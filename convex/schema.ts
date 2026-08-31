@@ -1,12 +1,12 @@
-import { defineSchema, defineTable } from "convex/server";
-import { v } from "convex/values";
+import { defineSchema, defineTable } from "convex/server"
+import { v } from "convex/values"
 
 const cardType = v.union(
   v.literal("explain"),
   v.literal("recall"),
   v.literal("multiple_choice"),
-  v.literal("connection"),
-);
+  v.literal("connection")
+)
 
 export default defineSchema({
   projects: defineTable({
@@ -17,9 +17,18 @@ export default defineSchema({
   sources: defineTable({
     projectId: v.id("projects"),
     filename: v.string(),
-    kind: v.union(v.literal("pdf"), v.literal("markdown"), v.literal("text"), v.literal("paste")),
+    kind: v.union(
+      v.literal("pdf"),
+      v.literal("markdown"),
+      v.literal("text"),
+      v.literal("paste")
+    ),
     extractedText: v.string(),
-    status: v.union(v.literal("processing"), v.literal("ready"), v.literal("failed")),
+    status: v.union(
+      v.literal("processing"),
+      v.literal("ready"),
+      v.literal("failed")
+    ),
     summary: v.optional(v.string()),
     error: v.optional(v.string()),
     createdAt: v.number(),
@@ -52,4 +61,4 @@ export default defineSchema({
     .index("by_project", ["projectId"])
     .index("by_project_card", ["projectId", "cardId"])
     .index("by_card_createdAt", ["cardId", "createdAt"]),
-});
+})
