@@ -1,29 +1,33 @@
-import { Geist, Geist_Mono } from "next/font/google"
+/** Defines the root document, global providers, fonts, and shared application shell. */
 
+import type { Metadata } from "next"
+import "@fontsource/bbh-bartle"
+import "@fontsource-variable/instrument-sans"
 import "./globals.css"
+import { AppShell } from "@/components/app-shell"
+import { ConvexClientProvider } from "@/components/convex-client-provider"
 import { ThemeProvider } from "@/components/theme-provider"
-import { cn } from "@/lib/utils";
 
-const geist = Geist({subsets:['latin'],variable:'--font-sans'})
+/** Default metadata used for Blitz routes. */
+export const metadata: Metadata = {
+  title: "Blitz | Learn at speed",
+  description: "Turn your study material into a focused learning feed.",
+}
 
-const fontMono = Geist_Mono({
-  subsets: ["latin"],
-  variable: "--font-mono",
-})
-
+/** Wraps every route with theme, Convex, and navigation providers. */
 export default function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode
 }>) {
   return (
-    <html
-      lang="en"
-      suppressHydrationWarning
-      className={cn("antialiased", fontMono.variable, "font-sans", geist.variable)}
-    >
+    <html lang="en" suppressHydrationWarning>
       <body>
-        <ThemeProvider>{children}</ThemeProvider>
+        <ThemeProvider>
+          <ConvexClientProvider>
+            <AppShell>{children}</AppShell>
+          </ConvexClientProvider>
+        </ThemeProvider>
       </body>
     </html>
   )

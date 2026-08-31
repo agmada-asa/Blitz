@@ -1,7 +1,10 @@
+/** Defines composable shadcn card regions using Blitz spacing and typography. */
+
 import * as React from "react"
 
 import { cn } from "@/lib/utils"
 
+/** Renders the outer card container and establishes shared region spacing. */
 function Card({
   className,
   size = "default",
@@ -20,6 +23,7 @@ function Card({
   )
 }
 
+/** Renders a card heading region with optional description and action slots. */
 function CardHeader({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
@@ -33,6 +37,7 @@ function CardHeader({ className, ...props }: React.ComponentProps<"div">) {
   )
 }
 
+/** Renders the display-styled title region of a card. */
 function CardTitle({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
@@ -46,6 +51,7 @@ function CardTitle({ className, ...props }: React.ComponentProps<"div">) {
   )
 }
 
+/** Renders secondary explanatory copy within a card header. */
 function CardDescription({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
@@ -56,6 +62,7 @@ function CardDescription({ className, ...props }: React.ComponentProps<"div">) {
   )
 }
 
+/** Positions a compact action beside a card title and description. */
 function CardAction({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
@@ -69,6 +76,7 @@ function CardAction({ className, ...props }: React.ComponentProps<"div">) {
   )
 }
 
+/** Renders the main padded content region of a card. */
 function CardContent({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
@@ -79,6 +87,7 @@ function CardContent({ className, ...props }: React.ComponentProps<"div">) {
   )
 }
 
+/** Renders a separated footer for card actions or metadata. */
 function CardFooter({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div

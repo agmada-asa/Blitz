@@ -1,8 +1,11 @@
 "use client"
 
+/** Owns system-aware theme state and the global keyboard theme shortcut. */
+
 import * as React from "react"
 import { ThemeProvider as NextThemesProvider, useTheme } from "next-themes"
 
+/** Provides theme state and installs the non-input "d" keyboard shortcut. */
 function ThemeProvider({
   children,
   ...props
@@ -21,6 +24,7 @@ function ThemeProvider({
   )
 }
 
+/** Reports whether a keyboard event started in an editable control. */
 function isTypingTarget(target: EventTarget | null) {
   if (!(target instanceof HTMLElement)) {
     return false
@@ -34,10 +38,12 @@ function isTypingTarget(target: EventTarget | null) {
   )
 }
 
+/** Toggles light and dark themes on an unmodified "d" key press outside inputs. */
 function ThemeHotkey() {
   const { resolvedTheme, setTheme } = useTheme()
 
   React.useEffect(() => {
+    /** Handles one global keydown without interfering with typing or shortcuts. */
     function onKeyDown(event: KeyboardEvent) {
       if (event.defaultPrevented || event.repeat) {
         return
