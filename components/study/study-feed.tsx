@@ -1,7 +1,8 @@
 "use client"
 
-import { useMemo } from "react"
-import { ArrowLeft, BookOpen, LoaderCircle } from "lucide-react"
+/** Loads a project deck and progress, then renders the vertical study session. */
+
+import { useMemo, useState } from "react"
 import Link from "next/link"
 import { useMutation, useQuery } from "convex/react"
 
@@ -11,9 +12,12 @@ import { StudyCard, type StudyCardData } from "@/components/study/study-card"
 import { Button } from "@/components/ui/button"
 import { Progress } from "@/components/ui/progress"
 import { Skeleton } from "@/components/ui/skeleton"
+import { ArrowLeftIcon, BookOpenIcon, LoadingIcon } from "@/components/ui/icon"
 
+/** Dynamic project identifier required by study views. */
 type Props = { projectId: string }
 
+/** Connects ordered cards and attempts to the full-height study interface. */
 export function StudyFeed({ projectId }: Props) {
   const convexProjectId = projectId as Id<"projects">
   const project = useQuery(api.projects.getProject, {
@@ -26,15 +30,21 @@ export function StudyFeed({ projectId }: Props) {
     projectId: convexProjectId,
   })
   const recordAttempt = useMutation(api.attempts.recordAttempt)
+  const [ratingError, setRatingError] = useState("")
   const completed = useMemo(() => progressData?.completed ?? 0, [progressData])
   const total = progressData?.total || cards?.length || 10
 
   const rate = async (cardId: string, rating: "again" | "got_it") => {
-    await recordAttempt({
-      projectId: convexProjectId,
-      cardId: cardId as Id<"cards">,
-      rating,
-    })
+    setRatingError("")
+    try {
+      await recordAttempt({
+        projectId: convexProjectId,
+        cardId: cardId as Id<"cards">,
+        rating,
+      })
+    } catch {
+      setRatingError("Could not save that rating. Try again.")
+    }
   }
 
   return (
@@ -48,7 +58,7 @@ export function StudyFeed({ projectId }: Props) {
             aria-label="Back to project"
           >
             <Link href={`/projects/${projectId}`}>
-              <ArrowLeft />
+              <ArrowLeftIcon />
             </Link>
           </Button>
           <div className="min-w-0 flex-1">
@@ -56,7 +66,11 @@ export function StudyFeed({ projectId }: Props) {
               {project?.title ?? "Study session"}
             </p>
             <div className="mt-2 flex items-center gap-3">
-              <Progress value={(completed / total) * 100} className="h-1.5" />
+              <Progress
+                value={(completed / total) * 100}
+                className="h-1.5"
+                aria-label="Study progress"
+              />
               <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
                 {completed}/{total}
               </span>
@@ -64,6 +78,14 @@ export function StudyFeed({ projectId }: Props) {
           </div>
         </div>
       </header>
+      {ratingError ? (
+        <p
+          role="alert"
+          className="border-b border-destructive/20 bg-destructive/10 px-4 py-2 text-center text-sm text-destructive"
+        >
+          {ratingError}
+        </p>
+      ) : null}
       {cards === undefined ? (
         <LoadingState />
       ) : cards.length === 0 ? (
@@ -84,10 +106,11 @@ export function StudyFeed({ projectId }: Props) {
   )
 }
 
+/** Shows a reduced-motion-safe loading placeholder while cards resolve. */
 function LoadingState() {
   return (
     <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col justify-center gap-6 px-6">
-      <LoaderCircle
+      <LoadingIcon
         className="size-10 animate-spin text-primary motion-reduce:animate-none"
         aria-label="Loading study cards"
       />
@@ -98,11 +121,12 @@ function LoadingState() {
   )
 }
 
+/** Guides an empty project back to source generation. */
 function EmptyState({ projectId }: Props) {
   return (
     <div className="mx-auto flex max-w-md flex-1 flex-col items-center justify-center px-6 text-center">
       <div className="mb-6 flex size-20 items-center justify-center rounded-3xl bg-primary/15 text-primary">
-        <BookOpen className="size-10" />
+        <BookOpenIcon className="size-10" />
       </div>
       <h1 className="text-3xl font-semibold tracking-tight">
         Your deck is empty

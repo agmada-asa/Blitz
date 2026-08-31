@@ -1,11 +1,14 @@
 "use client"
 
-import { Laptop, Moon, Sun } from "lucide-react"
+/** Renders the explicit light and dark theme control used by the app shell. */
+
 import { useTheme } from "next-themes"
 import * as React from "react"
 
+import { ComputerIconComponent, MoonIcon, SunIcon } from "@/components/ui/icon"
 import { cn } from "@/lib/utils"
 
+/** Toggles the resolved theme after hydration and labels the next action. */
 export function ThemeToggle({ className }: { className?: string }) {
   const { resolvedTheme, setTheme } = useTheme()
   const mounted = React.useSyncExternalStore(
@@ -28,12 +31,12 @@ export function ThemeToggle({ className }: { className?: string }) {
     >
       {mounted ? (
         isDark ? (
-          <Sun aria-hidden="true" size={19} />
+          <SunIcon aria-hidden="true" size={19} />
         ) : (
-          <Moon aria-hidden="true" size={19} />
+          <MoonIcon aria-hidden="true" size={19} />
         )
       ) : (
-        <Laptop aria-hidden="true" size={19} />
+        <ComputerIconComponent aria-hidden="true" size={19} />
       )}
     </button>
   )

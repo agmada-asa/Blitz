@@ -1,16 +1,24 @@
 "use client"
 
+/** Connects a project route to its sources, generation controls, and study action. */
+
 import { useMutation, useQuery } from "convex/react"
-import { ArrowLeft, BookOpen, FileText, Layers3 } from "lucide-react"
 import Link from "next/link"
 import { use } from "react"
 
 import { SourceUploader } from "@/components/projects/source-uploader"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import {
+  ArrowLeftIcon,
+  BookOpenIcon,
+  FileIcon,
+  LayersIcon,
+} from "@/components/ui/icon"
 import { api } from "@/convex/_generated/api"
 import type { Id } from "@/convex/_generated/dataModel"
 
+/** Renders one live project after resolving its Next.js 16 route parameters. */
 export default function ProjectPage({
   params,
 }: {
@@ -36,7 +44,7 @@ export default function ProjectPage({
         href="/"
         className="mb-10 inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground"
       >
-        <ArrowLeft size={16} /> All projects
+        <ArrowLeftIcon size={16} /> All projects
       </Link>
 
       <div className="mb-10 flex flex-wrap items-end justify-between gap-4">
@@ -46,7 +54,7 @@ export default function ProjectPage({
           </Badge>
           <h1 className="font-heading text-4xl tracking-tight sm:text-6xl">
             {project?.title || "Loading…"}
-            <span className="text-[#e6be00] dark:text-[#ffd60a]">.</span>
+            <span className="text-muted-foreground">.</span>
           </h1>
           <p className="mt-3 max-w-xl text-muted-foreground">
             Build a clear mental model from your own material.
@@ -55,12 +63,12 @@ export default function ProjectPage({
         {hasReadySource ? (
           <Button asChild size="lg" className="rounded-full">
             <Link href={`/projects/${projectId}/study`}>
-              <BookOpen size={18} /> Start studying
+              <BookOpenIcon size={18} /> Start studying
             </Link>
           </Button>
         ) : (
           <Button disabled size="lg" className="rounded-full">
-            <BookOpen size={18} /> Start studying
+            <BookOpenIcon size={18} /> Start studying
           </Button>
         )}
       </div>
@@ -81,7 +89,7 @@ export default function ProjectPage({
         </div>
         {!sources?.length ? (
           <div className="rounded-xl border border-dashed p-8 text-center text-sm text-muted-foreground">
-            <Layers3 className="mx-auto mb-3" size={32} />
+            <LayersIcon className="mx-auto mb-3" size={32} />
             Your generated summaries will appear here.
           </div>
         ) : (
@@ -93,7 +101,7 @@ export default function ProjectPage({
               >
                 <div className="flex min-w-0 items-center gap-3">
                   <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-muted">
-                    <FileText size={21} />
+                    <FileIcon size={21} />
                   </div>
                   <div className="min-w-0">
                     <p className="truncate font-medium">{source.filename}</p>

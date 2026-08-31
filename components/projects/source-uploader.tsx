@@ -1,24 +1,27 @@
 "use client"
 
+/** Coordinates browser extraction, server generation, and Convex persistence. */
+
 import type { FunctionArgs, FunctionReturnType } from "convex/server"
-import {
-  ClipboardPaste,
-  FileText,
-  FileUp,
-  LoaderCircle,
-  Sparkles,
-  X,
-} from "lucide-react"
 import { useRef, useState } from "react"
 
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Textarea } from "@/components/ui/textarea"
+import {
+  CancelIcon,
+  ClipboardPasteIcon,
+  FileIcon,
+  FileUploadIconComponent,
+  LoadingIcon,
+  SparklesIcon,
+} from "@/components/ui/icon"
 import { api } from "@/convex/_generated/api"
 import type { Id } from "@/convex/_generated/dataModel"
 import { extractSource, type SourceKind } from "@/lib/client/extract-source"
 import type { Generation } from "@/lib/server/generate-schema"
 
+/** Convex operations and project identity required by source ingestion. */
 type Props = {
   projectId: Id<"projects">
   createSource: (
@@ -32,9 +35,12 @@ type Props = {
   ) => Promise<FunctionReturnType<typeof api.cards.batchInsertCards>>
 }
 
+/** Success and error payloads returned by the generation route. */
 type GenerateResponse = Generation | { error: string }
+/** Client-side source limit mirrored by the server generation boundary. */
 const MAX_GENERATION_CHARACTERS = 120_000
 
+/** Renders file and paste ingestion with progress and recoverable result messages. */
 export function SourceUploader({
   projectId,
   createSource,
@@ -150,8 +156,8 @@ export function SourceUploader({
     >
       <CardContent className="p-5 sm:p-7">
         <div className="mb-6 flex items-center gap-3">
-          <div className="flex size-12 items-center justify-center rounded-2xl bg-[#ffd60a] text-black">
-            <Sparkles size={26} />
+          <div className="flex size-12 items-center justify-center rounded-2xl bg-muted text-foreground">
+            <SparklesIcon size={26} />
           </div>
           <div>
             <h2 className="font-heading text-xl">Add a source</h2>
@@ -162,34 +168,36 @@ export function SourceUploader({
         </div>
 
         <div className="grid gap-4 sm:grid-cols-2">
+          <input
+            ref={inputRef}
+            type="file"
+            accept=".pdf,.md,.markdown,.txt,text/plain,text/markdown,application/pdf"
+            className="sr-only"
+            tabIndex={-1}
+            onChange={(event) => void chooseFile(event.target.files?.[0])}
+          />
           <button
             type="button"
             disabled={busy}
             onClick={() => inputRef.current?.click()}
-            className="group flex min-h-40 flex-col items-center justify-center rounded-xl border border-dashed border-border p-5 text-center transition-colors hover:border-[#e6be00] hover:bg-[#ffd60a]/5 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50 dark:hover:border-[#ffd60a]"
+            className="group flex min-h-40 flex-col items-center justify-center rounded-xl border border-dashed border-border p-5 text-center transition-colors hover:border-foreground/40 hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50"
           >
-            <FileUp
-              className="mb-3 text-muted-foreground group-hover:text-[#c7a400] dark:group-hover:text-[#ffd60a]"
+            <FileUploadIconComponent
+              className="mb-3 text-muted-foreground group-hover:text-foreground"
               size={36}
             />
             <span className="font-medium">Upload a file</span>
             <span className="mt-1 text-xs text-muted-foreground">
               PDF · MD · TXT
             </span>
-            <input
-              ref={inputRef}
-              type="file"
-              accept=".pdf,.md,.markdown,.txt,text/plain,text/markdown,application/pdf"
-              className="hidden"
-              onChange={(event) => void chooseFile(event.target.files?.[0])}
-            />
           </button>
 
           <div className="flex min-h-40 flex-col">
             <div className="mb-2 flex items-center gap-2 text-sm font-medium">
-              <ClipboardPaste size={18} /> Paste notes
+              <ClipboardPasteIcon size={18} /> Paste notes
             </div>
             <Textarea
+              aria-label="Notes to generate cards from"
               value={paste}
               disabled={busy}
               onChange={(event) => setPaste(event.target.value)}
@@ -203,7 +211,7 @@ export function SourceUploader({
             >
               {busy ? (
                 <>
-                  <LoaderCircle
+                  <LoadingIcon
                     className="animate-spin motion-reduce:animate-none"
                     size={16}
                   />{" "}
@@ -211,7 +219,7 @@ export function SourceUploader({
                 </>
               ) : (
                 <>
-                  Generate cards <Sparkles size={16} />
+                  Generate cards <SparklesIcon size={16} />
                 </>
               )}
             </Button>
@@ -220,13 +228,16 @@ export function SourceUploader({
 
         {filename && !busy ? (
           <p className="mt-4 flex items-center gap-2 text-xs text-muted-foreground">
-            <FileText size={14} /> {filename}
+            <FileIcon size={14} /> {filename}
             <button
               type="button"
-              onClick={() => setFilename("")}
+              onClick={() => {
+                setFilename("")
+                if (inputRef.current) inputRef.current.value = ""
+              }}
               aria-label="Clear selected file"
             >
-              <X size={14} />
+              <CancelIcon size={14} />
             </button>
           </p>
         ) : null}
@@ -237,7 +248,7 @@ export function SourceUploader({
             className={`mt-4 rounded-lg px-3 py-2 text-sm ${
               message.type === "error"
                 ? "bg-destructive/10 text-destructive"
-                : "bg-[#ffd60a]/15 text-foreground"
+                : "bg-muted text-foreground"
             }`}
           >
             {message.text}

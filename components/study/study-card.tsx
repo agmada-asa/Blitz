@@ -1,21 +1,24 @@
 "use client"
 
+/** Renders one interactive card in the vertical study feed. */
+
 import { useState } from "react"
 import {
-  ArrowDown,
-  Check,
-  CheckCircle2,
-  HelpCircle,
-  Link2,
-  Lightbulb,
-  RotateCcw,
-  Sparkles,
-} from "lucide-react"
+  ArrowDownIcon,
+  BulbLineIcon,
+  CheckCircleIcon,
+  CheckIcon,
+  HelpIcon,
+  LinkIcon,
+  RotateLeftIcon,
+  SparklesIcon,
+} from "@/components/ui/icon"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 
+/** Persisted card fields consumed by the study interface. */
 export type StudyCardData = {
   _id: string
   type: "explain" | "recall" | "multiple_choice" | "connection"
@@ -28,35 +31,38 @@ export type StudyCardData = {
   sourceLabel?: string
 }
 
+/** Labels, icons, and semantic colors for each study format. */
 const cardMeta = {
   explain: {
     label: "Explain",
-    icon: Lightbulb,
-    tint: "bg-[#fff7c2] text-[#8a6800] dark:bg-yellow-400/15 dark:text-yellow-300",
+    icon: BulbLineIcon,
+    tint: "bg-slate-100 text-slate-700 dark:bg-slate-400/15 dark:text-slate-300",
   },
   recall: {
     label: "Recall",
-    icon: HelpCircle,
+    icon: HelpIcon,
     tint: "bg-blue-100 text-blue-700 dark:bg-blue-400/15 dark:text-blue-300",
   },
   multiple_choice: {
     label: "Quiz",
-    icon: CheckCircle2,
+    icon: CheckCircleIcon,
     tint: "bg-violet-100 text-violet-700 dark:bg-violet-400/15 dark:text-violet-300",
   },
   connection: {
     label: "Connect",
-    icon: Link2,
+    icon: LinkIcon,
     tint: "bg-emerald-100 text-emerald-700 dark:bg-emerald-400/15 dark:text-emerald-300",
   },
 } as const
 
+/** Card content, display order, and rating callback for one feed item. */
 type StudyCardProps = {
   card: StudyCardData
   index: number
   onRate: (rating: "again" | "got_it") => void
 }
 
+/** Presents recall and quiz interactions before allowing a positive rating. */
 export function StudyCard({ card, index, onRate }: StudyCardProps) {
   const [revealed, setRevealed] = useState(
     card.type === "explain" || card.type === "connection"
@@ -132,7 +138,7 @@ export function StudyCard({ card, index, onRate }: StudyCardProps) {
                   </span>
                   <span className="flex-1">{option}</span>
                   {answered && correct ? (
-                    <Check aria-hidden="true" className="size-5" />
+                    <CheckIcon aria-hidden="true" className="size-5" />
                   ) : null}
                 </button>
               )
@@ -140,6 +146,7 @@ export function StudyCard({ card, index, onRate }: StudyCardProps) {
             {selected !== null ? (
               <div className="pt-2">
                 <p
+                  aria-live="polite"
                   className={cn(
                     "text-sm font-medium",
                     isCorrect
@@ -148,7 +155,7 @@ export function StudyCard({ card, index, onRate }: StudyCardProps) {
                   )}
                 >
                   {isCorrect
-                    ? "Correct — nice work."
+                    ? "Correct. Nice work."
                     : "Not quite. The highlighted answer is correct."}
                 </p>
                 {card.answer ? (
@@ -188,11 +195,11 @@ export function StudyCard({ card, index, onRate }: StudyCardProps) {
                     onClick={() => setRevealed(true)}
                     className="flex min-h-24 w-full items-center justify-center gap-3 p-5 text-base font-semibold hover:bg-muted/60 focus-visible:ring-4 focus-visible:ring-primary/30 focus-visible:outline-none"
                   >
-                    <Sparkles
+                    <SparklesIcon
                       aria-hidden="true"
                       className="size-5 text-primary"
                     />{" "}
-                    Tap to reveal answer
+                    Reveal answer
                   </button>
                 )}
               </div>
@@ -208,7 +215,7 @@ export function StudyCard({ card, index, onRate }: StudyCardProps) {
             className="h-12 rounded-full px-5"
             onClick={() => onRate("again")}
           >
-            <RotateCcw aria-hidden="true" /> Again
+            <RotateLeftIcon aria-hidden="true" /> Again
           </Button>
           <Button
             type="button"
@@ -220,11 +227,11 @@ export function StudyCard({ card, index, onRate }: StudyCardProps) {
               (card.type === "multiple_choice" && selected === null)
             }
           >
-            <Check aria-hidden="true" /> Got it
+            <CheckIcon aria-hidden="true" /> Got it
           </Button>
         </div>
       </div>
-      <ArrowDown
+      <ArrowDownIcon
         aria-hidden="true"
         className="absolute bottom-7 left-1/2 size-5 -translate-x-1/2 animate-bounce text-muted-foreground motion-reduce:animate-none"
       />

@@ -1,105 +1,109 @@
 "use client"
 
+/** Provides responsive project navigation around every Blitz route. */
+
 import Link from "next/link"
 import { usePathname } from "next/navigation"
-import { BookOpen, FolderOpen, Plus, Zap } from "lucide-react"
-import type { ReactNode } from "react"
+import {
+  Add01Icon,
+  BookOpen01Icon,
+  Folder01Icon,
+  SidebarLeftIcon,
+} from "@hugeicons/core-free-icons"
+import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react"
+import { useState, type ReactNode } from "react"
 
 import { ThemeToggle } from "@/components/theme-toggle"
 import { cn } from "@/lib/utils"
 
-type AppShellProps = { children: ReactNode; projectId?: string }
+/** Content rendered inside the shared shell. */
+type AppShellProps = { children: ReactNode }
+/** One route-aware navigation destination. */
 type NavLink = {
-  href: string
+  href?: string
   label: string
-  icon: typeof FolderOpen
+  icon: IconSvgElement
   active: boolean
 }
 
-export function AppShell({ children, projectId }: AppShellProps) {
+/** Renders desktop and mobile navigation and tracks desktop collapse state. */
+export function AppShell({ children }: AppShellProps) {
   const pathname = usePathname()
+  const [collapsed, setCollapsed] = useState(false)
   const isStudyRoute = pathname.endsWith("/study")
-  const routeProjectId =
-    projectId ?? pathname.match(/^\/projects\/([^/]+)/)?.[1]
-  const projectHref = routeProjectId ? `/projects/${routeProjectId}` : "/"
+  const projectId = pathname.match(/^\/projects\/([^/]+)/)?.[1]
+  const projectHref = projectId ? `/projects/${projectId}` : "/"
   const links: NavLink[] = [
     {
       href: "/",
       label: "Projects",
-      icon: FolderOpen,
+      icon: Folder01Icon,
       active:
         pathname === "/" ||
         (pathname.startsWith("/projects/") && !pathname.endsWith("/study")),
     },
     {
-      href: routeProjectId ? `${projectHref}#add-source` : "/#new-project",
+      href: projectId ? `${projectHref}#add-source` : "/#new-project",
       label: "Add source",
-      icon: Plus,
+      icon: Add01Icon,
       active: false,
     },
     {
-      href: routeProjectId ? `${projectHref}/study` : "/",
+      href: projectId ? `${projectHref}/study` : "/",
       label: "Study",
-      icon: BookOpen,
+      icon: BookOpen01Icon,
       active: isStudyRoute,
     },
   ]
 
   return (
     <div className="min-h-svh bg-background text-foreground">
-      <aside className="fixed inset-y-0 left-0 z-40 hidden w-[84px] flex-col items-center border-r border-border/70 bg-background/90 py-6 backdrop-blur-xl md:flex">
-        <Link
-          href="/"
-          aria-label="Blitz home"
-          className="group mb-auto flex flex-col items-center gap-1"
+      <aside
+        className={cn(
+          "fixed inset-y-6 left-6 z-40 hidden flex-col rounded-[36px] border border-border/80 bg-background/95 p-4 shadow-sm backdrop-blur-xl transition-[width] duration-200 md:flex",
+          collapsed ? "w-[88px]" : "w-[288px]"
+        )}
+      >
+        <button
+          type="button"
+          onClick={() => setCollapsed((value) => !value)}
+          className={cn(
+            "mb-8 flex h-14 items-center rounded-2xl text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none",
+            collapsed ? "justify-center" : "gap-4 px-5"
+          )}
+          aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
         >
-          <span className="grid size-11 place-items-center rounded-2xl bg-[#FFD60A] text-black shadow-[0_8px_24px_-12px_#FFD60A] transition-transform group-hover:-rotate-6">
-            <Zap
-              aria-hidden="true"
-              size={27}
-              fill="currentColor"
-              strokeWidth={2.5}
-            />
-          </span>
-          <span className="font-display text-[11px] tracking-[0.18em]">
-            BLITZ
-          </span>
-        </Link>
-        <nav
-          aria-label="Primary navigation"
-          className="flex flex-col items-center gap-3"
-        >
+          <HugeiconsIcon icon={SidebarLeftIcon} size={27} strokeWidth={1.8} />
+          {!collapsed ? (
+            <span className="text-lg font-medium">Collapse</span>
+          ) : null}
+        </button>
+        <nav aria-label="Primary navigation" className="flex flex-col gap-2">
           {links.map((link) => (
-            <NavItem key={link.label} {...link} compact />
+            <NavItem key={link.label} {...link} collapsed={collapsed} />
           ))}
         </nav>
-        <div className="mt-auto">
+        <div
+          className={cn(
+            "mt-auto flex items-center",
+            collapsed ? "justify-center" : "px-2"
+          )}
+        >
           <ThemeToggle />
+          {!collapsed ? (
+            <span className="ml-4 text-lg font-medium text-muted-foreground">
+              Appearance
+            </span>
+          ) : null}
         </div>
       </aside>
 
-      {!isStudyRoute ? (
-        <header className="flex items-center justify-between border-b border-border/70 px-5 py-4 md:hidden">
-          <Link
-            href="/"
-            aria-label="Blitz home"
-            className="flex items-center gap-2"
-          >
-            <Zap
-              aria-hidden="true"
-              className="text-[#FFD60A]"
-              fill="currentColor"
-              size={25}
-            />
-            <span className="font-display text-lg tracking-[0.16em]">
-              BLITZ
-            </span>
-          </Link>
-          <ThemeToggle />
-        </header>
-      ) : null}
       <main
-        className={cn(isStudyRoute ? "pb-0" : "pb-24", "md:ml-[84px] md:pb-0")}
+        className={cn(
+          isStudyRoute ? "pb-0" : "pb-24",
+          "transition-[margin] duration-200 md:pb-0",
+          collapsed ? "md:ml-[112px]" : "md:ml-[336px]"
+        )}
       >
         {children}
       </main>
@@ -108,38 +112,59 @@ export function AppShell({ children, projectId }: AppShellProps) {
         className="fixed inset-x-0 bottom-0 z-40 grid h-[76px] grid-cols-3 border-t border-border/70 bg-background/90 px-2 pb-[env(safe-area-inset-bottom)] backdrop-blur-xl md:hidden"
       >
         {links.map((link) => (
-          <NavItem key={link.label} {...link} />
+          <NavItem key={link.label} {...link} mobile />
         ))}
       </nav>
     </div>
   )
 }
 
+/** Renders one navigation link with compact desktop and mobile variants. */
 function NavItem({
   href,
   label,
-  icon: Icon,
+  icon,
   active,
-  compact,
-}: NavLink & { compact?: boolean }) {
-  return (
+  collapsed,
+  mobile,
+}: NavLink & { collapsed?: boolean; mobile?: boolean }) {
+  const classes = cn(
+    "group flex h-14 items-center rounded-[18px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none",
+    collapsed || mobile ? "justify-center" : "gap-4 px-5",
+    mobile && "my-2 flex-col gap-1 text-[11px]",
+    active && "bg-muted text-foreground"
+  )
+  const content = (
+    <>
+      <HugeiconsIcon
+        icon={icon}
+        size={mobile ? 25 : 27}
+        strokeWidth={active ? 2 : 1.8}
+      />
+      <span
+        className={cn(collapsed && "sr-only", !mobile && "text-lg font-medium")}
+      >
+        {label}
+      </span>
+    </>
+  )
+
+  return href ? (
     <Link
       href={href}
       aria-current={active ? "page" : undefined}
-      className={cn(
-        "group flex items-center justify-center gap-2 rounded-2xl text-muted-foreground transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none",
-        compact
-          ? "size-14 flex-col gap-1 text-[10px]"
-          : "my-2 flex-col text-[11px]",
-        active && "bg-[#FFD60A] font-semibold text-black hover:text-black"
-      )}
+      className={classes}
     >
-      <Icon
-        aria-hidden="true"
-        size={compact ? 25 : 28}
-        strokeWidth={active ? 2.6 : 2.1}
-      />
-      <span>{label}</span>
+      {content}
     </Link>
+  ) : (
+    <button
+      type="button"
+      className={classes}
+      title={`${label} is coming soon`}
+      onClick={() => undefined}
+    >
+      {content}
+    </button>
   )
 }

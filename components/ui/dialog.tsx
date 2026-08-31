@@ -1,36 +1,43 @@
 "use client"
 
+/** Wraps Radix dialog primitives in the shared shadcn dialog presentation. */
+
 import * as React from "react"
 import { Dialog as DialogPrimitive } from "radix-ui"
 
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
-import { XIcon } from "lucide-react"
+import { CancelIcon } from "@/components/ui/icon"
 
+/** Owns open state and context for one modal dialog. */
 function Dialog({
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Root>) {
   return <DialogPrimitive.Root data-slot="dialog" {...props} />
 }
 
+/** Opens the nearest dialog using a semantic Radix trigger. */
 function DialogTrigger({
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Trigger>) {
   return <DialogPrimitive.Trigger data-slot="dialog-trigger" {...props} />
 }
 
+/** Mounts dialog content outside the surrounding layout tree. */
 function DialogPortal({
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Portal>) {
   return <DialogPrimitive.Portal data-slot="dialog-portal" {...props} />
 }
 
+/** Closes the nearest dialog while preserving the supplied control semantics. */
 function DialogClose({
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Close>) {
   return <DialogPrimitive.Close data-slot="dialog-close" {...props} />
 }
 
+/** Renders the modal backdrop and its reduced-duration transition. */
 function DialogOverlay({
   className,
   ...props
@@ -47,6 +54,7 @@ function DialogOverlay({
   )
 }
 
+/** Renders modal content with an optional accessible close button. */
 function DialogContent({
   className,
   children,
@@ -74,7 +82,7 @@ function DialogContent({
               className="absolute top-2 right-2"
               size="icon-sm"
             >
-              <XIcon />
+              <CancelIcon />
               <span className="sr-only">Close</span>
             </Button>
           </DialogPrimitive.Close>
@@ -84,6 +92,7 @@ function DialogContent({
   )
 }
 
+/** Groups a dialog title and description. */
 function DialogHeader({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
@@ -94,6 +103,7 @@ function DialogHeader({ className, ...props }: React.ComponentProps<"div">) {
   )
 }
 
+/** Groups dialog actions and can add a standard close action. */
 function DialogFooter({
   className,
   showCloseButton = false,
@@ -121,6 +131,7 @@ function DialogFooter({
   )
 }
 
+/** Labels a dialog for assistive technology. */
 function DialogTitle({
   className,
   ...props
@@ -137,6 +148,7 @@ function DialogTitle({
   )
 }
 
+/** Adds the dialog's accessible supporting description. */
 function DialogDescription({
   className,
   ...props
