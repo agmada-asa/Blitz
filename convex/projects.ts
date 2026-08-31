@@ -1,6 +1,9 @@
+/** Provides project reads and project creation for the library interface. */
+
 import { mutation, query } from "./_generated/server"
 import { v } from "convex/values"
 
+/** Lists projects newest first with their current source and card counts. */
 export const listProjects = query({
   args: {},
   handler: async (ctx) => {
@@ -37,11 +40,13 @@ export const listProjects = query({
   },
 })
 
+/** Returns a project by ID, or null when it no longer exists. */
 export const getProject = query({
   args: { projectId: v.id("projects") },
   handler: (ctx, args) => ctx.db.get(args.projectId),
 })
 
+/** Creates a project after trimming and bounding its user-visible title. */
 export const createProject = mutation({
   args: { title: v.string() },
   handler: async (ctx, args) => {

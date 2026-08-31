@@ -1,6 +1,9 @@
+/** Records study ratings and derives each project's latest progress totals. */
+
 import { mutation, query } from "./_generated/server"
 import { v } from "convex/values"
 
+/** Records a card rating after confirming the card belongs to the project. */
 export const recordAttempt = mutation({
   args: {
     projectId: v.id("projects"),
@@ -15,6 +18,7 @@ export const recordAttempt = mutation({
   },
 })
 
+/** Computes progress from the latest rating for each card in a project. */
 export const getProjectProgress = query({
   args: { projectId: v.id("projects") },
   handler: async (ctx, args) => {
@@ -51,4 +55,5 @@ export const getProjectProgress = query({
   },
 })
 
+/** Short public alias retained for existing client calls. */
 export const getProgress = getProjectProgress

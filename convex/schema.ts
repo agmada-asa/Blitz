@@ -1,6 +1,9 @@
+/** Defines the persisted Blitz data model and the indexes used by app queries. */
+
 import { defineSchema, defineTable } from "convex/server"
 import { v } from "convex/values"
 
+/** Validator shared by the cards table's supported learning formats. */
 const cardType = v.union(
   v.literal("explain"),
   v.literal("recall"),
@@ -8,6 +11,7 @@ const cardType = v.union(
   v.literal("connection")
 )
 
+/** Convex schema for projects, uploaded sources, generated cards, and attempts. */
 export default defineSchema({
   projects: defineTable({
     title: v.string(),
