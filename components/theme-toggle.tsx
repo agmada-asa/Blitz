@@ -8,8 +8,14 @@ import * as React from "react"
 import { ComputerIconComponent, MoonIcon, SunIcon } from "@/components/ui/icon"
 import { cn } from "@/lib/utils"
 
+/** Visual options for the shared theme control. */
+type ThemeToggleProps = {
+  className?: string
+  iconSize?: number
+}
+
 /** Toggles the resolved theme after hydration and labels the next action. */
-export function ThemeToggle({ className }: { className?: string }) {
+export function ThemeToggle({ className, iconSize = 19 }: ThemeToggleProps) {
   const { resolvedTheme, setTheme } = useTheme()
   const mounted = React.useSyncExternalStore(
     () => () => undefined,
@@ -31,12 +37,12 @@ export function ThemeToggle({ className }: { className?: string }) {
     >
       {mounted ? (
         isDark ? (
-          <SunIcon aria-hidden="true" size={19} />
+          <SunIcon aria-hidden="true" size={iconSize} />
         ) : (
-          <MoonIcon aria-hidden="true" size={19} />
+          <MoonIcon aria-hidden="true" size={iconSize} />
         )
       ) : (
-        <ComputerIconComponent aria-hidden="true" size={19} />
+        <ComputerIconComponent aria-hidden="true" size={iconSize} />
       )}
     </button>
   )

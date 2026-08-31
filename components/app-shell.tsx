@@ -73,9 +73,9 @@ export function AppShell({ children }: AppShellProps) {
           )}
           aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
         >
-          <HugeiconsIcon icon={SidebarLeftIcon} size={27} strokeWidth={1.8} />
+          <HugeiconsIcon icon={SidebarLeftIcon} size={20} strokeWidth={1.8} />
           {!collapsed ? (
-            <span className="text-lg font-medium">Collapse</span>
+            <span className="text-sm font-medium">Collapse</span>
           ) : null}
         </button>
         <nav aria-label="Primary navigation" className="flex flex-col gap-2">
@@ -89,9 +89,9 @@ export function AppShell({ children }: AppShellProps) {
             collapsed ? "justify-center" : "px-2"
           )}
         >
-          <ThemeToggle />
+          <ThemeToggle className="size-8" iconSize={14} />
           {!collapsed ? (
-            <span className="ml-4 text-lg font-medium text-muted-foreground">
+            <span className="ml-3 text-sm font-medium text-muted-foreground">
               Appearance
             </span>
           ) : null}
@@ -138,11 +138,11 @@ function NavItem({
     <>
       <HugeiconsIcon
         icon={icon}
-        size={mobile ? 25 : 27}
+        size={mobile ? 25 : 20}
         strokeWidth={active ? 2 : 1.8}
       />
       <span
-        className={cn(collapsed && "sr-only", !mobile && "text-lg font-medium")}
+        className={cn(collapsed && "sr-only", !mobile && "text-sm font-medium")}
       >
         {label}
       </span>
