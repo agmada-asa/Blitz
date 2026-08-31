@@ -1,7 +1,10 @@
+/** Defines the shared shadcn multiline text input presentation. */
+
 import * as React from "react"
 
 import { cn } from "@/lib/utils"
 
+/** Renders a native textarea with consistent focus, disabled, and invalid states. */
 function Textarea({ className, ...props }: React.ComponentProps<"textarea">) {
   return (
     <textarea

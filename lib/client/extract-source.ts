@@ -1,5 +1,9 @@
+/** Extracts browser-selected source files into text for the generation pipeline. */
+
+/** Source formats supported by upload and paste ingestion. */
 export type SourceKind = "pdf" | "markdown" | "text" | "paste"
 
+/** Maps a filename extension to the source kind used by persistence. */
 export function kindForFilename(
   filename: string
 ): Exclude<SourceKind, "paste"> {
@@ -9,6 +13,7 @@ export function kindForFilename(
   return "text"
 }
 
+/** Extracts normalized text per PDF page and returns an empty string for image-only files. */
 export async function extractPdfText(file: File): Promise<string> {
   const pdfjs = await import("pdfjs-dist/legacy/webpack.mjs")
   const data = new Uint8Array(await file.arrayBuffer())
@@ -38,6 +43,7 @@ export async function extractPdfText(file: File): Promise<string> {
   return pages.join("\n\n")
 }
 
+/** Reads a supported file and returns its name, inferred kind, and trimmed text. */
 export async function extractSource(file: File) {
   const kind = kindForFilename(file.name)
   const text = kind === "pdf" ? await extractPdfText(file) : await file.text()

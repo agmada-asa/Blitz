@@ -1,7 +1,10 @@
+/** Applies Next.js lint rules while excluding generated and build output. */
+
 import { defineConfig, globalIgnores } from "eslint/config"
 import nextVitals from "eslint-config-next/core-web-vitals"
 import nextTs from "eslint-config-next/typescript"
 
+/** Repository ESLint configuration for handwritten application code. */
 const eslintConfig = defineConfig([
   ...nextVitals,
   ...nextTs,

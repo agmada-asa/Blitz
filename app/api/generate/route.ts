@@ -1,11 +1,15 @@
+/** Accepts bounded source text and returns one schema-validated generated study set. */
+
 import { generateStudySet } from "@/lib/server/codex"
 import {
   MAX_FILENAME_LENGTH,
   MAX_SOURCE_TEXT_LENGTH,
 } from "@/lib/server/generate-schema"
 
+/** Uses Node.js because generation launches the local Codex process. */
 export const runtime = "nodejs"
 
+/** Handles generation requests and maps invalid input or generator failures to JSON errors. */
 export async function POST(request: Request) {
   let body: unknown
   try {

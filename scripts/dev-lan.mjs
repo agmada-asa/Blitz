@@ -1,3 +1,5 @@
+/** Starts Next.js and local Convex together for testing Blitz on a Mac and phone. */
+
 import { spawn } from "node:child_process"
 import { networkInterfaces } from "node:os"
 
@@ -35,6 +37,7 @@ start(
 process.on("SIGINT", () => stop("SIGINT"))
 process.on("SIGTERM", () => stop("SIGTERM"))
 
+/** Returns the first external IPv4 address, or undefined when no LAN is available. */
 function findLanAddress() {
   for (const interfaces of Object.values(networkInterfaces())) {
     for (const address of interfaces ?? []) {
@@ -43,6 +46,7 @@ function findLanAddress() {
   }
 }
 
+/** Starts a child service and shuts down the full stack if that service exits. */
 function start(command, args, environment) {
   const child = spawn(command, args, { env: environment, stdio: "inherit" })
   children.add(child)
@@ -57,6 +61,7 @@ function start(command, args, environment) {
   })
 }
 
+/** Sends a termination signal to each child and exits once they have begun stopping. */
 function stop(signal, exitCode = 0) {
   if (stopping) return
   stopping = true
