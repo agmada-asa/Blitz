@@ -20,12 +20,20 @@ const sourceStatus = v.union(
 /** Lists every source attached to a project, newest first. */
 export const listSources = query({
   args: { projectId: v.id("projects") },
-  handler: (ctx, args) =>
-    ctx.db
+  handler: async (ctx, args) => {
+    const sources = await ctx.db
       .query("sources")
       .withIndex("by_project", (q) => q.eq("projectId", args.projectId))
       .order("desc")
-      .collect(),
+    .collect()
+
+    return sources.map((source) => {
+      // The project view needs status and summaries, not the original upload.
+      return Object.fromEntries(
+        Object.entries(source).filter(([key]) => key !== "extractedText")
+      ) as Omit<typeof source, "extractedText">
+    })
+  },
 })
 
 /** Creates a processing source after validating its parent and bounded content. */

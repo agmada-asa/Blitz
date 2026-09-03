@@ -32,7 +32,8 @@ export function StudyFeed({ projectId }: Props) {
   const recordAttempt = useMutation(api.attempts.recordAttempt)
   const [ratingError, setRatingError] = useState("")
   const completed = useMemo(() => progressData?.completed ?? 0, [progressData])
-  const total = progressData?.total || cards?.length || 10
+  const total = progressData?.total ?? cards?.length ?? 10
+  const percentage = total > 0 ? (completed / total) * 100 : 0
 
   const rate = async (cardId: string, rating: "again" | "got_it") => {
     setRatingError("")
@@ -67,7 +68,7 @@ export function StudyFeed({ projectId }: Props) {
             </p>
             <div className="mt-2 flex items-center gap-3">
               <Progress
-                value={(completed / total) * 100}
+                value={percentage}
                 className="h-1.5"
                 aria-label="Study progress"
               />
@@ -86,7 +87,9 @@ export function StudyFeed({ projectId }: Props) {
           {ratingError}
         </p>
       ) : null}
-      {cards === undefined ? (
+      {project === null ? (
+        <ProjectNotFoundState />
+      ) : cards === undefined ? (
         <LoadingState />
       ) : cards.length === 0 ? (
         <EmptyState projectId={projectId} />
@@ -103,6 +106,25 @@ export function StudyFeed({ projectId }: Props) {
         </div>
       )}
     </main>
+  )
+}
+
+/** Explains that a stale or invalid study link no longer resolves. */
+function ProjectNotFoundState() {
+  return (
+    <div className="mx-auto flex max-w-md flex-1 flex-col items-center justify-center px-6 text-center">
+      <div role="alert">
+        <h1 className="text-3xl font-semibold tracking-tight">
+          Project not found.
+        </h1>
+        <p className="mt-3 text-muted-foreground">
+          This study session is no longer available.
+        </p>
+        <Button asChild className="mt-8 rounded-full">
+          <Link href="/">Back to projects</Link>
+        </Button>
+      </div>
+    </div>
   )
 }
 

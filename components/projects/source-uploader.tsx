@@ -40,6 +40,16 @@ type GenerateResponse = Generation | { error: string }
 /** Client-side source limit mirrored by the server generation boundary. */
 const MAX_GENERATION_CHARACTERS = 120_000
 
+/** Returns whether a generator response contains the server's user-facing error. */
+function isGenerateError(value: unknown): value is { error: string } {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "error" in value &&
+    typeof value.error === "string"
+  )
+}
+
 /** Renders file and paste ingestion with progress and recoverable result messages. */
 export function SourceUploader({
   projectId,
@@ -93,11 +103,16 @@ export function SourceUploader({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ filename: name, text }),
       })
-      const result = (await response.json()) as GenerateResponse
+      let result: GenerateResponse
+      try {
+        result = (await response.json()) as GenerateResponse
+      } catch {
+        throw new Error("Generation failed. Please try again.")
+      }
 
-      if (!response.ok || "error" in result) {
+      if (!response.ok || isGenerateError(result)) {
         throw new Error(
-          "error" in result
+          isGenerateError(result)
             ? result.error
             : "Generation failed. Please try again."
         )
@@ -152,6 +167,7 @@ export function SourceUploader({
   return (
     <Card
       id="add-source"
+      aria-busy={busy}
       className="scroll-mt-6 overflow-visible border-transparent bg-card"
     >
       <CardContent className="p-5 sm:p-7">
@@ -174,7 +190,11 @@ export function SourceUploader({
             accept=".pdf,.md,.markdown,.txt,text/plain,text/markdown,application/pdf"
             className="sr-only"
             tabIndex={-1}
-            onChange={(event) => void chooseFile(event.target.files?.[0])}
+            onChange={(event) => {
+              const file = event.target.files?.[0]
+              event.target.value = ""
+              void chooseFile(file)
+            }}
           />
           <button
             type="button"

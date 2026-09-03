@@ -23,6 +23,7 @@ import {
   Moon02Icon,
   RotateLeft01Icon,
   Sun03Icon,
+  ZapIcon as ZapGlyph,
 } from "@hugeicons/core-free-icons"
 import { HugeiconsIcon, type HugeiconsIconProps } from "@hugeicons/react"
 
@@ -80,3 +81,5 @@ export const RotateLeftIcon = makeIcon(RotateLeft01Icon)
 export const SparklesIcon = makeIcon(AiSparklesIcon)
 /** Light theme glyph. */
 export const SunIcon = makeIcon(Sun03Icon)
+/** Blitz brand and energy glyph. */
+export const ZapIcon = makeIcon(ZapGlyph)

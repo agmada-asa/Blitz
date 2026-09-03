@@ -3,6 +3,17 @@
 /** Source formats supported by upload and paste ingestion. */
 export type SourceKind = "pdf" | "markdown" | "text" | "paste"
 
+/** Returns whether a selected file uses one of Blitz's supported extensions. */
+export function isSupportedSourceFilename(filename: string): boolean {
+  const extension = filename.toLowerCase().split(".").pop()
+  return (
+    extension === "pdf" ||
+    extension === "md" ||
+    extension === "markdown" ||
+    extension === "txt"
+  )
+}
+
 /** Maps a filename extension to the source kind used by persistence. */
 export function kindForFilename(
   filename: string
@@ -45,6 +56,9 @@ export async function extractPdfText(file: File): Promise<string> {
 
 /** Reads a supported file and returns its name, inferred kind, and trimmed text. */
 export async function extractSource(file: File) {
+  if (!isSupportedSourceFilename(file.name)) {
+    throw new Error("Choose a PDF, Markdown, or text file.")
+  }
   const kind = kindForFilename(file.name)
   const text = kind === "pdf" ? await extractPdfText(file) : await file.text()
   return { filename: file.name, kind, text: text.trim() }

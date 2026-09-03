@@ -14,6 +14,7 @@ import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react"
 import { useState, type ReactNode } from "react"
 
 import { ThemeToggle } from "@/components/theme-toggle"
+import { ZapIcon } from "@/components/ui/icon"
 import { cn } from "@/lib/utils"
 
 /** Content rendered inside the shared shell. */
@@ -64,6 +65,24 @@ export function AppShell({ children }: AppShellProps) {
           collapsed ? "w-[88px]" : "w-[288px]"
         )}
       >
+        <Link
+          href="/"
+          aria-label="Blitz home"
+          title="Blitz home"
+          className={cn(
+            "mb-5 flex h-12 items-center rounded-2xl text-foreground transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none",
+            collapsed ? "justify-center" : "gap-3 px-3"
+          )}
+        >
+          <span className="flex size-8 items-center justify-center rounded-xl bg-primary text-primary-foreground">
+            <ZapIcon aria-hidden="true" size={18} strokeWidth={2.4} />
+          </span>
+          {!collapsed ? (
+            <span className="font-display text-lg tracking-[0.12em]">
+              BLITZ
+            </span>
+          ) : null}
+        </Link>
         <button
           type="button"
           onClick={() => setCollapsed((value) => !value)}
@@ -98,7 +117,7 @@ export function AppShell({ children }: AppShellProps) {
         </div>
       </aside>
 
-      <main
+      <div
         className={cn(
           isStudyRoute ? "pb-0" : "pb-24",
           "transition-[margin] duration-200 md:pb-0",
@@ -106,7 +125,7 @@ export function AppShell({ children }: AppShellProps) {
         )}
       >
         {children}
-      </main>
+      </div>
       <nav
         aria-label="Primary navigation"
         className="fixed inset-x-0 bottom-0 z-40 grid h-[76px] grid-cols-3 border-t border-border/70 bg-background/90 px-2 pb-[env(safe-area-inset-bottom)] backdrop-blur-xl md:hidden"

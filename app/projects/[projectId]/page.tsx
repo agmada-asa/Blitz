@@ -9,6 +9,7 @@ import { use } from "react"
 import { SourceUploader } from "@/components/projects/source-uploader"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { Skeleton } from "@/components/ui/skeleton"
 import {
   ArrowLeftIcon,
   BookOpenIcon,
@@ -37,6 +38,9 @@ export default function ProjectPage({
   const insertCards = useMutation(api.cards.batchInsertCards)
   const hasReadySource =
     sources?.some((source) => source.status === "ready") ?? false
+
+  if (project === undefined) return <ProjectLoadingState />
+  if (project === null) return <ProjectNotFoundState />
 
   return (
     <main className="mx-auto w-full max-w-5xl px-5 py-8 pb-28 sm:px-8 sm:py-12">
@@ -87,7 +91,9 @@ export default function ProjectPage({
             {sources?.length ?? 0} total
           </span>
         </div>
-        {!sources?.length ? (
+        {sources === undefined ? (
+          <SourcesLoadingState />
+        ) : !sources.length ? (
           <div className="rounded-xl border border-dashed p-8 text-center text-sm text-muted-foreground">
             <LayersIcon className="mx-auto mb-3" size={32} />
             Your generated summaries will appear here.
@@ -131,5 +137,63 @@ export default function ProjectPage({
         )}
       </section>
     </main>
+  )
+}
+
+/** Keeps the project route useful while its Convex project query is pending. */
+function ProjectLoadingState() {
+  return (
+    <main className="mx-auto w-full max-w-5xl px-5 py-8 pb-28 sm:px-8 sm:py-12">
+      <div role="status" aria-label="Loading project" className="space-y-10">
+        <span className="sr-only">Loading project</span>
+        <Skeleton className="h-5 w-28" />
+        <div className="space-y-4">
+          <Skeleton className="h-4 w-24" />
+          <Skeleton className="h-14 w-2/3 max-w-md" />
+          <Skeleton className="h-5 w-full max-w-xl" />
+        </div>
+        <Skeleton className="h-72 w-full rounded-xl" />
+      </div>
+    </main>
+  )
+}
+
+/** Explains that a stale or invalid project link no longer resolves. */
+function ProjectNotFoundState() {
+  return (
+    <main className="mx-auto flex min-h-[60svh] w-full max-w-5xl flex-col items-center justify-center px-5 pb-28 text-center sm:px-8">
+      <div role="alert">
+        <h1 className="font-heading text-3xl">Project not found.</h1>
+        <p className="mt-3 text-muted-foreground">
+          That study project may have been removed or the link is out of date.
+        </p>
+        <Button asChild className="mt-7 rounded-full">
+          <Link href="/">Back to projects</Link>
+        </Button>
+      </div>
+    </main>
+  )
+}
+
+/** Shows source-shaped placeholders while a project's sources are loading. */
+function SourcesLoadingState() {
+  return (
+    <div role="status" aria-label="Loading sources" className="space-y-3">
+      <span className="sr-only">Loading sources</span>
+      {Array.from({ length: 2 }, (_, index) => (
+        <div
+          key={index}
+          aria-hidden="true"
+          className="flex items-center gap-3 rounded-xl bg-card p-4 ring-1 ring-foreground/10"
+        >
+          <Skeleton className="size-10 rounded-xl" />
+          <div className="min-w-0 flex-1 space-y-2">
+            <Skeleton className="h-4 w-1/3" />
+            <Skeleton className="h-3 w-3/4" />
+          </div>
+          <Skeleton className="h-6 w-16 rounded-full" />
+        </div>
+      ))}
+    </div>
   )
 }

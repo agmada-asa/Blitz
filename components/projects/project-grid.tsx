@@ -21,6 +21,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
+import { Skeleton } from "@/components/ui/skeleton"
 
 /** Project summary returned by the library query. */
 type Project = {
@@ -31,14 +32,14 @@ type Project = {
   sourceCount?: number
 }
 
-/** Displays project summaries and creates a project through the supplied mutation. */
-export function ProjectGrid({
-  projects = [],
-  onCreate,
-}: {
+/** Props required to render the project library and create a project. */
+type ProjectGridProps = {
   projects?: Project[]
   onCreate?: (title: string) => Promise<void>
-}) {
+}
+
+/** Displays project summaries and creates a project through the supplied mutation. */
+export function ProjectGrid({ projects, onCreate }: ProjectGridProps) {
   const [open, setOpen] = useState(false)
   const [title, setTitle] = useState("")
   const [creating, setCreating] = useState(false)
@@ -84,12 +85,12 @@ export function ProjectGrid({
 
   return (
     <>
-      <div className="mb-10 flex items-end justify-between gap-4">
+      <div className="mb-10 flex flex-col items-start gap-5 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <p className="mb-3 text-xs font-semibold tracking-[0.2em] text-muted-foreground uppercase">
             Your library
           </p>
-          <h1 className="font-heading text-4xl tracking-tight sm:text-6xl">
+          <h1 className="font-heading text-3xl tracking-tight sm:text-6xl">
             Projects
             <span className="text-muted-foreground">.</span>
           </h1>
@@ -97,12 +98,14 @@ export function ProjectGrid({
         <Button
           size="lg"
           onClick={() => setOpen(true)}
-          className="h-11 gap-2 rounded-full px-5"
+          className="h-11 gap-2 rounded-full px-5 sm:self-auto"
         >
           <AddIcon size={18} /> New project
         </Button>
       </div>
-      {projects.length === 0 ? (
+      {projects === undefined ? (
+        <ProjectGridLoading />
+      ) : projects.length === 0 ? (
         <Card className="border-dashed bg-transparent py-0 shadow-none">
           <CardContent className="flex min-h-72 flex-col items-center justify-center text-center">
             <div className="mb-5 flex size-16 items-center justify-center rounded-2xl bg-muted text-foreground">
@@ -193,5 +196,30 @@ export function ProjectGrid({
         </DialogContent>
       </Dialog>
     </>
+  )
+}
+
+/** Shows project-shaped placeholders until the library query resolves. */
+function ProjectGridLoading() {
+  return (
+    <div role="status" aria-label="Loading projects">
+      <span className="sr-only">Loading projects</span>
+      <div
+        aria-hidden="true"
+        className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3"
+      >
+        {Array.from({ length: 3 }, (_, index) => (
+          <Card key={index} className="min-h-48 border-transparent bg-card">
+            <CardContent className="flex h-full flex-col justify-between">
+              <Skeleton className="size-12 rounded-2xl" />
+              <div className="space-y-3">
+                <Skeleton className="h-6 w-2/3" />
+                <Skeleton className="h-4 w-1/2" />
+              </div>
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+    </div>
   )
 }

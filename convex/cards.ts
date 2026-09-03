@@ -81,6 +81,7 @@ export const insertCards = mutation({
           !item.question ||
           !item.answer ||
           item.correctOption === undefined ||
+          !Number.isInteger(item.correctOption) ||
           item.correctOption < 0 ||
           item.correctOption > 3)
       ) {
