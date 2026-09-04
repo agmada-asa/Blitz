@@ -18,6 +18,7 @@ Repository-wide guidance for AI coding agents working on Blitz. Keep this file c
 - Inspect the closest existing implementation before creating a component, helper, layout, interaction, or visual pattern.
 - Keep changes focused on the request. Fix small directly related defects; report larger unrelated issues rather than expanding scope.
 - Preserve user work and unrelated local changes. Never discard or overwrite changes you did not create.
+- Replace live source files in place or with an atomic rename. Do not delete a component before preparing its replacement; the development server serves every intermediate state.
 - Prefer the simplest implementation that fits the existing architecture. Do not add a dependency when the platform or current dependencies already solve the problem well.
 - Treat documentation as part of the implementation, not optional cleanup. Code is not complete until a reader can understand its role and behavior without reconstructing intent from implementation details.
 
