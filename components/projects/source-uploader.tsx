@@ -1,12 +1,13 @@
 "use client"
 
-/** Coordinates browser extraction, server generation, and Convex persistence. */
+/** Coordinates browser extraction, public-link fetching, and queue persistence. */
 
 import type { FunctionArgs, FunctionReturnType } from "convex/server"
 import { useRef, useState } from "react"
 
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
+import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import {
   CancelIcon,
@@ -18,8 +19,11 @@ import {
 } from "@/components/ui/icon"
 import { api } from "@/convex/_generated/api"
 import type { Id } from "@/convex/_generated/dataModel"
-import { extractSource, type SourceKind } from "@/lib/client/extract-source"
-import type { Generation } from "@/lib/server/generate-schema"
+import {
+  extractSource,
+  extractSourceResponse,
+  type SourceKind,
+} from "@/lib/client/extract-source"
 
 /** Convex operations and project identity required by source ingestion. */
 type Props = {
@@ -30,137 +34,191 @@ type Props = {
   updateSource: (
     input: FunctionArgs<typeof api.sources.updateSource>
   ) => Promise<FunctionReturnType<typeof api.sources.updateSource>>
-  insertCards: (
-    input: FunctionArgs<typeof api.cards.batchInsertCards>
-  ) => Promise<FunctionReturnType<typeof api.cards.batchInsertCards>>
+  enqueue: (
+    input: FunctionArgs<typeof api.preparation.enqueue>
+  ) => Promise<FunctionReturnType<typeof api.preparation.enqueue>>
 }
 
-/** Success and error payloads returned by the generation route. */
-type GenerateResponse = Generation | { error: string }
-/** Client-side source limit mirrored by the server generation boundary. */
-const MAX_GENERATION_CHARACTERS = 120_000
-
-/** Returns whether a generator response contains the server's user-facing error. */
-function isGenerateError(value: unknown): value is { error: string } {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    "error" in value &&
-    typeof value.error === "string"
-  )
+/** One recoverable result from a bulk source import. */
+type ImportResult = {
+  filename: string
+  status: "queued" | "failed"
+  detail: string
 }
 
-/** Renders file and paste ingestion with progress and recoverable result messages. */
+/** Returns a useful error message without exposing arbitrary response objects. */
+function messageForError(error: unknown, fallback: string): string {
+  return error instanceof Error && error.message.trim()
+    ? error.message
+    : fallback
+}
+
+/** Reads a JSON error body from the public-link route when available. */
+async function responseError(
+  response: Response,
+  fallback: string
+): Promise<Error> {
+  try {
+    const payload = (await response.json()) as unknown
+    if (
+      payload &&
+      typeof payload === "object" &&
+      "error" in payload &&
+      typeof payload.error === "string"
+    )
+      return new Error(payload.error)
+  } catch {
+    // Use the bounded fallback when the route did not return JSON.
+  }
+  return new Error(fallback)
+}
+
+/** Renders file, paste, and public-link imports as quick queue submissions. */
 export function SourceUploader({
   projectId,
   createSource,
   updateSource,
-  insertCards,
+  enqueue,
 }: Props) {
   const inputRef = useRef<HTMLInputElement>(null)
   const [paste, setPaste] = useState("")
+  const [url, setUrl] = useState("")
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState<{
     type: "error" | "success"
     text: string
   }>()
-  const [filename, setFilename] = useState("")
+  const [results, setResults] = useState<ImportResult[]>([])
 
-  const processSource = async (
-    name: string,
+  /** Creates one source snapshot and queues it for local preparation. */
+  const queueSource = async (
+    filename: string,
     kind: SourceKind,
-    text: string
-  ) => {
-    if (!text.trim()) {
-      setMessage({
-        type: "error",
-        text: "There was no readable text in that source.",
-      })
-      return
-    }
-    if (text.length > MAX_GENERATION_CHARACTERS) {
-      setMessage({
-        type: "error",
-        text: "That source is too large for this prototype. Split it into a smaller section first.",
-      })
-      return
-    }
-
-    setBusy(true)
-    setMessage(undefined)
+    text: string,
+    originalUrl?: string
+  ): Promise<void> => {
+    if (!text.trim())
+      throw new Error("There was no readable text in that source.")
     let sourceId: Id<"sources"> | undefined
-
     try {
-      const createdSourceId = await createSource({
+      sourceId = await createSource({
         projectId,
-        filename: name,
+        filename,
         kind,
         extractedText: text,
+        ...(originalUrl ? { originalUrl } : {}),
       })
-      sourceId = createdSourceId
-      const response = await fetch("/api/generate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ filename: name, text }),
-      })
-      let result: GenerateResponse
-      try {
-        result = (await response.json()) as GenerateResponse
-      } catch {
-        throw new Error("Generation failed. Please try again.")
-      }
-
-      if (!response.ok || isGenerateError(result)) {
-        throw new Error(
-          isGenerateError(result)
-            ? result.error
-            : "Generation failed. Please try again."
-        )
-      }
-
-      await insertCards({
-        projectId,
-        cards: result.cards.map((card, order) => ({
-          ...card,
-          sourceId: createdSourceId,
-          order,
-        })),
-      })
-      await updateSource({ sourceId, summary: result.summary, status: "ready" })
-      setMessage({
-        type: "success",
-        text: `Generated ${result.cards.length} learning cards.`,
-      })
-      setPaste("")
-      setFilename("")
+      await enqueue({ projectId, sourceId })
     } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : "Generation failed"
       if (sourceId) {
         await updateSource({
           sourceId,
           status: "failed",
-          error: errorMessage,
+          error: messageForError(error, "This source could not be queued."),
         }).catch(() => undefined)
       }
-      setMessage({ type: "error", text: errorMessage })
+      throw error
+    }
+  }
+
+  /** Imports selected files one at a time so later files can still be saved after a failure. */
+  const chooseFiles = async (files: File[]): Promise<void> => {
+    const selected = files
+    if (!selected.length) return
+    setBusy(true)
+    setMessage(undefined)
+    setResults([])
+    const imported: ImportResult[] = []
+    for (const file of selected) {
+      try {
+        const source = await extractSource(file)
+        await queueSource(source.filename, source.kind, source.text)
+        imported.push({
+          filename: source.filename,
+          status: "queued",
+          detail: "Queued for preparation",
+        })
+      } catch (error) {
+        imported.push({
+          filename: file.name,
+          status: "failed",
+          detail: messageForError(error, "Could not read that file."),
+        })
+      }
+      setResults([...imported])
+    }
+    const failed = imported.filter((item) => item.status === "failed").length
+    setMessage({
+      type: failed ? "error" : "success",
+      text: failed
+        ? `${imported.length - failed} source${imported.length - failed === 1 ? "" : "s"} queued; ${failed} could not be imported.`
+        : `${imported.length} source${imported.length === 1 ? "" : "s"} queued for preparation.`,
+    })
+    setBusy(false)
+  }
+
+  /** Queues pasted notes without waiting for local concept generation. */
+  const queuePaste = async (): Promise<void> => {
+    if (!paste.trim()) return
+    setBusy(true)
+    setMessage(undefined)
+    try {
+      await queueSource("Pasted notes", "paste", paste)
+      setResults([
+        {
+          filename: "Pasted notes",
+          status: "queued",
+          detail: "Queued for preparation",
+        },
+      ])
+      setMessage({ type: "success", text: "Notes queued for preparation." })
+      setPaste("")
+    } catch (error) {
+      setMessage({
+        type: "error",
+        text: messageForError(error, "Notes could not be queued."),
+      })
     } finally {
       setBusy(false)
     }
   }
 
-  const chooseFile = async (file?: File) => {
-    if (!file) return
-    setFilename(file.name)
+  /** Fetches and extracts one public URL before creating its source snapshot. */
+  const importUrl = async (): Promise<void> => {
+    if (!url.trim()) return
+    setBusy(true)
+    setMessage(undefined)
     try {
-      const source = await extractSource(file)
-      await processSource(source.filename, source.kind, source.text)
+      const response = await fetch("/api/sources/fetch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: url.trim() }),
+      })
+      if (!response.ok)
+        throw await responseError(response, "That source could not be fetched.")
+      const source = await extractSourceResponse(response, url.trim())
+      await queueSource(
+        source.filename,
+        source.kind,
+        source.text,
+        response.headers.get("x-source-url") ?? url.trim()
+      )
+      setResults([
+        {
+          filename: source.filename,
+          status: "queued",
+          detail: "Queued for preparation",
+        },
+      ])
+      setMessage({ type: "success", text: "Link queued for preparation." })
+      setUrl("")
     } catch (error) {
       setMessage({
         type: "error",
-        text:
-          error instanceof Error ? error.message : "Could not read that file.",
+        text: messageForError(error, "That link could not be imported."),
       })
+    } finally {
+      setBusy(false)
     }
   }
 
@@ -176,10 +234,7 @@ export function SourceUploader({
             <SparklesIcon size={26} />
           </div>
           <div>
-            <h2 className="font-heading text-xl">Add a source</h2>
-            <p className="text-sm text-muted-foreground">
-              Paste notes or upload a PDF, Markdown, or text file.
-            </p>
+            <h2 className="font-heading text-xl">Add sources</h2>
           </div>
         </div>
 
@@ -187,13 +242,14 @@ export function SourceUploader({
           <input
             ref={inputRef}
             type="file"
-            accept=".pdf,.md,.markdown,.txt,text/plain,text/markdown,application/pdf"
+            multiple
+            accept=".pdf,.md,.markdown,.txt,.pptx,text/plain,text/markdown,application/pdf,application/vnd.openxmlformats-officedocument.presentationml.presentation"
             className="sr-only"
             tabIndex={-1}
             onChange={(event) => {
-              const file = event.target.files?.[0]
+              const files = Array.from(event.target.files ?? [])
               event.target.value = ""
-              void chooseFile(file)
+              void chooseFiles(files)
             }}
           />
           <button
@@ -206,9 +262,9 @@ export function SourceUploader({
               className="mb-3 text-muted-foreground group-hover:text-foreground"
               size={36}
             />
-            <span className="font-medium">Upload a file</span>
+            <span className="font-medium">Upload files</span>
             <span className="mt-1 text-xs text-muted-foreground">
-              PDF · MD · TXT
+              PDF · MD · TXT · PPTX
             </span>
           </button>
 
@@ -217,7 +273,7 @@ export function SourceUploader({
               <ClipboardPasteIcon size={18} /> Paste notes
             </div>
             <Textarea
-              aria-label="Notes to generate cards from"
+              aria-label="Notes to prepare"
               value={paste}
               disabled={busy}
               onChange={(event) => setPaste(event.target.value)}
@@ -226,53 +282,83 @@ export function SourceUploader({
             />
             <Button
               disabled={busy || !paste.trim()}
-              onClick={() => void processSource("Pasted notes", "paste", paste)}
+              onClick={() => void queuePaste()}
               className="mt-2 w-full"
             >
               {busy ? (
-                <>
-                  <LoadingIcon
-                    className="animate-spin motion-reduce:animate-none"
-                    size={16}
-                  />{" "}
-                  Working…
-                </>
+                <LoadingIcon
+                  className="animate-spin motion-reduce:animate-none"
+                  size={16}
+                />
               ) : (
                 <>
-                  Generate cards <SparklesIcon size={16} />
+                  <span>Queue notes</span>
+                  <SparklesIcon size={16} />
                 </>
               )}
             </Button>
           </div>
         </div>
 
-        {filename && !busy ? (
-          <p className="mt-4 flex items-center gap-2 text-xs text-muted-foreground">
-            <FileIcon size={14} /> {filename}
-            <button
-              type="button"
-              onClick={() => {
-                setFilename("")
-                if (inputRef.current) inputRef.current.value = ""
-              }}
-              aria-label="Clear selected file"
-            >
-              <CancelIcon size={14} />
-            </button>
-          </p>
+        <div className="mt-4 flex gap-2">
+          <Input
+            type="url"
+            aria-label="Public source link"
+            value={url}
+            disabled={busy}
+            onChange={(event) => setUrl(event.target.value)}
+            placeholder="https://example.com/your-notes"
+          />
+          <Button
+            disabled={busy || !url.trim()}
+            onClick={() => void importUrl()}
+          >
+            Import link
+          </Button>
+        </div>
+
+        {results.length ? (
+          <div className="mt-4 space-y-2" aria-live="polite">
+            {results.map((result, index) => (
+              <div
+                key={`${result.filename}-${index}`}
+                className="flex items-start gap-2 rounded-lg bg-muted/60 px-3 py-2 text-xs"
+              >
+                <FileIcon size={14} className="mt-0.5 shrink-0" />
+                <span className="min-w-0 flex-1 truncate">
+                  {result.filename}
+                </span>
+                <span
+                  className={
+                    result.status === "failed"
+                      ? "text-destructive"
+                      : "text-muted-foreground"
+                  }
+                >
+                  {result.detail}
+                </span>
+              </div>
+            ))}
+          </div>
         ) : null}
 
         {message ? (
           <p
             aria-live="polite"
-            className={`mt-4 rounded-lg px-3 py-2 text-sm ${
-              message.type === "error"
-                ? "bg-destructive/10 text-destructive"
-                : "bg-muted text-foreground"
-            }`}
+            className={`mt-4 rounded-lg px-3 py-2 text-sm ${message.type === "error" ? "bg-destructive/10 text-destructive" : "bg-muted text-foreground"}`}
           >
             {message.text}
           </p>
+        ) : null}
+
+        {!busy && results.length ? (
+          <button
+            type="button"
+            className="mt-3 inline-flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground"
+            onClick={() => setResults([])}
+          >
+            <CancelIcon size={14} /> Clear import details
+          </button>
         ) : null}
       </CardContent>
     </Card>

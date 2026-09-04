@@ -42,6 +42,7 @@ export default defineSchema({
       v.literal("paste")
     ),
     extractedText: v.string(),
+    originalUrl: v.optional(v.string()),
     status: v.union(
       v.literal("processing"),
       v.literal("ready"),

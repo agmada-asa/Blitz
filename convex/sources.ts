@@ -25,7 +25,7 @@ export const listSources = query({
       .query("sources")
       .withIndex("by_project", (q) => q.eq("projectId", args.projectId))
       .order("desc")
-    .collect()
+      .collect()
 
     return sources.map((source) => {
       // The project view needs status and summaries, not the original upload.
@@ -43,6 +43,7 @@ export const createSource = mutation({
     filename: v.string(),
     kind: sourceKind,
     extractedText: v.string(),
+    originalUrl: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     if (!(await ctx.db.get(args.projectId)))
@@ -54,11 +55,28 @@ export const createSource = mutation({
     if (!extractedText) throw new Error("Source text is required")
     if (extractedText.length > 120_000)
       throw new Error("Source text is too large")
+    const originalUrl = args.originalUrl?.trim() || undefined
+    if (originalUrl !== undefined) {
+      if (originalUrl.length > 2_048) throw new Error("Source URL is too long")
+      let parsedUrl: URL
+      try {
+        parsedUrl = new URL(originalUrl)
+      } catch {
+        throw new Error("Source URL is invalid")
+      }
+      if (
+        (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") ||
+        parsedUrl.username ||
+        parsedUrl.password
+      )
+        throw new Error("Source URL must be a public HTTP(S) URL")
+    }
     return ctx.db.insert("sources", {
       projectId: args.projectId,
       filename,
       kind: args.kind,
       extractedText,
+      ...(originalUrl ? { originalUrl } : {}),
       status: "processing",
       createdAt: Date.now(),
     })

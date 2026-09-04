@@ -35,7 +35,11 @@ export default function ProjectPage({
   })
   const createSource = useMutation(api.sources.createSource)
   const updateSource = useMutation(api.sources.updateSource)
-  const insertCards = useMutation(api.cards.batchInsertCards)
+  const enqueue = useMutation(api.preparation.enqueue)
+  const retryPreparation = useMutation(api.preparation.retry)
+  const preparationJobs = useQuery(api.preparation.listJobsForProject, {
+    projectId: convexProjectId,
+  })
   const hasReadySource =
     sources?.some((source) => source.status === "ready") ?? false
 
@@ -66,7 +70,7 @@ export default function ProjectPage({
         </div>
         {hasReadySource ? (
           <Button asChild size="lg" className="rounded-full">
-            <Link href={`/projects/${projectId}/study`}>
+            <Link href={`/?projectId=${encodeURIComponent(projectId)}`}>
               <BookOpenIcon size={18} /> Start studying
             </Link>
           </Button>
@@ -81,7 +85,7 @@ export default function ProjectPage({
         projectId={convexProjectId}
         createSource={createSource}
         updateSource={updateSource}
-        insertCards={insertCards}
+        enqueue={enqueue}
       />
 
       <section className="mt-10">
@@ -96,47 +100,128 @@ export default function ProjectPage({
         ) : !sources.length ? (
           <div className="rounded-xl border border-dashed p-8 text-center text-sm text-muted-foreground">
             <LayersIcon className="mx-auto mb-3" size={32} />
-            Your generated summaries will appear here.
+            Add a source to start preparing your learning feed.
           </div>
         ) : (
           <div className="space-y-3">
             {sources.map((source) => (
-              <div
+              <SourceRow
                 key={source._id}
-                className="flex items-center justify-between rounded-xl bg-card p-4 ring-1 ring-foreground/10"
-              >
-                <div className="flex min-w-0 items-center gap-3">
-                  <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-muted">
-                    <FileIcon size={21} />
-                  </div>
-                  <div className="min-w-0">
-                    <p className="truncate font-medium">{source.filename}</p>
-                    <p className="line-clamp-2 text-xs text-muted-foreground">
-                      {source.status === "processing"
-                        ? "Generating cards…"
-                        : source.status === "failed"
-                          ? source.error || "Failed"
-                          : source.summary || "Ready to study"}
-                    </p>
-                  </div>
-                </div>
-                <Badge
-                  variant={
-                    source.status === "ready"
-                      ? "secondary"
-                      : source.status === "failed"
-                        ? "destructive"
-                        : "outline"
-                  }
-                >
-                  {source.status}
-                </Badge>
-              </div>
+                source={source}
+                job={preparationJobs?.find(
+                  (candidate) => candidate.sourceId === source._id
+                )}
+                retryPreparation={retryPreparation}
+              />
             ))}
           </div>
         )}
       </section>
     </main>
+  )
+}
+
+/** Source status shape rendered by the project list. */
+type SourceRowData = {
+  _id: Id<"sources">
+  filename: string
+  originalUrl?: string
+  status: "processing" | "ready" | "failed"
+  summary?: string
+  error?: string
+}
+
+/** Persisted preparation progress associated with a source. */
+type PreparationJobData = {
+  jobId: Id<"preparationJobs">
+  sourceId: Id<"sources">
+  status: "queued" | "leased" | "failed" | "completed"
+  nextChunkOrdinal: number
+  totalChunks: number | null
+  error: string | null
+}
+
+/** Renders persisted source state plus live preparation progress when known. */
+function SourceRow({
+  source,
+  job,
+  retryPreparation,
+}: {
+  source: SourceRowData
+  job?: PreparationJobData
+  retryPreparation: (input: {
+    jobId: Id<"preparationJobs">
+  }) => Promise<unknown>
+}) {
+  const preparationFailed = job?.status === "failed"
+  const preparationComplete = job?.status === "completed"
+  const status = preparationFailed
+    ? "failed"
+    : preparationComplete
+      ? "ready"
+      : source.status
+  const detail = preparationFailed
+    ? job.error || "Preparation failed"
+    : preparationComplete
+      ? "Ready to study"
+      : job?.status === "leased"
+        ? job.totalChunks
+          ? `Preparing section ${Math.min(job.nextChunkOrdinal + 1, job.totalChunks)} of ${job.totalChunks}`
+          : "Preparing source…"
+        : job?.status === "queued"
+          ? "Queued for preparation"
+          : source.status === "processing"
+            ? "Waiting for preparation"
+            : source.status === "failed"
+              ? source.error || "Preparation failed"
+              : source.summary || "Ready to study"
+
+  /** Retries a failed preparation job and leaves the live query to refresh the row. */
+  const retry = async () => {
+    if (!job?.jobId) return
+    await retryPreparation({ jobId: job.jobId })
+  }
+
+  return (
+    <div className="flex items-center justify-between gap-3 rounded-xl bg-card p-4 ring-1 ring-foreground/10">
+      <div className="flex min-w-0 items-center gap-3">
+        <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-muted">
+          <FileIcon size={21} />
+        </div>
+        <div className="min-w-0">
+          <p className="truncate font-medium">{source.filename}</p>
+          {source.originalUrl ? (
+            <a
+              href={source.originalUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="block max-w-72 truncate text-xs text-muted-foreground underline-offset-2 hover:underline"
+            >
+              {source.originalUrl}
+            </a>
+          ) : null}
+          <p className="line-clamp-2 text-xs text-muted-foreground">{detail}</p>
+        </div>
+      </div>
+      <div className="flex shrink-0 items-center gap-2">
+        {preparationFailed && job?.jobId ? (
+          <Button variant="outline" size="sm" onClick={() => void retry()}>
+            Retry
+          </Button>
+        ) : null}
+        <Badge
+          variant={
+            status === "ready"
+              ? "secondary"
+              : status === "failed"
+                ? "destructive"
+                : "outline"
+          }
+        >
+          {status}
+        </Badge>
+      </div>
+    </div>
   )
 }
 

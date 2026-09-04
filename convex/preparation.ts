@@ -368,6 +368,10 @@ export const commitChunk = mutation({
       leaseExpiresAt: undefined,
       updatedAt: now,
     })
+    await ctx.db.patch(job.sourceId, {
+      status: isComplete ? "ready" : "processing",
+      ...(isComplete ? { summary: batch.summary, error: undefined } : {}),
+    })
     const updatedJob = await ctx.db.get(args.jobId)
     if (!updatedJob) throw new Error("Preparation job disappeared")
     return progressFor(updatedJob, chunkId, args.expectedOrdinal)
@@ -395,6 +399,10 @@ export const failJob = mutation({
       leaseExpiresAt: undefined,
       updatedAt: now,
     })
+    await ctx.db.patch(job.sourceId, {
+      status: "failed",
+      error: safeError,
+    })
     return {
       jobId: args.jobId,
       status: "failed" as const,
@@ -421,6 +429,10 @@ export const retry = mutation({
       leaseExpiresAt: undefined,
       updatedAt: now,
     })
+    await ctx.db.patch(job.sourceId, {
+      status: "processing",
+      error: undefined,
+    })
     return {
       jobId: args.jobId,
       status: "queued" as const,
@@ -440,5 +452,23 @@ export const getJob = query({
       sourceId: job.sourceId,
       error: job.lastError ?? null,
     }
+  },
+})
+
+/** Lists preparation jobs for a project so source progress survives page reloads. */
+export const listJobsForProject = query({
+  args: { projectId: v.id("projects") },
+  handler: async (ctx, args) => {
+    const jobs = await ctx.db
+      .query("preparationJobs")
+      .withIndex("by_project_source", (q) => q.eq("projectId", args.projectId))
+      .collect()
+    return jobs.map((job) => ({
+      ...progressFor(job),
+      sourceId: job.sourceId,
+      error: job.lastError ?? null,
+      createdAt: job.createdAt,
+      updatedAt: job.updatedAt,
+    }))
   },
 })
