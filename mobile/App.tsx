@@ -10,6 +10,7 @@ import {
   ActivityIndicator,
   FlatList,
   Linking,
+  Platform,
   Pressable,
   RefreshControl,
   StatusBar,
@@ -127,6 +128,8 @@ function mergeFeedMetadata(
 /** Renders the native feed and its small connection and recovery states. */
 export default function App() {
   const { height } = useWindowDimensions()
+  const topInset =
+    Platform.OS === "android" ? StatusBar.currentHeight ?? 0 : 0
   const listRef = useRef<FlatList<MobileLearningCard>>(null)
   const passiveHandlerRef = useRef<
     (card: MobileLearningCard, type: "skip" | "exposure") => void
@@ -334,6 +337,13 @@ export default function App() {
           setEditingServerUrl(false)
         }
         setPendingCount(pendingEvents.length)
+        setFeedback((current) => {
+          const next = { ...current }
+          for (const event of pendingEvents) {
+            if (event.type === "answer") next[event.cardId] = { status: "pending" }
+          }
+          return next
+        })
       } catch {
         setError("Could not read saved app data")
         setStatus("error")
@@ -614,7 +624,10 @@ export default function App() {
   return (
     <View style={styles.root}>
       <StatusBar barStyle="light-content" />
-      <View pointerEvents="box-none" style={styles.topControls}>
+      <View
+        pointerEvents="box-none"
+        style={[styles.topControls, { paddingTop: 16 + topInset }]}
+      >
         <View style={styles.topLeft}>
           <Pressable
             accessibilityRole="link"

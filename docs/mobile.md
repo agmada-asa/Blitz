@@ -118,7 +118,9 @@ At the cap, passive events can be dropped, but unsynced answers are retained.
 If the queue contains 200 answers, new answers wait until sync frees space.
 An offline answer is labelled as saved while waiting for sync and is never
 presented as correct or incorrect locally. A card locks after a server answer
-response so a revealed explanation cannot create repeated answer evidence.
+response so a revealed explanation cannot create repeated answer evidence. On
+restart, queued answer events restore that pending lock for cached cards; skip
+and exposure events never create answer feedback.
 
 The native chat sheet uses `GET /api/learning/chat?projectId=…&itemId=…` for
 the conversation, `POST /api/learning/chat` with `projectId`, `itemId`,
@@ -149,8 +151,9 @@ The following checks passed:
 - `npx expo export --platform android` (Metro bundled the Android entrypoint
   and shared learning contracts)
 - `./scripts/build-debug-preview.sh` with JDK 17 (successful self-contained
-  131 MB debug APK; archive contains `assets/index.android.bundle`; SHA-256
-  `be76509be56c25de5a535cf03b901dda074de6ad038318d7c90fca1789577394`)
+  131 MB debug APK; archive contains `assets/index.android.bundle` (1,232,092
+  bytes); SHA-256
+  `49bc380a206f722774ee0874c1b5f32371fed8ca4ea5072ecc13376b84122fd8`)
 
 `npm run android:debug` completed Expo prebuild, then stopped as expected
 because no Android device or runnable emulator was available. No emulator image
