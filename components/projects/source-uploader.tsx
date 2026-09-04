@@ -8,14 +8,15 @@ import { useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
 import {
   CancelIcon,
   ClipboardPasteIcon,
   FileIcon,
   FileUploadIconComponent,
+  LinkIcon,
   LoadingIcon,
-  SparklesIcon,
 } from "@/components/ui/icon"
 import { api } from "@/convex/_generated/api"
 import type { Id } from "@/convex/_generated/dataModel"
@@ -136,7 +137,7 @@ export function SourceUploader({
         imported.push({
           filename: source.filename,
           status: "queued",
-          detail: "Queued for preparation",
+          detail: "Queued",
         })
       } catch (error) {
         imported.push({
@@ -168,7 +169,7 @@ export function SourceUploader({
         {
           filename: "Pasted notes",
           status: "queued",
-          detail: "Queued for preparation",
+          detail: "Queued",
         },
       ])
       setMessage({ type: "success", text: "Notes queued for preparation." })
@@ -207,7 +208,7 @@ export function SourceUploader({
         {
           filename: source.filename,
           status: "queued",
-          detail: "Queued for preparation",
+          detail: "Queued",
         },
       ])
       setMessage({ type: "success", text: "Link queued for preparation." })
@@ -226,19 +227,23 @@ export function SourceUploader({
     <Card
       id="add-source"
       aria-busy={busy}
-      className="scroll-mt-6 overflow-visible border-transparent bg-card"
+      className="scroll-mt-6 overflow-visible border-transparent bg-card font-sans"
     >
       <CardContent className="p-5 sm:p-7">
-        <div className="mb-6 flex items-center gap-3">
-          <div className="flex size-12 items-center justify-center rounded-2xl bg-muted text-foreground">
-            <SparklesIcon size={26} />
-          </div>
-          <div>
-            <h2 className="font-heading text-xl">Add sources</h2>
-          </div>
-        </div>
+        <h2 className="mb-4 font-heading text-xl">Add sources</h2>
 
-        <div className="grid gap-4 sm:grid-cols-2">
+        <Tabs defaultValue="files" className="gap-0">
+          <TabsList aria-label="Source input type" className="mb-4">
+            <TabsTrigger value="files" disabled={busy}>
+              Upload
+            </TabsTrigger>
+            <TabsTrigger value="paste" disabled={busy}>
+              Paste
+            </TabsTrigger>
+            <TabsTrigger value="link" disabled={busy}>
+              Link
+            </TabsTrigger>
+          </TabsList>
           <input
             ref={inputRef}
             type="file"
@@ -252,70 +257,87 @@ export function SourceUploader({
               void chooseFiles(files)
             }}
           />
-          <button
-            type="button"
-            disabled={busy}
-            onClick={() => inputRef.current?.click()}
-            className="group flex min-h-40 flex-col items-center justify-center rounded-xl border border-dashed border-border p-5 text-center transition-colors hover:border-foreground/40 hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            <FileUploadIconComponent
-              className="mb-3 text-muted-foreground group-hover:text-foreground"
-              size={36}
-            />
-            <span className="font-medium">Upload files</span>
-            <span className="mt-1 text-xs text-muted-foreground">
-              PDF · MD · TXT · PPTX
-            </span>
-          </button>
-
-          <div className="flex min-h-40 flex-col">
-            <div className="mb-2 flex items-center gap-2 text-sm font-medium">
-              <ClipboardPasteIcon size={18} /> Paste notes
-            </div>
-            <Textarea
-              aria-label="Notes to prepare"
-              value={paste}
-              disabled={busy}
-              onChange={(event) => setPaste(event.target.value)}
-              placeholder="Drop your notes here…"
-              className="min-h-28 flex-1 resize-none"
-            />
-            <Button
-              disabled={busy || !paste.trim()}
-              onClick={() => void queuePaste()}
-              className="mt-2 w-full"
+          <div className="rounded-xl border border-border/70 p-3 sm:p-4">
+            <TabsContent
+              value="files"
+              className="mt-0 flex items-center justify-between gap-4"
             >
-              {busy ? (
-                <LoadingIcon
-                  className="animate-spin motion-reduce:animate-none"
-                  size={16}
+              <div className="flex min-w-0 items-center gap-3">
+                <FileUploadIconComponent
+                  className="shrink-0 text-muted-foreground"
+                  size={24}
                 />
-              ) : (
-                <>
-                  <span>Queue notes</span>
-                  <SparklesIcon size={16} />
-                </>
-              )}
-            </Button>
-          </div>
-        </div>
+                <div className="min-w-0">
+                  <p className="text-sm font-medium">Upload files</p>
+                  <p className="truncate text-xs text-muted-foreground">
+                    PDF · MD · TXT · PPTX · multiple files supported
+                  </p>
+                </div>
+              </div>
+              <Button
+                type="button"
+                size="sm"
+                disabled={busy}
+                onClick={() => inputRef.current?.click()}
+                className="shrink-0 rounded-lg"
+              >
+                Choose files
+              </Button>
+            </TabsContent>
 
-        <div className="mt-4 flex gap-2">
-          <Input
-            type="url"
-            aria-label="Public source link"
-            value={url}
-            disabled={busy}
-            onChange={(event) => setUrl(event.target.value)}
-            placeholder="https://example.com/your-notes"
-          />
-          <Button
-            disabled={busy || !url.trim()}
-            onClick={() => void importUrl()}
-          >
-            Import link
-          </Button>
-        </div>
+            <TabsContent value="paste" className="mt-0">
+              <div className="mb-2 flex items-center gap-2 text-sm font-medium">
+                <ClipboardPasteIcon size={17} /> Paste notes
+              </div>
+              <Textarea
+                aria-label="Notes to prepare"
+                value={paste}
+                disabled={busy}
+                onChange={(event) => setPaste(event.target.value)}
+                placeholder="Drop your notes here…"
+                className="min-h-28 flex-1 resize-none"
+              />
+              <Button
+                type="button"
+                disabled={busy || !paste.trim()}
+                onClick={() => void queuePaste()}
+                className="mt-2 w-full rounded-lg"
+              >
+                {busy ? (
+                  <LoadingIcon
+                    className="animate-spin motion-reduce:animate-none"
+                    size={16}
+                  />
+                ) : (
+                  <span>Queue notes</span>
+                )}
+              </Button>
+            </TabsContent>
+
+            <TabsContent value="link" className="mt-0 flex gap-2">
+              <LinkIcon
+                className="mt-2 shrink-0 text-muted-foreground"
+                size={17}
+              />
+              <Input
+                type="url"
+                aria-label="Public source link"
+                value={url}
+                disabled={busy}
+                onChange={(event) => setUrl(event.target.value)}
+                placeholder="https://example.com/your-notes"
+              />
+              <Button
+                type="button"
+                disabled={busy || !url.trim()}
+                onClick={() => void importUrl()}
+                className="shrink-0 rounded-lg"
+              >
+                {busy ? "Importing…" : "Import link"}
+              </Button>
+            </TabsContent>
+          </div>
+        </Tabs>
 
         {results.length ? (
           <div className="mt-4 space-y-2" aria-live="polite">
@@ -335,7 +357,7 @@ export function SourceUploader({
                       : "text-muted-foreground"
                   }
                 >
-                  {result.detail}
+                  {result.status === "failed" ? result.detail : "Queued"}
                 </span>
               </div>
             ))}

@@ -1,7 +1,6 @@
 /** Defines the root document, global providers, fonts, and shared application shell. */
 
 import type { Metadata } from "next"
-import "@fontsource/bbh-bartle"
 import "@fontsource-variable/instrument-sans"
 import "./globals.css"
 import { AppShell } from "@/components/app-shell"

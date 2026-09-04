@@ -1,21 +1,14 @@
 "use client"
 
-/** Renders the project library and owns the accessible create-project dialog. */
+/** Renders the compact dark project library and owns project creation. */
 
 import Link from "next/link"
 import { useEffect, useState } from "react"
-import {
-  AddIcon,
-  ArrowUpRightIcon,
-  FolderIcon,
-  SparklesIcon,
-} from "@/components/ui/icon"
+import { AddIcon, ArrowUpRightIcon } from "@/components/ui/icon"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent } from "@/components/ui/card"
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -27,8 +20,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 type Project = {
   _id: string
   title: string
-  createdAt?: number
-  cardCount?: number
+  itemCount?: number
   sourceCount?: number
 }
 
@@ -46,6 +38,7 @@ export function ProjectGrid({ projects, onCreate }: ProjectGridProps) {
   const [error, setError] = useState("")
 
   useEffect(() => {
+    /** Opens the dialog when navigation includes the new-project hash. */
     const openFromHash = () => {
       if (window.location.hash === "#new-project") setOpen(true)
     }
@@ -55,6 +48,7 @@ export function ProjectGrid({ projects, onCreate }: ProjectGridProps) {
     return () => window.removeEventListener("hashchange", openFromHash)
   }, [])
 
+  /** Closes the dialog and removes its navigation hash when necessary. */
   const changeOpen = (nextOpen: boolean) => {
     setOpen(nextOpen)
     if (!nextOpen) setError("")
@@ -67,9 +61,10 @@ export function ProjectGrid({ projects, onCreate }: ProjectGridProps) {
     }
   }
 
+  /** Validates and submits the new project title. */
   const create = async () => {
     const value = title.trim()
-    if (!value) return
+    if (!value || creating) return
     setCreating(true)
     setError("")
     try {
@@ -77,91 +72,89 @@ export function ProjectGrid({ projects, onCreate }: ProjectGridProps) {
       setTitle("")
       changeOpen(false)
     } catch {
-      setError("Could not create that project. Please try again.")
+      setError("Could not create that project. Try again.")
     } finally {
       setCreating(false)
     }
   }
 
   return (
-    <>
-      <div className="mb-10 flex flex-col items-start gap-5 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <p className="mb-3 text-xs font-semibold tracking-[0.2em] text-muted-foreground uppercase">
-            Your library
-          </p>
-          <h1 className="font-heading text-3xl tracking-tight sm:text-6xl">
+    <section className="-mx-5 -my-10 min-h-svh bg-[#080808] px-5 py-8 text-white sm:-mx-8 sm:-my-16 sm:px-8 sm:py-12">
+      <div className="mx-auto w-full max-w-5xl">
+        <div className="mb-8 flex items-center justify-between gap-4">
+          <h1 className="font-sans text-3xl font-medium tracking-[-0.04em]">
             Projects
-            <span className="text-muted-foreground">.</span>
           </h1>
+          <Button
+            size="sm"
+            onClick={() => setOpen(true)}
+            className="h-10 gap-2 rounded-[20px] bg-[#ff8065] px-4 text-sm font-medium text-[#1b0d0a] hover:bg-[#ff9b86] focus-visible:ring-[#ff8065]/50"
+          >
+            <AddIcon aria-hidden="true" size={17} />
+            New project
+          </Button>
         </div>
-        <Button
-          size="lg"
-          onClick={() => setOpen(true)}
-          className="h-11 gap-2 rounded-full px-5 sm:self-auto"
-        >
-          <AddIcon size={18} /> New project
-        </Button>
-      </div>
-      {projects === undefined ? (
-        <ProjectGridLoading />
-      ) : projects.length === 0 ? (
-        <Card className="border-dashed bg-transparent py-0 shadow-none">
-          <CardContent className="flex min-h-72 flex-col items-center justify-center text-center">
-            <div className="mb-5 flex size-16 items-center justify-center rounded-2xl bg-muted text-foreground">
-              <SparklesIcon size={30} />
-            </div>
-            <h2 className="font-heading text-2xl">
-              Make your first study space
+
+        {projects === undefined ? (
+          <ProjectGridLoading />
+        ) : projects.length === 0 ? (
+          <div className="rounded-[20px] border border-white/10 bg-white/[0.035] px-5 py-10">
+            <h2 className="font-sans text-lg font-medium tracking-[-0.02em]">
+              No projects yet
             </h2>
-            <p className="mt-2 max-w-sm text-muted-foreground">
-              Turn a lecture, article, or book chapter into a focused set of
-              learning cards.
-            </p>
-            <Button onClick={() => setOpen(true)} className="mt-6 rounded-full">
-              Create a project <ArrowUpRightIcon size={16} />
+            <Button
+              onClick={() => setOpen(true)}
+              className="mt-5 h-10 rounded-[20px] bg-white px-4 text-sm font-medium text-[#111] hover:bg-white/85"
+            >
+              Create project
             </Button>
-          </CardContent>
-        </Card>
-      ) : (
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-          {projects.map((project, index) => (
-            <Link key={project._id} href={`/projects/${project._id}`}>
-              <Card className="group min-h-48 justify-between border-transparent bg-card transition-transform hover:-translate-y-1 hover:ring-primary/40">
-                <CardContent className="flex h-full flex-col justify-between">
-                  <div
-                    className={`mb-8 flex size-12 items-center justify-center rounded-2xl ${index % 2 ? "bg-blue-500 text-white" : "bg-muted text-foreground"}`}
+          </div>
+        ) : (
+          <div className="overflow-hidden rounded-[20px] border border-white/10 bg-[#151515]">
+            <ul aria-label="Projects">
+              {projects.map((project) => (
+                <li
+                  key={project._id}
+                  className="border-b border-white/10 last:border-0"
+                >
+                  <Link
+                    href={`/projects/${project._id}`}
+                    className="group flex min-h-20 items-center justify-between gap-4 px-5 py-4 transition-colors hover:bg-white/[0.045] focus-visible:bg-white/[0.06] focus-visible:ring-2 focus-visible:ring-[#ff8065] focus-visible:outline-none sm:px-6"
                   >
-                    <FolderIcon size={26} />
-                  </div>
-                  <div>
-                    <div className="flex items-start justify-between gap-3">
-                      <h2 className="font-heading text-xl leading-tight">
+                    <span className="min-w-0">
+                      <span className="block truncate text-base font-medium tracking-[-0.015em] text-white">
                         {project.title}
-                      </h2>
-                      <ArrowUpRightIcon
-                        className="text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5"
-                        size={20}
-                      />
-                    </div>
-                    <p className="mt-2 text-sm text-muted-foreground">
-                      {project.sourceCount ?? 0} sources ·{" "}
-                      {project.cardCount ?? 0} cards
-                    </p>
-                  </div>
-                </CardContent>
-              </Card>
-            </Link>
-          ))}
-        </div>
-      )}
+                      </span>
+                      <span className="mt-1 block text-sm text-white/50">
+                        {project.sourceCount === 0
+                          ? "No sources yet"
+                          : `${project.sourceCount} ${project.sourceCount === 1 ? "source" : "sources"}`}
+                        {project.itemCount
+                          ? ` · ${project.itemCount} ${project.itemCount === 1 ? "item" : "items"}`
+                          : ""}
+                      </span>
+                    </span>
+                    <ArrowUpRightIcon
+                      aria-hidden="true"
+                      className="size-5 shrink-0 text-white/35 transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5"
+                    />
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </div>
+
       <Dialog open={open} onOpenChange={changeOpen}>
-        <DialogContent>
+        <DialogContent
+          aria-describedby={undefined}
+          className="border-white/10 bg-[#151515] text-white"
+        >
           <DialogHeader>
-            <DialogTitle>New project</DialogTitle>
-            <DialogDescription>
-              Name a study space to keep your sources and cards together.
-            </DialogDescription>
+            <DialogTitle className="font-sans text-white">
+              New project
+            </DialogTitle>
           </DialogHeader>
           <label htmlFor="project-title" className="sr-only">
             Project name
@@ -176,48 +169,55 @@ export function ProjectGrid({ projects, onCreate }: ProjectGridProps) {
               if (event.key === "Enter") void create()
             }}
             placeholder="e.g. Cognitive science"
+            className="border-white/10 bg-white/[0.045] text-white placeholder:text-white/30 focus-visible:border-[#ff8065] focus-visible:ring-[#ff8065]/30"
           />
           {error ? (
-            <p aria-live="polite" className="text-sm text-destructive">
+            <p aria-live="polite" className="text-sm text-red-200">
               {error}
             </p>
           ) : null}
           <DialogFooter>
-            <Button variant="outline" onClick={() => changeOpen(false)}>
+            <Button
+              variant="outline"
+              onClick={() => changeOpen(false)}
+              className="border-white/15 bg-transparent text-white/75 hover:bg-white/[0.07] hover:text-white"
+            >
               Cancel
             </Button>
             <Button
               disabled={!title.trim() || creating}
               onClick={() => void create()}
+              className="bg-[#ff8065] text-[#1b0d0a] hover:bg-[#ff9b86] focus-visible:ring-[#ff8065]/50"
             >
               {creating ? "Creating…" : "Create project"}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </>
+    </section>
   )
 }
 
-/** Shows project-shaped placeholders until the library query resolves. */
+/** Shows compact project rows while the library query resolves. */
 function ProjectGridLoading() {
   return (
     <div role="status" aria-label="Loading projects">
       <span className="sr-only">Loading projects</span>
       <div
         aria-hidden="true"
-        className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3"
+        className="overflow-hidden rounded-[20px] border border-white/10 bg-[#151515]"
       >
-        {Array.from({ length: 3 }, (_, index) => (
-          <Card key={index} className="min-h-48 border-transparent bg-card">
-            <CardContent className="flex h-full flex-col justify-between">
-              <Skeleton className="size-12 rounded-2xl" />
-              <div className="space-y-3">
-                <Skeleton className="h-6 w-2/3" />
-                <Skeleton className="h-4 w-1/2" />
-              </div>
-            </CardContent>
-          </Card>
+        {Array.from({ length: 4 }, (_, index) => (
+          <div
+            key={index}
+            className="flex min-h-20 items-center justify-between border-b border-white/10 px-5 py-4 last:border-0 sm:px-6"
+          >
+            <div className="space-y-2">
+              <Skeleton className="h-5 w-44 bg-white/10" />
+              <Skeleton className="h-4 w-24 bg-white/[0.07]" />
+            </div>
+            <Skeleton className="size-5 rounded-full bg-white/[0.07]" />
+          </div>
         ))}
       </div>
     </div>

@@ -3,7 +3,7 @@
 import { mutation, query } from "./_generated/server"
 import { v } from "convex/values"
 
-/** Lists projects newest first with their current source and card counts. */
+/** Lists projects newest first with source and total study-item counts. */
 export const listProjects = query({
   args: {},
   handler: async (ctx) => {
@@ -15,7 +15,7 @@ export const listProjects = query({
 
     return Promise.all(
       projects.map(async (project) => {
-        const [sources, cards] = await Promise.all([
+        const [sources, cards, learningItems] = await Promise.all([
           ctx.db
             .query("sources")
             .withIndex("by_project", (query) =>
@@ -28,12 +28,19 @@ export const listProjects = query({
               query.eq("projectId", project._id)
             )
             .collect(),
+          ctx.db
+            .query("learningItems")
+            .withIndex("by_project_order", (query) =>
+              query.eq("projectId", project._id)
+            )
+            .collect(),
         ])
 
         return {
           ...project,
           sourceCount: sources.length,
-          cardCount: cards.length,
+          cardCount: cards.length + learningItems.length,
+          itemCount: cards.length + learningItems.length,
         }
       })
     )

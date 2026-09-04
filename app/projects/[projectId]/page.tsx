@@ -4,7 +4,7 @@
 
 import { useMutation, useQuery } from "convex/react"
 import Link from "next/link"
-import { use } from "react"
+import { use, useState } from "react"
 
 import { SourceUploader } from "@/components/projects/source-uploader"
 import { Badge } from "@/components/ui/badge"
@@ -47,9 +47,9 @@ export default function ProjectPage({
   if (project === null) return <ProjectNotFoundState />
 
   return (
-    <main className="mx-auto w-full max-w-5xl px-5 py-8 pb-28 sm:px-8 sm:py-12">
+    <main className="mx-auto w-full max-w-5xl px-5 py-8 pb-28 font-sans sm:px-8 sm:py-12">
       <Link
-        href="/"
+        href="/library"
         className="mb-10 inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground"
       >
         <ArrowLeftIcon size={16} /> All projects
@@ -57,16 +57,9 @@ export default function ProjectPage({
 
       <div className="mb-10 flex flex-wrap items-end justify-between gap-4">
         <div>
-          <Badge variant="outline" className="mb-3">
-            Study project
-          </Badge>
-          <h1 className="font-heading text-4xl tracking-tight sm:text-6xl">
+          <h1 className="font-heading text-3xl font-medium tracking-tight sm:text-4xl">
             {project?.title || "Loading…"}
-            <span className="text-muted-foreground">.</span>
           </h1>
-          <p className="mt-3 max-w-xl text-muted-foreground">
-            Build a clear mental model from your own material.
-          </p>
         </div>
         {hasReadySource ? (
           <Button asChild size="lg" className="rounded-full">
@@ -91,9 +84,6 @@ export default function ProjectPage({
       <section className="mt-10">
         <div className="mb-4 flex items-center justify-between">
           <h2 className="font-heading text-2xl">Sources</h2>
-          <span className="text-sm text-muted-foreground">
-            {sources?.length ?? 0} total
-          </span>
         </div>
         {sources === undefined ? (
           <SourcesLoadingState />
@@ -161,25 +151,38 @@ function SourceRow({
       ? "ready"
       : source.status
   const detail = preparationFailed
-    ? job.error || "Preparation failed"
-    : preparationComplete
-      ? "Ready to study"
-      : job?.status === "leased"
-        ? job.totalChunks
-          ? `Preparing section ${Math.min(job.nextChunkOrdinal + 1, job.totalChunks)} of ${job.totalChunks}`
-          : "Preparing source…"
-        : job?.status === "queued"
-          ? "Queued for preparation"
-          : source.status === "processing"
-            ? "Waiting for preparation"
-            : source.status === "failed"
-              ? source.error || "Preparation failed"
-              : source.summary || "Ready to study"
+    ? job.error || undefined
+    : job?.status === "leased"
+      ? job.totalChunks
+        ? `Preparing section ${Math.min(job.nextChunkOrdinal + 1, job.totalChunks)} of ${job.totalChunks}`
+        : "Preparing source…"
+      : source.status === "failed"
+        ? source.error || undefined
+        : preparationComplete
+          ? source.summary
+          : undefined
+
+  const [retryState, setRetryState] = useState<"idle" | "pending" | "error">(
+    "idle"
+  )
+  const [retryError, setRetryError] = useState("")
 
   /** Retries a failed preparation job and leaves the live query to refresh the row. */
   const retry = async () => {
     if (!job?.jobId) return
-    await retryPreparation({ jobId: job.jobId })
+    setRetryState("pending")
+    setRetryError("")
+    try {
+      await retryPreparation({ jobId: job.jobId })
+      setRetryState("idle")
+    } catch (error) {
+      setRetryState("error")
+      setRetryError(
+        error instanceof Error && error.message.trim()
+          ? error.message
+          : "Retry failed. Try again."
+      )
+    }
   }
 
   return (
@@ -200,13 +203,27 @@ function SourceRow({
               {source.originalUrl}
             </a>
           ) : null}
-          <p className="line-clamp-2 text-xs text-muted-foreground">{detail}</p>
+          {detail ? (
+            <p className="line-clamp-2 text-xs text-muted-foreground">
+              {detail}
+            </p>
+          ) : null}
+          {retryError ? (
+            <p role="alert" className="mt-1 text-xs text-destructive">
+              {retryError}
+            </p>
+          ) : null}
         </div>
       </div>
       <div className="flex shrink-0 items-center gap-2">
         {preparationFailed && job?.jobId ? (
-          <Button variant="outline" size="sm" onClick={() => void retry()}>
-            Retry
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={retryState === "pending"}
+            onClick={() => void retry()}
+          >
+            {retryState === "pending" ? "Retrying…" : "Retry"}
           </Button>
         ) : null}
         <Badge
@@ -233,9 +250,7 @@ function ProjectLoadingState() {
         <span className="sr-only">Loading project</span>
         <Skeleton className="h-5 w-28" />
         <div className="space-y-4">
-          <Skeleton className="h-4 w-24" />
           <Skeleton className="h-14 w-2/3 max-w-md" />
-          <Skeleton className="h-5 w-full max-w-xl" />
         </div>
         <Skeleton className="h-72 w-full rounded-xl" />
       </div>
@@ -253,7 +268,7 @@ function ProjectNotFoundState() {
           That study project may have been removed or the link is out of date.
         </p>
         <Button asChild className="mt-7 rounded-full">
-          <Link href="/">Back to projects</Link>
+          <Link href="/library">Back to projects</Link>
         </Button>
       </div>
     </main>
