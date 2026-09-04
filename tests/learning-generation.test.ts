@@ -148,6 +148,27 @@ test("rejects wrappers instead of extracting nested JSON", async () => {
   )
 })
 
+test("repairs one invalid model response with the original prompt and bounded feedback", async () => {
+  let calls = 0
+  const invalid = JSON.parse(validOutput()) as {
+    items: Array<{ sourceChunkIds: string[] }>
+  }
+  invalid.items[0]!.sourceChunkIds = ["wrong_chunk"]
+  let repairPrompt = ""
+  const batch = await generateLearningForChunk(chunk, async (prompt) => {
+    calls += 1
+    if (calls === 1) return JSON.stringify(invalid)
+    repairPrompt = prompt
+    return validOutput()
+  })
+
+  assert.equal(calls, 2)
+  assert.equal(batch.items.length, 4)
+  assert.ok(repairPrompt.includes(chunk.text))
+  assert.ok(repairPrompt.includes("Validation feedback:"))
+  assert.ok(repairPrompt.includes("other than"))
+})
+
 test("accepts an explicit skipped batch for a chunk with no factual content", async () => {
   const batch = await generateLearningForChunk(chunk, async () =>
     JSON.stringify({
@@ -190,9 +211,11 @@ test("rejects oversized source chunks and generated responses before parsing", a
 test("aborted generation returns no validated batch", async () => {
   const controller = new AbortController()
   let receivedSignal: AbortSignal | undefined
+  let calls = 0
   const pending = generateLearningForChunk(
     chunk,
     async (_prompt, signal) => {
+      calls += 1
       receivedSignal = signal
       await new Promise((resolve) => setTimeout(resolve, 10))
       return validOutput()
@@ -207,4 +230,18 @@ test("aborted generation returns no validated batch", async () => {
     return true
   })
   assert.equal(receivedSignal, controller.signal)
+  assert.equal(calls, 1)
+})
+
+test("does not retry transport failures", async () => {
+  let calls = 0
+  await assert.rejects(
+    () =>
+      generateLearningForChunk(chunk, async () => {
+        calls += 1
+        throw new Error("transport unavailable")
+      }),
+    /transport unavailable/
+  )
+  assert.equal(calls, 1)
 })

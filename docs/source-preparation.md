@@ -59,3 +59,10 @@ repository through model tools. Interrupting the worker preserves committed
 chunks, and a failed job can be retried from its saved ordinal. The current
 source snapshot limit is 120,000 characters per file; larger source storage is
 separate work even though normalization itself accepts larger text.
+
+Generation asks multiple-answer questions to include at least one incorrect
+option, so a learner must distinguish the complete answer set. If a model
+response fails the strict bounded validator, the generation boundary makes one
+repair call containing the original source prompt and a short validation
+message. It never retries transport errors or cancellation, never persists an
+invalid batch, and never makes more than that one repair attempt.
