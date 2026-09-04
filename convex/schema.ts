@@ -205,4 +205,47 @@ export default defineSchema({
   })
     .index("by_job_ordinal", ["jobId", "ordinal"])
     .index("by_job_chunkId", ["jobId", "chunkId"]),
+
+  conversations: defineTable({
+    projectId: v.id("projects"),
+    itemId: v.id("learningItems"),
+    codexThreadId: v.optional(v.string()),
+    status: v.union(
+      v.literal("idle"),
+      v.literal("queued"),
+      v.literal("running"),
+      v.literal("failed")
+    ),
+    activeMessageId: v.optional(v.id("conversationMessages")),
+    lastError: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index("by_project_item", ["projectId", "itemId"]),
+
+  conversationMessages: defineTable({
+    conversationId: v.id("conversations"),
+    clientMessageId: v.string(),
+    question: v.string(),
+    status: v.union(
+      v.literal("queued"),
+      v.literal("running"),
+      v.literal("completed"),
+      v.literal("failed")
+    ),
+    reply: v.optional(v.string()),
+    error: v.optional(v.string()),
+    codexTurnId: v.optional(v.string()),
+    workerId: v.optional(v.string()),
+    leaseToken: v.optional(v.string()),
+    leaseExpiresAt: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_conversation_createdAt", ["conversationId", "createdAt"])
+    .index("by_conversation_clientMessageId", [
+      "conversationId",
+      "clientMessageId",
+    ])
+    .index("by_status_createdAt", ["status", "createdAt"])
+    .index("by_leaseToken", ["leaseToken"]),
 })

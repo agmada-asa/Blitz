@@ -33,7 +33,7 @@ cancellation wins the race.
 
 The `activity` event retains each original app-server notification so later
 tool and richer activity support can be added without changing this boundary.
-No card-chat persistence or UI behavior is included here. Tests inject an
+The transport layer owns no persistence or UI. Tests inject an
 in-memory transport and never start a live model turn.
 
 A separate local smoke check completed a real ephemeral Luna turn through the
@@ -42,3 +42,17 @@ threads; card conversations may keep their server-issued thread ID for resume.
 
 The event shapes are based on the installed `codex-cli 0.153.0` v2 schema:
 [Codex App Server](https://learn.chatgpt.com/docs/app-server).
+
+## Persistent card conversations
+
+`POST /api/learning/chat` accepts only `projectId`, `itemId`, `clientMessageId`, and the learner's `question`. It creates or resumes one conversation per project and learning item, and treats a repeated client message id as an idempotent retry. The `202` response includes `conversationId`, `messageId`, `status`, `alreadyQueued`, and the full safe message record. `GET /api/learning/chat?projectId=...&itemId=...` returns message status, questions, replies, errors, and the saved conversation status. It never returns source text.
+
+The local `scripts/chat-worker.ts` process claims queued messages with a bounded lease. It loads the selected learning item and its prepared source chunk, reconstructs that chunk from the preparation snapshot, then calls `runCardChat` with the saved Codex thread when available. A successful turn stores the thread id, turn id, and non-empty reply atomically. A failed turn keeps its question and history; retry is an explicit `convex.conversations.retry` mutation.
+
+For HTTP clients, `POST /api/learning/chat/retry` takes `projectId`, `itemId`, and the failed `messageId`; it deliberately requeues that existing record and never creates a duplicate question.
+
+The worker uses `BLITZ_CODEX_WORKSPACE` or `~/.local/share/blitz/codex-workspace`, an explicitly created directory outside the repository. `BLITZ_CODEX_MODEL` defaults to `gpt-5.6-luna`; sandbox is read-only and approval requests remain declined until an approval UI is wired. The queue allows later questions to wait behind an active turn and recovers expired leases, so the web request can succeed while the Mac worker is offline.
+
+The launcher can use `defaultChatWorkspaceDirectory`, `ensureChatWorkspaceDirectory`, `runChatWorkerStep`, and `runChatWorker` from `lib/server/chat-worker.ts`. The current polling contract preserves activity events inside the worker for future richer notifications; it does not claim full Codex agent parity.
+
+Start the local chat process with `npm run worker:chat` beside `npm run worker` and the development servers. Both workers load `.env.local` and prefer `BLITZ_CONVEX_URL` for a loopback connection.
