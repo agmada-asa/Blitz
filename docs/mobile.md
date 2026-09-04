@@ -158,3 +158,14 @@ The following checks passed:
 `npm run android:debug` completed Expo prebuild, then stopped as expected
 because no Android device or runnable emulator was available. No emulator image
 was downloaded or started.
+
+## Install over the local network
+
+Set `BLITZ_ANDROID_APK_PATH` to the absolute path of a built `.apk` when starting
+Blitz. `GET /api/android` streams that file as an Android package download;
+without a configured artifact it returns 404. The route never accepts a path
+from the request and the APK remains outside the repository.
+
+The overnight build's LAN download was streamed and SHA-256 checked against the
+artifact above. Installing and visually testing it on a physical phone remains
+unverified.
