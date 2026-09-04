@@ -6,6 +6,7 @@ import { useMutation, useQuery } from "convex/react"
 import Link from "next/link"
 import { use, useState } from "react"
 
+import { ResearchPanel } from "@/components/projects/research-panel"
 import { TopicList } from "@/components/projects/topic-list"
 import { SourceUploader } from "@/components/projects/source-uploader"
 import { Badge } from "@/components/ui/badge"
@@ -63,6 +64,7 @@ export default function ProjectPage({
           </h1>
         </div>
         <div className="flex flex-wrap gap-2">
+          <ResearchPanel key={projectId} projectId={projectId} />
           {hasPreparedSource ? (
             <>
               <Button asChild variant="outline" className="rounded-full">
