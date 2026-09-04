@@ -16,6 +16,8 @@ const eslintConfig = defineConfig([
     "build/**",
     "next-env.d.ts",
     "convex/_generated/**",
+    // The native package owns its React Native checks and generated Android files.
+    "mobile/**",
   ]),
 ])
 

@@ -1,0 +1,30 @@
+{
+  "name": "@blitz/mobile",
+  "version": "0.0.1",
+  "private": true,
+  "main": "index.js",
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "scripts": {
+    "start": "expo start",
+    "android": "expo run:android",
+    "android:debug": "expo run:android --variant debug",
+    "prebuild:android": "expo prebuild --platform android",
+    "test": "node --no-warnings --test --experimental-strip-types tests/*.test.ts",
+    "typecheck": "tsc --noEmit",
+    "doctor": "expo-doctor"
+  },
+  "dependencies": {
+    "@react-native-async-storage/async-storage": "2.2.0",
+    "expo": "~57.0.20",
+    "expo-crypto": "~57.0.2",
+    "react": "19.2.3",
+    "react-native": "0.86.3"
+  },
+  "devDependencies": {
+    "@types/react": "~19.2.0",
+    "expo-doctor": "^1.20.4",
+    "typescript": "~6.0.3"
+  }
+}

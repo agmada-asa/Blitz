@@ -1,0 +1,13 @@
+{
+  "expo": {
+    "name": "Blitz",
+    "slug": "blitz",
+    "version": "0.0.1",
+    "orientation": "portrait",
+    "scheme": "blitz",
+    "android": {
+      "package": "com.blitz.study",
+      "versionCode": 1
+    }
+  }
+}
