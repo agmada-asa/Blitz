@@ -359,6 +359,7 @@ export const commitChunk = mutation({
     const isComplete = nextChunkOrdinal === args.totalChunks
     await ctx.db.patch(args.jobId, {
       status: isComplete ? "completed" : "queued",
+      lastError: undefined,
       nextChunkOrdinal,
       totalChunks: args.totalChunks,
       // Each worker step releases its lease. A fresh claim can immediately
@@ -424,6 +425,7 @@ export const retry = mutation({
       throw new Error("Active preparation lease cannot be retried")
     await ctx.db.patch(args.jobId, {
       status: "queued",
+      lastError: undefined,
       workerId: undefined,
       leaseToken: undefined,
       leaseExpiresAt: undefined,
