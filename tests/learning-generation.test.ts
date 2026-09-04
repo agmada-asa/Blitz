@@ -1,0 +1,210 @@
+/** Tests strict, source-attributed generation for each supported learning format. */
+
+import assert from "node:assert/strict"
+import test from "node:test"
+
+import {
+  MAX_GENERATED_OUTPUT_BYTES,
+  MAX_SOURCE_CHUNK_LENGTH,
+  generateLearningForChunk,
+  LearningGenerationError,
+} from "../lib/server/learning-generation.ts"
+import type { SourceChunk } from "../lib/server/source-ingestion/types.ts"
+
+/** Stable source chunk fixture shared by generation tests. */
+const chunk: SourceChunk = {
+  id: "chunk_sound_001",
+  sourceId: "source_sound",
+  ordinal: 0,
+  text: "A longer compressor attack preserves the initial transient of a kick.",
+  startOffset: 0,
+  endOffset: 70,
+  references: [],
+}
+
+/** Builds a valid mixed-format response covering all supported item variants. */
+function validOutput() {
+  return JSON.stringify({
+    summary: "Transient shape depends on allowing the attack to pass through.",
+    concepts: [
+      { key: "transient", title: "Transient shape", topicTitle: "Compression" },
+      { key: "depth", title: "Perceived depth", topicTitle: "Sound design" },
+    ],
+    items: [
+      {
+        conceptKey: "transient",
+        type: "explain",
+        title: "Let the attack through",
+        body: "A longer compressor attack preserves the first transient of a kick.",
+        sourceChunkIds: [chunk.id],
+      },
+      {
+        conceptKey: "transient",
+        type: "single-choice",
+        title: "Choose the attack",
+        body: "Pick the setting that preserves the initial hit.",
+        question: "Which setting keeps the attack crisp?",
+        options: [
+          { id: "short", text: "Short attack" },
+          { id: "long", text: "Long attack" },
+        ],
+        correctOptionId: "long",
+        sourceChunkIds: [chunk.id],
+      },
+      {
+        conceptKey: "depth",
+        type: "multiple-answer",
+        title: "Create distance",
+        body: "Several changes can reduce the sense of proximity.",
+        question: "Which changes can move a sound back?",
+        options: [
+          { id: "top", text: "Roll off some high frequencies" },
+          { id: "early", text: "Add early reflections" },
+          { id: "mono", text: "Make it completely mono" },
+        ],
+        correctOptionIds: ["top", "early"],
+        sourceChunkIds: [chunk.id],
+      },
+      {
+        conceptKey: "depth",
+        type: "true-false",
+        title: "Attack and proximity",
+        body: "Attack time changes the initial transient shape.",
+        question: "A longer attack can preserve a kick's initial transient.",
+        correctAnswer: true,
+        sourceChunkIds: [chunk.id],
+      },
+    ],
+  })
+}
+
+test("generates every supported item format from one chunk", async () => {
+  let prompt = ""
+  const batch = await generateLearningForChunk(chunk, async (value) => {
+    prompt = value
+    return validOutput()
+  })
+
+  assert.deepEqual(
+    batch.items.map((item) => item.type),
+    ["explain", "single-choice", "multiple-answer", "true-false"]
+  )
+  assert.ok(prompt.includes(chunk.text))
+  assert.ok(prompt.includes("untrusted study material"))
+  assert.ok(batch.items.every((item) => item.sourceChunkIds[0] === chunk.id))
+})
+
+test("rejects an item that references an unknown chunk ID", async () => {
+  const output = JSON.parse(validOutput()) as {
+    items: Array<{ sourceChunkIds: string[] }>
+  }
+  output.items[0]!.sourceChunkIds = ["chunk_fabricated"]
+
+  await assert.rejects(
+    () => generateLearningForChunk(chunk, async () => JSON.stringify(output)),
+    (error: unknown) => {
+      assert.ok(error instanceof LearningGenerationError)
+      assert.equal(error.code, "invalid-output")
+      assert.match(error.message, /references a chunk other than/)
+      return true
+    }
+  )
+})
+
+test("rejects a wrong question shape and fabricated answer IDs", async () => {
+  const output = JSON.parse(validOutput()) as {
+    items: Array<Record<string, unknown>>
+  }
+  output.items[0]!.question = "This is not allowed on an explain item"
+
+  await assert.rejects(
+    () => generateLearningForChunk(chunk, async () => JSON.stringify(output)),
+    /schema validation/
+  )
+
+  const answerOutput = JSON.parse(validOutput()) as {
+    items: Array<Record<string, unknown>>
+  }
+  answerOutput.items[2]!.correctOptionIds = ["top", "fabricated"]
+  await assert.rejects(
+    () =>
+      generateLearningForChunk(chunk, async () => JSON.stringify(answerOutput)),
+    /provided options/
+  )
+})
+
+test("rejects wrappers instead of extracting nested JSON", async () => {
+  await assert.rejects(
+    () =>
+      generateLearningForChunk(
+        chunk,
+        async () => `Here is the result:\n${validOutput()}`
+      ),
+    (error: unknown) => {
+      assert.ok(error instanceof LearningGenerationError)
+      assert.match(error.message, /not a JSON object/)
+      return true
+    }
+  )
+})
+
+test("accepts an explicit skipped batch for a chunk with no factual content", async () => {
+  const batch = await generateLearningForChunk(chunk, async () =>
+    JSON.stringify({
+      summary: "SKIPPED: title-only page",
+      concepts: [],
+      items: [],
+    })
+  )
+
+  assert.deepEqual(batch.concepts, [])
+  assert.deepEqual(batch.items, [])
+  assert.match(batch.summary, /^SKIPPED:/)
+})
+
+test("rejects oversized source chunks and generated responses before parsing", async () => {
+  const oversizedChunk = {
+    ...chunk,
+    text: "x".repeat(MAX_SOURCE_CHUNK_LENGTH + 1),
+  }
+  let called = false
+  await assert.rejects(
+    () =>
+      generateLearningForChunk(oversizedChunk, async () => {
+        called = true
+        return validOutput()
+      }),
+    /Source chunk exceeds/
+  )
+  assert.equal(called, false)
+
+  await assert.rejects(
+    () =>
+      generateLearningForChunk(chunk, async () =>
+        "x".repeat(MAX_GENERATED_OUTPUT_BYTES + 1)
+      ),
+    /output limit/
+  )
+})
+
+test("aborted generation returns no validated batch", async () => {
+  const controller = new AbortController()
+  let receivedSignal: AbortSignal | undefined
+  const pending = generateLearningForChunk(
+    chunk,
+    async (_prompt, signal) => {
+      receivedSignal = signal
+      await new Promise((resolve) => setTimeout(resolve, 10))
+      return validOutput()
+    },
+    { signal: controller.signal }
+  )
+  controller.abort()
+
+  await assert.rejects(pending, (error: unknown) => {
+    assert.ok(error instanceof LearningGenerationError)
+    assert.equal(error.code, "aborted")
+    return true
+  })
+  assert.equal(receivedSignal, controller.signal)
+})
