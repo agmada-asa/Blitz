@@ -249,4 +249,82 @@ export default defineSchema({
     ])
     .index("by_status_createdAt", ["status", "createdAt"])
     .index("by_leaseToken", ["leaseToken"]),
+
+  researchProposals: defineTable({
+    projectId: v.id("projects"),
+    requestId: v.string(),
+    request: v.string(),
+    status: v.union(
+      v.literal("queued"),
+      v.literal("running"),
+      v.literal("ready"),
+      v.literal("failed")
+    ),
+    scope: v.string(),
+    topics: v.array(v.string()),
+    sources: v.array(
+      v.object({
+        url: v.string(),
+        title: v.string(),
+        reason: v.string(),
+        verification: v.union(
+          v.literal("suggested-unverified"),
+          v.literal("checked")
+        ),
+      })
+    ),
+    generatedNotes: v.array(
+      v.object({
+        label: v.literal("generated"),
+        title: v.string(),
+        description: v.string(),
+        reason: v.string(),
+      })
+    ),
+    workerId: v.optional(v.string()),
+    leaseToken: v.optional(v.string()),
+    leaseExpiresAt: v.optional(v.number()),
+    lastError: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_project_requestId", ["projectId", "requestId"])
+    .index("by_project_createdAt", ["projectId", "createdAt"])
+    .index("by_status_createdAt", ["status", "createdAt"])
+    .index("by_leaseToken", ["leaseToken"]),
+
+  researchProposalImports: defineTable({
+    proposalId: v.id("researchProposals"),
+    projectId: v.id("projects"),
+    sourceIndex: v.number(),
+    status: v.union(
+      v.literal("queued"),
+      v.literal("running"),
+      v.literal("imported"),
+      v.literal("failed")
+    ),
+    sourceId: v.optional(v.id("sources")),
+    preparationJobId: v.optional(v.id("preparationJobs")),
+    workerId: v.optional(v.string()),
+    leaseToken: v.optional(v.string()),
+    leaseExpiresAt: v.optional(v.number()),
+    failureCategory: v.optional(
+      v.union(
+        v.literal("site-refused"),
+        v.literal("not-found"),
+        v.literal("unsupported-format"),
+        v.literal("needs-ocr"),
+        v.literal("too-large"),
+        v.literal("timeout"),
+        v.literal("invalid-url"),
+        v.literal("download-failed")
+      )
+    ),
+    lastError: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_proposal_sourceIndex", ["proposalId", "sourceIndex"])
+    .index("by_status_createdAt", ["status", "createdAt"])
+    .index("by_leaseToken", ["leaseToken"]),
 })
