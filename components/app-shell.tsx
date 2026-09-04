@@ -6,7 +6,6 @@ import Link from "next/link"
 import { usePathname } from "next/navigation"
 import {
   Add01Icon,
-  BookOpen01Icon,
   Folder01Icon,
   Home01Icon,
   SidebarLeftIcon,
@@ -35,7 +34,7 @@ export function AppShell({ children }: AppShellProps) {
     pathname === "/preview" || pathname.startsWith("/preview/")
   const isHomeRoute = pathname === "/"
   const [collapsed, setCollapsed] = useState(false)
-  const isStudyRoute = pathname.endsWith("/study")
+  const isStudyRoute = /\/(study|practice|test)$/.test(pathname)
   const projectId = pathname.match(/^\/projects\/([^/]+)/)?.[1]
   const projectHref = projectId ? `/projects/${projectId}` : "/"
   const links: NavLink[] = [
@@ -51,7 +50,7 @@ export function AppShell({ children }: AppShellProps) {
       icon: Folder01Icon,
       active:
         pathname === "/library" ||
-        (pathname.startsWith("/projects/") && !pathname.endsWith("/study")),
+        (pathname.startsWith("/projects/") && !isStudyRoute),
     },
     {
       href: projectId ? `${projectHref}#add-source` : "/library#new-project",
@@ -59,15 +58,9 @@ export function AppShell({ children }: AppShellProps) {
       icon: Add01Icon,
       active: false,
     },
-    {
-      href: projectId ? `/?projectId=${encodeURIComponent(projectId)}` : "/",
-      label: "Study",
-      icon: BookOpen01Icon,
-      active: isStudyRoute,
-    },
   ]
 
-  if (isPreviewRoute || isHomeRoute) {
+  if (isPreviewRoute || isHomeRoute || isStudyRoute) {
     return <>{children}</>
   }
 
@@ -142,7 +135,7 @@ export function AppShell({ children }: AppShellProps) {
       </div>
       <nav
         aria-label="Primary navigation"
-        className="fixed inset-x-0 bottom-0 z-40 grid h-[76px] grid-cols-4 border-t border-border/70 bg-background/90 px-2 pb-[env(safe-area-inset-bottom)] backdrop-blur-xl md:hidden"
+        className="fixed inset-x-0 bottom-0 z-40 grid h-[76px] grid-cols-3 border-t border-border/70 bg-background/90 px-2 pb-[env(safe-area-inset-bottom)] backdrop-blur-xl md:hidden"
       >
         {links.map((link) => (
           <NavItem key={link.label} {...link} mobile />
