@@ -85,6 +85,7 @@ export default defineSchema({
     projectId: v.id("projects"),
     parentTopicId: v.optional(v.id("topics")),
     title: v.string(),
+    excludedFromFeed: v.optional(v.boolean()),
     createdAt: v.number(),
   })
     .index("by_project", ["projectId"])

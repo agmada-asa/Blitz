@@ -6,6 +6,7 @@ import { useMutation, useQuery } from "convex/react"
 import Link from "next/link"
 import { use, useState } from "react"
 
+import { TopicList } from "@/components/projects/topic-list"
 import { SourceUploader } from "@/components/projects/source-uploader"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -40,8 +41,8 @@ export default function ProjectPage({
   const preparationJobs = useQuery(api.preparation.listJobsForProject, {
     projectId: convexProjectId,
   })
-  const hasReadySource =
-    sources?.some((source) => source.status === "ready") ?? false
+  const hasPreparedSource =
+    preparationJobs?.some((job) => job.nextChunkOrdinal > 0) ?? false
 
   if (project === undefined) return <ProjectLoadingState />
   if (project === null) return <ProjectNotFoundState />
@@ -61,25 +62,41 @@ export default function ProjectPage({
             {project?.title || "Loading…"}
           </h1>
         </div>
-        {hasReadySource ? (
-          <Button asChild size="lg" className="rounded-full">
-            <Link href={`/?projectId=${encodeURIComponent(projectId)}`}>
-              <BookOpenIcon size={18} /> Start studying
-            </Link>
-          </Button>
-        ) : (
-          <Button disabled size="lg" className="rounded-full">
-            <BookOpenIcon size={18} /> Start studying
-          </Button>
-        )}
+        <div className="flex flex-wrap gap-2">
+          {hasPreparedSource ? (
+            <>
+              <Button asChild variant="outline" className="rounded-full">
+                <Link
+                  href={`/projects/${encodeURIComponent(projectId)}/practice`}
+                >
+                  Study
+                </Link>
+              </Button>
+              <Button asChild variant="outline" className="rounded-full">
+                <Link href={`/projects/${encodeURIComponent(projectId)}/test`}>
+                  Test
+                </Link>
+              </Button>
+              <Button asChild className="rounded-full">
+                <Link href={`/?projectId=${encodeURIComponent(projectId)}`}>
+                  <BookOpenIcon size={18} /> Open feed
+                </Link>
+              </Button>
+            </>
+          ) : null}
+        </div>
       </div>
 
-      <SourceUploader
-        projectId={convexProjectId}
-        createSource={createSource}
-        updateSource={updateSource}
-        enqueue={enqueue}
-      />
+      <TopicList projectId={convexProjectId} />
+
+      <div className="mt-10">
+        <SourceUploader
+          projectId={convexProjectId}
+          createSource={createSource}
+          updateSource={updateSource}
+          enqueue={enqueue}
+        />
+      </div>
 
       <section className="mt-10">
         <div className="mb-4 flex items-center justify-between">
@@ -102,6 +119,9 @@ export default function ProjectPage({
                   (candidate) => candidate.sourceId === source._id
                 )}
                 retryPreparation={retryPreparation}
+                prepareSource={() =>
+                  enqueue({ projectId: convexProjectId, sourceId: source._id })
+                }
               />
             ))}
           </div>
@@ -136,9 +156,11 @@ function SourceRow({
   source,
   job,
   retryPreparation,
+  prepareSource,
 }: {
   source: SourceRowData
   job?: PreparationJobData
+  prepareSource: () => Promise<unknown>
   retryPreparation: (input: {
     jobId: Id<"preparationJobs">
   }) => Promise<unknown>
@@ -158,22 +180,20 @@ function SourceRow({
         : "Preparing source…"
       : source.status === "failed"
         ? source.error || undefined
-        : preparationComplete
-          ? source.summary
-          : undefined
+        : undefined
 
   const [retryState, setRetryState] = useState<"idle" | "pending" | "error">(
     "idle"
   )
   const [retryError, setRetryError] = useState("")
 
-  /** Retries a failed preparation job and leaves the live query to refresh the row. */
+  /** Queues an older source or retries failed preparation without replacing existing cards. */
   const retry = async () => {
-    if (!job?.jobId) return
     setRetryState("pending")
     setRetryError("")
     try {
-      await retryPreparation({ jobId: job.jobId })
+      if (job) await retryPreparation({ jobId: job.jobId })
+      else await prepareSource()
       setRetryState("idle")
     } catch (error) {
       setRetryState("error")
@@ -216,14 +236,18 @@ function SourceRow({
         </div>
       </div>
       <div className="flex shrink-0 items-center gap-2">
-        {preparationFailed && job?.jobId ? (
+        {preparationFailed || (!job && source.status === "ready") ? (
           <Button
             variant="outline"
             size="sm"
             disabled={retryState === "pending"}
             onClick={() => void retry()}
           >
-            {retryState === "pending" ? "Retrying…" : "Retry"}
+            {retryState === "pending"
+              ? "Queuing…"
+              : job
+                ? "Retry"
+                : "Prepare feed"}
           </Button>
         ) : null}
         <Badge

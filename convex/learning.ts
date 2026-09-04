@@ -600,6 +600,11 @@ export const listLearningFeedCandidates = query({
         (topicIds && (!concept.topicId || !topicIds.has(concept.topicId)))
       )
         continue
+      // Exclusion changes the mixed feed, while explicit topic study stays available.
+      if (!topicIds && concept.topicId) {
+        const topic = await ctx.db.get(concept.topicId)
+        if (topic?.excludedFromFeed) continue
+      }
       const reviews = await ctx.db
         .query("conceptReviews")
         .withIndex("by_project_concept", (q) =>
@@ -804,6 +809,10 @@ export const getLearningFeed = query({
         const concept = await ctx.db.get(item.conceptId)
         if (!concept) continue
         if (requestedTopic && concept.topicId !== requestedTopic._id) continue
+        if (!requestedTopic && concept.topicId) {
+          const topic = await ctx.db.get(concept.topicId)
+          if (topic?.excludedFromFeed) continue
+        }
         let review = reviewCache.get(String(item.conceptId))
         if (review === undefined) {
           const reviews = await ctx.db

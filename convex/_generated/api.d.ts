@@ -16,6 +16,7 @@ import type * as preparation from "../preparation.js";
 import type * as projects from "../projects.js";
 import type * as sources from "../sources.js";
 import type * as study from "../study.js";
+import type * as topics from "../topics.js";
 
 import type {
   ApiFromModules,
@@ -32,6 +33,7 @@ declare const fullApi: ApiFromModules<{
   projects: typeof projects;
   sources: typeof sources;
   study: typeof study;
+  topics: typeof topics;
 }>;
 
 /**
