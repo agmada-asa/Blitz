@@ -17,7 +17,6 @@ import { Button } from "@/components/ui/button"
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
@@ -31,11 +30,10 @@ type PreviewFilter = "all" | "explain" | "questions"
 const filterOptions: Array<{
   value: PreviewFilter
   label: string
-  detail: string
 }> = [
-  { value: "all", label: "All cards", detail: "The complete three-card slice" },
-  { value: "explain", label: "Explanations", detail: "Read the concept cards" },
-  { value: "questions", label: "Questions", detail: "Practice with feedback" },
+  { value: "all", label: "All cards" },
+  { value: "explain", label: "Explanations" },
+  { value: "questions", label: "Questions" },
 ]
 
 /** Returns whether a fixture card belongs in the selected filter. */
@@ -159,11 +157,6 @@ export function PreviewFeed() {
             </Link>
           </Button>
 
-          <span className="hidden items-center gap-2 text-xs text-white/42 sm:flex">
-            <span className="size-1.5 rounded-full bg-[#ff8065]" />
-            Use ↑ ↓ to move
-          </span>
-
           <Dialog open={filterOpen} onOpenChange={setFilterOpen}>
             <DialogTrigger asChild>
               <Button
@@ -181,6 +174,7 @@ export function PreviewFeed() {
               </Button>
             </DialogTrigger>
             <DialogContent
+              aria-describedby={undefined}
               className="border-white/10 bg-[#151515] text-white sm:max-w-sm"
               showCloseButton
             >
@@ -188,10 +182,6 @@ export function PreviewFeed() {
                 <DialogTitle className="font-sans text-white">
                   Filter this preview
                 </DialogTitle>
-                <DialogDescription className="text-white/48">
-                  Keep the local fixture focused while you review the feed
-                  rhythm.
-                </DialogDescription>
               </DialogHeader>
               <div
                 className="mt-2 space-y-2"
@@ -210,22 +200,14 @@ export function PreviewFeed() {
                     <span className="mt-1 size-3 shrink-0 rounded-full border border-white/30 p-0.5">
                       <span className={cnRadio(filter === option.value)} />
                     </span>
-                    <span>
-                      <span className="block text-sm font-medium text-white">
-                        {option.label}
-                      </span>
-                      <span className="mt-1 block text-xs leading-relaxed text-white/45">
-                        {option.detail}
-                      </span>
+                    <span className="text-sm font-medium text-white">
+                      {option.label}
                     </span>
                   </button>
                 ))}
               </div>
             </DialogContent>
           </Dialog>
-        </div>
-        <div className="mt-3 flex justify-between gap-3 text-[11px] text-white/38 sm:justify-center">
-          <span>Example content · local fixture · no progress saved</span>
         </div>
       </div>
 
@@ -240,32 +222,15 @@ export function PreviewFeed() {
             key={card.id}
             card={card}
             index={index}
-            total={visibleCards.length}
             onAsk={setChatCard}
             onSkip={skipCard}
           />
         ))}
       </div>
 
-      <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 flex items-end justify-between gap-4 px-4 pb-[max(1.25rem,env(safe-area-inset-bottom))] sm:px-8 sm:pb-7">
-        <p aria-live="polite" className="sr-only">
-          {sessionMessage ||
-            "Questions are skippable · answer feedback stays local"}
-        </p>
-        <div
-          className="flex items-center gap-1.5"
-          aria-label="Preview position"
-        >
-          {visibleCards.map((card, index) => (
-            <span
-              key={card.id}
-              className={`h-1 rounded-full transition-all duration-300 ${
-                index === activeIndex ? "w-7 bg-[#ff8065]" : "w-1.5 bg-white/25"
-              }`}
-            />
-          ))}
-        </div>
-      </div>
+      <p aria-live="polite" className="sr-only">
+        {sessionMessage}
+      </p>
 
       <PreviewChatPanel
         key={chatCard?.id ?? "chat-closed"}

@@ -7,8 +7,6 @@ export type PreviewCardType = "explain" | "single_choice" | "multiple_answer"
 export type PreviewCardData = {
   id: string
   type: PreviewCardType
-  label: string
-  eyebrow: string
   title: string
   body?: string
   question?: string
@@ -24,21 +22,14 @@ export const previewCards: PreviewCardData[] = [
   {
     id: "room-treatment",
     type: "explain",
-    label: "Explain",
-    eyebrow: "01 · Start with the room",
     title: "A good mix begins before you touch the EQ.",
-    body: "Room reflections can make a sound feel louder or brighter than it really is. Softening the earliest reflections gives your ears a steadier reference, so later decisions stay intentional.",
-    answer:
-      "Treat the first reflection points and keep the listening position consistent. You are making the monitoring signal more trustworthy, not trying to make the room completely dead.",
+    body: "Treat the first reflection points to make your monitoring reference more trustworthy.",
     sourceLabel: "Example · Sound design notes",
   },
   {
     id: "transient-choice",
     type: "single_choice",
-    label: "Single choice",
-    eyebrow: "02 · Shape a transient",
     title: "Which move keeps a kick's attack crisp?",
-    question: "Choose the first move you would try on a crowded low end.",
     options: [
       "Use a short attack on compression",
       "Use a longer attack on compression",
@@ -52,11 +43,8 @@ export const previewCards: PreviewCardData[] = [
   {
     id: "space-moves",
     type: "multiple_answer",
-    label: "Multiple answer",
-    eyebrow: "03 · Create depth",
     title: "Which moves can push a sound further back?",
-    question:
-      "Select every choice that contributes to a more distant impression.",
+    question: "Select all that apply.",
     options: [
       "Roll off some high frequencies",
       "Add a little early reflection",

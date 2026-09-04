@@ -10,12 +10,11 @@ import {
   Dialog,
   DialogClose,
   DialogContent,
-  DialogDescription,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Textarea } from "@/components/ui/textarea"
-import { CancelIcon, SparklesIcon } from "@/components/ui/icon"
+import { CancelIcon } from "@/components/ui/icon"
 
 /** Props controlling the attached-card chat panel. */
 type PreviewChatPanelProps = {
@@ -44,23 +43,16 @@ export function PreviewChatPanel({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         showCloseButton={false}
+        aria-describedby={undefined}
         className="!top-auto !right-0 !bottom-0 !left-0 !h-auto !max-w-none !translate-x-0 !translate-y-0 !gap-0 !rounded-t-[28px] !rounded-b-none border-white/10 bg-[#151515] p-0 text-white shadow-2xl shadow-black/45 sm:!top-0 sm:!bottom-auto sm:!left-auto sm:!h-full sm:!max-w-md sm:!rounded-t-none sm:!rounded-l-[28px]"
       >
         <div className="flex max-h-[88svh] flex-col sm:h-full sm:max-h-none">
           <DialogHeader className="border-b border-white/10 px-5 pt-5 pb-5 sm:px-7 sm:pt-7">
             <div className="flex items-start justify-between gap-5">
               <div>
-                <p className="mb-3 flex items-center gap-2 text-xs font-medium tracking-[0.12em] text-[#ff9b86] uppercase">
-                  <SparklesIcon aria-hidden="true" className="size-4" />
-                  Attached card
-                </p>
                 <DialogTitle className="font-sans text-xl tracking-[-0.03em] text-white">
                   Ask about this idea
                 </DialogTitle>
-                <DialogDescription className="mt-2 text-sm leading-relaxed text-white/48">
-                  This is a preview interaction. Your message stays on this
-                  device and no AI reply is generated.
-                </DialogDescription>
               </div>
               <DialogClose asChild>
                 <Button
@@ -78,9 +70,7 @@ export function PreviewChatPanel({
 
           {card ? (
             <div className="mx-5 mt-5 rounded-2xl border border-white/10 bg-white/[0.045] p-4 sm:mx-7 sm:mt-7">
-              <p className="text-[11px] font-medium tracking-[0.12em] text-white/38 uppercase">
-                {card.label} · example content
-              </p>
+              <p className="text-xs text-white/45">{card.sourceLabel}</p>
               <p className="mt-2 line-clamp-3 text-sm leading-relaxed text-white/80">
                 {card.title}
               </p>
@@ -114,8 +104,8 @@ export function PreviewChatPanel({
                 className="text-xs leading-relaxed text-white/42"
               >
                 {submitted
-                  ? "Preview only · message not sent."
-                  : "No response will appear in this checkpoint."}
+                  ? "Preview: message not sent."
+                  : "AI replies are unavailable in this preview."}
               </p>
               <Button
                 type="submit"

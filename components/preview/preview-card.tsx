@@ -6,43 +6,19 @@ import { useState } from "react"
 
 import type { PreviewCardData } from "@/components/preview/preview-data"
 import { Button } from "@/components/ui/button"
-import {
-  BulbLineIcon,
-  CheckCircleIcon,
-  CheckIcon,
-  HelpIcon,
-  SparklesIcon,
-} from "@/components/ui/icon"
+import { CheckIcon } from "@/components/ui/icon"
 import { cn } from "@/lib/utils"
 
 /** Props needed to render and navigate one fixture card. */
 type PreviewCardProps = {
   card: PreviewCardData
   index: number
-  total: number
   onAsk: (card: PreviewCardData) => void
   onSkip: (index: number) => void
 }
 
-/** Returns the icon associated with a preview card format. */
-function CardIcon({ type }: { type: PreviewCardData["type"] }) {
-  if (type === "explain") {
-    return <BulbLineIcon aria-hidden="true" className="size-5" />
-  }
-  if (type === "single_choice") {
-    return <HelpIcon aria-hidden="true" className="size-5" />
-  }
-  return <CheckCircleIcon aria-hidden="true" className="size-5" />
-}
-
 /** Presents explanation, single-choice, and multiple-answer interactions. */
-export function PreviewCard({
-  card,
-  index,
-  total,
-  onAsk,
-  onSkip,
-}: PreviewCardProps) {
+export function PreviewCard({ card, index, onAsk, onSkip }: PreviewCardProps) {
   const [selected, setSelected] = useState<number | null>(null)
   const [selectedMany, setSelectedMany] = useState<number[]>([])
   const [submitted, setSubmitted] = useState(false)
@@ -78,24 +54,6 @@ export function PreviewCard({
   return (
     <article className="flex h-svh snap-start items-center px-4 pt-28 pb-10 sm:px-8 sm:pt-24 sm:pb-8">
       <div className="mx-auto flex max-h-full min-h-0 w-full max-w-[680px] [scrollbar-width:none] flex-col overflow-y-auto [&::-webkit-scrollbar]:hidden">
-        <div className="mb-7 flex items-center justify-between gap-4 text-[11px] font-medium tracking-[0.16em] text-white/55 uppercase sm:mb-5">
-          <span>{card.eyebrow}</span>
-          <span className="shrink-0 tabular-nums">
-            {String(index + 1).padStart(2, "0")} /{" "}
-            {String(total).padStart(2, "0")}
-          </span>
-        </div>
-
-        <div className="mb-7 flex items-center gap-3 text-sm text-[#ff8065] sm:mb-5">
-          <span className="flex size-9 items-center justify-center rounded-xl bg-[#ff8065]/12 ring-1 ring-[#ff8065]/18">
-            <CardIcon type={card.type} />
-          </span>
-          <span className="font-medium">{card.label}</span>
-          <span className="ml-auto text-xs text-white/55">
-            {card.sourceLabel}
-          </span>
-        </div>
-
         <h2 className="max-w-[620px] text-[clamp(2rem,7vw,3.75rem)] leading-[0.99] font-medium tracking-[-0.045em] text-white sm:text-[clamp(2rem,5vw,2.5rem)]">
           {card.title}
         </h2>
@@ -116,7 +74,9 @@ export function PreviewCard({
           <div
             className="mt-6 space-y-2.5 sm:mt-5"
             role={isSingleChoice ? "radiogroup" : "group"}
-            aria-label={`${card.label} answers`}
+            aria-label={
+              isMultipleAnswer ? "Select all that apply" : "Answer options"
+            }
           >
             {(card.options ?? []).map((option, optionIndex) => {
               const isSelected = isSingleChoice
@@ -190,17 +150,8 @@ export function PreviewCard({
           <FeedbackMessage correct={isManyCorrect} answer={card.answer} />
         ) : null}
 
-        {card.answer && card.type === "explain" ? (
-          <div className="mt-7 rounded-2xl border border-white/10 bg-[#151515] p-5 text-sm leading-relaxed text-white/66 sm:mt-5 sm:p-6 sm:text-base">
-            <div className="mb-3 flex items-center gap-2 text-xs font-medium tracking-[0.12em] text-[#ff9b86] uppercase">
-              <SparklesIcon aria-hidden="true" className="size-4" />
-              Key idea
-            </div>
-            {card.answer}
-          </div>
-        ) : null}
-
-        <div className="mt-8 flex flex-wrap items-center gap-3 sm:mt-6">
+        <p className="mt-6 text-xs text-white/55">{card.sourceLabel}</p>
+        <div className="mt-5 flex flex-wrap items-center gap-3">
           {isMultipleAnswer ? (
             <Button
               type="button"
@@ -249,9 +200,7 @@ function FeedbackMessage({
           correct ? "text-emerald-300" : "text-red-300"
         )}
       >
-        {correct
-          ? "Correct. Nice read."
-          : "Not quite. Try the highlighted answer."}
+        {correct ? "Correct" : "Not quite"}
       </p>
       {answer ? (
         <p className="text-sm leading-relaxed text-white/52">{answer}</p>

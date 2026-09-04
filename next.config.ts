@@ -6,9 +6,10 @@ import type { NextConfig } from "next"
 const nextConfig: NextConfig = {
   // Keep the development badge from covering the full-screen feed controls.
   devIndicators: false,
-  allowedDevOrigins: process.env.BLITZ_LAN_ADDRESS
-    ? [process.env.BLITZ_LAN_ADDRESS]
-    : [],
+  allowedDevOrigins: [
+    "127.0.0.1",
+    ...(process.env.BLITZ_LAN_ADDRESS ? [process.env.BLITZ_LAN_ADDRESS] : []),
+  ],
 }
 
 export default nextConfig
