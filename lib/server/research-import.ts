@@ -1,5 +1,6 @@
 /** Fetches one approved research source through the bounded public-source boundary. */
 
+import { SourceIngestionError } from "./source-ingestion/errors.ts"
 import { fetchPublicSource } from "./source-ingestion/url.ts"
 import {
   extractDownloadedSource,
@@ -21,6 +22,16 @@ export async function fetchApprovedResearchSource(
     timeoutMs: 20_000,
     maxRedirects: 3,
   })
+  const approvedPath = new URL(url).pathname.replace(/\/+$/, "")
+  const downloadedPath = new URL(response.url).pathname.replace(/\/+$/, "")
+  // Missing articles often redirect to a site's homepage with a successful HTTP status.
+  // Importing that page would silently teach unrelated navigation and news instead.
+  if (approvedPath && !downloadedPath)
+    throw new SourceIngestionError(
+      "invalid-input",
+      "The approved article redirected to the site homepage",
+      { reason: "redirected-to-homepage" }
+    )
   const extracted = await extractDownloadedSource({
     bytes: response.bytes,
     contentType: response.contentType,

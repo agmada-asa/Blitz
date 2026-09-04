@@ -23,6 +23,7 @@ export function classifyResearchImportFailure(
   error: unknown
 ): ResearchImportFailureCategory {
   if (!(error instanceof SourceIngestionError)) return "download-failed"
+  if (error.context.reason === "redirected-to-homepage") return "not-found"
   if (error.code === "url-fetch-failed") {
     const status = error.context.status
     if (status === 401 || status === 403) return "site-refused"
