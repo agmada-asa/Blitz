@@ -9,6 +9,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "test": "node --test --experimental-strip-types tests/*.test.ts",
     "format": "prettier --write \"**/*.{js,mjs,ts,tsx}\"",
     "typecheck": "tsc --noEmit"
   },
