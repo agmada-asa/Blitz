@@ -2,7 +2,7 @@
 
 /** Connects a project route to its sources, generation controls, and study action. */
 
-import { useMutation, useQuery } from "convex/react"
+import { useMutation, usePaginatedQuery, useQuery } from "convex/react"
 import Link from "next/link"
 import { use, useState } from "react"
 
@@ -32,18 +32,24 @@ export default function ProjectPage({
   const project = useQuery(api.projects.getProject, {
     projectId: convexProjectId,
   })
-  const sources = useQuery(api.sources.listSources, {
-    projectId: convexProjectId,
-  })
+  const {
+    results: sources,
+    status: sourcesStatus,
+    loadMore: loadMoreSources,
+  } = usePaginatedQuery(
+    api.sources.listSources,
+    {
+      projectId: convexProjectId,
+    },
+    { initialNumItems: 20 }
+  )
   const createSource = useMutation(api.sources.createSource)
   const updateSource = useMutation(api.sources.updateSource)
   const enqueue = useMutation(api.preparation.enqueue)
   const retryPreparation = useMutation(api.preparation.retry)
-  const preparationJobs = useQuery(api.preparation.listJobsForProject, {
+  const hasLearningItems = useQuery(api.learning.hasLearningItems, {
     projectId: convexProjectId,
   })
-  const hasPreparedSource =
-    preparationJobs?.some((job) => job.nextChunkOrdinal > 0) ?? false
 
   if (project === undefined) return <ProjectLoadingState />
   if (project === null) return <ProjectNotFoundState />
@@ -65,7 +71,7 @@ export default function ProjectPage({
         </div>
         <div className="flex flex-wrap gap-2">
           <ResearchPanel key={projectId} projectId={projectId} />
-          {hasPreparedSource ? (
+          {hasLearningItems ? (
             <>
               <Button asChild variant="outline" className="rounded-full">
                 <Link
@@ -104,7 +110,7 @@ export default function ProjectPage({
         <div className="mb-4 flex items-center justify-between">
           <h2 className="font-heading text-2xl">Sources</h2>
         </div>
-        {sources === undefined ? (
+        {sourcesStatus === "LoadingFirstPage" ? (
           <SourcesLoadingState />
         ) : !sources.length ? (
           <div className="rounded-xl border border-dashed p-8 text-center text-sm text-muted-foreground">
@@ -117,15 +123,26 @@ export default function ProjectPage({
               <SourceRow
                 key={source._id}
                 source={source}
-                job={preparationJobs?.find(
-                  (candidate) => candidate.sourceId === source._id
-                )}
+                projectId={convexProjectId}
                 retryPreparation={retryPreparation}
                 prepareSource={() =>
                   enqueue({ projectId: convexProjectId, sourceId: source._id })
                 }
               />
             ))}
+            {sourcesStatus === "CanLoadMore" ||
+            sourcesStatus === "LoadingMore" ? (
+              <Button
+                variant="outline"
+                className="w-full"
+                disabled={sourcesStatus === "LoadingMore"}
+                onClick={() => loadMoreSources(20)}
+              >
+                {sourcesStatus === "LoadingMore"
+                  ? "Loading sources…"
+                  : "Load more sources"}
+              </Button>
+            ) : null}
           </div>
         )}
       </section>
@@ -143,30 +160,25 @@ type SourceRowData = {
   error?: string
 }
 
-/** Persisted preparation progress associated with a source. */
-type PreparationJobData = {
-  jobId: Id<"preparationJobs">
-  sourceId: Id<"sources">
-  status: "queued" | "leased" | "failed" | "completed"
-  nextChunkOrdinal: number
-  totalChunks: number | null
-  error: string | null
-}
-
 /** Renders persisted source state plus live preparation progress when known. */
 function SourceRow({
   source,
-  job,
+  projectId,
   retryPreparation,
   prepareSource,
 }: {
   source: SourceRowData
-  job?: PreparationJobData
+  projectId: Id<"projects">
   prepareSource: () => Promise<unknown>
   retryPreparation: (input: {
     jobId: Id<"preparationJobs">
   }) => Promise<unknown>
 }) {
+  const jobs = useQuery(api.preparation.listJobsForProject, {
+    projectId,
+    sourceIds: [source._id],
+  })
+  const job = jobs?.[0]
   const preparationFailed = job?.status === "failed"
   const preparationComplete = job?.status === "completed"
   const status = preparationFailed

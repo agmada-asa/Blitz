@@ -1,5 +1,6 @@
 /** Persists extracted sources and tracks their generation lifecycle. */
 
+import { paginationOptsValidator } from "convex/server"
 import { mutation, query } from "./_generated/server"
 import { v } from "convex/values"
 
@@ -17,22 +18,30 @@ const sourceStatus = v.union(
   v.literal("failed")
 )
 
-/** Lists every source attached to a project, newest first. */
+/** Lists a bounded page of source metadata attached to a project, newest first. */
 export const listSources = query({
-  args: { projectId: v.id("projects") },
+  args: {
+    projectId: v.id("projects"),
+    paginationOpts: paginationOptsValidator,
+  },
   handler: async (ctx, args) => {
-    const sources = await ctx.db
+    if (args.paginationOpts.numItems > 20)
+      throw new Error("Source pages may contain at most 20 items")
+    const page = await ctx.db
       .query("sources")
       .withIndex("by_project", (q) => q.eq("projectId", args.projectId))
       .order("desc")
-      .collect()
+      .paginate(args.paginationOpts)
 
-    return sources.map((source) => {
-      // The project view needs status and summaries, not the original upload.
-      return Object.fromEntries(
-        Object.entries(source).filter(([key]) => key !== "extractedText")
-      ) as Omit<typeof source, "extractedText">
-    })
+    return {
+      ...page,
+      page: page.page.map((source) => {
+        // The project view needs status and summaries, not the original upload.
+        return Object.fromEntries(
+          Object.entries(source).filter(([key]) => key !== "extractedText")
+        ) as Omit<typeof source, "extractedText">
+      }),
+    }
   },
 })
 

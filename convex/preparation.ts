@@ -459,12 +459,27 @@ export const getJob = query({
 
 /** Lists preparation jobs for a project so source progress survives page reloads. */
 export const listJobsForProject = query({
-  args: { projectId: v.id("projects") },
+  args: {
+    projectId: v.id("projects"),
+    sourceIds: v.optional(v.array(v.id("sources"))),
+  },
   handler: async (ctx, args) => {
-    const jobs = await ctx.db
-      .query("preparationJobs")
-      .withIndex("by_project_source", (q) => q.eq("projectId", args.projectId))
-      .collect()
+    const sourceIds = args.sourceIds ?? []
+    if (sourceIds.length > 20)
+      throw new Error("Job status may include at most 20 sources")
+    const jobs = (
+      await Promise.all(
+        sourceIds.map((sourceId) =>
+          ctx.db
+            .query("preparationJobs")
+            .withIndex("by_project_source", (q) =>
+              q.eq("projectId", args.projectId).eq("sourceId", sourceId)
+            )
+            .order("desc")
+            .first()
+        )
+      )
+    ).filter((job): job is NonNullable<typeof job> => job !== null)
     return jobs.map((job) => ({
       ...progressFor(job),
       sourceId: job.sourceId,

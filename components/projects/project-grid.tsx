@@ -20,8 +20,6 @@ import { Skeleton } from "@/components/ui/skeleton"
 type Project = {
   _id: string
   title: string
-  itemCount?: number
-  sourceCount?: number
 }
 
 /** Props required to render the project library and create a project. */
@@ -124,14 +122,6 @@ export function ProjectGrid({ projects, onCreate }: ProjectGridProps) {
                     <span className="min-w-0">
                       <span className="block truncate text-base font-medium tracking-[-0.015em] text-white">
                         {project.title}
-                      </span>
-                      <span className="mt-1 block text-sm text-white/50">
-                        {project.sourceCount === 0
-                          ? "No sources yet"
-                          : `${project.sourceCount} ${project.sourceCount === 1 ? "source" : "sources"}`}
-                        {project.itemCount
-                          ? ` · ${project.itemCount} ${project.itemCount === 1 ? "item" : "items"}`
-                          : ""}
                       </span>
                     </span>
                     <ArrowUpRightIcon

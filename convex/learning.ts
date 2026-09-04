@@ -33,6 +33,18 @@ const learningItemType = v.union(
   v.literal("true-false")
 )
 
+/** Reports whether a project has any persisted learning items for its actions. */
+export const hasLearningItems = query({
+  args: { projectId: v.id("projects") },
+  handler: async (ctx, args) => {
+    const item = await ctx.db
+      .query("learningItems")
+      .withIndex("by_project_order", (q) => q.eq("projectId", args.projectId))
+      .first()
+    return item !== null
+  },
+})
+
 /** Choice option payload accepted by learning-item insertion. */
 const option = v.object({ id: v.string(), text: v.string() })
 
