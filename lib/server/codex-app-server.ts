@@ -73,6 +73,9 @@ export type CodexApprovalDecision =
 export type CodexSandboxMode =
   "read-only" | "workspace-write" | "danger-full-access"
 
+/** Hosted web-search mode passed to one app-server process. */
+export type CodexWebSearchMode = "cached" | "indexed" | "live" | "disabled"
+
 /** Permission response accepted by the current v2 protocol. */
 export interface CodexPermissionApprovalResponse {
   /** Explicitly granted filesystem and network permissions. */
@@ -137,6 +140,8 @@ export interface CodexAppServerOptions {
   workspaceDirectory: string
   /** Optional executable override for controlled local integration tests. */
   executable?: string
+  /** Optional process-scoped hosted search mode; omitted preserves current defaults. */
+  webSearchMode?: CodexWebSearchMode
   /** Client metadata sent in the required initialize handshake. */
   clientInfo?: {
     name?: string
@@ -154,7 +159,10 @@ export interface CodexAppServerOptions {
   /** Optional approval handler; absent handlers explicitly decline approvals. */
   approvalHandler?: CodexApprovalHandler
   /** Injectable process factory for tests; production uses `codex app-server`. */
-  spawnProcess?: (workspaceDirectory: string) => CodexChildProcess
+  spawnProcess?: (
+    workspaceDirectory: string,
+    args?: readonly string[]
+  ) => CodexChildProcess
 }
 
 /** Base error for transport and app-server failures. */
@@ -261,9 +269,13 @@ export interface CodexTurnResponse {
 /** Factory type used to start the real local Codex process. */
 function defaultSpawnProcess(
   executable: string,
-  workspaceDirectory: string
+  workspaceDirectory: string,
+  webSearchMode?: CodexWebSearchMode
 ): CodexChildProcess {
-  return spawn(executable, ["app-server", "--listen", "stdio://"], {
+  const args = ["app-server", "--listen", "stdio://"]
+  if (webSearchMode !== undefined)
+    args.push("-c", `web_search=\"${webSearchMode}\"`)
+  return spawn(executable, args, {
     cwd: workspaceDirectory,
     stdio: ["pipe", "pipe", "pipe"],
   }) as unknown as CodexChildProcess
@@ -286,6 +298,12 @@ function validateWorkspaceDirectory(workspaceDirectory: string): string {
 /** Validates all bounded options before a child process can be created. */
 function validateOptions(options: CodexAppServerOptions): void {
   validateWorkspaceDirectory(options.workspaceDirectory)
+  if (
+    options.webSearchMode !== undefined &&
+    !["cached", "indexed", "live", "disabled"].includes(options.webSearchMode)
+  ) {
+    throw new CodexAppServerError("Codex webSearchMode is invalid")
+  }
   const bounds = [
     ["requestTimeoutMs", options.requestTimeoutMs],
     ["maxLineBytes", options.maxLineBytes],
@@ -375,8 +393,19 @@ export class CodexAppServerClient {
     )
     const executable = options.executable ?? "codex"
     const child = options.spawnProcess
-      ? options.spawnProcess(workspaceDirectory)
-      : defaultSpawnProcess(executable, workspaceDirectory)
+      ? options.spawnProcess(workspaceDirectory, [
+          "app-server",
+          "--listen",
+          "stdio://",
+          ...(options.webSearchMode === undefined
+            ? []
+            : ["-c", `web_search=\"${options.webSearchMode}\"`]),
+        ])
+      : defaultSpawnProcess(
+          executable,
+          workspaceDirectory,
+          options.webSearchMode
+        )
     const client = new CodexAppServerClient(child, options)
     try {
       await client.initialize(options.clientInfo)

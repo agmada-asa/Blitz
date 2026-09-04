@@ -101,11 +101,54 @@ test("research worker validates and completes one leased proposal", async () => 
       queue,
       workerId: "worker-1",
       workspaceDirectory: workspace,
-      runTurn: async () => ({ text: JSON.stringify(validProposal()) }),
+      runTurn: async (_prompt, turnOptions) => {
+        turnOptions.onEvent?.({
+          type: "activity",
+          notification: {
+            method: "item/completed",
+            params: { item: { type: "webSearch" } },
+          },
+        })
+        return { text: JSON.stringify(validProposal()) }
+      },
     })
     assert.equal(result.status, "ready")
     assert.equal(completed.length, 1)
     assert.equal(failed.length, 0)
+  } finally {
+    await rm(workspace, { recursive: true, force: true })
+  }
+})
+
+test("research worker rejects sources when hosted search was not observed", async () => {
+  const failed: unknown[] = []
+  const queue: ResearchProposalQueue = {
+    claimNext: async () => ({
+      proposalId: "proposal-no-search",
+      projectId: "project-1",
+      requestId: "request-1",
+      request: "help me learn sound design",
+      leaseToken: "lease-1",
+    }),
+    complete: async () => {
+      throw new Error("unexpected completion")
+    },
+    fail: async (value) => {
+      failed.push(value)
+    },
+  }
+  const workspace = await mkdtemp(
+    join(tmpdir(), "blitz-research-worker-no-search-")
+  )
+  try {
+    const result = await runResearchProposalStep({
+      queue,
+      workerId: "worker-1",
+      workspaceDirectory: workspace,
+      runTurn: async () => ({ text: JSON.stringify(validProposal()) }),
+    })
+    assert.equal(result.status, "failed")
+    assert.equal(failed.length, 1)
   } finally {
     await rm(workspace, { recursive: true, force: true })
   }

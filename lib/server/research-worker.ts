@@ -132,15 +132,35 @@ export async function runResearchProposalStep(
             signal: turnOptions.signal,
             timeoutMs: 120_000,
             ephemeral: true,
+            webSearchMode: "live",
             model:
               options.model ?? process.env.BLITZ_CODEX_MODEL ?? "gpt-5.6-luna",
             ...(options.effort === undefined ? {} : { effort: options.effort }),
           },
           { onEvent: turnOptions.onEvent }
         ))
+    let webSearchCount = 0
+    /** Records hosted search completion events while preserving caller activity. */
+    const handleTurnEvent = (event: CardChatEvent): void => {
+      if (
+        event.type === "activity" &&
+        "notification" in event &&
+        event.notification.method === "item/completed" &&
+        typeof event.notification.params === "object" &&
+        event.notification.params !== null &&
+        !Array.isArray(event.notification.params) &&
+        typeof (event.notification.params as { item?: unknown }).item ===
+          "object" &&
+        (event.notification.params as { item?: { type?: unknown } }).item
+          ?.type === "webSearch"
+      ) {
+        webSearchCount += 1
+      }
+      options.onEvent?.(event)
+    }
     const result = await runTurn(prompt, {
       signal: options.signal,
-      onEvent: options.onEvent,
+      onEvent: handleTurnEvent,
     })
     options.signal?.throwIfAborted()
     let proposal: ResearchProposal
@@ -155,10 +175,16 @@ export async function runResearchProposalStep(
       // Repair malformed model JSON once; transport failures remain non-retryable here.
       const repaired = await runTurn(buildRepairPrompt(prompt, error), {
         signal: options.signal,
-        onEvent: options.onEvent,
+        onEvent: handleTurnEvent,
       })
       options.signal?.throwIfAborted()
       proposal = parseResearchProposal(repaired.text)
+    }
+    if (proposal.sources.length > 0 && webSearchCount === 0) {
+      throw new ResearchProposalError(
+        "invalid-output",
+        "Research proposal contained sources without a hosted web search"
+      )
     }
     await options.queue.complete({
       proposalId: claim.proposalId,

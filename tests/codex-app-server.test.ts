@@ -164,6 +164,28 @@ test("performs the handshake, correlates out-of-order replies, and uses the supp
   }
 })
 
+test("forwards a process-scoped hosted web-search mode to the executable", async () => {
+  const process = new FakeProcess()
+  let args: readonly string[] | undefined
+  const client = await CodexAppServerClient.connect({
+    workspaceDirectory: "/tmp/blitz-owned-workspace",
+    webSearchMode: "live",
+    spawnProcess: (_directory, receivedArgs) => {
+      args = receivedArgs
+      queueMicrotask(() => initialize(process))
+      return process
+    },
+  })
+  await client.close()
+  assert.deepEqual(args, [
+    "app-server",
+    "--listen",
+    "stdio://",
+    "-c",
+    'web_search="live"',
+  ])
+})
+
 test("preserves UTF-8 characters split across stdout chunks", async () => {
   const process = new FakeProcess()
   const client = await CodexAppServerClient.connect({

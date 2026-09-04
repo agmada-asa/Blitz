@@ -17,6 +17,7 @@ import {
   type CodexThreadResponse,
   type CodexTurn,
   type CodexTurnResponse,
+  type CodexWebSearchMode,
 } from "./codex-app-server.ts"
 
 /** Maximum question size accepted by the card chat boundary. */
@@ -93,6 +94,8 @@ export interface CodexTextTurnRequest {
   readonly model?: string
   /** Optional reasoning effort override; omitted to preserve configuration. */
   readonly effort?: string
+  /** Optional process-scoped hosted search mode for this turn. */
+  readonly webSearchMode?: CodexWebSearchMode
   /** Existing persistent Codex thread to resume, when available. */
   readonly threadId?: string
   /** Caller cancellation signal. */
@@ -220,6 +223,7 @@ export interface CardChatTransport {
 export type CardChatTransportFactory = (options: {
   workspaceDirectory: string
   signal?: AbortSignal
+  webSearchMode?: CodexWebSearchMode
 }) => CardChatTransport | Promise<CardChatTransport>
 
 /** Options controlling event delivery and local transport construction. */
@@ -402,6 +406,9 @@ export async function runCodexTextTurn(
     ((transportOptions) =>
       CodexAppServerClient.connect({
         workspaceDirectory: transportOptions.workspaceDirectory,
+        ...(transportOptions.webSearchMode === undefined
+          ? {}
+          : { webSearchMode: transportOptions.webSearchMode }),
       }))
   const emit = options.onEvent ?? (() => {})
   let client: CardChatTransport | undefined
@@ -620,6 +627,9 @@ export async function runCodexTextTurn(
       createTransport({
         workspaceDirectory: request.workspaceDirectory,
         signal: request.signal,
+        ...(request.webSearchMode === undefined
+          ? {}
+          : { webSearchMode: request.webSearchMode }),
       })
     )
     lateClient
