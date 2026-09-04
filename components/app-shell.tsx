@@ -30,6 +30,8 @@ type NavLink = {
 /** Renders desktop and mobile navigation and tracks desktop collapse state. */
 export function AppShell({ children }: AppShellProps) {
   const pathname = usePathname()
+  const isPreviewRoute =
+    pathname === "/preview" || pathname.startsWith("/preview/")
   const [collapsed, setCollapsed] = useState(false)
   const isStudyRoute = pathname.endsWith("/study")
   const projectId = pathname.match(/^\/projects\/([^/]+)/)?.[1]
@@ -56,6 +58,10 @@ export function AppShell({ children }: AppShellProps) {
       active: isStudyRoute,
     },
   ]
+
+  if (isPreviewRoute) {
+    return <>{children}</>
+  }
 
   return (
     <div className="min-h-svh bg-background text-foreground">
