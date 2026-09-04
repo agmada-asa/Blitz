@@ -1,0 +1,61 @@
+# Source preparation queue
+
+`convex/preparation.ts` provides a small queue for the local Mac worker. The
+queue only prepares an existing source. `enqueue` snapshots its extracted text,
+filename, and kind, so a worker can finish the same input even if a future
+import changes. Snapshots are bounded at 120,000 characters, matching the
+current source limit.
+
+The worker flow is:
+
+1. Call `enqueue({ projectId, sourceId })`. Repeating the call returns the
+   existing job for that project and source.
+2. Call `claimNext({ workerId, leaseToken })`. The oldest queued job, or a job
+   whose lease expired, is leased for five minutes. Repeating the call with the
+   same live worker and token returns the same lease.
+3. Split the returned source snapshot locally, generate one chunk at a time,
+   and call `commitChunk` with the expected ordinal, stable chunk ID, total
+   chunk count, and the validated generation batch.
+4. Each commit clears its lease and requeues the remaining work. Claim again to
+   continue from `nextChunk.ordinal`. A final chunk marks the job completed.
+
+`commitChunk` validates the batch with the shared portable generation schema.
+Every item must point to the current chunk ID. It then creates the batch's
+topics, concepts, and source-linked learning items in one mutation and records
+the chunk checkpoint. Learning items keep `sourceChunkId` and
+`sourceChunkOrdinal` for precise attribution.
+
+Matching topic titles within a project are reused. Matching concept titles in
+the same topic are also reused, adding the current source to their references.
+This keeps repeated chunks from splitting one concept's review history.
+
+If a worker loses the response after a successful commit, repeating the same
+commit for that ordinal and chunk ID returns the existing progress without
+creating duplicate content. A different chunk ID, total count, ordinal, or
+lease token is rejected. A stale worker cannot commit after another worker has
+claimed the expired lease.
+
+Already-committed checkpoints can be read back with a previous token. They do
+not write anything; new commits always require the current live lease.
+
+`failJob` records a bounded safe error and clears the lease. `retry` puts a
+failed or expired job back in the queue without discarding completed chunk
+checkpoints. There is no multi-user authorization layer in this first personal
+deployment, and the queue does not expose agent execution or network access.
+The local worker owns source splitting and generation timeouts; the queue only
+stores snapshots, validates batches, and persists bounded results.
+
+## Running the Mac worker
+
+Run `npm run worker` alongside the local Convex and web servers. It reads the
+existing `.env.local`, claims one chunk at a time, generates through the local
+Codex app-server, and commits only validated output. `npm run worker -- --once`
+processes one available chunk and exits. `BLITZ_CONVEX_URL` overrides the data
+endpoint; `BLITZ_CODEX_MODEL` overrides the default Luna model.
+
+Each generation uses a private temporary directory and an ephemeral Codex
+thread. The worker removes that directory after the turn. It never changes the
+repository through model tools. Interrupting the worker preserves committed
+chunks, and a failed job can be retried from its saved ordinal. The current
+source snapshot limit is 120,000 characters per file; larger source storage is
+separate work even though normalization itself accepts larger text.

@@ -87,6 +87,7 @@ export default defineSchema({
     createdAt: v.number(),
   })
     .index("by_project", ["projectId"])
+    .index("by_project_title", ["projectId", "title"])
     .index("by_project_parent", ["projectId", "parentTopicId"]),
 
   concepts: defineTable({
@@ -97,6 +98,7 @@ export default defineSchema({
     createdAt: v.number(),
   })
     .index("by_project", ["projectId"])
+    .index("by_project_title", ["projectId", "title"])
     .index("by_project_topic", ["projectId", "topicId"]),
 
   learningItems: defineTable({
@@ -111,6 +113,8 @@ export default defineSchema({
     correctOptionId: v.optional(v.string()),
     correctOptionIds: v.optional(v.array(v.string())),
     correctAnswer: v.optional(v.boolean()),
+    sourceChunkId: v.optional(v.id("preparationChunks")),
+    sourceChunkOrdinal: v.optional(v.number()),
     order: v.number(),
     createdAt: v.number(),
   })
@@ -157,4 +161,46 @@ export default defineSchema({
   })
     .index("by_project_concept", ["projectId", "conceptId"])
     .index("by_project_dueAt", ["projectId", "dueAt"]),
+
+  preparationJobs: defineTable({
+    projectId: v.id("projects"),
+    sourceId: v.id("sources"),
+    sourceTextSnapshot: v.string(),
+    sourceFilename: v.string(),
+    sourceKind: v.union(
+      v.literal("pdf"),
+      v.literal("markdown"),
+      v.literal("text"),
+      v.literal("paste")
+    ),
+    status: v.union(
+      v.literal("queued"),
+      v.literal("leased"),
+      v.literal("failed"),
+      v.literal("completed")
+    ),
+    nextChunkOrdinal: v.number(),
+    totalChunks: v.optional(v.number()),
+    workerId: v.optional(v.string()),
+    leaseToken: v.optional(v.string()),
+    leaseExpiresAt: v.optional(v.number()),
+    attemptCount: v.number(),
+    lastError: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_project_source", ["projectId", "sourceId"])
+    .index("by_status_createdAt", ["status", "createdAt"])
+    .index("by_leaseToken", ["leaseToken"]),
+
+  preparationChunks: defineTable({
+    jobId: v.id("preparationJobs"),
+    sourceId: v.id("sources"),
+    ordinal: v.number(),
+    chunkId: v.string(),
+    totalChunks: v.number(),
+    createdAt: v.number(),
+  })
+    .index("by_job_ordinal", ["jobId", "ordinal"])
+    .index("by_job_chunkId", ["jobId", "chunkId"]),
 })
