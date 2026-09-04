@@ -11,6 +11,20 @@ const cardType = v.union(
   v.literal("connection")
 )
 
+/** Question formats stored in the new learning-item table. */
+const learningItemType = v.union(
+  v.literal("explain"),
+  v.literal("single-choice"),
+  v.literal("multiple-answer"),
+  v.literal("true-false")
+)
+
+/** Stable option payload shared by choice learning items. */
+const learningOption = v.object({
+  id: v.string(),
+  text: v.string(),
+})
+
 /** Convex schema for projects, uploaded sources, generated cards, and attempts. */
 export default defineSchema({
   projects: defineTable({
@@ -65,4 +79,82 @@ export default defineSchema({
     .index("by_project", ["projectId"])
     .index("by_project_card", ["projectId", "cardId"])
     .index("by_card_createdAt", ["cardId", "createdAt"]),
+
+  topics: defineTable({
+    projectId: v.id("projects"),
+    parentTopicId: v.optional(v.id("topics")),
+    title: v.string(),
+    createdAt: v.number(),
+  })
+    .index("by_project", ["projectId"])
+    .index("by_project_parent", ["projectId", "parentTopicId"]),
+
+  concepts: defineTable({
+    projectId: v.id("projects"),
+    topicId: v.optional(v.id("topics")),
+    title: v.string(),
+    sourceIds: v.array(v.id("sources")),
+    createdAt: v.number(),
+  })
+    .index("by_project", ["projectId"])
+    .index("by_project_topic", ["projectId", "topicId"]),
+
+  learningItems: defineTable({
+    projectId: v.id("projects"),
+    conceptId: v.id("concepts"),
+    sourceIds: v.array(v.id("sources")),
+    type: learningItemType,
+    title: v.string(),
+    body: v.string(),
+    question: v.optional(v.string()),
+    options: v.optional(v.array(learningOption)),
+    correctOptionId: v.optional(v.string()),
+    correctOptionIds: v.optional(v.array(v.string())),
+    correctAnswer: v.optional(v.boolean()),
+    order: v.number(),
+    createdAt: v.number(),
+  })
+    .index("by_project_order", ["projectId", "order"])
+    .index("by_project_concept_order", ["projectId", "conceptId", "order"])
+    .index("by_concept_order", ["conceptId", "order"]),
+
+  studyEvents: defineTable({
+    clientEventId: v.string(),
+    itemId: v.id("learningItems"),
+    conceptId: v.id("concepts"),
+    projectId: v.id("projects"),
+    occurredAt: v.number(),
+    receivedAt: v.number(),
+    eventType: v.union(
+      v.literal("answer"),
+      v.literal("skip"),
+      v.literal("exposure")
+    ),
+    answer: v.optional(v.union(v.string(), v.boolean(), v.array(v.string()))),
+    outcome: v.optional(v.union(v.literal("correct"), v.literal("incorrect"))),
+  })
+    .index("by_project_clientEventId", ["projectId", "clientEventId"])
+    .index("by_project_concept_occurredAt", [
+      "projectId",
+      "conceptId",
+      "occurredAt",
+    ])
+    .index("by_item_occurredAt", ["itemId", "occurredAt"]),
+
+  conceptReviews: defineTable({
+    projectId: v.id("projects"),
+    conceptId: v.id("concepts"),
+    attemptCount: v.number(),
+    correctCount: v.number(),
+    incorrectCount: v.number(),
+    consecutiveCorrect: v.number(),
+    lastAttemptAt: v.optional(v.number()),
+    dueAt: v.number(),
+    lastOutcome: v.optional(
+      v.union(v.literal("correct"), v.literal("incorrect"))
+    ),
+    updatedAt: v.number(),
+  })
+    .index("by_project_concept", ["projectId", "conceptId"])
+    .index("by_project_dueAt", ["projectId", "dueAt"]),
 })

@@ -10,6 +10,7 @@
 
 import type * as attempts from "../attempts.js";
 import type * as cards from "../cards.js";
+import type * as learning from "../learning.js";
 import type * as projects from "../projects.js";
 import type * as sources from "../sources.js";
 
@@ -22,6 +23,7 @@ import type {
 declare const fullApi: ApiFromModules<{
   attempts: typeof attempts;
   cards: typeof cards;
+  learning: typeof learning;
   projects: typeof projects;
   sources: typeof sources;
 }>;
