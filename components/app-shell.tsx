@@ -8,6 +8,7 @@ import {
   Add01Icon,
   BookOpen01Icon,
   Folder01Icon,
+  Home01Icon,
   SidebarLeftIcon,
 } from "@hugeicons/core-free-icons"
 import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react"
@@ -32,6 +33,7 @@ export function AppShell({ children }: AppShellProps) {
   const pathname = usePathname()
   const isPreviewRoute =
     pathname === "/preview" || pathname.startsWith("/preview/")
+  const isHomeRoute = pathname === "/"
   const [collapsed, setCollapsed] = useState(false)
   const isStudyRoute = pathname.endsWith("/study")
   const projectId = pathname.match(/^\/projects\/([^/]+)/)?.[1]
@@ -39,27 +41,33 @@ export function AppShell({ children }: AppShellProps) {
   const links: NavLink[] = [
     {
       href: "/",
-      label: "Projects",
+      label: "Home",
+      icon: Home01Icon,
+      active: isHomeRoute,
+    },
+    {
+      href: "/library",
+      label: "Library",
       icon: Folder01Icon,
       active:
-        pathname === "/" ||
+        pathname === "/library" ||
         (pathname.startsWith("/projects/") && !pathname.endsWith("/study")),
     },
     {
-      href: projectId ? `${projectHref}#add-source` : "/#new-project",
+      href: projectId ? `${projectHref}#add-source` : "/library#new-project",
       label: "Add source",
       icon: Add01Icon,
       active: false,
     },
     {
-      href: projectId ? `${projectHref}/study` : "/",
+      href: projectId ? `/?projectId=${encodeURIComponent(projectId)}` : "/",
       label: "Study",
       icon: BookOpen01Icon,
       active: isStudyRoute,
     },
   ]
 
-  if (isPreviewRoute) {
+  if (isPreviewRoute || isHomeRoute) {
     return <>{children}</>
   }
 
@@ -84,8 +92,8 @@ export function AppShell({ children }: AppShellProps) {
             <ZapIcon aria-hidden="true" size={18} strokeWidth={2.4} />
           </span>
           {!collapsed ? (
-            <span className="font-display text-lg tracking-[0.12em]">
-              BLITZ
+            <span className="font-sans text-xl font-semibold tracking-tight">
+              Blitz
             </span>
           ) : null}
         </Link>
@@ -134,7 +142,7 @@ export function AppShell({ children }: AppShellProps) {
       </div>
       <nav
         aria-label="Primary navigation"
-        className="fixed inset-x-0 bottom-0 z-40 grid h-[76px] grid-cols-3 border-t border-border/70 bg-background/90 px-2 pb-[env(safe-area-inset-bottom)] backdrop-blur-xl md:hidden"
+        className="fixed inset-x-0 bottom-0 z-40 grid h-[76px] grid-cols-4 border-t border-border/70 bg-background/90 px-2 pb-[env(safe-area-inset-bottom)] backdrop-blur-xl md:hidden"
       >
         {links.map((link) => (
           <NavItem key={link.label} {...link} mobile />
