@@ -17,8 +17,10 @@ import type { Doc, Id } from "./_generated/dataModel"
 import { v } from "convex/values"
 import {
   evaluateAnswer,
+  selectFeedItems,
   type AnswerInput,
   type ConceptReviewState,
+  type FeedItem,
   type Question,
 } from "../lib/learning/core"
 import { answersEquivalent, replayReviewEvents } from "../lib/learning/replay"
@@ -54,6 +56,23 @@ const answer = v.union(v.string(), v.boolean(), v.array(v.string()))
 
 /** Maximum clock skew accepted for an offline device timestamp. */
 const MAX_FUTURE_SKEW_MS = 5 * 60 * 1000
+
+/** Maximum rows scanned by one unfiltered feed request across its project page. */
+const FEED_SCAN_LIMIT = 200
+
+/** Maximum projects advanced together so one feed page can mix project material. */
+const FEED_PROJECT_PAGE_SIZE = 20
+
+/** Serializable continuation state for the bounded multi-project feed scan. */
+type LearningFeedCursor = {
+  version: 3
+  projectCursor: string | null
+  projectIds: string[]
+  itemAnchors: Array<number | null>
+  itemDone: boolean[]
+  recentConceptIds: string[]
+  previousConceptId: string | null
+}
 
 /** Read-only context shared by query and mutation helpers. */
 type ReadContext = Pick<QueryCtx, "db">
@@ -280,6 +299,120 @@ function reviewStateFromDoc(
   }
 }
 
+/** Returns post-answer explanation and server-owned answer keys for feedback. */
+function answerFeedbackForItem(item: Doc<"learningItems">) {
+  return {
+    body: item.body,
+    ...(item.correctOptionId ? { correctOptionId: item.correctOptionId } : {}),
+    ...(item.correctOptionIds
+      ? { correctOptionIds: item.correctOptionIds }
+      : {}),
+    ...(item.correctAnswer !== undefined
+      ? { correctAnswer: item.correctAnswer }
+      : {}),
+  }
+}
+
+/** Parses a bounded feed cursor and rejects tampered project or page state. */
+function parseLearningFeedCursor(
+  value: string | undefined,
+  expectedProjectId?: Id<"projects">
+): LearningFeedCursor | null {
+  if (!value) return null
+  if (value.length > 16_000) throw new Error("Feed cursor is too large")
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(value)
+  } catch {
+    throw new Error("Feed cursor is invalid")
+  }
+  if (!parsed || typeof parsed !== "object")
+    throw new Error("Feed cursor is invalid")
+  const cursor = parsed as Partial<LearningFeedCursor>
+  if (
+    cursor.version !== 3 ||
+    !Array.isArray(cursor.projectIds) ||
+    !Array.isArray(cursor.itemAnchors) ||
+    cursor.projectIds.length !== cursor.itemAnchors.length ||
+    (cursor.itemDone !== undefined &&
+      (!Array.isArray(cursor.itemDone) ||
+        cursor.projectIds.length !== cursor.itemDone.length)) ||
+    cursor.projectIds.length > FEED_PROJECT_PAGE_SIZE ||
+    (cursor.projectCursor !== null && typeof cursor.projectCursor !== "string")
+  )
+    throw new Error("Feed cursor is invalid")
+  if (
+    cursor.projectIds.some(
+      (projectId) =>
+        typeof projectId !== "string" ||
+        !projectId.trim() ||
+        projectId.length > 128
+    ) ||
+    cursor.itemAnchors.some(
+      (itemAnchor) =>
+        itemAnchor !== null &&
+        (typeof itemAnchor !== "number" ||
+          !Number.isFinite(itemAnchor) ||
+          itemAnchor < 0)
+    ) ||
+    (cursor.itemDone !== undefined &&
+      cursor.itemDone.some((done) => typeof done !== "boolean")) ||
+    (cursor.recentConceptIds !== undefined &&
+      (!Array.isArray(cursor.recentConceptIds) ||
+        cursor.recentConceptIds.length > 64 ||
+        cursor.recentConceptIds.some(
+          (conceptId) =>
+            typeof conceptId !== "string" ||
+            !conceptId.trim() ||
+            conceptId.length > 128
+        ))) ||
+    (cursor.previousConceptId !== undefined &&
+      cursor.previousConceptId !== null &&
+      (typeof cursor.previousConceptId !== "string" ||
+        !cursor.previousConceptId.trim() ||
+        cursor.previousConceptId.length > 128))
+  )
+    throw new Error("Feed cursor is invalid")
+  if (expectedProjectId && cursor.projectIds.length !== 1) {
+    throw new Error("Feed cursor does not match the project filter")
+  }
+  if (expectedProjectId && cursor.projectIds[0] !== String(expectedProjectId))
+    throw new Error("Feed cursor does not match the project filter")
+  return {
+    version: 3,
+    projectCursor: cursor.projectCursor ?? null,
+    projectIds: [...cursor.projectIds],
+    itemAnchors: [...cursor.itemAnchors],
+    itemDone: cursor.itemDone
+      ? [...cursor.itemDone]
+      : cursor.itemAnchors.map(() => false),
+    recentConceptIds: [...(cursor.recentConceptIds ?? [])],
+    previousConceptId: cursor.previousConceptId ?? null,
+  }
+}
+
+/** Creates the next opaque cursor only while more rows or projects remain. */
+function nextLearningFeedCursor(
+  projectCursor: string | null,
+  projectIds: readonly string[],
+  itemAnchors: readonly (number | null)[],
+  itemDone: readonly boolean[],
+  recentConceptIds: readonly string[],
+  previousConceptId: string | null
+): string | null {
+  const hasMoreItems = itemDone.some((done) => !done)
+  if (!hasMoreItems && projectCursor === null) return null
+  return JSON.stringify({
+    version: 3,
+    projectCursor,
+    projectIds: [...projectIds],
+    itemAnchors: [...itemAnchors],
+    itemDone: [...itemDone],
+    recentConceptIds: [...recentConceptIds].slice(-64),
+    previousConceptId,
+  } satisfies LearningFeedCursor)
+}
+
 /** Writes a recomputed review summary, replacing stale derived values. */
 async function saveReview(
   ctx: WriteContext,
@@ -481,7 +614,7 @@ export const listLearningFeedCandidates = query({
         conceptId: String(item.conceptId),
         itemType: item.type,
         title: item.title,
-        body: item.body,
+        body: item.type === "explain" ? item.body : undefined,
         question: item.question,
         options: item.options,
         sourceIds: item.sourceIds.map(String),
@@ -511,6 +644,268 @@ export const listLearningFeedCandidates = query({
       items: candidates,
       isDone: page.isDone,
       continueCursor: page.continueCursor,
+    }
+  },
+})
+
+/** Returns a bounded mixed due/new feed with source filenames and filters. */
+export const getLearningFeed = query({
+  args: {
+    projectId: v.optional(v.id("projects")),
+    topicId: v.optional(v.id("topics")),
+    limit: v.optional(v.number()),
+    cursor: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const limit = args.limit ?? 20
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 30)
+      throw new Error("Feed limit must be between 1 and 30")
+
+    const requestedTopic = args.topicId ? await ctx.db.get(args.topicId) : null
+    if (args.topicId && !requestedTopic) throw new Error("Topic not found")
+    if (
+      args.projectId &&
+      requestedTopic &&
+      requestedTopic.projectId !== args.projectId
+    )
+      throw new Error("Topic does not belong to project")
+
+    const requestedProject = args.projectId
+      ? await ctx.db.get(args.projectId)
+      : requestedTopic
+        ? await ctx.db.get(requestedTopic.projectId)
+        : null
+    if ((args.projectId || requestedTopic) && !requestedProject)
+      throw new Error("Project not found")
+
+    const isProjectScoped = Boolean(args.projectId || requestedTopic)
+    const suppliedCursor = parseLearningFeedCursor(
+      args.cursor,
+      requestedProject?._id
+    )
+    let projectCursor = suppliedCursor?.projectCursor ?? null
+    let projectIds = suppliedCursor?.projectIds ?? []
+    let itemAnchors = suppliedCursor?.itemAnchors ?? []
+    let itemDone = suppliedCursor?.itemDone ?? []
+    let recentConceptIds = suppliedCursor?.recentConceptIds ?? []
+    let previousConceptId = suppliedCursor?.previousConceptId ?? null
+    let selectedProjects: Array<Doc<"projects">> = []
+
+    if (isProjectScoped) {
+      const scopedProjectId = String(requestedProject?._id)
+      if (!suppliedCursor) {
+        projectIds = [scopedProjectId]
+        itemAnchors = [null]
+        itemDone = [false]
+      }
+      if (requestedProject) selectedProjects = [requestedProject]
+    } else if (!suppliedCursor) {
+      const page = await ctx.db
+        .query("projects")
+        .withIndex("by_createdAt")
+        .order("desc")
+        .paginate({ numItems: FEED_PROJECT_PAGE_SIZE, cursor: null })
+      projectIds = page.page.map((project) => String(project._id))
+      itemAnchors = page.page.map(() => null)
+      itemDone = page.page.map(() => false)
+      projectCursor = page.isDone ? null : page.continueCursor
+      selectedProjects = page.page
+    } else {
+      const loadedProjects = await Promise.all(
+        projectIds.map((projectId) => ctx.db.get(projectId as Id<"projects">))
+      )
+      if (loadedProjects.some((project) => !project))
+        throw new Error("Feed cursor is invalid")
+      selectedProjects = loadedProjects.filter(
+        (project): project is Doc<"projects"> => Boolean(project)
+      )
+      if (itemDone.every((done) => done) && projectCursor !== null) {
+        const page = await ctx.db
+          .query("projects")
+          .withIndex("by_createdAt")
+          .order("desc")
+          .paginate({
+            numItems: FEED_PROJECT_PAGE_SIZE,
+            cursor: projectCursor,
+          })
+        projectIds = page.page.map((project) => String(project._id))
+        itemAnchors = page.page.map(() => null)
+        itemDone = page.page.map(() => false)
+        projectCursor = page.isDone ? null : page.continueCursor
+        selectedProjects = page.page
+      }
+    }
+
+    const topics = await ctx.db.query("topics").take(FEED_SCAN_LIMIT)
+    const visibleProjectId = args.projectId ?? requestedTopic?.projectId
+    const visibleTopics = topics
+      .filter(
+        (topic) => !visibleProjectId || topic.projectId === visibleProjectId
+      )
+      .map((topic) => ({
+        id: String(topic._id),
+        projectId: String(topic.projectId),
+        title: topic.title,
+      }))
+    const activeProjectIndices = selectedProjects
+      .map((_, index) => index)
+      .filter((index) => !itemDone[index])
+    const scanBase = Math.floor(
+      limit / Math.max(1, activeProjectIndices.length)
+    )
+    const scanRemainder = limit % Math.max(1, activeProjectIndices.length)
+    const scanCountByProject = new Map(
+      activeProjectIndices.map((projectIndex, activeIndex) => [
+        projectIndex,
+        scanBase + (activeIndex < scanRemainder ? 1 : 0),
+      ])
+    )
+    const now = Date.now()
+    const reviewCache = new Map<string, Doc<"conceptReviews"> | null>()
+    const candidateItems: FeedItem[] = []
+    const cardById = new Map<
+      string,
+      {
+        id: string
+        projectId: string
+        conceptId: string
+        topicId?: string
+        type: "explain" | "single-choice" | "multiple-answer" | "true-false"
+        title: string
+        body?: string
+        question?: string
+        options?: { id: string; text: string }[]
+        sourceLabel: string
+        sourceIds: string[]
+      }
+    >()
+    const nextItemAnchors = [...itemAnchors]
+    const nextItemDone = [...itemDone]
+
+    for (const [projectIndex, project] of selectedProjects.entries()) {
+      const scanCount = scanCountByProject.get(projectIndex) ?? 0
+      if (scanCount === 0 || itemDone[projectIndex]) continue
+      const itemAnchor = itemAnchors[projectIndex]
+      const page = await ctx.db
+        .query("learningItems")
+        .withIndex("by_project", (q) =>
+          itemAnchor === null || itemAnchor === undefined
+            ? q.eq("projectId", project._id)
+            : q.eq("projectId", project._id).gt("_creationTime", itemAnchor)
+        )
+        .order("asc")
+        .take(scanCount + 1)
+      const itemPage = page.slice(0, scanCount)
+      // Source-local order repeats across imports. Convex creation timestamps
+      // provide the stable per-document index boundary used for continuation.
+      nextItemAnchors[projectIndex] = itemPage.at(-1)?._creationTime ?? null
+      nextItemDone[projectIndex] = page.length <= scanCount
+      for (const item of itemPage) {
+        const concept = await ctx.db.get(item.conceptId)
+        if (!concept) continue
+        if (requestedTopic && concept.topicId !== requestedTopic._id) continue
+        let review = reviewCache.get(String(item.conceptId))
+        if (review === undefined) {
+          const reviews = await ctx.db
+            .query("conceptReviews")
+            .withIndex("by_project_concept", (q) =>
+              q.eq("projectId", project._id).eq("conceptId", item.conceptId)
+            )
+            .take(1)
+          review = reviews[0] ?? null
+          reviewCache.set(String(item.conceptId), review)
+        }
+        const feedItem: FeedItem = review
+          ? {
+              id: String(item._id),
+              projectId: String(item.projectId),
+              conceptId: String(item.conceptId),
+              createdAt: item.createdAt,
+              order: item.order,
+              ...(concept.topicId ? { topicId: String(concept.topicId) } : {}),
+              kind: "review",
+              reviewState: {
+                conceptId: String(review.conceptId),
+                attemptCount: review.attemptCount,
+                correctCount: review.correctCount,
+                incorrectCount: review.incorrectCount,
+                consecutiveCorrect: review.consecutiveCorrect,
+                lastAttemptAt: review.lastAttemptAt ?? null,
+                dueAt: review.dueAt,
+                lastOutcome: review.lastOutcome ?? null,
+              },
+            }
+          : {
+              id: String(item._id),
+              projectId: String(item.projectId),
+              conceptId: String(item.conceptId),
+              createdAt: item.createdAt,
+              order: item.order,
+              ...(concept.topicId ? { topicId: String(concept.topicId) } : {}),
+              kind: "new",
+            }
+        candidateItems.push(feedItem)
+        const sources = await Promise.all(
+          item.sourceIds.map((sourceId) => ctx.db.get(sourceId))
+        )
+        const source = sources.find((candidate) => candidate !== null)
+        if (!source) continue
+        cardById.set(String(item._id), {
+          id: String(item._id),
+          projectId: String(item.projectId),
+          conceptId: String(item.conceptId),
+          ...(concept.topicId ? { topicId: String(concept.topicId) } : {}),
+          type: item.type,
+          title: item.title,
+          ...(item.type === "explain" ? { body: item.body } : {}),
+          ...(item.type !== "explain" ? { question: item.question ?? "" } : {}),
+          ...(item.options ? { options: item.options } : {}),
+          sourceLabel: source.filename,
+          sourceIds: item.sourceIds.map(String),
+        })
+      }
+    }
+
+    const selected = selectFeedItems({
+      items: candidateItems.filter((item) => cardById.has(item.id)),
+      now,
+      limit,
+      ...(previousConceptId ? { previousConceptId } : {}),
+      recentConceptIds,
+      ...(args.projectId ? { projectId: String(args.projectId) } : {}),
+      ...(args.topicId ? { topicId: String(args.topicId) } : {}),
+    })
+    const cards = selected.flatMap((item) => {
+      const card = cardById.get(item.id)
+      return card ? [card] : []
+    })
+    const projectOptions = isProjectScoped
+      ? requestedProject
+        ? [requestedProject]
+        : []
+      : selectedProjects
+
+    if (isProjectScoped) projectCursor = null
+    const selectedConceptIds = selected.map((item) => item.conceptId)
+    recentConceptIds = [...recentConceptIds, ...selectedConceptIds].slice(-64)
+    previousConceptId = selected.at(-1)?.conceptId ?? previousConceptId
+    const continueCursor = nextLearningFeedCursor(
+      projectCursor,
+      projectIds,
+      nextItemAnchors,
+      nextItemDone,
+      recentConceptIds,
+      previousConceptId
+    )
+    return {
+      cards,
+      projects: projectOptions.map((project) => ({
+        id: String(project._id),
+        title: project.title,
+      })),
+      topics: visibleTopics,
+      isDone: continueCursor === null,
+      continueCursor,
     }
   },
 })
@@ -611,6 +1006,7 @@ export const recordAnswerEvent = mutation({
         eventId: existing._id,
         alreadyRecorded: true,
         review: reviewStateFromDoc(review[0] ?? null),
+        feedback: answerFeedbackForItem(item),
       }
     }
     const evaluation = evaluateAnswer(
@@ -650,6 +1046,7 @@ export const recordAnswerEvent = mutation({
       eventId,
       alreadyRecorded: false,
       review,
+      feedback: answerFeedbackForItem(item),
     }
   },
 })

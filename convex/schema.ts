@@ -119,6 +119,7 @@ export default defineSchema({
     order: v.number(),
     createdAt: v.number(),
   })
+    .index("by_project", ["projectId"])
     .index("by_project_order", ["projectId", "order"])
     .index("by_project_concept_order", ["projectId", "conceptId", "order"])
     .index("by_concept_order", ["conceptId", "order"]),
