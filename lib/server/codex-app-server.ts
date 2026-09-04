@@ -224,6 +224,8 @@ export interface CodexStartThreadOptions {
 
 /** Explicit policy overrides accepted when resuming a stored thread. */
 export interface CodexResumeThreadOptions {
+  /** Optional model override supported by the installed protocol. */
+  model?: string
   /** Approval policy; defaults to on-request for this bridge. */
   approvalPolicy?: "untrusted" | "on-request" | "never"
   /** Sandbox mode; defaults to read-only for this bridge. */
@@ -477,12 +479,17 @@ export class CodexAppServerClient {
     options: CodexResumeThreadOptions = {}
   ): Promise<CodexThreadResponse> {
     if (!threadId) throw new CodexAppServerError("threadId is required")
-    const { approvalPolicy = "on-request", sandbox = "read-only" } = options
+    const {
+      model,
+      approvalPolicy = "on-request",
+      sandbox = "read-only",
+    } = options
     const result = await this.request("thread/resume", {
       threadId,
       cwd: this.workspaceDirectory,
       approvalPolicy,
       sandbox,
+      ...(model === undefined ? {} : { model }),
     })
     return this.parseThreadResponse(result)
   }
@@ -722,7 +729,6 @@ export class CodexAppServerClient {
         reject(error)
         this.fail(error)
       }, this.requestTimeoutMs)
-      timer.unref?.()
       this.pending.set(id, { method, resolve, reject, timer })
       try {
         this.writeMessage({ id, method, params })
@@ -807,7 +813,6 @@ export class CodexAppServerClient {
         // The child may have exited between the two signals.
       }
     }, 2_000)
-    this.forceKillTimer.unref?.()
   }
 
   /** Rejects and clears all unanswered request promises. */
