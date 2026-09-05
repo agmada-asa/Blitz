@@ -24,6 +24,7 @@ import {
 import { FilterPanel } from "./components/filter-panel"
 import { ChatModal } from "./components/chat-modal"
 import { LearningCard } from "./components/learning-card"
+import { useSafeAreaInsets } from "react-native-safe-area-context"
 import { appendFeedPage, filterCards, mergeFeedMetadata } from "./lib/feed"
 import {
   MobileApiError,
@@ -64,6 +65,7 @@ function errorMessage(error: unknown): string {
 /** Renders the native feed and its small connection and recovery states. */
 export default function App() {
   const { height } = useWindowDimensions()
+  const insets = useSafeAreaInsets()
   const topInset =
     Platform.OS === "android" ? (StatusBar.currentHeight ?? 0) : 0
   const listRef = useRef<FlatList<MobileLearningCard>>(null)
@@ -78,7 +80,6 @@ export default function App() {
   const [connecting, setConnecting] = useState(false)
   const [payload, setPayload] = useState<MobileFeedPayload>()
   const payloadRef = useRef<MobileFeedPayload | undefined>(undefined)
-  const [cacheSavedAt, setCacheSavedAt] = useState<number>()
   const [status, setStatus] = useState<FeedStatus>("loading")
   const [error, setError] = useState("")
   const [projectId, setProjectId] = useState<string>()
@@ -118,7 +119,6 @@ export default function App() {
         return false
       payloadRef.current = cache.payload
       setPayload(cache.payload)
-      setCacheSavedAt(cache.savedAt)
       // The cache envelope predates persisted query identity; replace it on the
       // first successful refresh instead of mixing pages from an unknown filter.
       feedQueryRef.current = undefined
@@ -209,7 +209,6 @@ export default function App() {
         payloadRef.current = mergedPayload
         feedQueryRef.current = { projectId, topicId }
         setPayload(mergedPayload)
-        setCacheSavedAt(Date.now())
         if (generation !== requestGenerationRef.current) return
         await saveFeedCache(mergedPayload, baseUrl)
         if (generation !== requestGenerationRef.current) return
@@ -360,7 +359,6 @@ export default function App() {
     setFeedback({})
     setProjectId(undefined)
     setTopicId(undefined)
-    setCacheSavedAt(undefined)
     setPendingCount(0)
     requestGenerationRef.current += 1
     requestControllerRef.current?.abort()
@@ -694,7 +692,7 @@ export default function App() {
         <Pressable
           accessibilityRole="button"
           onPress={() => setNotice("")}
-          style={styles.notice}
+          style={[styles.notice, { bottom: 14 + insets.bottom }]}
         >
           <Text style={styles.noticeText}>{notice}</Text>
         </Pressable>
@@ -730,11 +728,6 @@ export default function App() {
         visible={chatCard !== null}
         onClose={() => setChatCard(null)}
       />
-      {cacheSavedAt && status === "offline" ? (
-        <Text accessibilityLiveRegion="polite" style={styles.cacheTime}>
-          Saved {new Date(cacheSavedAt).toLocaleTimeString()}
-        </Text>
-      ) : null}
     </View>
   )
 }
@@ -869,13 +862,6 @@ const styles = StyleSheet.create({
   noticeText: {
     color: "#ffb19e",
     fontSize: 12,
-  },
-  cacheTime: {
-    bottom: 7,
-    color: "#5f5f5f",
-    fontSize: 10,
-    position: "absolute",
-    right: 14,
   },
   footer: {
     paddingVertical: 18,

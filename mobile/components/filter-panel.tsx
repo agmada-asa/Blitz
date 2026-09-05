@@ -4,6 +4,8 @@
  */
 
 import { Modal, Pressable, StyleSheet, Text, View } from "react-native"
+import { ScrollView } from "react-native"
+import { useSafeAreaInsets } from "react-native-safe-area-context"
 
 import type { MobileProjectChoice, MobileTopicChoice } from "../lib/contracts"
 
@@ -30,6 +32,7 @@ export function FilterPanel({
   onSelectProject,
   onSelectTopic,
 }: FilterPanelProps) {
+  const insets = useSafeAreaInsets()
   return (
     <Modal
       animationType="fade"
@@ -38,7 +41,7 @@ export function FilterPanel({
       onRequestClose={onClose}
     >
       <View style={styles.backdrop}>
-        <View style={styles.panel}>
+        <View style={[styles.panel, { paddingTop: 16 + insets.top }]}>
           <View style={styles.header}>
             <Text style={styles.title}>Filter</Text>
             <Pressable
@@ -49,52 +52,61 @@ export function FilterPanel({
               <Text style={styles.closeText}>Close</Text>
             </Pressable>
           </View>
-          <Text style={styles.label}>Project</Text>
-          <View style={styles.choices}>
-            <FilterChoice
-              label="All projects"
-              selected={!projectId}
-              onPress={() => {
-                onSelectProject(undefined)
-                onClose()
-              }}
-            />
-            {projects.map((choice) => (
+          <ScrollView
+            contentContainerStyle={[
+              styles.panelContent,
+              { paddingBottom: 24 + insets.bottom },
+            ]}
+          >
+            <Text style={styles.label}>Project</Text>
+            <View style={styles.choices}>
               <FilterChoice
-                key={choice.id}
-                label={choice.title}
-                selected={projectId === choice.id}
+                label="All projects"
+                selected={!projectId}
                 onPress={() => {
-                  onSelectProject(choice.id)
+                  onSelectProject(undefined)
                   onClose()
                 }}
               />
-            ))}
-          </View>
-          <Text style={styles.label}>Topic</Text>
-          <View style={styles.choices}>
-            <FilterChoice
-              label="All topics"
-              selected={!topicId}
-              onPress={() => {
-                onSelectTopic(undefined)
-                onClose()
-              }}
-            />
-            {topics
-              .filter((choice) => !projectId || choice.projectId === projectId)
-              .map((choice) => (
+              {projects.map((choice) => (
                 <FilterChoice
                   key={choice.id}
                   label={choice.title}
-                  selected={topicId === choice.id}
+                  selected={projectId === choice.id}
                   onPress={() => {
-                    onSelectTopic(choice.id)
+                    onSelectProject(choice.id)
                     onClose()
                   }}
                 />
               ))}
-          </View>
+            </View>
+            <Text style={styles.label}>Topic</Text>
+            <View style={styles.choices}>
+              <FilterChoice
+                label="All topics"
+                selected={!topicId}
+                onPress={() => {
+                  onSelectTopic(undefined)
+                  onClose()
+                }}
+              />
+              {topics
+                .filter(
+                  (choice) => !projectId || choice.projectId === projectId
+                )
+                .map((choice) => (
+                  <FilterChoice
+                    key={choice.id}
+                    label={choice.title}
+                    selected={topicId === choice.id}
+                    onPress={() => {
+                      onSelectTopic(choice.id)
+                      onClose()
+                    }}
+                  />
+                ))}
+            </View>
+          </ScrollView>
         </View>
       </View>
     </Modal>
@@ -139,8 +151,11 @@ const styles = StyleSheet.create({
     backgroundColor: "#171717",
     borderTopLeftRadius: 28,
     borderTopRightRadius: 28,
-    padding: 24,
-    paddingBottom: 34,
+    maxHeight: "90%",
+    paddingHorizontal: 24,
+  },
+  panelContent: {
+    paddingBottom: 24,
   },
   header: {
     alignItems: "center",

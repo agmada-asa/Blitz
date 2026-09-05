@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react"
 import { randomUUID } from "expo-crypto"
+import { useSafeAreaInsets } from "react-native-safe-area-context"
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -56,14 +57,22 @@ const EMPTY_STATE: ChatState = {
 }
 
 /** Shows one feed card's questions and queued server replies in a modal sheet. */
-export function ChatModal({ card, serverUrl, visible, onClose }: ChatModalProps) {
+export function ChatModal({
+  card,
+  serverUrl,
+  visible,
+  onClose,
+}: ChatModalProps) {
+  const insets = useSafeAreaInsets()
   const [state, setState] = useState<ChatState>(EMPTY_STATE)
 
   /** Applies a partial state update without replacing the learner's draft. */
   const updateState = useCallback(
     (update: Partial<ChatState> | ((current: ChatState) => ChatState)) => {
       setState((current) =>
-        typeof update === "function" ? update(current) : { ...current, ...update }
+        typeof update === "function"
+          ? update(current)
+          : { ...current, ...update }
       )
     },
     []
@@ -117,7 +126,11 @@ export function ChatModal({ card, serverUrl, visible, onClose }: ChatModalProps)
     const question = state.draft.trim()
     if (!question) return
     const clientMessageId = state.draftMessageId ?? randomUUID()
-    updateState({ sending: true, requestError: "", draftMessageId: clientMessageId })
+    updateState({
+      sending: true,
+      requestError: "",
+      draftMessageId: clientMessageId,
+    })
     try {
       const result = await enqueueChatQuestion(
         serverUrl,
@@ -127,7 +140,8 @@ export function ChatModal({ card, serverUrl, visible, onClose }: ChatModalProps)
       )
       updateState((current) => {
         const existingIndex = current.messages.findIndex(
-          (message) => message.clientMessageId === result.message.clientMessageId
+          (message) =>
+            message.clientMessageId === result.message.clientMessageId
         )
         const messages = [...current.messages]
         if (existingIndex === -1) messages.push(result.message)
@@ -151,7 +165,14 @@ export function ChatModal({ card, serverUrl, visible, onClose }: ChatModalProps)
           error instanceof Error ? error.message : "Could not send question.",
       })
     }
-  }, [card, serverUrl, state.draft, state.draftMessageId, state.sending, updateState])
+  }, [
+    card,
+    serverUrl,
+    state.draft,
+    state.draftMessageId,
+    state.sending,
+    updateState,
+  ])
 
   /** Requeues a failed persisted message through the explicit retry endpoint. */
   const retryMessage = useCallback(
@@ -164,7 +185,12 @@ export function ChatModal({ card, serverUrl, visible, onClose }: ChatModalProps)
           ...current,
           messages: current.messages.map((currentMessage) =>
             currentMessage.id === message.id
-              ? { ...currentMessage, status: "queued", error: undefined, updatedAt: Date.now() }
+              ? {
+                  ...currentMessage,
+                  status: "queued",
+                  error: undefined,
+                  updatedAt: Date.now(),
+                }
               : currentMessage
           ),
           status: "queued",
@@ -175,7 +201,9 @@ export function ChatModal({ card, serverUrl, visible, onClose }: ChatModalProps)
         updateState({
           sending: false,
           requestError:
-            error instanceof Error ? error.message : "Could not retry question.",
+            error instanceof Error
+              ? error.message
+              : "Could not retry question.",
         })
       }
     },
@@ -207,14 +235,26 @@ export function ChatModal({ card, serverUrl, visible, onClose }: ChatModalProps)
           <View style={styles.header}>
             <View style={styles.headerCopy}>
               <Text style={styles.heading}>Ask about this card</Text>
-              {card ? <Text numberOfLines={2} style={styles.cardTitle}>{card.title}</Text> : null}
+              {card ? (
+                <Text numberOfLines={2} style={styles.cardTitle}>
+                  {card.title}
+                </Text>
+              ) : null}
             </View>
-            <Pressable accessibilityLabel="Close chat" accessibilityRole="button" onPress={close} style={styles.closeButton}>
+            <Pressable
+              accessibilityLabel="Close chat"
+              accessibilityRole="button"
+              onPress={close}
+              style={styles.closeButton}
+            >
               <Text style={styles.closeText}>×</Text>
             </Pressable>
           </View>
 
-          <ScrollView contentContainerStyle={styles.messages} keyboardShouldPersistTaps="handled">
+          <ScrollView
+            contentContainerStyle={styles.messages}
+            keyboardShouldPersistTaps="handled"
+          >
             {state.loading && !state.messages.length ? (
               <View style={styles.loadingRow}>
                 <ActivityIndicator color="#ff8065" />
@@ -234,12 +274,23 @@ export function ChatModal({ card, serverUrl, visible, onClose }: ChatModalProps)
                     <Text style={styles.replyText}>{message.reply}</Text>
                   </View>
                 ) : null}
-                {message.status === "queued" ? <Text style={styles.muted}>Waiting for a reply</Text> : null}
-                {message.status === "running" ? <Text style={styles.muted}>Working on it</Text> : null}
+                {message.status === "queued" ? (
+                  <Text style={styles.muted}>Waiting for a reply</Text>
+                ) : null}
+                {message.status === "running" ? (
+                  <Text style={styles.muted}>Working on it</Text>
+                ) : null}
                 {message.status === "failed" ? (
                   <View style={styles.failedRow}>
-                    <Text style={styles.error}>{message.error || "Could not answer that question."}</Text>
-                    <Pressable accessibilityRole="button" disabled={state.sending} onPress={() => void retryMessage(message)} style={styles.retryButton}>
+                    <Text style={styles.error}>
+                      {message.error || "Could not answer that question."}
+                    </Text>
+                    <Pressable
+                      accessibilityRole="button"
+                      disabled={state.sending}
+                      onPress={() => void retryMessage(message)}
+                      style={styles.retryButton}
+                    >
                       <Text style={styles.retryText}>Retry</Text>
                     </Pressable>
                   </View>
@@ -248,7 +299,9 @@ export function ChatModal({ card, serverUrl, visible, onClose }: ChatModalProps)
             ))}
           </ScrollView>
 
-          <View style={styles.composer}>
+          <View
+            style={[styles.composer, { paddingBottom: 24 + insets.bottom }]}
+          >
             <TextInput
               accessibilityLabel="Your question"
               autoCapitalize="sentences"
@@ -259,19 +312,34 @@ export function ChatModal({ card, serverUrl, visible, onClose }: ChatModalProps)
               style={styles.input}
               value={state.draft}
             />
-            {state.requestError ? <Text style={styles.error}>{state.requestError}</Text> : null}
-            {!state.requestError && state.lastError && !state.messages.some((message) => message.status === "failed") ? (
+            {state.requestError ? (
+              <Text style={styles.error}>{state.requestError}</Text>
+            ) : null}
+            {!state.requestError &&
+            state.lastError &&
+            !state.messages.some((message) => message.status === "failed") ? (
               <Text style={styles.error}>{state.lastError}</Text>
             ) : null}
             <Pressable
               accessibilityRole="button"
               disabled={!state.draft.trim() || state.sending || !serverUrl}
               onPress={() => void sendQuestion()}
-              style={({ pressed }) => [styles.sendButton, pressed && styles.pressed, (!state.draft.trim() || state.sending || !serverUrl) && styles.disabled]}
+              style={({ pressed }) => [
+                styles.sendButton,
+                pressed && styles.pressed,
+                (!state.draft.trim() || state.sending || !serverUrl) &&
+                  styles.disabled,
+              ]}
             >
-              <Text style={styles.sendText}>{state.sending ? "Sending" : "Send question"}</Text>
+              <Text style={styles.sendText}>
+                {state.sending ? "Sending" : "Send question"}
+              </Text>
             </Pressable>
-            {!serverUrl ? <Text style={styles.error}>Connect to Blitz before starting chat.</Text> : null}
+            {!serverUrl ? (
+              <Text style={styles.error}>
+                Connect to Blitz before starting chat.
+              </Text>
+            ) : null}
           </View>
         </View>
       </KeyboardAvoidingView>
@@ -280,29 +348,98 @@ export function ChatModal({ card, serverUrl, visible, onClose }: ChatModalProps)
 }
 
 const styles = StyleSheet.create({
-  backdrop: { backgroundColor: "rgba(0,0,0,0.56)", flex: 1, justifyContent: "flex-end" },
-  sheet: { backgroundColor: "#151515", borderTopLeftRadius: 28, borderTopRightRadius: 28, maxHeight: "90%", minHeight: "62%" },
-  header: { alignItems: "flex-start", borderBottomColor: "#292929", borderBottomWidth: 1, flexDirection: "row", justifyContent: "space-between", paddingHorizontal: 22, paddingTop: 22, paddingBottom: 18 },
+  backdrop: {
+    backgroundColor: "rgba(0,0,0,0.56)",
+    flex: 1,
+    justifyContent: "flex-end",
+  },
+  sheet: {
+    backgroundColor: "#151515",
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    maxHeight: "90%",
+    minHeight: "62%",
+  },
+  header: {
+    alignItems: "flex-start",
+    borderBottomColor: "#292929",
+    borderBottomWidth: 1,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    paddingHorizontal: 22,
+    paddingTop: 22,
+    paddingBottom: 18,
+  },
   headerCopy: { flex: 1, paddingRight: 12 },
   heading: { color: "#fff", fontSize: 20, fontWeight: "600" },
   cardTitle: { color: "#999", fontSize: 13, lineHeight: 19, marginTop: 8 },
-  closeButton: { alignItems: "center", height: 40, justifyContent: "center", width: 40 },
+  closeButton: {
+    alignItems: "center",
+    height: 40,
+    justifyContent: "center",
+    width: 40,
+  },
   closeText: { color: "#aaa", fontSize: 30, fontWeight: "300", lineHeight: 32 },
   messages: { gap: 16, padding: 22 },
   loadingRow: { alignItems: "center", flexDirection: "row", gap: 10 },
   muted: { color: "#777", fontSize: 13, lineHeight: 20 },
   messageGroup: { gap: 8 },
-  questionBubble: { alignSelf: "flex-end", backgroundColor: "#2a1713", borderRadius: 18, maxWidth: "92%", paddingHorizontal: 15, paddingVertical: 12 },
+  questionBubble: {
+    alignSelf: "flex-end",
+    backgroundColor: "#2a1713",
+    borderRadius: 18,
+    maxWidth: "92%",
+    paddingHorizontal: 15,
+    paddingVertical: 12,
+  },
   questionText: { color: "#f3d8d1", fontSize: 15, lineHeight: 22 },
-  replyBubble: { alignSelf: "flex-start", borderColor: "#303030", borderRadius: 18, borderWidth: 1, maxWidth: "96%", paddingHorizontal: 15, paddingVertical: 12 },
+  replyBubble: {
+    alignSelf: "flex-start",
+    borderColor: "#303030",
+    borderRadius: 18,
+    borderWidth: 1,
+    maxWidth: "96%",
+    paddingHorizontal: 15,
+    paddingVertical: 12,
+  },
   replyText: { color: "#ddd", fontSize: 15, lineHeight: 23 },
   failedRow: { alignItems: "center", flexDirection: "row", gap: 10 },
   error: { color: "#ff9a89", flex: 1, fontSize: 12, lineHeight: 18 },
-  retryButton: { minHeight: 38, justifyContent: "center", paddingHorizontal: 9 },
+  retryButton: {
+    minHeight: 38,
+    justifyContent: "center",
+    paddingHorizontal: 9,
+  },
   retryText: { color: "#ffb19e", fontSize: 13, fontWeight: "600" },
-  composer: { borderTopColor: "#292929", borderTopWidth: 1, gap: 10, padding: 18, paddingBottom: 24 },
-  input: { backgroundColor: "#202020", borderColor: "#383838", borderRadius: 17, borderWidth: 1, color: "#fff", fontSize: 15, lineHeight: 21, maxHeight: 110, minHeight: 54, paddingHorizontal: 15, paddingVertical: 13 },
-  sendButton: { alignItems: "center", alignSelf: "flex-end", backgroundColor: "#ff8065", borderRadius: 19, justifyContent: "center", minHeight: 44, paddingHorizontal: 18 },
+  composer: {
+    borderTopColor: "#292929",
+    borderTopWidth: 1,
+    gap: 10,
+    padding: 18,
+    paddingBottom: 24,
+  },
+  input: {
+    backgroundColor: "#202020",
+    borderColor: "#383838",
+    borderRadius: 17,
+    borderWidth: 1,
+    color: "#fff",
+    fontSize: 15,
+    lineHeight: 21,
+    maxHeight: 110,
+    minHeight: 54,
+    paddingHorizontal: 15,
+    paddingVertical: 13,
+  },
+  sendButton: {
+    alignItems: "center",
+    alignSelf: "flex-end",
+    backgroundColor: "#ff8065",
+    borderRadius: 19,
+    justifyContent: "center",
+    minHeight: 44,
+    paddingHorizontal: 18,
+  },
   sendText: { color: "#1b0d0a", fontSize: 14, fontWeight: "600" },
   pressed: { opacity: 0.72 },
   disabled: { opacity: 0.42 },

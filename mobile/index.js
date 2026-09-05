@@ -5,7 +5,17 @@
  */
 
 import { registerRootComponent } from "expo"
+import { SafeAreaProvider } from "react-native-safe-area-context"
 
 import App from "./App"
 
-registerRootComponent(App)
+/** Provides safe-area insets to every native screen before registration. */
+function BlitzRoot() {
+  return (
+    <SafeAreaProvider>
+      <App />
+    </SafeAreaProvider>
+  )
+}
+
+registerRootComponent(BlitzRoot)
