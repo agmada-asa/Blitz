@@ -6,10 +6,10 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
+  Animated,
   AppState,
   ActivityIndicator,
   FlatList,
-  Linking,
   Platform,
   Pressable,
   RefreshControl,
@@ -21,6 +21,10 @@ import {
   useWindowDimensions,
 } from "react-native"
 
+import { FeedBackdrop } from "./components/feed-backdrop"
+import { ProjectLibrary } from "./components/project-library"
+import { useMotionEnabled } from "./lib/use-motion"
+import type { ProjectOperation } from "../lib/project-contracts"
 import { FilterPanel } from "./components/filter-panel"
 import { ChatModal } from "./components/chat-modal"
 import { LearningCard } from "./components/learning-card"
@@ -52,6 +56,7 @@ import {
   orphanLegacyData,
   loadServerUrl,
   removePendingEvent,
+  removeProjectEvents,
   saveFeedCache,
   saveServerUrl,
 } from "./lib/storage"
@@ -71,6 +76,9 @@ function errorMessage(error: unknown): string {
 /** Renders the native feed and its small connection and recovery states. */
 export default function App() {
   const { height } = useWindowDimensions()
+  const motionEnabled = useMotionEnabled()
+  const scrollY = useRef(new Animated.Value(0)).current
+  const [libraryOpen, setLibraryOpen] = useState(false)
   const insets = useSafeAreaInsets()
   const topInset =
     Platform.OS === "android" ? (StatusBar.currentHeight ?? 0) : 0
@@ -476,18 +484,74 @@ export default function App() {
     [serverUrl]
   )
 
-  /** Opens the browser library so source imports remain owned by the web app. */
-  const openLibrary = useCallback(async () => {
+  /** Opens native project management without leaving the learning app. */
+  function openLibrary() {
     if (!serverUrl) {
-      setNotice("Connect to Blitz to open the library")
+      setNotice("Connect to Blitz to open projects")
       return
     }
-    try {
-      await Linking.openURL(`${serverUrl.replace(/\/+$/, "")}/library`)
-    } catch {
-      setNotice("Could not open the web library")
+    setLibraryOpen(true)
+  }
+
+  /** Invalidates older feed requests and reconciles the device after a confirmed project change. */
+  async function projectChanged(operation: ProjectOperation, id: string) {
+    requestGenerationRef.current += 1
+    requestControllerRef.current?.abort()
+    feedQueryRef.current = undefined
+    pendingSnapTargetRef.current = null
+    const current = payloadRef.current
+    if (operation.action === "delete") {
+      const next = current
+        ? {
+            ...current,
+            cards: current.cards.filter((card) => card.projectId !== id),
+            projects: current.projects.filter((project) => project.id !== id),
+            topics: current.topics.filter((topic) => topic.projectId !== id),
+            continueCursor: undefined,
+          }
+        : undefined
+      payloadRef.current = next
+      setPayload(next)
+      if (projectId === id) {
+        setProjectId(undefined)
+        setTopicId(undefined)
+      }
+      listRef.current?.scrollToOffset({ offset: 0, animated: false })
+      scrollY.setValue(0)
+      setActiveIndex(0)
+      if (serverUrl) {
+        // Deleted-project answers must not block the remaining queue on the next sync.
+        await removeProjectEvents(id, serverUrl)
+        if (next) await saveFeedCache(next, serverUrl)
+        await refreshPendingCount(serverUrl)
+      }
+    } else if (operation.action === "rename" && current) {
+      const next = {
+        ...current,
+        projects: current.projects.map((project) =>
+          project.id === id ? { ...project, title: operation.title } : project
+        ),
+      }
+      payloadRef.current = next
+      setPayload(next)
+      await saveFeedCache(next, serverUrl)
     }
-  }, [serverUrl])
+  }
+
+  /** Opens a project's native feed and discards stale paging metadata. */
+  function openProject(id: string) {
+    pendingSnapTargetRef.current = null
+    requestGenerationRef.current += 1
+    requestControllerRef.current?.abort()
+    feedQueryRef.current = undefined
+    listRef.current?.scrollToOffset({ offset: 0, animated: false })
+    scrollY.setValue(0)
+    setActiveIndex(0)
+    setProjectId(id)
+    setTopicId(undefined)
+    setLibraryOpen(false)
+    if (projectId === id && !topicId) void refresh(serverUrl, false)
+  }
 
   /** Advances to the next card after recording a deliberate skip. */
   function skipCard(card: MobileLearningCard) {
@@ -629,15 +693,23 @@ export default function App() {
 
   return (
     <View style={styles.root}>
+      <FeedBackdrop
+        motionEnabled={
+          motionEnabled && !libraryOpen && !filterOpen && !chatCard
+        }
+      />
       <StatusBar barStyle="light-content" />
       <View
         pointerEvents="box-none"
-        style={[styles.topControls, { paddingTop: 16 + topInset }]}
+        style={[
+          styles.topControls,
+          { paddingTop: 16 + Math.max(topInset, insets.top) },
+        ]}
       >
         <View style={styles.topLeft}>
           <Pressable
-            accessibilityRole="link"
-            onPress={() => void openLibrary()}
+            accessibilityRole="button"
+            onPress={openLibrary}
             style={styles.libraryButton}
           >
             <Text style={styles.libraryText}>Library</Text>
@@ -663,8 +735,13 @@ export default function App() {
       ) : !visibleCards.length ? (
         renderEmptyState()
       ) : (
-        <FlatList
+        <Animated.FlatList
           ref={listRef}
+          onScroll={Animated.event(
+            [{ nativeEvent: { contentOffset: { y: scrollY } } }],
+            { useNativeDriver: true }
+          )}
+          scrollEventThrottle={16}
           data={visibleCards}
           decelerationRate="fast"
           disableIntervalMomentum
@@ -753,8 +830,38 @@ export default function App() {
               tintColor="#ff8065"
             />
           }
-          renderItem={({ item }) => (
-            <View style={{ height }}>
+          renderItem={({ item, index }) => (
+            <Animated.View
+              style={{
+                height,
+                opacity: motionEnabled
+                  ? scrollY.interpolate({
+                      inputRange: [
+                        (index - 1) * height,
+                        index * height,
+                        (index + 1) * height,
+                      ],
+                      outputRange: [0.55, 1, 0.55],
+                      extrapolate: "clamp",
+                    })
+                  : 1,
+                transform: [
+                  {
+                    translateY: motionEnabled
+                      ? scrollY.interpolate({
+                          inputRange: [
+                            (index - 1) * height,
+                            index * height,
+                            (index + 1) * height,
+                          ],
+                          outputRange: [24, 0, -24],
+                          extrapolate: "clamp",
+                        })
+                      : 0,
+                  },
+                ],
+              }}
+            >
               <LearningCard
                 card={item}
                 feedback={feedback[item.id]}
@@ -762,7 +869,7 @@ export default function App() {
                 onAsk={() => void openChat(item)}
                 onSkip={() => skipCard(item)}
               />
-            </View>
+            </Animated.View>
           )}
           ListFooterComponent={
             loadingMore ? (
@@ -781,6 +888,17 @@ export default function App() {
           <Text style={styles.noticeText}>{notice}</Text>
         </Pressable>
       ) : null}
+      {libraryOpen && serverUrl && (
+        <ProjectLibrary
+          serverUrl={serverUrl}
+          onClose={() => {
+            setLibraryOpen(false)
+            void refresh(serverUrl, false)
+          }}
+          onOpenProject={openProject}
+          onChange={projectChanged}
+        />
+      )}
       <FilterPanel
         open={filterOpen}
         projectId={projectId}
@@ -836,21 +954,28 @@ const styles = StyleSheet.create({
     zIndex: 2,
   },
   topLeft: {
+    flex: 1,
+    flexShrink: 1,
     alignItems: "center",
     flexDirection: "row",
     gap: 12,
   },
   libraryButton: {
-    minHeight: 40,
+    minHeight: 44,
     justifyContent: "center",
-    paddingHorizontal: 4,
+    paddingHorizontal: 16,
+    borderWidth: 1,
+    borderColor: "#383838",
+    borderRadius: 24,
+    backgroundColor: "rgba(255,255,255,0.05)",
   },
   libraryText: {
     color: "#b0b0b0",
     fontSize: 13,
   },
   statusText: {
-    color: "#898989",
+    flexShrink: 1,
+    color: "#aaaaaa",
     fontSize: 12,
   },
   filterButton: {
@@ -858,7 +983,7 @@ const styles = StyleSheet.create({
     borderColor: "#303030",
     borderRadius: 20,
     borderWidth: 1,
-    minHeight: 40,
+    minHeight: 44,
     justifyContent: "center",
     paddingHorizontal: 16,
   },
