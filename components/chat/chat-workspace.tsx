@@ -42,8 +42,12 @@ import { cn } from "@/lib/utils"
 
 /** Maximum context items accepted by the server for one conversation turn. */
 const MAX_ATTACHMENTS = 8
+/** Maximum project collections accepted by the project context query. */
+const MAX_PROJECT_ATTACHMENTS = 3
 /** Maximum extracted characters retained for one browser-owned attachment. */
 const MAX_ATTACHMENT_TEXT = 48_000
+/** Maximum inline file and link text sent with one message. */
+const MAX_INLINE_CONTEXT = 96_000
 
 /** One project, file, or public link shown above the message composer. */
 type ChatAttachment = {
@@ -135,6 +139,11 @@ export function ChatWorkspace() {
 
   /** Reports whether another context item can fit in the current conversation. */
   const canAttach = attachments.length < MAX_ATTACHMENTS
+  /** Reports whether the server can accept another attached project. */
+  const canAttachProject =
+    canAttach &&
+    attachments.filter((attachment) => attachment.kind === "project").length <
+      MAX_PROJECT_ATTACHMENTS
 
   /** Adds an attachment unless the same project or URL is already present. */
   const addAttachment = (attachment: ChatAttachment): void => {
@@ -159,16 +168,33 @@ export function ChatWorkspace() {
       0,
       Math.max(0, MAX_ATTACHMENTS - attachments.length)
     )
+    let remainingCharacters =
+      MAX_INLINE_CONTEXT -
+      attachments
+        .filter((attachment) => !attachment.sent)
+        .reduce(
+          (total, attachment) => total + (attachment.text?.length ?? 0),
+          0
+        )
     for (const file of selected) {
       try {
         const source = await extractSource(file)
         if (!source.text.trim())
           throw new Error("There was no readable text in that file.")
+        if (remainingCharacters <= 0)
+          throw new Error(
+            "Remove an unsent file or link before adding another."
+          )
+        const text = source.text.slice(
+          0,
+          Math.min(MAX_ATTACHMENT_TEXT, remainingCharacters)
+        )
+        remainingCharacters -= text.length
         addAttachment({
           id: crypto.randomUUID(),
           kind: "file",
           label: source.filename,
-          text: source.text.slice(0, MAX_ATTACHMENT_TEXT),
+          text,
           sent: false,
         })
       } catch (fileError) {
@@ -199,11 +225,24 @@ export function ChatWorkspace() {
       const source = await extractSourceResponse(response, url)
       if (!source.text.trim())
         throw new Error("There was no readable text at that link.")
+      const remainingCharacters =
+        MAX_INLINE_CONTEXT -
+        attachments
+          .filter((attachment) => !attachment.sent)
+          .reduce(
+            (total, attachment) => total + (attachment.text?.length ?? 0),
+            0
+          )
+      if (remainingCharacters <= 0)
+        throw new Error("Remove an unsent file or link before adding another.")
       addAttachment({
         id: crypto.randomUUID(),
         kind: "link",
         label: source.filename,
-        text: source.text.slice(0, MAX_ATTACHMENT_TEXT),
+        text: source.text.slice(
+          0,
+          Math.min(MAX_ATTACHMENT_TEXT, remainingCharacters)
+        ),
         url: response.headers.get("x-source-url") ?? url,
         sent: false,
       })
@@ -510,7 +549,10 @@ export function ChatWorkspace() {
                   <HugeiconsIcon icon={Link02Icon} size={17} />
                   Add link
                 </DropdownMenuItem>
-                <DropdownMenuItem onSelect={() => setProjectDialogOpen(true)}>
+                <DropdownMenuItem
+                  disabled={!canAttachProject}
+                  onSelect={() => setProjectDialogOpen(true)}
+                >
                   <HugeiconsIcon icon={Folder01Icon} size={17} />
                   Add project
                 </DropdownMenuItem>
@@ -569,7 +611,7 @@ export function ChatWorkspace() {
                     key={project._id}
                     type="button"
                     variant="ghost"
-                    disabled={attached || !canAttach}
+                    disabled={attached || !canAttachProject}
                     className="h-auto w-full justify-start gap-3 rounded-xl px-3 py-3 text-left"
                     onClick={() => {
                       addAttachment({
