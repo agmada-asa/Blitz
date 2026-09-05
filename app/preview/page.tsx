@@ -1,16 +1,8 @@
-/** Exposes the self-contained visual checkpoint for Blitz's feed direction. */
+/** Keeps the shared checkpoint URL working after the live feed replaces its fixtures. */
 
-import type { Metadata } from "next"
+import { redirect } from "next/navigation"
 
-import { PreviewFeed } from "@/components/preview/preview-feed"
-
-/** Browser metadata for the fixture-driven preview route. */
-export const metadata: Metadata = {
-  title: "Blitz preview | Learn at speed",
-  description: "An interactive, local-only preview of the Blitz learning feed.",
-}
-
-/** Renders the local preview without querying Convex or persisting progress. */
+/** Sends existing preview links to the real source-backed learning feed. */
 export default function PreviewPage() {
-  return <PreviewFeed />
+  redirect("/")
 }
