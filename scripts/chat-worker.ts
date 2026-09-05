@@ -57,6 +57,11 @@ async function main(): Promise<void> {
         messageId: args.messageId as Id<"conversationMessages">,
         leaseToken: args.leaseToken,
       }),
+    progress: (args) =>
+      client.mutation(api.conversations.progress, {
+        ...args,
+        messageId: args.messageId as Id<"conversationMessages">,
+      }),
     complete: (args) =>
       client.mutation(api.conversations.complete, {
         messageId: args.messageId as Id<"conversationMessages">,

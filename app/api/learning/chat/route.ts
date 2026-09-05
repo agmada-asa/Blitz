@@ -1,5 +1,6 @@
-/** Provides the polling card-chat contract for browser and native clients. */
+/** Provides snapshot and streaming card-chat contracts for browser and native clients. */
 
+import { chatStream } from "@/lib/server/chat-stream"
 import { ConvexHttpClient } from "convex/browser"
 import { api } from "@/convex/_generated/api"
 import type { Id } from "@/convex/_generated/dataModel"
@@ -94,11 +95,15 @@ export async function GET(request: Request): Promise<Response> {
       200
     )
     const itemId = requiredText(url.searchParams.get("itemId"), "Item ID", 200)
-    const result = await convexClient().query(api.conversations.get, {
+    const client = convexClient()
+    const args = {
       projectId: projectId as Id<"projects">,
       itemId: itemId as Id<"learningItems">,
-    })
-    return Response.json(result)
+    }
+    const result = await client.query(api.conversations.get, args)
+    if (url.searchParams.get("stream") === "1")
+      return chatStream(client.url, args, request.signal)
+    return Response.json(result, { headers: { "Cache-Control": "no-store" } })
   } catch (error) {
     if (error instanceof LearningApiError)
       return Response.json({ error: error.message }, { status: error.status })

@@ -1,5 +1,6 @@
 /** Drains persisted card-chat requests on the local Mac using the subscription Codex transport. */
 
+import { createChatProgress } from "./chat-progress.ts"
 import { mkdir } from "node:fs/promises"
 import { homedir } from "node:os"
 import { isAbsolute, join, resolve, sep } from "node:path"
@@ -65,6 +66,12 @@ export interface ChatWorkerQueue {
     messageId: string
     leaseToken: string
   }): Promise<ChatWorkContext>
+  /** Saves a cumulative partial reply while the lease is live. */
+  progress(args: {
+    messageId: string
+    leaseToken: string
+    reply: string
+  }): Promise<unknown>
   /** Saves assistant output and both Codex identifiers atomically. */
   complete(args: {
     messageId: string
@@ -148,6 +155,9 @@ export async function runChatWorkerStep(
     leaseToken,
   })
   if (!claim) return { status: "idle" }
+  const progress = createChatProgress((reply) =>
+    options.queue.progress({ messageId: claim.messageId, leaseToken, reply })
+  )
   try {
     options.signal?.throwIfAborted()
     const context = await options.queue.getWorkContext({
@@ -194,9 +204,15 @@ export async function runChatWorkerStep(
         ...(options.effort === undefined ? {} : { effort: options.effort }),
         signal: options.signal,
       },
-      { onEvent: options.onEvent ?? (() => {}) }
+      {
+        onEvent: (event) => {
+          if (event.type === "text-delta") progress.append(event.delta)
+          options.onEvent?.(event)
+        },
+      }
     )
     options.signal?.throwIfAborted()
+    await progress.finish()
     await options.queue.complete({
       messageId: claim.messageId,
       leaseToken,
@@ -211,6 +227,7 @@ export async function runChatWorkerStep(
       result,
     }
   } catch (error) {
+    await progress.finish()
     await options.queue
       .fail({ messageId: claim.messageId, leaseToken, error: safeFailure() })
       .catch(() => undefined)
