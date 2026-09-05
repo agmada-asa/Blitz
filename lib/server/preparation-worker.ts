@@ -13,6 +13,8 @@ import {
 export interface PreparationClaim {
   jobId: string
   nextChunk: number
+  /** Approved research scope; omitted for generic source preparation. */
+  learningScope?: string
   source: {
     _id: string
     filename: string
@@ -84,6 +86,7 @@ export async function runPreparationStep(
       throw new Error("Source preparation checkpoint is outside its content")
     const batch = await generateLearningForChunk(chunk, generate, {
       signal: options.signal,
+      learningScope: claim.learningScope,
     })
     options.signal?.throwIfAborted()
     await queue.commitChunk({

@@ -23,6 +23,9 @@ export const PREPARATION_LEASE_MS = 5 * 60 * 1000
 export const MAX_PREPARATION_CHUNKS = 1_000
 /** Maximum jobs inspected in one non-paginated claim query. */
 const CLAIM_SCAN_LIMIT = 50
+/** Safe source error shown when a completed job produced no learning items. */
+const NO_STUDY_CONTENT_ERROR =
+  "No study content was generated. Add clearer notes or another source."
 
 /** Read-only Convex context shared by queue helpers. */
 type ReadContext = Pick<QueryCtx, "db">
@@ -74,6 +77,8 @@ function progressFor(
     chunkOrdinal: chunkOrdinal ?? null,
     nextChunkOrdinal: job.nextChunkOrdinal,
     totalChunks: job.totalChunks ?? null,
+    // Older jobs predate this counter; null keeps their progress honest.
+    generatedItemCount: job.generatedItemCount ?? null,
     isComplete: job.status === "completed",
   }
 }
@@ -152,6 +157,7 @@ export const enqueue = mutation({
       sourceKind: source.kind,
       status: "queued",
       nextChunkOrdinal: 0,
+      generatedItemCount: 0,
       attemptCount: 0,
       createdAt: now,
       updatedAt: now,
@@ -183,6 +189,9 @@ export const claimNext = mutation({
         leaseToken,
         nextChunk: { ordinal: activeOwned.nextChunkOrdinal },
         totalChunks: activeOwned.totalChunks ?? null,
+        ...(activeOwned.learningScope
+          ? { learningScope: activeOwned.learningScope }
+          : {}),
         source: sourceForWorker(activeOwned),
       }
     }
@@ -218,6 +227,9 @@ export const claimNext = mutation({
       leaseToken,
       nextChunk: { ordinal: candidate.nextChunkOrdinal },
       totalChunks: candidate.totalChunks ?? null,
+      ...(candidate.learningScope
+        ? { learningScope: candidate.learningScope }
+        : {}),
       source: sourceForWorker({
         ...candidate,
         status: "leased",
@@ -357,11 +369,20 @@ export const commitChunk = mutation({
     }
     const nextChunkOrdinal = args.expectedOrdinal + 1
     const isComplete = nextChunkOrdinal === args.totalChunks
+    // New jobs count from zero. For a legacy job with prior chunks, preserve an
+    // unknown total rather than presenting a misleading partial count.
+    const generatedItemCount =
+      job.generatedItemCount === undefined
+        ? job.nextChunkOrdinal === 0
+          ? batch.items.length
+          : undefined
+        : job.generatedItemCount + batch.items.length
     await ctx.db.patch(args.jobId, {
       status: isComplete ? "completed" : "queued",
       lastError: undefined,
       nextChunkOrdinal,
       totalChunks: args.totalChunks,
+      ...(generatedItemCount === undefined ? {} : { generatedItemCount }),
       // Each worker step releases its lease. A fresh claim can immediately
       // continue this source, and lost commit responses cannot fail a later step.
       workerId: undefined,
@@ -370,8 +391,19 @@ export const commitChunk = mutation({
       updatedAt: now,
     })
     await ctx.db.patch(job.sourceId, {
-      status: isComplete ? "ready" : "processing",
-      ...(isComplete ? { summary: batch.summary, error: undefined } : {}),
+      status:
+        isComplete && generatedItemCount === 0
+          ? "failed"
+          : isComplete
+            ? "ready"
+            : "processing",
+      ...(isComplete
+        ? {
+            summary: batch.summary,
+            error:
+              generatedItemCount === 0 ? NO_STUDY_CONTENT_ERROR : undefined,
+          }
+        : {}),
     })
     const updatedJob = await ctx.db.get(args.jobId)
     if (!updatedJob) throw new Error("Preparation job disappeared")

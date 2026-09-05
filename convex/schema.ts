@@ -184,6 +184,10 @@ export default defineSchema({
     ),
     nextChunkOrdinal: v.number(),
     totalChunks: v.optional(v.number()),
+    /** Approved research topic filter copied into the immutable job snapshot. */
+    learningScope: v.optional(v.string()),
+    /** Number of generated learning items committed so far; absent on legacy jobs. */
+    generatedItemCount: v.optional(v.number()),
     workerId: v.optional(v.string()),
     leaseToken: v.optional(v.string()),
     leaseExpiresAt: v.optional(v.number()),

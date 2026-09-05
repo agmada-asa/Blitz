@@ -181,20 +181,24 @@ function SourceRow({
   const job = jobs?.[0]
   const preparationFailed = job?.status === "failed"
   const preparationComplete = job?.status === "completed"
-  const status = preparationFailed
-    ? "failed"
-    : preparationComplete
-      ? "ready"
-      : source.status
-  const detail = preparationFailed
-    ? job.error || undefined
-    : job?.status === "leased"
-      ? job.totalChunks
-        ? `Preparing section ${Math.min(job.nextChunkOrdinal + 1, job.totalChunks)} of ${job.totalChunks}`
-        : "Preparing source…"
-      : source.status === "failed"
-        ? source.error || undefined
-        : undefined
+  const noStudyContent = preparationComplete && job.generatedItemCount === 0
+  const status =
+    noStudyContent || preparationFailed
+      ? "failed"
+      : preparationComplete
+        ? "ready"
+        : source.status
+  const detail = noStudyContent
+    ? source.error || "No study content. Add clearer notes or another source."
+    : preparationFailed
+      ? job.error || undefined
+      : job?.status === "leased"
+        ? job.totalChunks
+          ? `Preparing section ${Math.min(job.nextChunkOrdinal + 1, job.totalChunks)} of ${job.totalChunks}`
+          : "Preparing source…"
+        : source.status === "failed"
+          ? source.error || undefined
+          : undefined
 
   const [retryState, setRetryState] = useState<"idle" | "pending" | "error">(
     "idle"

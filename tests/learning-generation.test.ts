@@ -94,6 +94,23 @@ test("generates every supported item format from one chunk", async () => {
   assert.ok(batch.items.every((item) => item.sourceChunkIds[0] === chunk.id))
 })
 
+test("research scope filters coverage and keeps generated questions standalone", async () => {
+  let prompt = ""
+  await generateLearningForChunk(
+    chunk,
+    async (value) => {
+      prompt = value
+      return validOutput()
+    },
+    { learningScope: "ADSR envelope behavior" }
+  )
+
+  assert.match(prompt, /ADSR envelope behavior/)
+  assert.match(prompt, /directly relevant to that scope/)
+  assert.match(prompt, /SKIPPED:/)
+  assert.match(prompt, /must not say "according to the source"/)
+})
+
 test("rejects an item that references an unknown chunk ID", async () => {
   const output = JSON.parse(validOutput()) as {
     items: Array<{ sourceChunkIds: string[] }>

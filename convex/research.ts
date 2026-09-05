@@ -633,6 +633,8 @@ export const completeImport = mutation({
       sourceKind: args.kind,
       status: "queued",
       nextChunkOrdinal: 0,
+      learningScope: proposal.scope,
+      generatedItemCount: 0,
       attemptCount: 0,
       createdAt: now,
       updatedAt: now,

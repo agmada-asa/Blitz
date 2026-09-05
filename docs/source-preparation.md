@@ -6,6 +6,13 @@ filename, and kind, so a worker can finish the same input even if a future
 import changes. Snapshots are bounded at 120,000 characters, matching the
 current source limit.
 
+Generic uploads cover all factual material in the snapshot. Research imports
+copy the approved proposal's bounded (3,000-character) `learningScope` into the preparation job;
+the worker uses that scope as a filter, so chunks outside the approved scope
+produce an explicit `SKIPPED:` batch instead of unrelated concepts. Generated
+questions are written as standalone prompts and do not refer to the source or
+chunk as context.
+
 The worker flow is:
 
 1. Call `enqueue({ projectId, sourceId })`. Repeating the call returns the
@@ -44,6 +51,13 @@ checkpoints. There is no multi-user authorization layer in this first personal
 deployment, and the queue does not expose agent execution or network access.
 The local worker owns source splitting and generation timeouts; the queue only
 stores snapshots, validates batches, and persists bounded results.
+
+Progress includes `generatedItemCount` for new jobs. It starts at zero and is
+advanced with each committed chunk in the same idempotent checkpoint mutation.
+Older partial jobs return `null` because their earlier item count is unknown.
+A completed job with zero generated items marks its source failed with “No study
+content” guidance, so the interface does not present an empty feed as ready and
+does not offer a retry loop for the same unreadable input.
 
 ## Running the Mac worker
 
