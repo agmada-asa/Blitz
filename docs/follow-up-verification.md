@@ -34,7 +34,10 @@ Its progress remains saved and its project offers Retry. Read-only review found
 no deterministic prompt/validator contradiction; raw failed output was ephemeral.
 
 The previously oversized Live Instrument Reference downloaded in three parts.
-Its preparation remains active at handoff. The Learning Synths interactive
+At the final check, its third part completed with 11 items. Parts one and two
+stopped on invalid model output after saving 59 and 44 items respectively.
+Together with Wavetable, these three jobs offer checkpoint-preserving Retry;
+no jobs remain active. The Learning Synths interactive
 website returned browser compatibility text and produced no study content.
 It was not retried automatically.
 
