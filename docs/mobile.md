@@ -77,9 +77,11 @@ cd mobile
 ```
 
 The generated native directory and APK build output are not committed. The
-script writes the preview to `/tmp/blitz-artifacts/blitz-android-debug.apk` by
+script writes the preview to `build/android/blitz-android-debug.apk` at the repository root by
 default; set `BLITZ_ANDROID_ARTIFACT_DIR` to choose another local output
 directory.
+
+The output directory is ignored by Git and survives temporary-directory cleanup.
 
 ## Checks
 
@@ -111,8 +113,9 @@ correctness is displayed only after the answer response arrives.
 
 Prepared cards are cached in AsyncStorage with a 60-card cap, scoped to the
 normalized server URL. The feed requests 20 cards at a time and follows the
-server's opaque `continueCursor`, appending each page by card ID so later pages
-cannot restart the first page or erase earlier loaded pages during refresh.
+server's opaque `continueCursor`, appending each page by card ID. Refreshing the
+same feed preserves loaded pages while the app is running. A fresh launch replaces
+the restored cache when its first online response arrives.
 Answers, skips, and exposures are queued with stable UUID client event IDs and
 a 200-event cap; queued events are retried in order when the same server is
 reachable. Queues are scoped to that server, so changing servers never sends
@@ -144,34 +147,64 @@ The local environment was checked before the first native build:
 - Node.js 24.14.0; JDK 17.0.17 is installed at the documented macOS path,
   while the default `java` command points to JDK 23.0.1.
 - Android SDK Platform 36 and Build-Tools 36.0.0 are installed.
-- `adb` 37.0.1 is installed, with no connected device.
-- An `Ocean_API_35` AVD record exists, but the Android emulator executable is
-  not installed or available on `PATH`.
+- `adb` 37.0.1 was available. Android emulator 37.1.11 was used from a
+  temporary installation. The existing `Ocean_API_35` AVD was left untouched.
+- The task-owned SDK at `/tmp/blitz-android-sdk-20260905` used the already
+  accepted `android-sdk-license` for the standard AOSP API 36 arm64 image.
+  The task-owned AVD and user directory were under
+  `/tmp/blitz-android-avd-standard36-20260905` and
+  `/tmp/blitz-android-user-standard36-20260905`; no global SDK or AVD setting
+  was changed. An AOSP ATD image was also tried, but its captures were black,
+  so the standard AOSP image was used for runtime verification.
 
 The following checks passed:
 
 - `npm install` generated the independent lockfile, and a clean `npm ci` install
   completed successfully afterward.
-- `npm run test` (bounded queue retention and removal invariants)
+- `npm run test` (6 tests covering queue retention, migration ownership, and feed merging)
 - `npm run typecheck`
 - `npm run doctor` (`expo-doctor`, 21/21 checks)
 - `npx expo export --platform android` (Metro bundled the Android entrypoint
   and shared learning contracts)
 - `./scripts/build-debug-preview.sh` with JDK 17 (successful self-contained
-  131 MB debug APK; archive contains `assets/index.android.bundle` (1,232,092
+  134 MiB debug APK; archive contains `assets/index.android.bundle` (1,245,008
   bytes); SHA-256
-  `49bc380a206f722774ee0874c1b5f32371fed8ca4ea5072ecc13376b84122fd8`)
+  `22536d9599e6764a3da87a006302b3efd6455f1e5ffd10ca66b8cdcd080dcf5f`)
 
-`npm run android:debug` completed Expo prebuild, then stopped as expected
-because no Android device or runnable emulator was available. No emulator image
-was downloaded or started.
+The final APK was installed on the task-owned standard AOSP API 36 emulator
+(`emulator-5554`) and launched without Metro. The bounded visual pass used
+`http://10.0.2.2:3998`, a loopback proxy that serves only the verification
+project and rejects mutations targeting any other project. The real feed rendered;
+the filter sheet's close control stayed below the status bar; and the offline
+saved-card notice stayed above the navigation bar. The chat send control was
+fully visible with and without the keyboard after the keyboard-avoidance fix. A
+long topic list reached its stable end after repeated swipes, with the final
+option above the navigation bar. Screenshot evidence was reviewed inline in
+the task; diagnostic images are not part of the deliverable. Physical phone
+behavior remains unverified.
+
+Earlier runtime checks exercised real answer feedback and an offline multiple-answer
+submission that retained its pending state across force stop/restart and synced
+after reconnection. A native chat question received a real worker reply. That
+chat accidentally targeted the preexisting project; its test message and fifteen
+passive exposure events were backed up and removed. No answer scores or review
+records were created in that project. Subsequent checks used the restricted proxy.
+
+The root uses safe-area insets for overlays and notices. The filter header stays
+fixed while choices scroll. Chat uses explicit Android keyboard resizing so its
+input and Send action remain visible.
+
+After review, the test app was cleared, the emulator was stopped, and the temporary
+SDK, AVDs, screenshots, and proxy were removed. The APK remains in the ignored
+`build/android/` directory. The original project retains its PDF, ten legacy cards,
+and 83 prepared learning items.
 
 ## Install over the local network
 
 Set `BLITZ_ANDROID_APK_PATH` to the absolute path of a built `.apk` when starting
 Blitz. `GET /api/android` streams that file as an Android package download;
 without a configured artifact it returns 404. The route never accepts a path
-from the request and the APK remains outside the repository.
+from the request and the APK is never committed.
 
 The overnight build's LAN download was streamed and SHA-256 checked against the
 artifact above. Installing and visually testing it on a physical phone remains

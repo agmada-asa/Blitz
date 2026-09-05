@@ -8,7 +8,7 @@
 set -euo pipefail
 
 mobile_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-artifact_dir="${BLITZ_ANDROID_ARTIFACT_DIR:-/tmp/blitz-artifacts}"
+artifact_dir="${BLITZ_ANDROID_ARTIFACT_DIR:-${mobile_root}/../build/android}"
 
 cd "$mobile_root"
 if [[ -e android ]]; then
