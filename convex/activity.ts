@@ -1,32 +1,60 @@
-/** Provides a bounded read-only activity feed for durable local preparation jobs. */
+/** Builds the notification center from durable jobs and AI reply records. */
 
 import { query } from "./_generated/server"
 import type { Doc } from "./_generated/dataModel"
 
-/** Maximum jobs read for each status so snapshots cannot exhaust a query. */
-const MAX_JOBS_PER_STATUS = 6
+/** Maximum records read for each indexed status. */
+const MAX_ROWS_PER_STATUS = 8
+/** Maximum finished notifications returned after all sources are merged. */
+const MAX_NOTIFICATIONS = 40
+/** Maximum workspace chats inspected for their latest assistant message. */
+const MAX_WORKSPACE_CHATS = 24
 
-/** Public preparation activity row with names and safe progress fields only. */
-export type PreparationActivity = {
-  jobId: string
-  projectId: Doc<"projects">["_id"]
-  projectTitle: string
-  label: string
-  status: "queued" | "leased" | "running" | "failed" | "completed" | "ready"
+/** Work types rendered with distinct labels and destinations. */
+export type NotificationKind =
+  "preparation" | "research" | "import" | "card-reply" | "workspace-reply"
+
+/** Shared row used by active tasks and finished notifications. */
+export type NotificationCenterRow = {
+  id: string
+  kind: NotificationKind
+  title: string
+  detail: string
+  context: string | null
+  status: "queued" | "running" | "completed" | "failed"
   stage: string
-  elapsedMs: number
-  section: number | null
-  sectionCount: number | null
-  generatedItemCount: number | null
+  href: string
   createdAt: number
   updatedAt: number
-  error: string | null
-  kind: "preparation" | "research" | "download" | "chat"
   elapsedSince: number | null
-  href?: string
+  elapsedMs: number
+  generatedItemCount: number | null
+  error: string | null
 }
 
-/** Lists active work and recent failures without returning snapshots or worker logs. */
+/** Truncates user-provided text before it becomes a compact row label. */
+function compact(value: string, maximum = 96): string {
+  const text = value.trim().replace(/\s+/g, " ")
+  return text.length <= maximum
+    ? text
+    : `${text.slice(0, maximum - 1).trimEnd()}…`
+}
+
+/** Maps a terminal row to a fixed elapsed duration and an active row to a timer. */
+function timing(
+  status: NotificationCenterRow["status"],
+  createdAt: number,
+  updatedAt: number
+): Pick<NotificationCenterRow, "elapsedSince" | "elapsedMs"> {
+  return status === "completed" || status === "failed"
+    ? {
+        elapsedSince: null,
+        elapsedMs: Math.max(0, updatedAt - createdAt),
+      }
+    : { elapsedSince: createdAt, elapsedMs: 0 }
+}
+
+/** Lists current background work and recent results without source text or replies. */
 export const list = query({
   args: {},
   handler: async (ctx) => {
@@ -34,110 +62,158 @@ export const list = query({
       prepQueued,
       prepLeased,
       prepFailed,
+      prepCompleted,
       researchQueued,
       researchRunning,
       researchFailed,
+      researchReady,
       importQueued,
       importRunning,
       importFailed,
-      messageQueued,
-      messageRunning,
-      messageFailed,
-      messageCompleted,
+      importCompleted,
+      cardQueued,
+      cardRunning,
+      cardFailed,
+      cardCompleted,
+      workspaceChats,
     ] = await Promise.all([
       ctx.db
         .query("preparationJobs")
         .withIndex("by_status_createdAt", (q) => q.eq("status", "queued"))
         .order("asc")
-        .take(MAX_JOBS_PER_STATUS),
+        .take(MAX_ROWS_PER_STATUS),
       ctx.db
         .query("preparationJobs")
         .withIndex("by_status_createdAt", (q) => q.eq("status", "leased"))
         .order("desc")
-        .take(MAX_JOBS_PER_STATUS),
+        .take(MAX_ROWS_PER_STATUS),
       ctx.db
         .query("preparationJobs")
         .withIndex("by_status_createdAt", (q) => q.eq("status", "failed"))
         .order("desc")
-        .take(MAX_JOBS_PER_STATUS),
+        .take(MAX_ROWS_PER_STATUS),
+      ctx.db
+        .query("preparationJobs")
+        .withIndex("by_status_createdAt", (q) => q.eq("status", "completed"))
+        .order("desc")
+        .take(MAX_ROWS_PER_STATUS),
       ctx.db
         .query("researchProposals")
         .withIndex("by_status_createdAt", (q) => q.eq("status", "queued"))
         .order("asc")
-        .take(MAX_JOBS_PER_STATUS),
+        .take(MAX_ROWS_PER_STATUS),
       ctx.db
         .query("researchProposals")
         .withIndex("by_status_createdAt", (q) => q.eq("status", "running"))
         .order("desc")
-        .take(MAX_JOBS_PER_STATUS),
+        .take(MAX_ROWS_PER_STATUS),
       ctx.db
         .query("researchProposals")
         .withIndex("by_status_createdAt", (q) => q.eq("status", "failed"))
         .order("desc")
-        .take(MAX_JOBS_PER_STATUS),
+        .take(MAX_ROWS_PER_STATUS),
+      ctx.db
+        .query("researchProposals")
+        .withIndex("by_status_createdAt", (q) => q.eq("status", "ready"))
+        .order("desc")
+        .take(MAX_ROWS_PER_STATUS),
       ctx.db
         .query("researchProposalImports")
         .withIndex("by_status_createdAt", (q) => q.eq("status", "queued"))
         .order("asc")
-        .take(MAX_JOBS_PER_STATUS),
+        .take(MAX_ROWS_PER_STATUS),
       ctx.db
         .query("researchProposalImports")
         .withIndex("by_status_createdAt", (q) => q.eq("status", "running"))
         .order("desc")
-        .take(MAX_JOBS_PER_STATUS),
+        .take(MAX_ROWS_PER_STATUS),
       ctx.db
         .query("researchProposalImports")
         .withIndex("by_status_createdAt", (q) => q.eq("status", "failed"))
         .order("desc")
-        .take(MAX_JOBS_PER_STATUS),
+        .take(MAX_ROWS_PER_STATUS),
+      ctx.db
+        .query("researchProposalImports")
+        .withIndex("by_status_createdAt", (q) => q.eq("status", "imported"))
+        .order("desc")
+        .take(MAX_ROWS_PER_STATUS),
       ctx.db
         .query("conversationMessages")
         .withIndex("by_status_createdAt", (q) => q.eq("status", "queued"))
         .order("asc")
-        .take(MAX_JOBS_PER_STATUS),
+        .take(MAX_ROWS_PER_STATUS),
       ctx.db
         .query("conversationMessages")
         .withIndex("by_status_createdAt", (q) => q.eq("status", "running"))
         .order("desc")
-        .take(MAX_JOBS_PER_STATUS),
+        .take(MAX_ROWS_PER_STATUS),
       ctx.db
         .query("conversationMessages")
         .withIndex("by_status_createdAt", (q) => q.eq("status", "failed"))
         .order("desc")
-        .take(MAX_JOBS_PER_STATUS),
+        .take(MAX_ROWS_PER_STATUS),
       ctx.db
         .query("conversationMessages")
         .withIndex("by_status_createdAt", (q) => q.eq("status", "completed"))
         .order("desc")
-        .take(4),
+        .take(MAX_ROWS_PER_STATUS),
+      ctx.db
+        .query("workspaceChats")
+        .withIndex("by_updatedAt")
+        .order("desc")
+        .take(MAX_WORKSPACE_CHATS),
     ])
-    const prep = [...prepLeased, ...prepQueued, ...prepFailed]
-    const proposals = [...researchRunning, ...researchQueued, ...researchFailed]
-    const imports = [...importRunning, ...importQueued, ...importFailed]
-    const messages = [
-      ...messageRunning,
-      ...messageQueued,
-      ...messageFailed,
-      ...messageCompleted,
+
+    const preparation = [
+      ...prepQueued,
+      ...prepLeased,
+      ...prepFailed,
+      ...prepCompleted,
+    ]
+    const proposals = [
+      ...researchQueued,
+      ...researchRunning,
+      ...researchFailed,
+      ...researchReady,
+    ]
+    const imports = [
+      ...importQueued,
+      ...importRunning,
+      ...importFailed,
+      ...importCompleted,
+    ]
+    const cardMessages = [
+      ...cardQueued,
+      ...cardRunning,
+      ...cardFailed,
+      ...cardCompleted,
+    ]
+
+    const conversationIds = [
+      ...new Set(cardMessages.map((message) => message.conversationId)),
     ]
     const conversations = new Map(
-      (
-        await Promise.all(
-          [...new Set(messages.map((message) => message.conversationId))].map(
-            (id) => ctx.db.get(id)
-          )
-        )
-      )
+      (await Promise.all(conversationIds.map((id) => ctx.db.get(id))))
         .filter(
           (conversation): conversation is Doc<"conversations"> =>
             conversation !== null
         )
         .map((conversation) => [conversation._id, conversation])
     )
+    const proposalIds = [
+      ...new Set(imports.map((importRow) => importRow.proposalId)),
+    ]
+    const importedProposals = new Map(
+      (await Promise.all(proposalIds.map((id) => ctx.db.get(id))))
+        .filter(
+          (proposal): proposal is Doc<"researchProposals"> => proposal !== null
+        )
+        .map((proposal) => [proposal._id, proposal])
+    )
     const projectIds = new Set([
-      ...prep.map((job) => job.projectId),
-      ...proposals.map((job) => job.projectId),
-      ...imports.map((job) => job.projectId),
+      ...preparation.map((job) => job.projectId),
+      ...proposals.map((proposal) => proposal.projectId),
+      ...imports.map((importRow) => importRow.projectId),
       ...[...conversations.values()].map(
         (conversation) => conversation.projectId
       ),
@@ -147,159 +223,237 @@ export const list = query({
         .filter((project): project is Doc<"projects"> => project !== null)
         .map((project) => [project._id, project])
     )
-    const rows: PreparationActivity[] = []
-    for (const job of prep) {
+    const learningItems = new Map(
+      (
+        await Promise.all(
+          [...conversations.values()].map((conversation) =>
+            ctx.db.get(conversation.itemId)
+          )
+        )
+      )
+        .filter((item): item is Doc<"learningItems"> => item !== null)
+        .map((item) => [item._id, item])
+    )
+    const workspaceMessages = (
+      await Promise.all(
+        workspaceChats.map(async (chat) => {
+          if (chat.activeMessageId) return ctx.db.get(chat.activeMessageId)
+          return ctx.db
+            .query("workspaceChatMessages")
+            .withIndex("by_chat_createdAt", (q) => q.eq("chatId", chat._id))
+            .order("desc")
+            .first()
+        })
+      )
+    ).filter(
+      (message): message is Doc<"workspaceChatMessages"> =>
+        message !== null && message.role === "assistant"
+    )
+
+    const rows: NotificationCenterRow[] = []
+    for (const job of preparation) {
       const project = projects.get(job.projectId)
       if (!project) continue
-      const sectionCount = job.totalChunks ?? null
-      const section = sectionCount
-        ? Math.min(job.nextChunkOrdinal + 1, sectionCount)
+      const status =
+        job.status === "leased"
+          ? "running"
+          : (job.status as "queued" | "completed" | "failed")
+      const section = job.totalChunks
+        ? Math.min(job.nextChunkOrdinal + 1, job.totalChunks)
         : null
       rows.push({
-        jobId: job._id,
-        projectId: job.projectId,
-        projectTitle: project.title,
-        label: job.sourceFilename,
+        id: `preparation:${job._id}`,
         kind: "preparation",
-        status: job.status,
+        title:
+          status === "completed"
+            ? `${job.sourceFilename} is ready`
+            : status === "failed"
+              ? `${job.sourceFilename} needs attention`
+              : `Preparing ${job.sourceFilename}`,
+        detail:
+          status === "completed"
+            ? `${job.generatedItemCount ?? 0} ${job.generatedItemCount === 1 ? "study item" : "study items"} created`
+            : section && job.totalChunks
+              ? `Section ${section} of ${job.totalChunks}`
+              : status === "queued"
+                ? "Waiting to start"
+                : "Creating study material",
+        context: project.title,
+        status,
         stage:
-          job.status === "queued"
-            ? "Queued"
-            : job.status === "failed"
+          status === "completed"
+            ? "Ready"
+            : status === "failed"
               ? "Failed"
-              : sectionCount
-                ? `Preparing section ${section} of ${sectionCount}`
-                : "Preparing source",
-        elapsedMs:
-          job.status === "failed"
-            ? Math.max(0, job.updatedAt - job.createdAt)
-            : 0,
-        elapsedSince: job.status === "failed" ? null : job.createdAt,
-        section,
-        sectionCount,
-        generatedItemCount: job.generatedItemCount ?? null,
+              : status === "queued"
+                ? "Queued"
+                : "Preparing",
+        href: `/projects/${job.projectId}`,
         createdAt: job.createdAt,
         updatedAt: job.updatedAt,
+        ...timing(status, job.createdAt, job.updatedAt),
+        generatedItemCount: job.generatedItemCount ?? null,
         error: job.lastError?.trim().slice(0, 500) || null,
       })
     }
+
     for (const proposal of proposals) {
       const project = projects.get(proposal.projectId)
       if (!project) continue
+      const status =
+        proposal.status === "ready"
+          ? "completed"
+          : (proposal.status as "queued" | "running" | "failed")
       rows.push({
-        jobId: proposal._id,
-        projectId: proposal.projectId,
-        projectTitle: project.title,
-        label: proposal.request,
+        id: `research:${proposal._id}`,
         kind: "research",
-        status: proposal.status,
+        title:
+          status === "completed"
+            ? "Research plan is ready"
+            : status === "failed"
+              ? "Research needs attention"
+              : "Research in progress",
+        detail: compact(proposal.request),
+        context: project.title,
+        status,
         stage:
-          proposal.status === "failed"
-            ? "Failed"
-            : proposal.status === "queued"
-              ? "Queued"
-              : "Planning research",
-        elapsedMs:
-          proposal.status === "failed"
-            ? Math.max(0, proposal.updatedAt - proposal.createdAt)
-            : 0,
-        elapsedSince: proposal.status === "failed" ? null : proposal.createdAt,
-        section: null,
-        sectionCount: null,
-        generatedItemCount: null,
+          status === "completed"
+            ? "Review sources"
+            : status === "failed"
+              ? "Failed"
+              : status === "queued"
+                ? "Queued"
+                : compact(
+                    proposal.activity?.at(-1)?.label || "Finding sources"
+                  ),
+        href: `/projects/${proposal.projectId}?research=${encodeURIComponent(proposal.requestId)}`,
         createdAt: proposal.createdAt,
         updatedAt: proposal.updatedAt,
+        ...timing(status, proposal.createdAt, proposal.updatedAt),
+        generatedItemCount: null,
         error: proposal.lastError?.trim().slice(0, 500) || null,
       })
     }
+
     for (const importRow of imports) {
       const project = projects.get(importRow.projectId)
-      if (!project) continue
-      const proposal = await ctx.db.get(importRow.proposalId)
-      const label =
-        proposal?.sources[importRow.sourceIndex]?.title ||
+      const proposal = importedProposals.get(importRow.proposalId)
+      if (!project || !proposal) continue
+      const sourceTitle =
+        proposal.sources[importRow.sourceIndex]?.title ||
         `Source ${importRow.sourceIndex + 1}`
+      const status =
+        importRow.status === "imported"
+          ? "completed"
+          : (importRow.status as "queued" | "running" | "failed")
       rows.push({
-        jobId: importRow._id,
-        projectId: importRow.projectId,
-        projectTitle: project.title,
-        label,
-        kind: "download",
-        status:
-          importRow.status === "running"
-            ? "running"
-            : importRow.status === "queued"
-              ? "queued"
-              : "failed",
-        stage:
-          importRow.status === "failed"
-            ? "Failed"
-            : importRow.status === "queued"
-              ? "Queued download"
+        id: `import:${importRow._id}`,
+        kind: "import",
+        title:
+          status === "completed"
+            ? `${sourceTitle} was added`
+            : status === "failed"
+              ? `${sourceTitle} could not be added`
+              : `Importing ${sourceTitle}`,
+        detail:
+          status === "completed"
+            ? "Source preparation will continue if needed"
+            : status === "queued"
+              ? "Waiting to download"
               : "Downloading source",
-        elapsedMs:
-          importRow.status === "failed"
-            ? Math.max(0, importRow.updatedAt - importRow.createdAt)
-            : 0,
-        elapsedSince:
-          importRow.status === "failed" ? null : importRow.createdAt,
-        section: null,
-        sectionCount: null,
-        generatedItemCount: null,
+        context: project.title,
+        status,
+        stage:
+          status === "completed"
+            ? "Imported"
+            : status === "failed"
+              ? "Failed"
+              : status === "queued"
+                ? "Queued"
+                : "Importing",
+        href: `/projects/${importRow.projectId}?research=${encodeURIComponent(proposal.requestId)}`,
         createdAt: importRow.createdAt,
         updatedAt: importRow.updatedAt,
+        ...timing(status, importRow.createdAt, importRow.updatedAt),
+        generatedItemCount: null,
         error: importRow.lastError?.trim().slice(0, 500) || null,
       })
     }
-    for (const message of messages) {
+
+    for (const message of cardMessages) {
       const conversation = conversations.get(message.conversationId)
       if (!conversation) continue
       const project = projects.get(conversation.projectId)
-      if (!project) continue
+      const item = learningItems.get(conversation.itemId)
+      if (!project || !item) continue
+      const status = message.status
       rows.push({
-        jobId: message._id,
-        projectId: conversation.projectId,
-        projectTitle: project.title,
-        label: "Card reply",
-        kind: "chat",
-        href: `/chat?projectId=${encodeURIComponent(conversation.projectId)}&itemId=${encodeURIComponent(conversation.itemId)}`,
-        status: message.status,
+        id: `card-reply:${message._id}`,
+        kind: "card-reply",
+        title:
+          status === "completed"
+            ? "Card reply is ready"
+            : status === "failed"
+              ? "Card reply failed"
+              : "Preparing a card reply",
+        detail: compact(message.question),
+        context: `${project.title} · ${item.title}`,
+        status,
         stage:
-          message.status === "failed"
-            ? "Failed"
-            : message.status === "queued"
-              ? "Queued"
-              : message.status === "completed"
-                ? "Reply ready"
-                : "Preparing reply",
-        elapsedMs:
-          message.status === "failed" || message.status === "completed"
-            ? Math.max(0, message.updatedAt - message.createdAt)
-            : 0,
-        elapsedSince:
-          message.status === "failed" || message.status === "completed"
-            ? null
-            : message.createdAt,
-        section: null,
-        sectionCount: null,
-        generatedItemCount: null,
+          status === "completed"
+            ? "Open reply"
+            : status === "failed"
+              ? "Failed"
+              : status === "queued"
+                ? "Queued"
+                : "Replying",
+        href: `/chat?projectId=${encodeURIComponent(conversation.projectId)}&itemId=${encodeURIComponent(conversation.itemId)}`,
         createdAt: message.createdAt,
         updatedAt: message.updatedAt,
+        ...timing(status, message.createdAt, message.updatedAt),
+        generatedItemCount: null,
         error: message.error?.trim().slice(0, 500) || null,
       })
     }
-    return {
-      hasActive:
-        prepQueued.length +
-          prepLeased.length +
-          researchQueued.length +
-          researchRunning.length +
-          importQueued.length +
-          importRunning.length +
-          messageQueued.length +
-          messageRunning.length >
-        0,
-      jobs: rows,
+
+    for (const message of workspaceMessages) {
+      const chat = workspaceChats.find((row) => row._id === message.chatId)
+      if (!chat) continue
+      const status = message.status
+      rows.push({
+        id: `workspace-reply:${message._id}`,
+        kind: "workspace-reply",
+        title:
+          status === "completed"
+            ? "Chat reply is ready"
+            : status === "failed"
+              ? "Chat reply failed"
+              : "Chat reply in progress",
+        detail: compact(chat.title),
+        context: "Workspace chat",
+        status,
+        stage:
+          status === "completed"
+            ? "Open reply"
+            : status === "failed"
+              ? "Failed"
+              : "Replying",
+        href: `/chat?chatId=${encodeURIComponent(chat._id)}`,
+        createdAt: message.createdAt,
+        updatedAt: message.updatedAt,
+        ...timing(status, message.createdAt, message.updatedAt),
+        generatedItemCount: null,
+        error: chat.lastError?.trim().slice(0, 500) || null,
+      })
     }
+
+    const tasks = rows
+      .filter((row) => row.status === "queued" || row.status === "running")
+      .sort((left, right) => right.updatedAt - left.updatedAt)
+    const notifications = rows
+      .filter((row) => row.status === "completed" || row.status === "failed")
+      .sort((left, right) => right.updatedAt - left.updatedAt)
+      .slice(0, MAX_NOTIFICATIONS)
+    return { tasks, notifications }
   },
 })

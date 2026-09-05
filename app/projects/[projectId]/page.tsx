@@ -31,10 +31,13 @@ import type { Id } from "@/convex/_generated/dataModel"
 /** Renders one live project after resolving its Next.js 16 route parameters. */
 export default function ProjectPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ projectId: string }>
+  searchParams: Promise<{ research?: string }>
 }) {
   const { projectId } = use(params)
+  const { research } = use(searchParams)
   const convexProjectId = projectId as Id<"projects">
   const project = useQuery(api.projects.getProject, {
     projectId: convexProjectId,
@@ -79,7 +82,11 @@ export default function ProjectPage({
         </div>
         <ProjectActions project={project} returnToLibrary />
         <div className="flex w-full flex-wrap gap-2 [&_a]:min-h-11 [&_button]:min-h-11">
-          <ResearchPanel key={projectId} projectId={projectId} />
+          <ResearchPanel
+            key={projectId}
+            projectId={projectId}
+            initialRequestId={research}
+          />
           {hasLearningItems ? (
             <>
               <DropdownMenu>

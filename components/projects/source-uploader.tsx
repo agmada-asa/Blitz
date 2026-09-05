@@ -233,8 +233,8 @@ export function SourceUploader({
     if (queuedCount)
       notifyBackground(
         "Card preparation continues in the background.",
-        "/activity",
-        "View activity"
+        "/notifications",
+        "View notifications"
       )
     setBusy(false)
   }
@@ -274,8 +274,8 @@ export function SourceUploader({
         setMessage({ type: "success", text: "Notes queued for preparation." })
         notifyBackground(
           "Card preparation continues in the background.",
-          "/activity",
-          "View activity"
+          "/notifications",
+          "View notifications"
         )
         setPaste("")
       }
@@ -337,8 +337,8 @@ export function SourceUploader({
         setMessage({ type: "success", text: "Link queued for preparation." })
         notifyBackground(
           "Card preparation continues in the background.",
-          "/activity",
-          "View activity"
+          "/notifications",
+          "View notifications"
         )
         setUrl("")
       }

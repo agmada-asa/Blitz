@@ -1,20 +1,18 @@
-# Activity
+# Notifications
 
-`/activity` reads the durable preparation queue so active work remains visible
-when the user navigates away from a project. The read is bounded to six queued,
-six leased, and six failed jobs per preparation, research-planning, source
-download, and card-reply status, using each table's existing status and
-creation index. It joins only project titles and source filenames or proposal
-titles and returns progress fields and clipped error messages; source snapshots,
-questions, replies, and worker logs are omitted from the activity response.
-The four most recently created completed chat messages are also listed, so
-users can reopen a saved reply after leaving the feed. `/chat` resolves the
-attachment by project and item, independently of feed ordering.
+`/notifications` combines ongoing work and recent results from source
+preparation, research planning, research imports, card conversations, and
+workspace chat. Each row links to its project, research dialog, or saved chat.
+`/activity` redirects here so older links remain valid.
 
-The page explains once that preparation continues on the local Mac while it is
-awake, even when the page is closed.
+The query reads a bounded number of records for each status and returns project
+names, task labels, progress, timestamps, and clipped errors. It does not return
+source snapshots, generated replies, or worker logs. Ongoing timers measure
+time since each request started, including queue time and retries. Finished
+rows keep their recorded duration.
 
-Elapsed time updates in the browser and stops at the recorded timestamp for
-failed or completed jobs. It is time since the request was created, including
-waiting and retries, rather than a completion estimate. The bounded list is
-not an exhaustive history; project source lists remain the complete view.
+Unread state and delivered browser alerts are kept on the current device.
+Opening the page marks visible results as read. If the user enables browser
+alerts, Blitz announces newly completed or failed work while the app remains
+open. Clicking an alert opens the matching destination. The first load records
+existing results without announcing a backlog.

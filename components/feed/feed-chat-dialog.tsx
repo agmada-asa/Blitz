@@ -132,7 +132,7 @@ export function FeedChatDialog({
         "Your reply is being prepared in the background.",
         card
           ? `/chat?projectId=${encodeURIComponent(card.projectId)}&itemId=${encodeURIComponent(card.id)}`
-          : "/activity",
+          : "/notifications",
         "View"
       )
     }

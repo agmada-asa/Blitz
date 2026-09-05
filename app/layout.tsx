@@ -7,6 +7,7 @@ import { AppShell } from "@/components/app-shell"
 import { ConvexClientProvider } from "@/components/convex-client-provider"
 import { ThemeProvider } from "@/components/theme-provider"
 import { BackgroundNotices } from "@/components/background-notices"
+import { NotificationProvider } from "@/components/notifications/notification-provider"
 
 /** Default metadata used for Blitz routes. */
 export const metadata: Metadata = {
@@ -26,7 +27,9 @@ export default function RootLayout({
         <ThemeProvider>
           <ConvexClientProvider>
             <BackgroundNotices>
-              <AppShell>{children}</AppShell>
+              <NotificationProvider>
+                <AppShell>{children}</AppShell>
+              </NotificationProvider>
             </BackgroundNotices>
           </ConvexClientProvider>
         </ThemeProvider>

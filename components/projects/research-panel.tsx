@@ -114,7 +114,7 @@ function ImportPreparationStatus({
       <span className="text-red-200">
         Needs retry
         <Link
-          href="/activity"
+          href="/notifications"
           className="ml-2 underline underline-offset-2 hover:text-white"
         >
           View preparation
@@ -308,13 +308,19 @@ function ActivityDetails({ activity }: { activity: ResearchActivity[] }) {
 /** Props for the project-scoped research proposal entry. */
 export type ResearchPanelProps = {
   projectId: string
+  initialRequestId?: string
 }
 
 /** Renders the collapsed research entry and its approval dialog. */
-export function ResearchPanel({ projectId }: ResearchPanelProps) {
-  const [open, setOpen] = useState(false)
+export function ResearchPanel({
+  projectId,
+  initialRequestId,
+}: ResearchPanelProps) {
+  const [open, setOpen] = useState(Boolean(initialRequestId))
   const [requestText, setRequestText] = useState("")
-  const [requestId, setRequestId] = useState<string>()
+  const [requestId, setRequestId] = useState<string | undefined>(
+    initialRequestId
+  )
   const [proposal, setProposal] = useState<ProposalSnapshot>()
   const [imports, setImports] = useState<ResearchImport[]>([])
   const [selectedSources, setSelectedSources] = useState<Set<number>>(new Set())
@@ -413,24 +419,27 @@ export function ResearchPanel({ projectId }: ResearchPanelProps) {
     return () => window.clearInterval(interval)
   }, [hasActiveImports, proposal?.requestId, proposal?.status])
 
-  /** Loads recent project proposals so the latest request survives reloads. */
+  /** Loads a deep-linked proposal or the latest project proposal after reload. */
   useEffect(() => {
     const controller = new AbortController()
     const generation = recentGeneration.current + 1
     recentGeneration.current = generation
     async function loadRecent() {
       try {
-        const response = await fetch(
-          `/api/research/proposals?projectId=${encodeURIComponent(projectId)}&limit=5`,
-          { signal: controller.signal }
-        )
+        const query = new URLSearchParams({ projectId })
+        if (initialRequestId) query.set("requestId", initialRequestId)
+        else query.set("limit", "5")
+        const response = await fetch(`/api/research/proposals?${query}`, {
+          signal: controller.signal,
+        })
         if (!response.ok)
           throw new Error(
             await readResearchError(response, "Could not load research.")
           )
-        const snapshots = (await response.json()) as ProposalSnapshot[]
+        const result = (await response.json()) as
+          ProposalSnapshot | ProposalSnapshot[] | null
         if (recentGeneration.current !== generation) return
-        const latest = Array.isArray(snapshots) ? snapshots[0] : undefined
+        const latest = Array.isArray(result) ? result[0] : (result ?? undefined)
         if (latest) {
           setRequestId(latest.requestId)
           setRequestText(latest.request)
@@ -448,7 +457,7 @@ export function ResearchPanel({ projectId }: ResearchPanelProps) {
     }
     void loadRecent()
     return () => controller.abort()
-  }, [projectId, showProposal])
+  }, [initialRequestId, projectId, showProposal])
 
   /** Polls the active proposal until its server-owned state changes. */
   useEffect(() => {

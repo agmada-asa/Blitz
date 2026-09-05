@@ -8,7 +8,7 @@ import {
   BubbleChatIcon,
   Folder01Icon,
   Home01Icon,
-  Clock01Icon,
+  Notification02Icon,
   Settings02Icon,
   SidebarLeftIcon,
 } from "@hugeicons/core-free-icons"
@@ -16,6 +16,7 @@ import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react"
 import { useState, type ReactNode } from "react"
 
 import { ThemeToggle } from "@/components/theme-toggle"
+import { useNotifications } from "@/components/notifications/notification-provider"
 import { ZapIcon } from "@/components/ui/icon"
 import { cn } from "@/lib/utils"
 
@@ -27,11 +28,13 @@ type NavLink = {
   label: string
   icon: IconSvgElement
   active: boolean
+  count?: number
 }
 
 /** Renders desktop and mobile navigation and tracks desktop collapse state. */
 export function AppShell({ children }: AppShellProps) {
   const pathname = usePathname()
+  const { unreadCount } = useNotifications()
   const isPreviewRoute =
     pathname === "/preview" || pathname.startsWith("/preview/")
   const isHomeRoute = pathname === "/"
@@ -59,10 +62,11 @@ export function AppShell({ children }: AppShellProps) {
       active: pathname === "/chat",
     },
     {
-      href: "/activity",
-      label: "Activity",
-      icon: Clock01Icon,
-      active: pathname === "/activity",
+      href: "/notifications",
+      label: "Notifications",
+      icon: Notification02Icon,
+      active: pathname === "/notifications" || pathname === "/activity",
+      count: unreadCount,
     },
     {
       href: "/settings",
@@ -173,11 +177,12 @@ function NavItem({
   label,
   icon,
   active,
+  count,
   collapsed,
   mobile,
 }: NavLink & { collapsed?: boolean; mobile?: boolean }) {
   const classes = cn(
-    "group flex h-14 items-center rounded-[18px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none",
+    "group relative flex h-14 items-center rounded-[18px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none",
     collapsed || mobile ? "justify-center" : "gap-4 px-5",
     mobile && "my-2 flex-col gap-1 text-[11px]",
     active && "bg-brand/10 text-brand"
@@ -189,6 +194,17 @@ function NavItem({
         size={mobile ? 25 : 20}
         strokeWidth={active ? 2 : 1.8}
       />
+      {count ? (
+        <span
+          aria-label={`${count} unread`}
+          className={cn(
+            "flex min-w-4 items-center justify-center rounded-full bg-brand px-1 text-[10px] leading-4 font-semibold text-brand-foreground",
+            (collapsed || mobile) && "absolute translate-x-2.5 -translate-y-2.5"
+          )}
+        >
+          {count > 9 ? "9+" : count}
+        </span>
+      ) : null}
       <span
         className={cn(collapsed && "sr-only", !mobile && "text-sm font-medium")}
       >

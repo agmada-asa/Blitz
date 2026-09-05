@@ -55,7 +55,7 @@ export default function ChatPage({
           card={card}
           open
           onOpenChange={(open) => {
-            if (!open) router.push("/activity")
+            if (!open) router.push("/notifications")
           }}
         />
       )}
