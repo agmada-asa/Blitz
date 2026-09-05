@@ -12,13 +12,24 @@ import { Button } from "@/components/ui/button"
 import { api } from "@/convex/_generated/api"
 import type { Id } from "@/convex/_generated/dataModel"
 
+/** Accepts only the lowercase encoded shape used by Convex document IDs. */
+function chatIdFromQuery(value?: string): Id<"workspaceChats"> | undefined {
+  return value && /^[a-z0-9]{32}$/.test(value)
+    ? (value as Id<"workspaceChats">)
+    : undefined
+}
+
 /** Routes card deep links to their dialog and otherwise renders general workspace chat. */
 export default function ChatPage({
   searchParams,
 }: {
-  searchParams: Promise<{ projectId?: string; itemId?: string }>
+  searchParams: Promise<{
+    projectId?: string
+    itemId?: string
+    chatId?: string
+  }>
 }) {
-  const { projectId, itemId } = use(searchParams)
+  const { projectId, itemId, chatId } = use(searchParams)
   const router = useRouter()
   const card = useQuery(
     api.conversations.getAttachment,
@@ -29,7 +40,8 @@ export default function ChatPage({
         }
       : "skip"
   )
-  if (!projectId || !itemId) return <ChatWorkspace />
+  if (!projectId || !itemId)
+    return <ChatWorkspace initialChatId={chatIdFromQuery(chatId)} />
 
   return (
     <main className="mx-auto max-w-4xl px-5 py-8 sm:px-8 sm:py-12">

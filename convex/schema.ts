@@ -264,6 +264,51 @@ export default defineSchema({
     updatedAt: v.number(),
   }).index("by_scope", ["scope"]),
 
+  /** General Codex threads opened from the top-level Chat tab. */
+  workspaceChats: defineTable({
+    title: v.string(),
+    codexThreadId: v.optional(v.string()),
+    status: v.union(
+      v.literal("idle"),
+      v.literal("running"),
+      v.literal("failed")
+    ),
+    activeMessageId: v.optional(v.id("workspaceChatMessages")),
+    lastError: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index("by_updatedAt", ["updatedAt"]),
+
+  /** User and assistant messages retained for a general Codex thread. */
+  workspaceChatMessages: defineTable({
+    chatId: v.id("workspaceChats"),
+    clientMessageId: v.string(),
+    role: v.union(v.literal("user"), v.literal("assistant")),
+    content: v.string(),
+    status: v.union(
+      v.literal("running"),
+      v.literal("completed"),
+      v.literal("failed")
+    ),
+    codexTurnId: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_chat_createdAt", ["chatId", "createdAt"])
+    .index("by_clientMessageId", ["clientMessageId"]),
+
+  /** Context items introduced by one message in a general Codex thread. */
+  workspaceChatAttachments: defineTable({
+    chatId: v.id("workspaceChats"),
+    clientMessageId: v.string(),
+    kind: v.union(v.literal("project"), v.literal("file"), v.literal("link")),
+    label: v.string(),
+    projectId: v.optional(v.id("projects")),
+    text: v.optional(v.string()),
+    url: v.optional(v.string()),
+    createdAt: v.number(),
+  }).index("by_chat_createdAt", ["chatId", "createdAt"]),
+
   conversations: defineTable({
     projectId: v.id("projects"),
     itemId: v.id("learningItems"),

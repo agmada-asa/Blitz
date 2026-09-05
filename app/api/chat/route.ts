@@ -6,7 +6,10 @@ import { mkdir } from "node:fs/promises"
 import { homedir } from "node:os"
 import { isAbsolute, join } from "node:path"
 import type { Id } from "@/convex/_generated/dataModel"
+import { resolveAiModel } from "@/lib/ai-model-settings"
 import { runCodexTextTurn } from "@/lib/server/card-chat"
+import { createChatProgress } from "@/lib/server/chat-progress"
+import { loadSavedAiModelSettings } from "@/lib/server/ai-model-settings"
 import {
   buildWorkspaceChatPrompt,
   parseWorkspaceChatRequest,
@@ -23,6 +26,62 @@ const getProjectContext = makeFunctionReference<
   { projectIds: Id<"projects">[] },
   WorkspaceChatProjectContext[]
 >("chatContext:getProjects")
+
+/** Attachment shape persisted alongside the turn that introduced it. */
+type PersistedAttachment = {
+  kind: "project" | "file" | "link"
+  label: string
+  projectId?: Id<"projects">
+  text?: string
+  url?: string
+}
+
+const startWorkspaceTurn = makeFunctionReference<
+  "mutation",
+  {
+    chatId?: Id<"workspaceChats">
+    clientMessageId: string
+    message: string
+    attachments: PersistedAttachment[]
+  },
+  {
+    chatId: Id<"workspaceChats">
+    assistantMessageId: Id<"workspaceChatMessages">
+    codexThreadId: string | null
+  }
+>("workspaceChats:startTurn")
+
+const saveWorkspaceProgress = makeFunctionReference<
+  "mutation",
+  {
+    chatId: Id<"workspaceChats">
+    messageId: Id<"workspaceChatMessages">
+    reply: string
+  },
+  null
+>("workspaceChats:progress")
+
+const completeWorkspaceTurn = makeFunctionReference<
+  "mutation",
+  {
+    chatId: Id<"workspaceChats">
+    messageId: Id<"workspaceChatMessages">
+    codexThreadId: string
+    codexTurnId: string
+    reply: string
+  },
+  null
+>("workspaceChats:complete")
+
+const failWorkspaceTurn = makeFunctionReference<
+  "mutation",
+  {
+    chatId: Id<"workspaceChats">
+    messageId: Id<"workspaceChatMessages">
+    error: string
+  },
+  null
+>("workspaceChats:fail")
 
 /** Creates a server-side Convex client for resolving attached project context. */
 function convexClient(): ConvexHttpClient {
@@ -83,6 +142,13 @@ export async function POST(request: Request): Promise<Response> {
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
       let closed = false
+      let activeTurn:
+        | {
+            chatId: Id<"workspaceChats">
+            assistantMessageId: Id<"workspaceChatMessages">
+          }
+        | undefined
+      let progress: ReturnType<typeof createChatProgress> | undefined
       /** Writes one event while tolerating a browser that has left the page. */
       const send = (value: unknown): void => {
         if (closed) return
@@ -93,18 +159,50 @@ export async function POST(request: Request): Promise<Response> {
         }
       }
       try {
+        const client = convexClient()
         const projects = input.projectIds.length
-          ? await convexClient().query(getProjectContext, {
+          ? await client.query(getProjectContext, {
               projectIds: input.projectIds,
             })
           : []
+        const persistedAttachments: PersistedAttachment[] = [
+          ...projects.map((project) => ({
+            kind: "project" as const,
+            label: project.title,
+            projectId: project.id,
+          })),
+          ...input.attachments,
+        ]
+        const turn = await client.mutation(startWorkspaceTurn, {
+          ...(input.chatId ? { chatId: input.chatId } : {}),
+          clientMessageId: input.clientMessageId,
+          message: input.message,
+          attachments: persistedAttachments,
+        })
+        activeTurn = {
+          chatId: turn.chatId,
+          assistantMessageId: turn.assistantMessageId,
+        }
+        progress = createChatProgress((reply) =>
+          client.mutation(saveWorkspaceProgress, {
+            chatId: turn.chatId,
+            messageId: turn.assistantMessageId,
+            reply,
+          })
+        )
+        send({ type: "started", chatId: turn.chatId })
         const workspaceDirectory = await chatWorkspaceDirectory()
+        const modelSettings = await loadSavedAiModelSettings(client)
         const result = await runCodexTextTurn(
           {
             workspaceDirectory,
             prompt: buildWorkspaceChatPrompt(input, projects),
-            ...(input.threadId ? { threadId: input.threadId } : {}),
-            model: process.env.BLITZ_CODEX_MODEL ?? "gpt-5.6-luna",
+            ...(turn.codexThreadId ? { threadId: turn.codexThreadId } : {}),
+            model: resolveAiModel(
+              modelSettings,
+              "replyModel",
+              process.env.BLITZ_CODEX_MODEL
+            ),
             ...(process.env.BLITZ_CODEX_EFFORT
               ? { effort: process.env.BLITZ_CODEX_EFFORT }
               : {}),
@@ -112,13 +210,36 @@ export async function POST(request: Request): Promise<Response> {
           },
           {
             onEvent: (event) => {
-              if (event.type === "text-delta")
+              if (event.type === "text-delta") {
+                progress?.append(event.delta)
                 send({ type: "delta", text: event.delta })
+              }
             },
           }
         )
-        send({ type: "complete", threadId: result.threadId })
+        await progress.finish()
+        await client.mutation(completeWorkspaceTurn, {
+          chatId: turn.chatId,
+          messageId: turn.assistantMessageId,
+          codexThreadId: result.threadId,
+          codexTurnId: result.turnId,
+          reply: result.text,
+        })
+        send({
+          type: "complete",
+          chatId: turn.chatId,
+          threadId: result.threadId,
+        })
       } catch {
+        await progress?.finish().catch(() => undefined)
+        if (activeTurn)
+          await convexClient()
+            .mutation(failWorkspaceTurn, {
+              chatId: activeTurn.chatId,
+              messageId: activeTurn.assistantMessageId,
+              error: "Codex could not finish that reply.",
+            })
+            .catch(() => undefined)
         send({
           type: "error",
           message:

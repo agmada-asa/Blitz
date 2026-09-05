@@ -20,7 +20,8 @@ export interface WorkspaceChatInlineAttachment {
 /** Validated input accepted by the workspace chat route. */
 export interface WorkspaceChatRequest {
   message: string
-  threadId?: string
+  chatId?: Id<"workspaceChats">
+  clientMessageId: string
   projectIds: Id<"projects">[]
   attachments: WorkspaceChatInlineAttachment[]
 }
@@ -62,10 +63,15 @@ export function parseWorkspaceChatRequest(
     "Message",
     MAX_WORKSPACE_CHAT_MESSAGE_LENGTH
   )
-  const threadId =
-    input.threadId === undefined
+  const chatId =
+    input.chatId === undefined
       ? undefined
-      : requiredString(input.threadId, "Thread ID", 200)
+      : (requiredString(input.chatId, "Chat ID", 200) as Id<"workspaceChats">)
+  const clientMessageId = requiredString(
+    input.clientMessageId,
+    "Client message ID",
+    200
+  )
   if (!Array.isArray(input.projectIds) || input.projectIds.length > 3)
     throw new Error("Attach at most 3 projects")
   const projectIds = input.projectIds.map(
@@ -118,7 +124,13 @@ export function parseWorkspaceChatRequest(
     }
     return { kind, label, text, ...(url ? { url } : {}) }
   })
-  return { message, projectIds, attachments, ...(threadId ? { threadId } : {}) }
+  return {
+    message,
+    clientMessageId,
+    projectIds,
+    attachments,
+    ...(chatId ? { chatId } : {}),
+  }
 }
 
 /** Truncates a value while stating that Blitz omitted the remainder. */

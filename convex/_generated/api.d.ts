@@ -21,6 +21,7 @@ import type * as settings from "../settings.js";
 import type * as sources from "../sources.js";
 import type * as study from "../study.js";
 import type * as topics from "../topics.js";
+import type * as workspaceChats from "../workspaceChats.js";
 import type * as writing from "../writing.js";
 
 import type {
@@ -43,6 +44,7 @@ declare const fullApi: ApiFromModules<{
   sources: typeof sources;
   study: typeof study;
   topics: typeof topics;
+  workspaceChats: typeof workspaceChats;
   writing: typeof writing;
 }>;
 

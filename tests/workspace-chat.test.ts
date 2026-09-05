@@ -12,7 +12,8 @@ import type { Id } from "../convex/_generated/dataModel.d.ts"
 test("parseWorkspaceChatRequest accepts mixed attachment context", () => {
   const result = parseWorkspaceChatRequest({
     message: "Compare these notes",
-    threadId: "thread-1",
+    chatId: "chat-1",
+    clientMessageId: "message-1",
     projectIds: ["project-1"],
     attachments: [
       {
@@ -34,6 +35,7 @@ test("parseWorkspaceChatRequest rejects unsafe attachment URLs", () => {
     () =>
       parseWorkspaceChatRequest({
         message: "Read this",
+        clientMessageId: "message-2",
         projectIds: [],
         attachments: [
           {
@@ -51,6 +53,7 @@ test("parseWorkspaceChatRequest rejects unsafe attachment URLs", () => {
 test("buildWorkspaceChatPrompt labels attached material as untrusted", () => {
   const request = parseWorkspaceChatRequest({
     message: "What connects these ideas?",
+    clientMessageId: "message-3",
     projectIds: ["project-1"],
     attachments: [{ kind: "file", label: "outline.txt", text: "First idea" }],
   })
