@@ -17,18 +17,28 @@ import {
   MAX_PENDING_EVENTS,
   removePendingEventFromQueue,
 } from "./pending-events"
+import { legacyMigrationAction } from "./storage-policy"
 
 const FEED_KEY = "@blitz/mobile/feed-v1"
 const EVENTS_KEY = "@blitz/mobile/events-v1"
 const SERVER_URL_KEY = "@blitz/mobile/server-url-v1"
+const LEGACY_OWNER_KEY = "@blitz/mobile/legacy-owner-v1"
 const MAX_CACHED_ITEMS = 60
 let eventMutation = Promise.resolve()
+
+/** Derives a stable storage key so caches and queues never cross server boundaries. */
+function scopedKey(prefix: string, serverUrl?: string): string {
+  if (!serverUrl?.trim()) return prefix
+  const normalized = serverUrl.trim().replace(/\/+$/, "")
+  return `${prefix}:${encodeURIComponent(normalized)}`
+}
 
 /** The persisted cache envelope, versioned for safe future migrations. */
 export type MobileFeedCache = {
   readonly version: 1
   readonly savedAt: number
   readonly payload: MobileFeedPayload
+  readonly serverUrl?: string
 }
 
 /** Reads JSON from AsyncStorage and returns undefined for malformed values. */
@@ -43,22 +53,37 @@ async function readJson<T>(key: string): Promise<T | undefined> {
 }
 
 /** Loads the latest bounded feed cache, if one exists. */
-export async function loadFeedCache(): Promise<MobileFeedCache | undefined> {
-  const value = await readJson<MobileFeedCache>(FEED_KEY)
-  if (value?.version !== 1 || !value.payload || !Array.isArray(value.payload.cards)) {
+export async function loadFeedCache(
+  serverUrl?: string
+): Promise<MobileFeedCache | undefined> {
+  const value = await readJson<MobileFeedCache>(scopedKey(FEED_KEY, serverUrl))
+  if (
+    value?.version !== 1 ||
+    !value.payload ||
+    !Array.isArray(value.payload.cards)
+  ) {
     return undefined
   }
   return value
 }
 
 /** Stores only the first bounded slice of a prepared feed for offline use. */
-export async function saveFeedCache(payload: MobileFeedPayload): Promise<void> {
+export async function saveFeedCache(
+  payload: MobileFeedPayload,
+  serverUrl?: string
+): Promise<void> {
   const cache: MobileFeedCache = {
     version: 1,
     savedAt: Date.now(),
     payload: { ...payload, cards: payload.cards.slice(0, MAX_CACHED_ITEMS) },
+    ...(serverUrl?.trim()
+      ? { serverUrl: serverUrl.trim().replace(/\/+$/, "") }
+      : {}),
   }
-  await AsyncStorage.setItem(FEED_KEY, JSON.stringify(cache))
+  await AsyncStorage.setItem(
+    scopedKey(FEED_KEY, serverUrl),
+    JSON.stringify(cache)
+  )
 }
 
 /** Loads the user's last server URL, if configured. */
@@ -73,8 +98,12 @@ export async function saveServerUrl(baseUrl: string): Promise<void> {
 }
 
 /** Loads queued answer and passive events, dropping malformed entries. */
-export async function loadPendingEvents(): Promise<MobilePendingEvent[]> {
-  const value = await readJson<MobilePendingEvent[]>(EVENTS_KEY)
+export async function loadPendingEvents(
+  serverUrl?: string
+): Promise<MobilePendingEvent[]> {
+  const value = await readJson<MobilePendingEvent[]>(
+    scopedKey(EVENTS_KEY, serverUrl)
+  )
   if (!Array.isArray(value)) return []
   return value.filter((event) => {
     if (
@@ -90,12 +119,62 @@ export async function loadPendingEvents(): Promise<MobilePendingEvent[]> {
   })
 }
 
+/** Normalizes a server identity for durable legacy ownership decisions. */
+function normalizedServer(serverUrl: string): string {
+  return serverUrl.trim().replace(/\/+$/, "")
+}
+
+/** Claims legacy cache and queue data for the known prior server exactly once. */
+export async function migrateLegacyData(serverUrl?: string): Promise<void> {
+  if (!serverUrl?.trim()) return
+  const owner = normalizedServer(serverUrl)
+  const existingOwner = await AsyncStorage.getItem(LEGACY_OWNER_KEY)
+  const [legacyCache, legacyEvents] = await Promise.all([
+    AsyncStorage.getItem(FEED_KEY),
+    AsyncStorage.getItem(EVENTS_KEY),
+  ])
+  if (
+    legacyMigrationAction(
+      existingOwner,
+      Boolean(legacyCache || legacyEvents),
+      owner
+    ) !== "claim"
+  )
+    return
+  // Record ownership first. An interrupted copy can resume for this same owner.
+  await AsyncStorage.setItem(LEGACY_OWNER_KEY, owner)
+  if (
+    legacyCache &&
+    !(await AsyncStorage.getItem(scopedKey(FEED_KEY, owner)))
+  ) {
+    await AsyncStorage.setItem(scopedKey(FEED_KEY, owner), legacyCache)
+  }
+  if (
+    legacyEvents &&
+    !(await AsyncStorage.getItem(scopedKey(EVENTS_KEY, owner)))
+  ) {
+    await AsyncStorage.setItem(scopedKey(EVENTS_KEY, owner), legacyEvents)
+  }
+}
+
+/** Permanently leaves unknown legacy data unassigned before a new server is saved. */
+export async function orphanLegacyData(): Promise<void> {
+  const existingOwner = await AsyncStorage.getItem(LEGACY_OWNER_KEY)
+  if (!existingOwner) await AsyncStorage.setItem(LEGACY_OWNER_KEY, "orphaned")
+}
+
 /** Persists an already bounded retry queue without silently discarding unsynced answers. */
-export async function savePendingEvents(events: readonly MobilePendingEvent[]): Promise<void> {
+export async function savePendingEvents(
+  events: readonly MobilePendingEvent[],
+  serverUrl?: string
+): Promise<void> {
   if (events.length > MAX_PENDING_EVENTS) {
     throw new Error("Pending answer queue exceeds its storage limit")
   }
-  await AsyncStorage.setItem(EVENTS_KEY, JSON.stringify(events))
+  await AsyncStorage.setItem(
+    scopedKey(EVENTS_KEY, serverUrl),
+    JSON.stringify(events)
+  )
 }
 
 /** Creates and persists one answer event with a stable UUID. */
@@ -103,14 +182,17 @@ export function enqueueEvent(
   projectId: string,
   cardId: string,
   type: "answer",
-  answer: MobileAnswer
+  answer: MobileAnswer,
+  serverUrl?: string
 ): Promise<Extract<MobilePendingEvent, { type: "answer" }>>
 
 /** Creates and persists one passive event with a stable UUID. */
 export function enqueueEvent(
   projectId: string,
   cardId: string,
-  type: "skip" | "exposure"
+  type: "skip" | "exposure",
+  answer?: undefined,
+  serverUrl?: string
 ): Promise<Extract<MobilePendingEvent, { type: "skip" | "exposure" }>>
 
 /** Creates and persists one answer or passive event with a stable UUID. */
@@ -118,7 +200,8 @@ export async function enqueueEvent(
   projectId: string,
   cardId: string,
   type: MobilePendingEvent["type"],
-  answer?: MobileAnswer
+  answer?: MobileAnswer,
+  serverUrl?: string
 ): Promise<MobilePendingEvent> {
   const eventId = randomUUID()
   const occurredAt = Date.now()
@@ -134,8 +217,8 @@ export async function enqueueEvent(
         }
       : { eventId, projectId, cardId, type, occurredAt }
   const operation = eventMutation.then(async () => {
-    const events = await loadPendingEvents()
-    await savePendingEvents(appendPendingEvent(events, event))
+    const events = await loadPendingEvents(serverUrl)
+    await savePendingEvents(appendPendingEvent(events, event), serverUrl)
     return event
   })
   eventMutation = operation.then(
@@ -146,10 +229,16 @@ export async function enqueueEvent(
 }
 
 /** Removes one successfully delivered event from the retry queue. */
-export function removePendingEvent(eventId: string): Promise<void> {
+export function removePendingEvent(
+  eventId: string,
+  serverUrl?: string
+): Promise<void> {
   const operation = eventMutation.then(async () => {
-    const events = await loadPendingEvents()
-    await savePendingEvents(removePendingEventFromQueue(events, eventId))
+    const events = await loadPendingEvents(serverUrl)
+    await savePendingEvents(
+      removePendingEventFromQueue(events, eventId),
+      serverUrl
+    )
   })
   eventMutation = operation.then(
     () => undefined,

@@ -24,6 +24,7 @@ import {
 import { FilterPanel } from "./components/filter-panel"
 import { ChatModal } from "./components/chat-modal"
 import { LearningCard } from "./components/learning-card"
+import { appendFeedPage, filterCards, mergeFeedMetadata } from "./lib/feed"
 import {
   MobileApiError,
   fetchFeed,
@@ -40,6 +41,8 @@ import {
   enqueueEvent,
   loadFeedCache,
   loadPendingEvents,
+  migrateLegacyData,
+  orphanLegacyData,
   loadServerUrl,
   removePendingEvent,
   saveFeedCache,
@@ -58,78 +61,11 @@ function errorMessage(error: unknown): string {
     : "The learning server is unavailable"
 }
 
-/** Returns cards that match the local view of a cached or fetched payload. */
-function filterCards(
-  payload: MobileFeedPayload | undefined,
-  projectId: string | undefined,
-  topicId: string | undefined
-): MobileLearningCard[] {
-  return (payload?.cards ?? []).filter(
-    (card) =>
-      (!projectId || card.projectId === projectId) &&
-      (!topicId || card.topicId === topicId)
-  )
-}
-
-/** Appends a server page while preserving filter metadata and card order. */
-function appendFeedPage(
-  current: MobileFeedPayload,
-  next: MobileFeedPayload
-): MobileFeedPayload {
-  const cards = [...current.cards]
-  const knownIds = new Set(cards.map((card) => card.id))
-  for (const card of next.cards) {
-    if (!knownIds.has(card.id)) {
-      knownIds.add(card.id)
-      cards.push(card)
-    }
-  }
-  const projects = new Map(
-    [...current.projects, ...next.projects].map((project) => [
-      project.id,
-      project,
-    ])
-  )
-  const topics = new Map(
-    [...current.topics, ...next.topics].map((topic) => [topic.id, topic])
-  )
-  return {
-    ...next,
-    cards,
-    projects: [...projects.values()],
-    topics: [...topics.values()],
-  }
-}
-
-/** Merges filter choices while replacing cards for a fresh filter request. */
-function mergeFeedMetadata(
-  current: MobileFeedPayload | undefined,
-  next: MobileFeedPayload
-): MobileFeedPayload {
-  const projects = new Map(
-    [...(current?.projects ?? []), ...next.projects].map((project) => [
-      project.id,
-      project,
-    ])
-  )
-  const topics = new Map(
-    [...(current?.topics ?? []), ...next.topics].map((topic) => [
-      topic.id,
-      topic,
-    ])
-  )
-  return {
-    ...next,
-    projects: [...projects.values()],
-    topics: [...topics.values()],
-  }
-}
-
 /** Renders the native feed and its small connection and recovery states. */
 export default function App() {
   const { height } = useWindowDimensions()
   const topInset =
-    Platform.OS === "android" ? StatusBar.currentHeight ?? 0 : 0
+    Platform.OS === "android" ? (StatusBar.currentHeight ?? 0) : 0
   const listRef = useRef<FlatList<MobileLearningCard>>(null)
   const passiveHandlerRef = useRef<
     (card: MobileLearningCard, type: "skip" | "exposure") => void
@@ -139,6 +75,7 @@ export default function App() {
     configuredServerUrl ?? ""
   )
   const [editingServerUrl, setEditingServerUrl] = useState(!configuredServerUrl)
+  const [connecting, setConnecting] = useState(false)
   const [payload, setPayload] = useState<MobileFeedPayload>()
   const payloadRef = useRef<MobileFeedPayload | undefined>(undefined)
   const [cacheSavedAt, setCacheSavedAt] = useState<number>()
@@ -158,6 +95,9 @@ export default function App() {
   const loadingMoreRef = useRef(false)
   const requestGenerationRef = useRef(0)
   const requestControllerRef = useRef<AbortController | null>(null)
+  const feedQueryRef = useRef<
+    { projectId?: string; topicId?: string } | undefined
+  >(undefined)
   const [bootstrapped, setBootstrapped] = useState(false)
   const visibleCards = useMemo(
     () => filterCards(payload, projectId, topicId),
@@ -167,22 +107,31 @@ export default function App() {
   const topics = payload?.topics ?? []
 
   /** Loads a local cache before network work so offline prepared material remains usable. */
-  const loadCache = useCallback(async (generation?: number) => {
-    const cache = await loadFeedCache()
-    if (!cache) return false
-    if (generation !== undefined && generation !== requestGenerationRef.current)
-      return false
-    payloadRef.current = cache.payload
-    setPayload(cache.payload)
-    setCacheSavedAt(cache.savedAt)
-    setStatus("offline")
-    return true
-  }, [])
+  const loadCache = useCallback(
+    async (server?: string, generation?: number) => {
+      const cache = await loadFeedCache(server)
+      if (!cache) return false
+      if (
+        generation !== undefined &&
+        generation !== requestGenerationRef.current
+      )
+        return false
+      payloadRef.current = cache.payload
+      setPayload(cache.payload)
+      setCacheSavedAt(cache.savedAt)
+      // The cache envelope predates persisted query identity; replace it on the
+      // first successful refresh instead of mixing pages from an unknown filter.
+      feedQueryRef.current = undefined
+      setStatus("offline")
+      return true
+    },
+    []
+  )
 
   /** Re-reads the serialized queue so evictions and removals are reflected exactly. */
-  const refreshPendingCount = useCallback(async () => {
+  const refreshPendingCount = useCallback(async (baseUrl?: string) => {
     try {
-      setPendingCount((await loadPendingEvents()).length)
+      setPendingCount((await loadPendingEvents(baseUrl)).length)
     } catch {
       // Keep the last known count when local storage is temporarily unavailable.
     }
@@ -191,7 +140,7 @@ export default function App() {
   /** Synchronizes queued events in order and stops at the first unavailable request. */
   const syncPendingEvents = useCallback(
     async (baseUrl: string, generation: number) => {
-      const events = await loadPendingEvents()
+      const events = await loadPendingEvents(baseUrl)
       if (generation !== requestGenerationRef.current) return
       setPendingCount(events.length)
       for (const event of events) {
@@ -204,8 +153,8 @@ export default function App() {
           } else {
             await submitPassiveEvent(baseUrl, event)
           }
-          await removePendingEvent(event.eventId)
-          await refreshPendingCount()
+          await removePendingEvent(event.eventId, baseUrl)
+          await refreshPendingCount(baseUrl)
         } catch {
           break
         }
@@ -224,7 +173,7 @@ export default function App() {
       requestControllerRef.current = controller
       if (!baseUrl) {
         try {
-          if (!(await loadCache(generation))) {
+          if (!(await loadCache(baseUrl, generation))) {
             if (generation === requestGenerationRef.current) {
               setStatus("error")
             }
@@ -249,12 +198,20 @@ export default function App() {
           signal: controller.signal,
         })
         if (generation !== requestGenerationRef.current) return
-        const mergedPayload = mergeFeedMetadata(payloadRef.current, nextPayload)
+        const sameQuery =
+          feedQueryRef.current !== undefined &&
+          feedQueryRef.current?.projectId === projectId &&
+          feedQueryRef.current?.topicId === topicId
+        const mergedPayload =
+          sameQuery && payloadRef.current
+            ? appendFeedPage(payloadRef.current, nextPayload)
+            : mergeFeedMetadata(payloadRef.current, nextPayload)
         payloadRef.current = mergedPayload
+        feedQueryRef.current = { projectId, topicId }
         setPayload(mergedPayload)
         setCacheSavedAt(Date.now())
         if (generation !== requestGenerationRef.current) return
-        await saveFeedCache(nextPayload)
+        await saveFeedCache(mergedPayload, baseUrl)
         if (generation !== requestGenerationRef.current) return
         setStatus("ready")
         await syncPendingEvents(baseUrl, generation)
@@ -263,7 +220,7 @@ export default function App() {
         let hasCache = Boolean(payloadRef.current)
         if (allowCache && !hasCache) {
           try {
-            hasCache = await loadCache(generation)
+            hasCache = await loadCache(baseUrl, generation)
           } catch {
             hasCache = false
           }
@@ -309,7 +266,7 @@ export default function App() {
           : latest
       )
       if (generation !== requestGenerationRef.current) return
-      await saveFeedCache(merged)
+      await saveFeedCache(merged, serverUrl)
     } catch {
       if (generation === requestGenerationRef.current) {
         setNotice("Could not load more cards")
@@ -326,11 +283,13 @@ export default function App() {
   useEffect(() => {
     /** Restores the configured URL, cache, and queue on first launch. */
     async function bootstrap() {
+      let savedUrl: string | undefined
+      let effectiveUrl: string | undefined
       try {
-        const [savedUrl, pendingEvents] = await Promise.all([
-          loadServerUrl(),
-          loadPendingEvents(),
-        ])
+        savedUrl = await loadServerUrl()
+        effectiveUrl = configuredServerUrl ?? savedUrl
+        await migrateLegacyData(savedUrl)
+        const pendingEvents = await loadPendingEvents(effectiveUrl)
         if (!configuredServerUrl && savedUrl) {
           setServerUrl(savedUrl)
           setDraftServerUrl(savedUrl)
@@ -340,7 +299,8 @@ export default function App() {
         setFeedback((current) => {
           const next = { ...current }
           for (const event of pendingEvents) {
-            if (event.type === "answer") next[event.cardId] = { status: "pending" }
+            if (event.type === "answer")
+              next[event.cardId] = { status: "pending" }
           }
           return next
         })
@@ -349,7 +309,7 @@ export default function App() {
         setStatus("error")
       }
       try {
-        await loadCache()
+        await loadCache(effectiveUrl)
       } catch {
         setError("Could not read saved feed")
         setStatus("error")
@@ -374,19 +334,39 @@ export default function App() {
   }, [refresh, serverUrl])
 
   /** Stores a configured URL and triggers a fresh feed request. */
-  function connect() {
+  async function connect() {
+    if (!bootstrapped || connecting) return
     const nextUrl = draftServerUrl.trim()
     if (!/^https?:\/\//i.test(nextUrl)) {
       setError("Enter a server URL beginning with http:// or https://")
       return
     }
+    setConnecting(true)
+    try {
+      // Preserve legacy ownership before changing the remembered endpoint.
+      await orphanLegacyData()
+      await saveServerUrl(nextUrl)
+    } catch {
+      setError("Could not save this connection. Try again")
+      setConnecting(false)
+      return
+    }
+    setConnecting(false)
     setError("")
     setStatus("loading")
+    payloadRef.current = undefined
+    feedQueryRef.current = undefined
+    setPayload(undefined)
+    setFeedback({})
+    setProjectId(undefined)
+    setTopicId(undefined)
+    setCacheSavedAt(undefined)
+    setPendingCount(0)
     requestGenerationRef.current += 1
     requestControllerRef.current?.abort()
     setEditingServerUrl(false)
-    void saveServerUrl(nextUrl)
-    setServerUrl(nextUrl)
+    if (nextUrl === serverUrl) void refresh(nextUrl)
+    else setServerUrl(nextUrl)
   }
 
   /** Enqueues one event before attempting delivery, preserving it on failure. */
@@ -394,17 +374,23 @@ export default function App() {
     async (card: MobileLearningCard, type: "skip" | "exposure") => {
       let event: Awaited<ReturnType<typeof enqueueEvent>>
       try {
-        event = await enqueueEvent(card.projectId, card.id, type)
+        event = await enqueueEvent(
+          card.projectId,
+          card.id,
+          type,
+          undefined,
+          serverUrl
+        )
       } catch {
         setNotice("Could not save this action. Try again")
         return
       }
-      await refreshPendingCount()
+      await refreshPendingCount(serverUrl)
       if (!serverUrl) return
       try {
         await submitPassiveEvent(serverUrl, event)
-        await removePendingEvent(event.eventId)
-        await refreshPendingCount()
+        await removePendingEvent(event.eventId, serverUrl)
+        await refreshPendingCount(serverUrl)
       } catch {
         setNotice("Saved on this device · waiting for sync")
       }
@@ -425,21 +411,22 @@ export default function App() {
         card.projectId,
         card.id,
         "answer",
-        answer
+        answer,
+        serverUrl
       )
       setFeedback((current) => ({
         ...current,
         [card.id]: { status: "pending" },
       }))
-      await refreshPendingCount()
+      await refreshPendingCount(serverUrl)
       if (!serverUrl) {
         setNotice("Answer saved on this device · waiting for sync")
         return
       }
       try {
         const result = await submitAnswer(serverUrl, event)
-        await removePendingEvent(event.eventId)
-        await refreshPendingCount()
+        await removePendingEvent(event.eventId, serverUrl)
+        await refreshPendingCount(serverUrl)
         setFeedback((current) => ({ ...current, [card.id]: result }))
       } catch (requestError) {
         if (
@@ -447,8 +434,8 @@ export default function App() {
           requestError.message.includes("answer response")
         ) {
           try {
-            await removePendingEvent(event.eventId)
-            await refreshPendingCount()
+            await removePendingEvent(event.eventId, serverUrl)
+            await refreshPendingCount(serverUrl)
           } catch {
             // Preserve the original scoring error for the retryable card state.
           }
@@ -533,7 +520,7 @@ export default function App() {
           keyboardType="url"
           onChangeText={setDraftServerUrl}
           onSubmitEditing={connect}
-          placeholder="http://your-computer.local:3000"
+          placeholder="http://your-computer.local:3001"
           placeholderTextColor="#656565"
           returnKeyType="go"
           style={styles.input}
@@ -541,10 +528,13 @@ export default function App() {
         />
         <Pressable
           accessibilityRole="button"
+          disabled={!bootstrapped || connecting}
           onPress={connect}
           style={styles.primaryButton}
         >
-          <Text style={styles.primaryButtonText}>Connect</Text>
+          <Text style={styles.primaryButtonText}>
+            {connecting ? "Connecting…" : "Connect"}
+          </Text>
         </Pressable>
         {error ? <Text style={styles.error}>{error}</Text> : null}
       </View>
@@ -579,7 +569,7 @@ export default function App() {
               keyboardType="url"
               onChangeText={setDraftServerUrl}
               onSubmitEditing={connect}
-              placeholder="http://your-computer.local:3000"
+              placeholder="http://your-computer.local:3001"
               placeholderTextColor="#656565"
               returnKeyType="go"
               style={styles.input}
@@ -587,10 +577,13 @@ export default function App() {
             />
             <Pressable
               accessibilityRole="button"
+              disabled={!bootstrapped || connecting}
               onPress={connect}
               style={styles.primaryButton}
             >
-              <Text style={styles.primaryButtonText}>Connect</Text>
+              <Text style={styles.primaryButtonText}>
+                {connecting ? "Connecting…" : "Connect"}
+              </Text>
             </Pressable>
           </>
         )}

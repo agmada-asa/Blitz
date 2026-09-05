@@ -5,10 +5,7 @@
 
 import { Modal, Pressable, StyleSheet, Text, View } from "react-native"
 
-import type {
-  MobileProjectChoice,
-  MobileTopicChoice,
-} from "../lib/contracts"
+import type { MobileProjectChoice, MobileTopicChoice } from "../lib/contracts"
 
 /** Props for opening, rendering, and applying the feed filters. */
 export type FilterPanelProps = {
@@ -34,12 +31,21 @@ export function FilterPanel({
   onSelectTopic,
 }: FilterPanelProps) {
   return (
-    <Modal animationType="fade" transparent visible={open} onRequestClose={onClose}>
+    <Modal
+      animationType="fade"
+      transparent
+      visible={open}
+      onRequestClose={onClose}
+    >
       <View style={styles.backdrop}>
         <View style={styles.panel}>
           <View style={styles.header}>
             <Text style={styles.title}>Filter</Text>
-            <Pressable accessibilityRole="button" onPress={onClose} style={styles.close}>
+            <Pressable
+              accessibilityRole="button"
+              onPress={onClose}
+              style={styles.close}
+            >
               <Text style={styles.closeText}>Close</Text>
             </Pressable>
           </View>
@@ -75,17 +81,19 @@ export function FilterPanel({
                 onClose()
               }}
             />
-            {topics.map((choice) => (
-              <FilterChoice
-                key={choice.id}
-                label={choice.title}
-                selected={topicId === choice.id}
-                onPress={() => {
-                  onSelectTopic(choice.id)
-                  onClose()
-                }}
-              />
-            ))}
+            {topics
+              .filter((choice) => !projectId || choice.projectId === projectId)
+              .map((choice) => (
+                <FilterChoice
+                  key={choice.id}
+                  label={choice.title}
+                  selected={topicId === choice.id}
+                  onPress={() => {
+                    onSelectTopic(choice.id)
+                    onClose()
+                  }}
+                />
+              ))}
           </View>
         </View>
       </View>
@@ -108,9 +116,15 @@ function FilterChoice({
       accessibilityRole="radio"
       accessibilityState={{ selected }}
       onPress={onPress}
-      style={({ pressed }) => [styles.choice, selected && styles.choiceSelected, pressed && styles.choicePressed]}
+      style={({ pressed }) => [
+        styles.choice,
+        selected && styles.choiceSelected,
+        pressed && styles.choicePressed,
+      ]}
     >
-      <Text style={[styles.choiceText, selected && styles.choiceTextSelected]}>{label}</Text>
+      <Text style={[styles.choiceText, selected && styles.choiceTextSelected]}>
+        {label}
+      </Text>
     </Pressable>
   )
 }

@@ -109,15 +109,22 @@ watches the repository root, and keeps dependency resolution anchored to
 and exposure events. Server answer fields are withheld from feed cards and
 correctness is displayed only after the answer response arrives.
 
-Prepared cards are cached in AsyncStorage with a 60-card cap. The feed requests
-20 cards at a time and follows the server's opaque `continueCursor`, appending
-each page by card ID so later pages cannot restart the first page. Answers,
-skips, and exposures are queued with stable UUID client event IDs and a
-200-event cap; queued events are retried in order when the server is reachable.
+Prepared cards are cached in AsyncStorage with a 60-card cap, scoped to the
+normalized server URL. The feed requests 20 cards at a time and follows the
+server's opaque `continueCursor`, appending each page by card ID so later pages
+cannot restart the first page or erase earlier loaded pages during refresh.
+Answers, skips, and exposures are queued with stable UUID client event IDs and
+a 200-event cap; queued events are retried in order when the same server is
+reachable. Queues are scoped to that server, so changing servers never sends
+old events to the new endpoint. Legacy global data is migrated only when the
+previously saved server URL identifies its owner; otherwise it remains
+preserved and unassigned.
 At the cap, passive events can be dropped, but unsynced answers are retained.
 If the queue contains 200 answers, new answers wait until sync frees space.
 An offline answer is labelled as saved while waiting for sync and is never
-presented as correct or incorrect locally. A card locks after a server answer
+presented as correct or incorrect locally. Project and topic filters are also
+applied to cached cards locally when the server is unavailable, and topic
+choices are limited to the selected project. A card locks after a server answer
 response so a revealed explanation cannot create repeated answer evidence. On
 restart, queued answer events restore that pending lock for cached cards; skip
 and exposure events never create answer feedback.
