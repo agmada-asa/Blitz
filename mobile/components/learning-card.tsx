@@ -32,6 +32,8 @@ export function LearningCard({
   const [selected, setSelected] = useState<string[]>([])
   const [submitted, setSubmitted] = useState(false)
   const [answerError, setAnswerError] = useState("")
+  const [viewportHeight, setViewportHeight] = useState(0)
+  const [contentHeight, setContentHeight] = useState(0)
   const isMultiple = card.type === "multiple-answer"
   const options =
     card.type === "true-false"
@@ -40,6 +42,27 @@ export function LearningCard({
           { id: "false", text: "False" },
         ]
       : (card.options ?? [])
+
+  /** Returns whether an option is one of the server-confirmed correct answers. */
+  function isCorrectOption(optionId: string): boolean {
+    if (
+      !feedback ||
+      (feedback.status !== "correct" && feedback.status !== "incorrect")
+    )
+      return false
+    if (
+      card.type === "true-false" &&
+      "feedback" in feedback &&
+      feedback.feedback?.correctAnswer !== undefined
+    ) {
+      return feedback.feedback.correctAnswer === (optionId === "true")
+    }
+    return (
+      "feedback" in feedback &&
+      (feedback.feedback?.correctOptionIds?.includes(optionId) === true ||
+        feedback.feedback?.correctOptionId === optionId)
+    )
+  }
 
   useEffect(() => {
     setSelected([])
@@ -108,6 +131,10 @@ export function LearningCard({
     <View style={styles.card}>
       <ScrollView
         contentContainerStyle={styles.content}
+        nestedScrollEnabled={contentHeight > viewportHeight + 1}
+        onContentSizeChange={(_, height) => setContentHeight(height)}
+        onLayout={(event) => setViewportHeight(event.nativeEvent.layout.height)}
+        scrollEnabled={contentHeight > viewportHeight + 1}
         showsVerticalScrollIndicator={false}
         style={styles.scroll}
       >
@@ -128,6 +155,12 @@ export function LearningCard({
             <View style={styles.options} accessibilityLabel="Answer options">
               {options.map((option, index) => {
                 const isSelected = selected.includes(option.id)
+                const scored =
+                  feedback?.status === "correct" ||
+                  feedback?.status === "incorrect"
+                const isCorrect = scored && isCorrectOption(option.id)
+                const isIncorrect =
+                  isSelected && scored && !isCorrectOption(option.id)
                 return (
                   <Pressable
                     key={option.id}
@@ -137,6 +170,8 @@ export function LearningCard({
                     style={({ pressed }) => [
                       styles.option,
                       isSelected && styles.optionSelected,
+                      isCorrect && styles.optionCorrect,
+                      isIncorrect && styles.optionIncorrect,
                       pressed && styles.optionPressed,
                     ]}
                   >
@@ -144,6 +179,8 @@ export function LearningCard({
                       style={[
                         styles.optionLetter,
                         isSelected && styles.optionLetterSelected,
+                        isCorrect && styles.optionLetterCorrect,
+                        isIncorrect && styles.optionLetterIncorrect,
                       ]}
                     >
                       {isMultiple
@@ -301,6 +338,14 @@ const styles = StyleSheet.create({
     backgroundColor: "#2a1713",
     borderColor: "#ff8065",
   },
+  optionCorrect: {
+    backgroundColor: "#123b26",
+    borderColor: "#5fd48a",
+  },
+  optionIncorrect: {
+    backgroundColor: "#3b1919",
+    borderColor: "#ff756e",
+  },
   optionPressed: {
     opacity: 0.76,
   },
@@ -322,6 +367,16 @@ const styles = StyleSheet.create({
     backgroundColor: "#ff8065",
     borderColor: "#ff8065",
     color: "#1b0d0a",
+  },
+  optionLetterCorrect: {
+    backgroundColor: "#5fd48a",
+    borderColor: "#5fd48a",
+    color: "#0b2516",
+  },
+  optionLetterIncorrect: {
+    backgroundColor: "#ff756e",
+    borderColor: "#ff756e",
+    color: "#2b0d0d",
   },
   optionText: {
     color: "#eeeeee",

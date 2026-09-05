@@ -56,6 +56,18 @@ const EMPTY_STATE: ChatState = {
   sending: false,
 }
 
+/** Formats elapsed time from a server timestamp without inventing a completion estimate. */
+function formatElapsed(timestamp: number): string {
+  const elapsedSeconds = Math.max(
+    0,
+    Math.floor((Date.now() - timestamp) / 1_000)
+  )
+  if (elapsedSeconds < 60) return `${elapsedSeconds}s`
+  const minutes = Math.floor(elapsedSeconds / 60)
+  if (minutes < 60) return `${minutes}m`
+  return `${Math.floor(minutes / 60)}h`
+}
+
 /** Shows one feed card's questions and queued server replies in a modal sheet. */
 export function ChatModal({
   card,
@@ -275,10 +287,14 @@ export function ChatModal({
                   </View>
                 ) : null}
                 {message.status === "queued" ? (
-                  <Text style={styles.muted}>Waiting for a reply</Text>
+                  <Text style={styles.muted}>
+                    Queued · {formatElapsed(message.updatedAt)}
+                  </Text>
                 ) : null}
                 {message.status === "running" ? (
-                  <Text style={styles.muted}>Working on it</Text>
+                  <Text style={styles.muted}>
+                    Preparing reply · {formatElapsed(message.updatedAt)}
+                  </Text>
                 ) : null}
                 {message.status === "failed" ? (
                   <View style={styles.failedRow}>

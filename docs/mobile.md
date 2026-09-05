@@ -210,3 +210,40 @@ from the request and the APK is never committed.
 The overnight build's LAN download was streamed and SHA-256 checked against the
 artifact above. Installing and visually testing it on a physical phone remains
 unverified.
+
+## Morning interaction fixes
+
+Server-scored answers now color every correct option green and each selected
+mistake red. Pending offline answers stay neutral. Chat shows queued or preparing
+reply status with elapsed time refreshed by its existing polling.
+
+Feed paging recognizes shorter vertical drags and quick flicks. The distance
+threshold is 3% of the logical viewport height, bounded to 24–48 points.
+Paging starts from the index captured at drag begin and clamps the target to one
+adjacent card. Vertical intent uses the larger displacement from touch or native scrolling.
+Android can stop raw touch updates when its scroll view takes over, so a partial
+touch movement must not replace a larger native scroll distance. Horizontal
+intent uses touch coordinates. The page change runs on the
+next animation frame after drag end. The native scroll view uses interval
+snapping and fast deceleration. At momentum end, it corrects a native snap that
+landed on a different page. Android can emit a second completion after the
+programmatic animation, so the target survives both completions. A new touch,
+filter change, refresh, or explicit Skip cancels that target. Card contents enable their inner scroll view
+only when measured content exceeds its viewport, so fitting cards do not
+consume the feed swipe. Overflowing cards retain nested scrolling and Skip.
+
+The mobile unit suite now has eight tests, including gesture thresholds,
+horizontal rejection, direction, and boundary clamping. TypeScript passes.
+
+The final clean APK was installed on the task-owned API 35 emulator at
+1080 × 2400, density 420. The primary agent verified 100-pixel, 800 ms swipes
+forward and backward over card content, followed by 500-pixel swipes in both
+directions. Each moved exactly one card. Earlier candidates snapped back;
+diagnostics showed two separate momentum completions. Retaining the intended
+target through both fixed the installed build. Physical phone feel still
+needs the user's check.
+
+The verified APK embeds 1,248,988 bytes of Hermes JavaScript and contains no
+`[feed-swipe]` diagnostic marker. The LAN download matches its SHA-256:
+`4aab37b9f2a47469b85ce39005518a9b5596a90e344c3f03d9aef457b8ca4432`.
+No answer or chat submissions were made during the swipe checks.

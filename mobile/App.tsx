@@ -27,6 +27,12 @@ import { LearningCard } from "./components/learning-card"
 import { useSafeAreaInsets } from "react-native-safe-area-context"
 import { appendFeedPage, filterCards, mergeFeedMetadata } from "./lib/feed"
 import {
+  chooseFeedDelta,
+  clampFeedIndex,
+  feedSwipeDirection,
+  isFeedAdvanceGesture,
+} from "./lib/gesture"
+import {
   MobileApiError,
   fetchFeed,
   submitAnswer,
@@ -69,6 +75,13 @@ export default function App() {
   const topInset =
     Platform.OS === "android" ? (StatusBar.currentHeight ?? 0) : 0
   const listRef = useRef<FlatList<MobileLearningCard>>(null)
+  const dragStartOffsetRef = useRef(0)
+  const dragStartXRef = useRef(0)
+  const dragEndXRef = useRef(0)
+  const dragStartYRef = useRef(0)
+  const dragEndYRef = useRef(0)
+  const dragStartIndexRef = useRef(0)
+  const pendingSnapTargetRef = useRef<number | null>(null)
   const passiveHandlerRef = useRef<
     (card: MobileLearningCard, type: "skip" | "exposure") => void
   >(() => undefined)
@@ -166,6 +179,7 @@ export default function App() {
   /** Fetches the current feed and preserves a cache when the Mac is unavailable. */
   const refresh = useCallback(
     async (baseUrl: string | undefined, allowCache = true) => {
+      pendingSnapTargetRef.current = null
       const generation = requestGenerationRef.current + 1
       requestGenerationRef.current = generation
       requestControllerRef.current?.abort()
@@ -477,6 +491,7 @@ export default function App() {
 
   /** Advances to the next card after recording a deliberate skip. */
   function skipCard(card: MobileLearningCard) {
+    pendingSnapTargetRef.current = null
     const cardFeedback = feedback[card.id]
     const alreadyScored =
       cardFeedback?.status === "correct" || cardFeedback?.status === "incorrect"
@@ -652,16 +667,85 @@ export default function App() {
           ref={listRef}
           data={visibleCards}
           decelerationRate="fast"
+          disableIntervalMomentum
           getItemLayout={(_, index) => ({
             length: height,
             offset: height * index,
             index,
           })}
           keyExtractor={(card) => card.id}
+          onScrollBeginDrag={(event) => {
+            pendingSnapTargetRef.current = null
+            dragStartOffsetRef.current = event.nativeEvent.contentOffset.y
+            dragStartIndexRef.current = Math.round(
+              event.nativeEvent.contentOffset.y / height
+            )
+          }}
+          onTouchStart={(event) => {
+            pendingSnapTargetRef.current = null
+            dragStartXRef.current = event.nativeEvent.pageX
+            dragEndXRef.current = event.nativeEvent.pageX
+            dragStartYRef.current = event.nativeEvent.pageY
+            dragEndYRef.current = event.nativeEvent.pageY
+          }}
+          onTouchMove={(event) => {
+            dragEndXRef.current = event.nativeEvent.pageX
+            dragEndYRef.current = event.nativeEvent.pageY
+          }}
+          onTouchEnd={(event) => {
+            dragEndXRef.current = event.nativeEvent.pageX
+            dragEndYRef.current = event.nativeEvent.pageY
+          }}
+          onScrollEndDrag={(event) => {
+            const offset = event.nativeEvent.contentOffset.y
+            const nativeDeltaY = offset - dragStartOffsetRef.current
+            const touchDeltaY = dragStartYRef.current - dragEndYRef.current
+            const deltaY = chooseFeedDelta(nativeDeltaY, touchDeltaY)
+            const deltaX = dragEndXRef.current - dragStartXRef.current
+            const velocityY = event.nativeEvent.velocity?.y ?? 0
+            const recognized = isFeedAdvanceGesture({
+              deltaX,
+              deltaY,
+              velocityY,
+              height,
+            })
+            const direction = feedSwipeDirection(deltaY, velocityY)
+            const nextIndex = clampFeedIndex(
+              dragStartIndexRef.current + direction,
+              visibleCards.length
+            )
+            if (!recognized) return
+            if (nextIndex !== dragStartIndexRef.current) {
+              pendingSnapTargetRef.current = nextIndex
+              requestAnimationFrame(() => {
+                if (pendingSnapTargetRef.current !== nextIndex) return
+                listRef.current?.scrollToIndex({
+                  index: nextIndex,
+                  animated: true,
+                })
+              })
+              setActiveIndex(nextIndex)
+            }
+          }}
+          onMomentumScrollEnd={(event) => {
+            const target = pendingSnapTargetRef.current
+            if (target === null) return
+            // Android can emit a second native completion after our animation.
+            // Keep this gesture target until the next touch or navigation.
+            const actualOffset = event.nativeEvent.contentOffset.y
+            const targetOffset = target * height
+            if (Math.abs(actualOffset - targetOffset) > 1) {
+              listRef.current?.scrollToOffset({
+                offset: targetOffset,
+                animated: true,
+              })
+            }
+          }}
           onViewableItemsChanged={onViewableItemsChanged}
           onEndReached={() => void loadMore()}
           onEndReachedThreshold={0.4}
-          pagingEnabled
+          snapToAlignment="start"
+          snapToInterval={height}
           refreshControl={
             <RefreshControl
               onRefresh={() => void refresh(serverUrl)}
@@ -705,6 +789,7 @@ export default function App() {
         topics={topics}
         onClose={() => setFilterOpen(false)}
         onSelectProject={(nextId) => {
+          pendingSnapTargetRef.current = null
           requestGenerationRef.current += 1
           requestControllerRef.current?.abort()
           listRef.current?.scrollToOffset({ offset: 0, animated: false })
@@ -714,6 +799,7 @@ export default function App() {
           setTopicId(undefined)
         }}
         onSelectTopic={(nextId) => {
+          pendingSnapTargetRef.current = null
           requestGenerationRef.current += 1
           requestControllerRef.current?.abort()
           listRef.current?.scrollToOffset({ offset: 0, animated: false })
