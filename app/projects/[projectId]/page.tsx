@@ -4,14 +4,13 @@
 
 import { useMutation, usePaginatedQuery, useQuery } from "convex/react"
 import Link from "next/link"
-import { use, useState } from "react"
+import { use, useEffect, useState } from "react"
 
 import { ProjectActions } from "@/components/projects/project-actions"
 import { ProjectFiles } from "@/components/projects/project-files"
 import { ResearchPanel } from "@/components/projects/research-panel"
 import { TopicList } from "@/components/projects/topic-list"
 import { SourceUploader } from "@/components/projects/source-uploader"
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -20,14 +19,10 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Skeleton } from "@/components/ui/skeleton"
-import {
-  ArrowLeftIcon,
-  BookOpenIcon,
-  FileIcon,
-  LayersIcon,
-} from "@/components/ui/icon"
+import { ArrowLeftIcon, BookOpenIcon } from "@/components/ui/icon"
 import { api } from "@/convex/_generated/api"
 import type { Id } from "@/convex/_generated/dataModel"
+import type {} from "@/lib/client/desktop"
 
 /** Renders one live project after resolving its Next.js 16 route parameters. */
 export default function ProjectPage({
@@ -45,7 +40,7 @@ export default function ProjectPage({
   })
   const {
     results: sources,
-    status: sourcesStatus,
+    status: sourceStatus,
     loadMore: loadMoreSources,
   } = usePaginatedQuery(
     api.sources.listSources,
@@ -58,10 +53,117 @@ export default function ProjectPage({
   const createAndEnqueue = useMutation(api.sources.createAndEnqueue)
   const updateSource = useMutation(api.sources.updateSource)
   const enqueue = useMutation(api.preparation.enqueue)
-  const retryPreparation = useMutation(api.preparation.retry)
   const hasLearningItems = useQuery(api.learning.hasLearningItems, {
     projectId: convexProjectId,
   })
+  const [agentCapability, setAgentCapability] = useState<{
+    available: boolean
+    error?: string
+  }>()
+  useEffect(() => {
+    let active = true
+    fetch(`/api/projects/${encodeURIComponent(projectId)}/agent`)
+      .then(
+        async (response) =>
+          (await response.json()) as { available?: boolean; error?: string }
+      )
+      .then((result) => {
+        if (active)
+          setAgentCapability({
+            available: result.available === true,
+            error: result.error,
+          })
+      })
+      .catch(() => {
+        if (active)
+          setAgentCapability({
+            available: false,
+            error: "The local agent is unavailable on this desktop.",
+          })
+      })
+    return () => {
+      active = false
+    }
+  }, [projectId])
+  const ingestion = useQuery(api.projectAgents.listIngestion, {
+    projectId: convexProjectId,
+  })
+  const artifacts = useQuery(api.projectAgents.listArtifacts, {
+    projectId: convexProjectId,
+  })
+  const agentTasks = useQuery(api.projectAgents.listTasks, {
+    projectId: convexProjectId,
+  })
+  const citations = useQuery(api.projectAgents.listCitations, {
+    projectId: convexProjectId,
+  })
+
+  /** Starts a local project task through the desktop agent bridge. */
+  const startAgent = async (input: { title: string; request: string }) => {
+    const response = await fetch(
+      `/api/projects/${encodeURIComponent(projectId)}/agent`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(input),
+      }
+    )
+    const payload = (await response.json()) as { error?: string }
+    if (!response.ok)
+      throw new Error(payload.error || "Agent task could not start.")
+  }
+
+  /** Opens a generated file through the bounded local artifact endpoint. */
+  const openArtifact = (artifact: { relativeKey: string }) => {
+    if (window.blitzDesktop) {
+      void window.blitzDesktop.openFile(projectId, artifact.relativeKey)
+      return
+    }
+    window.open(
+      `/api/projects/${encodeURIComponent(projectId)}/agent/artifacts?key=${encodeURIComponent(artifact.relativeKey)}`,
+      "_blank",
+      "noopener,noreferrer"
+    )
+  }
+
+  /** Opens an original source in the native shell or the bounded browser route. */
+  const openSource = (source: {
+    _id: Id<"sources"> | string
+    relativeKey?: string
+  }) => {
+    if (source.relativeKey && window.blitzDesktop) {
+      void window.blitzDesktop.openFile(projectId, source.relativeKey)
+      return
+    }
+    window.open(
+      `/api/sources/file?projectId=${encodeURIComponent(projectId)}&sourceId=${encodeURIComponent(String(source._id))}`,
+      "_blank",
+      "noopener,noreferrer"
+    )
+  }
+
+  /** Reveals a generated artifact in Finder when the Electron bridge is present. */
+  const revealArtifact = (artifact: { relativeKey: string }) => {
+    if (window.blitzDesktop)
+      void window.blitzDesktop.revealFile(projectId, artifact.relativeKey)
+  }
+
+  /** Promotes a text artifact through the explicit source approval route. */
+  const addArtifactToSources = async (artifact: { relativeKey: string }) => {
+    const response = await fetch(
+      `/api/projects/${encodeURIComponent(projectId)}/agent/promote`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ relativeKey: artifact.relativeKey }),
+      }
+    )
+    const payload = (await response.json()) as { error?: string }
+    if (!response.ok)
+      throw new Error(
+        payload.error || "Artifact could not be added to sources."
+      )
+  }
 
   if (project === undefined) return <ProjectLoadingState />
   if (project === null) return <ProjectNotFoundState />
@@ -143,183 +245,77 @@ export default function ProjectPage({
         />
       </div>
 
-      <section className="mt-10">
-        <div className="mb-4 flex items-center justify-between">
-          <h2 className="font-heading text-2xl">Sources</h2>
-        </div>
-        {sourcesStatus === "LoadingFirstPage" ? (
-          <SourcesLoadingState />
-        ) : !sources.length ? (
-          <div className="rounded-xl border border-dashed p-8 text-center text-sm text-muted-foreground">
-            <LayersIcon className="mx-auto mb-3" size={32} />
-            Add a source to start preparing your learning feed.
-          </div>
-        ) : (
-          <div className="space-y-3">
-            {sources.map((source) => (
-              <SourceRow
-                key={source._id}
-                source={source}
-                projectId={convexProjectId}
-                retryPreparation={retryPreparation}
-                prepareSource={() =>
-                  enqueue({ projectId: convexProjectId, sourceId: source._id })
-                }
-              />
-            ))}
-            {sourcesStatus === "CanLoadMore" ||
-            sourcesStatus === "LoadingMore" ? (
-              <Button
-                variant="outline"
-                className="w-full"
-                disabled={sourcesStatus === "LoadingMore"}
-                onClick={() => loadMoreSources(20)}
-              >
-                {sourcesStatus === "LoadingMore"
-                  ? "Loading sources…"
-                  : "Load more sources"}
-              </Button>
-            ) : null}
-          </div>
-        )}
-      </section>
-
-      <ProjectFiles projectId={convexProjectId} sources={sources} />
-    </main>
-  )
-}
-
-/** Source status shape rendered by the project list. */
-type SourceRowData = {
-  _id: Id<"sources">
-  filename: string
-  originalUrl?: string
-  status: "processing" | "ready" | "failed"
-  summary?: string
-  error?: string
-}
-
-/** Renders persisted source state plus live preparation progress when known. */
-function SourceRow({
-  source,
-  projectId,
-  retryPreparation,
-  prepareSource,
-}: {
-  source: SourceRowData
-  projectId: Id<"projects">
-  prepareSource: () => Promise<unknown>
-  retryPreparation: (input: {
-    jobId: Id<"preparationJobs">
-  }) => Promise<unknown>
-}) {
-  const jobs = useQuery(api.preparation.listJobsForProject, {
-    projectId,
-    sourceIds: [source._id],
-  })
-  const job = jobs?.[0]
-  const preparationFailed = job?.status === "failed"
-  const preparationComplete = job?.status === "completed"
-  const noStudyContent = preparationComplete && job.generatedItemCount === 0
-  const status =
-    noStudyContent || preparationFailed
-      ? "failed"
-      : preparationComplete
-        ? "ready"
-        : source.status
-  const detail = noStudyContent
-    ? source.error || "No study content. Add clearer notes or another source."
-    : preparationFailed
-      ? job.error || undefined
-      : job?.status === "leased"
-        ? job.totalChunks
-          ? `Preparing section ${Math.min(job.nextChunkOrdinal + 1, job.totalChunks)} of ${job.totalChunks}`
-          : "Preparing source…"
-        : source.status === "failed"
-          ? source.error || undefined
-          : undefined
-
-  const [retryState, setRetryState] = useState<"idle" | "pending" | "error">(
-    "idle"
-  )
-  const [retryError, setRetryError] = useState("")
-
-  /** Queues an older source or retries failed preparation without replacing existing cards. */
-  const retry = async () => {
-    setRetryState("pending")
-    setRetryError("")
-    try {
-      if (job) await retryPreparation({ jobId: job.jobId })
-      else await prepareSource()
-      setRetryState("idle")
-    } catch (error) {
-      setRetryState("error")
-      setRetryError(
-        error instanceof Error && error.message.trim()
-          ? error.message
-          : "Retry failed. Try again."
-      )
-    }
-  }
-
-  return (
-    <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-card p-4 ring-1 ring-foreground/10">
-      <div className="flex min-w-0 flex-1 basis-48 items-center gap-3">
-        <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-muted">
-          <FileIcon size={21} />
-        </div>
-        <div className="min-w-0">
-          <p className="truncate font-medium">{source.filename}</p>
-          {source.originalUrl ? (
-            <a
-              href={source.originalUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="block max-w-72 truncate text-xs text-muted-foreground underline-offset-2 hover:underline"
-            >
-              {source.originalUrl}
-            </a>
-          ) : null}
-          {detail ? (
-            <p className="line-clamp-2 text-xs text-muted-foreground">
-              {detail}
-            </p>
-          ) : null}
-          {retryError ? (
-            <p role="alert" className="mt-1 text-xs text-destructive">
-              {retryError}
-            </p>
-          ) : null}
-        </div>
-      </div>
-      <div className="flex shrink-0 flex-wrap items-center gap-2 [&_button]:min-h-11">
-        {preparationFailed || (!job && source.status === "ready") ? (
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={retryState === "pending"}
-            onClick={() => void retry()}
-          >
-            {retryState === "pending"
-              ? "Queuing…"
-              : job
-                ? "Retry"
-                : "Prepare feed"}
-          </Button>
-        ) : null}
-        <Badge
-          variant={
-            status === "ready"
-              ? "secondary"
-              : status === "failed"
-                ? "destructive"
-                : "outline"
-          }
+      {sourceStatus === "LoadingFirstPage" ? (
+        <p role="status">Loading files…</p>
+      ) : (
+        <ProjectFiles
+          projectId={convexProjectId}
+          sources={sources}
+          ingestion={ingestion?.map((job) => ({
+            sourceId: String(job.sourceId),
+            status: job.status,
+            error: job.error,
+          }))}
+          artifacts={artifacts?.map((artifact) => ({
+            id: String(artifact._id),
+            relativeKey: artifact.relativeKey,
+            kind: artifact.kind,
+            mimeType: artifact.mimeType,
+            sizeBytes: artifact.sizeBytes,
+            status: artifact.status,
+            updatedAt: artifact.updatedAt,
+          }))}
+          agentTasks={agentTasks?.map((task) => ({
+            id: String(task._id),
+            title: task.title,
+            status: task.status,
+            request: task.request,
+            error: task.error,
+            artifactIds: task.artifactIds?.map(String),
+          }))}
+          citations={citations?.map((citation) => ({
+            sourceId: String(citation.sourceId),
+            label: citation.label,
+            detail:
+              "detail" in citation && typeof citation.detail === "string"
+                ? citation.detail
+                : undefined,
+          }))}
+          agentAvailable={agentCapability?.available === true}
+          agentUnavailableReason={agentCapability?.error}
+          actions={{
+            onStartAgent: startAgent,
+            onOpenArtifact: openArtifact,
+            onAddArtifactToSources: addArtifactToSources,
+            onRetryIngestion: async (sourceId) => {
+              const response = await fetch("/api/sources/retry", {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({ projectId, sourceId }),
+              })
+              if (!response.ok) {
+                const payload = (await response.json()) as { error?: string }
+                throw new Error(payload.error || "Source retry failed.")
+              }
+            },
+            onOpenSource: openSource,
+            onRevealArtifact: revealArtifact,
+          }}
+        />
+      )}
+      {sourceStatus === "CanLoadMore" || sourceStatus === "LoadingMore" ? (
+        <Button
+          variant="outline"
+          className="mt-4"
+          disabled={sourceStatus === "LoadingMore"}
+          onClick={() => loadMoreSources(20)}
         >
-          {status}
-        </Badge>
-      </div>
-    </div>
+          {sourceStatus === "LoadingMore"
+            ? "Loading files…"
+            : "Load more files"}
+        </Button>
+      ) : null}
+    </main>
   )
 }
 
@@ -353,28 +349,5 @@ function ProjectNotFoundState() {
         </Button>
       </div>
     </main>
-  )
-}
-
-/** Shows source-shaped placeholders while a project's sources are loading. */
-function SourcesLoadingState() {
-  return (
-    <div role="status" aria-label="Loading sources" className="space-y-3">
-      <span className="sr-only">Loading sources</span>
-      {Array.from({ length: 2 }, (_, index) => (
-        <div
-          key={index}
-          aria-hidden="true"
-          className="flex items-center gap-3 rounded-xl bg-card p-4 ring-1 ring-foreground/10"
-        >
-          <Skeleton className="size-10 rounded-xl" />
-          <div className="min-w-0 flex-1 space-y-2">
-            <Skeleton className="h-4 w-1/3" />
-            <Skeleton className="h-3 w-3/4" />
-          </div>
-          <Skeleton className="h-6 w-16 rounded-full" />
-        </div>
-      ))}
-    </div>
   )
 }

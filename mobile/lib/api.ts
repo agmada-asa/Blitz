@@ -28,6 +28,16 @@ export class MobileApiError extends Error {
   }
 }
 
+/** Metadata returned after an Android or browser client stores original bytes. */
+export type MobileOriginalUpload = {
+  readonly key: string
+  readonly sha256: string
+  readonly size: number
+  readonly mimeType: string | null
+  readonly filename: string
+  readonly duplicate: boolean
+}
+
 /** Removes trailing slashes so endpoint joins remain stable. */
 function normalizeBaseUrl(baseUrl: string): string {
   const normalized = baseUrl.trim().replace(/\/+$/, "")
@@ -81,6 +91,42 @@ function requiredString(value: unknown, field: string): string {
     throw new MobileApiError(`Server response is missing ${field}`)
   }
   return value
+}
+
+/** Uploads one original source stream to the local Mac storage boundary. */
+export async function uploadOriginalSource(
+  baseUrl: string,
+  input: {
+    projectId: string
+    filename: string
+    mimeType?: string
+    body: BodyInit
+    signal?: AbortSignal
+  }
+): Promise<MobileOriginalUpload> {
+  const response = await fetchWithTimeout(
+    `${normalizeBaseUrl(baseUrl)}/api/sources/upload`,
+    {
+      method: "POST",
+      headers: {
+        "x-blitz-project-id": input.projectId,
+        "x-blitz-filename": input.filename,
+        ...(input.mimeType ? { "content-type": input.mimeType } : {}),
+      },
+      body: input.body,
+      signal: input.signal,
+    }
+  )
+  const value = await readJson(response)
+  if (!isRecord(value)) throw new MobileApiError("Server returned an invalid upload response")
+  return {
+    key: requiredString(value.key, "upload key"),
+    sha256: requiredString(value.sha256, "upload hash"),
+    size: typeof value.size === "number" ? value.size : 0,
+    mimeType: typeof value.mimeType === "string" ? value.mimeType : null,
+    filename: requiredString(value.filename, "upload filename"),
+    duplicate: value.duplicate === true,
+  }
 }
 
 /** Validates one option from the shared feed response. */

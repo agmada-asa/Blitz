@@ -22,10 +22,10 @@ import {
 import { api } from "@/convex/_generated/api"
 import type { Id } from "@/convex/_generated/dataModel"
 import {
-  extractSource,
   extractSourceResponse,
   type SourceKind,
 } from "@/lib/client/extract-source"
+import type {} from "@/lib/client/desktop"
 import { sourcePartFilename, splitSourceText } from "@/lib/source-splitting"
 
 /** Convex operations and project identity required by source ingestion. */
@@ -49,7 +49,7 @@ type Props = {
 /** One recoverable result from a bulk source import. */
 type ImportResult = {
   filename: string
-  status: "queued" | "failed"
+  status: "queued" | "failed" | "retained"
   detail: string
 }
 
@@ -189,43 +189,57 @@ export function SourceUploader({
     const imported: ImportResult[] = []
     for (const file of selected) {
       try {
-        const source = await extractSource(file)
-        const result = await queueSourceParts(
-          source.filename,
-          source.kind,
-          source.text
-        )
-        imported.push(
-          result.failed
-            ? {
-                filename: file.name,
-                status: "failed",
-                detail: `${result.queuedFilenames.length} part${result.queuedFilenames.length === 1 ? "" : "s"} queued; ${result.failed.filename}: ${result.failed.detail}`,
-              }
-            : {
-                filename: file.name,
-                status: "queued",
-                detail:
-                  result.queuedFilenames.length === 1
-                    ? "Queued"
-                    : `Queued ${result.queuedFilenames.length} parts`,
-              }
-        )
-      } catch (error) {
-        imported.push({
-          filename: file.name,
-          status: "failed",
-          detail: messageForError(error, "Could not read that file."),
+        const originalResponse = await fetch("/api/sources/upload", {
+          method: "POST",
+          headers: {
+            "x-blitz-project-id": String(projectId),
+            "x-blitz-filename": file.name,
+            ...(file.type ? { "content-type": file.type } : {}),
+          },
+          body: file,
         })
+        if (!originalResponse.ok)
+          throw await responseError(
+            originalResponse,
+            "The original file could not be stored."
+          )
+        const upload = (await originalResponse.json()) as {
+          unsupported?: boolean
+          extracted?: boolean
+          duplicate?: boolean
+          error?: string
+        }
+        if (upload.unsupported)
+          imported.push({
+            filename: file.name,
+            status: "retained",
+            detail: "Original file retained for agent inspection.",
+          })
+        else if (!upload.extracted && !upload.duplicate)
+          throw new Error(upload.error || "The source could not be extracted.")
+        else
+          imported.push({
+            filename: file.name,
+            status: "queued",
+            detail: upload.duplicate
+              ? "This file is already uploaded."
+              : "Uploaded and queued for preparation.",
+          })
+      } catch (error) {
+        const detail = messageForError(error, "Could not read that file.")
+        imported.push({ filename: file.name, status: "failed", detail })
       }
       setResults([...imported])
     }
     const failed = imported.filter((item) => item.status === "failed").length
+    const retained = imported.filter(
+      (item) => item.status === "retained"
+    ).length
     setMessage({
       type: failed ? "error" : "success",
       text: failed
-        ? `${imported.length - failed} source${imported.length - failed === 1 ? "" : "s"} queued; ${failed} could not be imported.`
-        : `${imported.length} source${imported.length === 1 ? "" : "s"} queued for preparation.`,
+        ? `${failed} file${failed === 1 ? "" : "s"} could not be prepared. Review the details below.`
+        : `${imported.length} file${imported.length === 1 ? "" : "s"} uploaded.${retained ? ` ${retained} retained for inspection without indexing.` : ""}`,
     })
     const queuedCount = imported.filter(
       (item) => item.status === "queued"
@@ -237,6 +251,30 @@ export function SourceUploader({
         "View notifications"
       )
     setBusy(false)
+  }
+
+  /** Uses native file selection in Electron and the browser picker everywhere else. */
+  const selectFiles = async (): Promise<void> => {
+    if (!window.blitzDesktop) {
+      inputRef.current?.click()
+      return
+    }
+    try {
+      const selected = await window.blitzDesktop.selectFiles(String(projectId))
+      await chooseFiles(
+        selected.map(
+          (file) =>
+            new File([new Uint8Array(file.contents)], file.filename, {
+              type: file.mimeType,
+            })
+        )
+      )
+    } catch (error) {
+      setMessage({
+        type: "error",
+        text: messageForError(error, "Files could not be selected."),
+      })
+    }
   }
 
   /** Queues pasted notes without waiting for local concept generation. */
@@ -382,7 +420,6 @@ export function SourceUploader({
             ref={inputRef}
             type="file"
             multiple
-            accept=".pdf,.md,.markdown,.txt,.pptx,text/plain,text/markdown,application/pdf,application/vnd.openxmlformats-officedocument.presentationml.presentation"
             className="sr-only"
             tabIndex={-1}
             onChange={(event) => {
@@ -412,7 +449,10 @@ export function SourceUploader({
                 type="button"
                 size="sm"
                 disabled={busy}
-                onClick={() => inputRef.current?.click()}
+                onClick={() => {
+                  if (window.blitzDesktop) void selectFiles()
+                  else inputRef.current?.click()
+                }}
                 className="shrink-0 rounded-lg"
               >
                 Choose files

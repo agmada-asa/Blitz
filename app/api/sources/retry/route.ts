@@ -11,19 +11,63 @@ export const runtime = "nodejs"
 /** Requeues one failed source by replaying its original bytes through upload. */
 export async function POST(request: Request): Promise<Response> {
   try {
-    const body = (await request.json()) as { projectId?: unknown; sourceId?: unknown }
+    const body = (await request.json()) as {
+      projectId?: unknown
+      sourceId?: unknown
+    }
     if (typeof body.projectId !== "string" || typeof body.sourceId !== "string")
-      return Response.json({ error: "Project and source are required" }, { status: 400 })
-    const endpoint = process.env.BLITZ_CONVEX_URL ?? process.env.NEXT_PUBLIC_CONVEX_URL ?? process.env.CONVEX_URL
+      return Response.json(
+        { error: "Project and source are required" },
+        { status: 400 }
+      )
+    const endpoint =
+      process.env.BLITZ_CONVEX_URL ??
+      process.env.NEXT_PUBLIC_CONVEX_URL ??
+      process.env.CONVEX_URL
     if (!endpoint) throw new Error("Convex is unavailable")
     const convex = new ConvexHttpClient(endpoint)
-    const source = await convex.query(api.sources.getOriginalSource, { projectId: body.projectId as never, sourceId: body.sourceId as never })
-    if (!source?.relativeKey) return Response.json({ error: "Original source file is unavailable" }, { status: 404 })
-    const bytes = await fs.readFile(await resolveProjectFile(body.projectId, source.relativeKey))
-    const replay = new Request(new URL("/api/sources/upload", request.url), { method: "POST", headers: { "x-blitz-project-id": body.projectId, "x-blitz-filename": source.filename, ...(source.mimeType ? { "content-type": source.mimeType } : {}) }, body: bytes })
+    const source = await convex.query(api.sources.getOriginalSource, {
+      projectId: body.projectId as never,
+      sourceId: body.sourceId as never,
+    })
+    if (!source)
+      return Response.json({ error: "Source not found" }, { status: 404 })
+    const jobs = await convex.query(api.preparation.listJobsForProject, {
+      projectId: body.projectId as never,
+      sourceIds: [body.sourceId as never],
+    })
+    const preparation = jobs[0]
+    if (preparation?.status === "failed")
+      return Response.json(
+        await convex.mutation(api.preparation.retry, {
+          jobId: preparation.jobId,
+        })
+      )
+    if (!source.relativeKey)
+      return Response.json(
+        await convex.mutation(api.preparation.enqueue, {
+          projectId: body.projectId as never,
+          sourceId: body.sourceId as never,
+        })
+      )
+    const bytes = await fs.readFile(
+      await resolveProjectFile(body.projectId, source.relativeKey)
+    )
+    const replay = new Request(new URL("/api/sources/upload", request.url), {
+      method: "POST",
+      headers: {
+        "x-blitz-project-id": body.projectId,
+        "x-blitz-filename": source.filename,
+        ...(source.mimeType ? { "content-type": source.mimeType } : {}),
+      },
+      body: bytes,
+    })
     return POST_REPLAY(replay)
   } catch (error) {
-    return Response.json({ error: error instanceof Error ? error.message : "Source retry failed" }, { status: 400 })
+    return Response.json(
+      { error: error instanceof Error ? error.message : "Source retry failed" },
+      { status: 400 }
+    )
   }
 }
 
