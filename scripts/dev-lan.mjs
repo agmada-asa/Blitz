@@ -5,6 +5,11 @@ import { existsSync } from "node:fs"
 import { networkInterfaces } from "node:os"
 import { isIP } from "node:net"
 import { fileURLToPath } from "node:url"
+import {
+  killProcessGroups,
+  processGroupExists,
+  terminateProcessGroups,
+} from "./process-groups.mjs"
 
 const port = process.env.BLITZ_PORT ?? "3001"
 const lanAddress = process.env.BLITZ_LAN_ADDRESS?.trim() || findLanAddress()
@@ -15,6 +20,7 @@ const apkPath =
   process.env.BLITZ_ANDROID_APK_PATH?.trim() ||
   (existsSync(defaultApkPath) ? defaultApkPath : undefined)
 const children = new Set()
+const processGroups = new Set()
 let stopping = false
 
 if (!lanAddress || isIP(lanAddress) !== 4) {
@@ -42,8 +48,15 @@ if (apkPath)
 
 start("npx", ["convex", "dev", "--tail-logs", "disable"], process.env)
 start(
-  "npm",
-  ["run", "dev", "--", "--hostname", "0.0.0.0", "--port", port],
+  process.execPath,
+  [
+    "node_modules/next/dist/bin/next",
+    "dev",
+    "--hostname",
+    "0.0.0.0",
+    "--port",
+    port,
+  ],
   sharedEnvironment
 )
 
@@ -84,12 +97,19 @@ function start(command, args, environment) {
     detached: process.platform !== "win32",
   })
   children.add(child)
+  if (process.platform !== "win32" && child.pid) processGroups.add(child.pid)
   child.on("error", () => {
     console.error(`Could not start ${command}. Shutting Blitz down.`)
     stop("SIGTERM", 1)
   })
   child.on("exit", (code, signal) => {
     children.delete(child)
+    if (
+      process.platform !== "win32" &&
+      child.pid &&
+      !processGroupExists(child.pid)
+    )
+      processGroups.delete(child.pid)
     if (!stopping) {
       console.error(
         `${command} stopped (${signal ?? code ?? "unknown"}). Shutting Blitz down.`
@@ -99,18 +119,22 @@ function start(command, args, environment) {
   })
 }
 
-/** Stops only this launcher's service groups and lets their cleanup finish before exit. */
+/** Stops every owned service group and force-kills survivors after a short grace period. */
 function stop(signal, exitCode = 0) {
-  if (stopping) return
-  stopping = true
-  for (const child of children) {
-    try {
-      if (process.platform !== "win32" && child.pid)
-        process.kill(-child.pid, signal)
-      else child.kill(signal)
-    } catch {
-      // An already-exited child needs no further shutdown work.
-    }
+  if (stopping) {
+    if (process.platform !== "win32") killProcessGroups(processGroups)
+    else for (const child of children) child.kill("SIGKILL")
+    process.exit(exitCode)
   }
-  process.exitCode = exitCode
+  stopping = true
+  if (process.platform === "win32") {
+    for (const child of children) child.kill(signal)
+    process.exitCode = exitCode
+    return
+  }
+  void terminateProcessGroups(processGroups, { signal })
+    .catch(() => {
+      killProcessGroups(processGroups)
+    })
+    .finally(() => process.exit(exitCode))
 }

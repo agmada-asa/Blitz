@@ -11,7 +11,7 @@ npm ci
 npm run dev:lan
 ```
 
-The launcher starts Next.js, local Convex, the preparation, card chat, and research workers. Open the printed LAN address on a phone connected to the same Wi-Fi. Keep the process running while using the web app. Set `BLITZ_PORT` to change the web port from `3001`.
+The launcher starts Next.js, local Convex, the preparation, card chat, and research workers. Open the printed LAN address on a phone connected to the same Wi-Fi. Keep the process running while using the web app. Pressing `Ctrl+C` stops every process group; a service that does not exit within three seconds is killed so it cannot retain a development port. Set `BLITZ_PORT` to change the web port from `3001`.
 
 For separate terminals:
 
