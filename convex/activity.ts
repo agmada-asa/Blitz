@@ -255,9 +255,11 @@ export const list = query({
       const project = projects.get(job.projectId)
       if (!project) continue
       const status =
-        job.status === "leased"
-          ? "running"
-          : (job.status as "queued" | "completed" | "failed")
+        job.status === "completed" && job.generatedItemCount === 0
+          ? "failed"
+          : job.status === "leased"
+            ? "running"
+            : (job.status as "queued" | "completed" | "failed")
       const section = job.totalChunks
         ? Math.min(job.nextChunkOrdinal + 1, job.totalChunks)
         : null
@@ -293,7 +295,11 @@ export const list = query({
         updatedAt: job.updatedAt,
         ...timing(status, job.createdAt, job.updatedAt),
         generatedItemCount: job.generatedItemCount ?? null,
-        error: job.lastError?.trim().slice(0, 500) || null,
+        error:
+          job.lastError?.trim().slice(0, 500) ||
+          (job.status === "completed" && job.generatedItemCount === 0
+            ? "No study items were created. Add clearer notes or another source."
+            : null),
       })
     }
 
