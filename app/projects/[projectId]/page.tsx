@@ -7,6 +7,7 @@ import Link from "next/link"
 import { use, useState } from "react"
 
 import { ProjectActions } from "@/components/projects/project-actions"
+import { ProjectFiles } from "@/components/projects/project-files"
 import { ResearchPanel } from "@/components/projects/research-panel"
 import { TopicList } from "@/components/projects/topic-list"
 import { SourceUploader } from "@/components/projects/source-uploader"
@@ -182,6 +183,8 @@ export default function ProjectPage({
           </div>
         )}
       </section>
+
+      <ProjectFiles projectId={convexProjectId} sources={sources} />
     </main>
   )
 }
