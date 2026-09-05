@@ -40,24 +40,6 @@ function validateArtifactMetadata(
     throw new Error("Artifact hash is invalid")
 }
 
-/** Validates an approval request before it is made visible to a user. */
-function validateApproval(
-  approval: { id: string; method: string; details: string; expiresAt: number },
-  now: number
-): void {
-  if (
-    !approval.id ||
-    approval.id.length > 200 ||
-    !approval.method ||
-    approval.method.length > 200 ||
-    approval.details.length > 20_000 ||
-    !Number.isFinite(approval.expiresAt) ||
-    approval.expiresAt <= now ||
-    approval.expiresAt > now + 5 * 60 * 1000
-  )
-    throw new Error("Approval request is invalid")
-}
-
 const artifactInput = v.object({
   relativeKey: v.string(),
   kind: v.union(v.literal("file"), v.literal("directory")),

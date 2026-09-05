@@ -5,6 +5,8 @@
 import * as React from "react"
 import { ThemeProvider as NextThemesProvider, useTheme } from "next-themes"
 
+import { AccentProvider } from "@/components/accent-provider"
+
 /** Provides theme state and installs the non-input "d" keyboard shortcut. */
 function ThemeProvider({
   children,
@@ -18,8 +20,10 @@ function ThemeProvider({
       disableTransitionOnChange
       {...props}
     >
-      <ThemeHotkey />
-      {children}
+      <AccentProvider>
+        <ThemeHotkey />
+        {children}
+      </AccentProvider>
     </NextThemesProvider>
   )
 }

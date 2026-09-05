@@ -10,6 +10,7 @@ import {
   AppState,
   ActivityIndicator,
   FlatList,
+  Linking,
   Platform,
   Pressable,
   RefreshControl,
@@ -22,6 +23,10 @@ import {
 } from "react-native"
 
 import { FeedBackdrop } from "./components/feed-backdrop"
+import {
+  BottomNavigation,
+  type MobileNavigationKey,
+} from "./components/bottom-navigation"
 import { ProjectLibrary } from "./components/project-library"
 import { useMotionEnabled } from "./lib/use-motion"
 import type { ProjectOperation } from "../lib/project-contracts"
@@ -493,6 +498,36 @@ export default function App() {
     setLibraryOpen(true)
   }
 
+  /** Opens a secondary destination in the browser connected to this native feed. */
+  async function openWebRoute(path: string) {
+    if (!serverUrl) {
+      setNotice("Connect to Blitz to open that page")
+      return
+    }
+    try {
+      await Linking.openURL(`${serverUrl.replace(/\/+$/, "")}${path}`)
+    } catch {
+      setNotice("Could not open that page in your browser")
+    }
+  }
+
+  /** Handles native tab actions without inventing a second navigation stack. */
+  function handleNavigation(key: MobileNavigationKey) {
+    if (key === "home") {
+      setLibraryOpen(false)
+      setFilterOpen(false)
+      setChatCard(null)
+      return
+    }
+    if (key === "library") {
+      openLibrary()
+      return
+    }
+    void openWebRoute(
+      key === "chat" ? "/chat" : key === "activity" ? "/activity" : "/settings"
+    )
+  }
+
   /** Invalidates older feed requests and reconciles the device after a confirmed project change. */
   async function projectChanged(operation: ProjectOperation, id: string) {
     requestGenerationRef.current += 1
@@ -707,13 +742,7 @@ export default function App() {
         ]}
       >
         <View style={styles.topLeft}>
-          <Pressable
-            accessibilityRole="button"
-            onPress={openLibrary}
-            style={styles.libraryButton}
-          >
-            <Text style={styles.libraryText}>Library</Text>
-          </Pressable>
+          <Text style={styles.brandText}>Blitz</Text>
           <Text style={styles.statusText}>
             {status === "offline"
               ? "Offline · saved cards"
@@ -883,7 +912,7 @@ export default function App() {
         <Pressable
           accessibilityRole="button"
           onPress={() => setNotice("")}
-          style={[styles.notice, { bottom: 14 + insets.bottom }]}
+          style={[styles.notice, { bottom: 84 + insets.bottom }]}
         >
           <Text style={styles.noticeText}>{notice}</Text>
         </Pressable>
@@ -932,6 +961,10 @@ export default function App() {
         visible={chatCard !== null}
         onClose={() => setChatCard(null)}
       />
+      <BottomNavigation
+        activeKey={libraryOpen ? "library" : "home"}
+        onSelect={handleNavigation}
+      />
     </View>
   )
 }
@@ -960,18 +993,10 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 12,
   },
-  libraryButton: {
-    minHeight: 44,
-    justifyContent: "center",
-    paddingHorizontal: 16,
-    borderWidth: 1,
-    borderColor: "#383838",
-    borderRadius: 24,
-    backgroundColor: "rgba(255,255,255,0.05)",
-  },
-  libraryText: {
-    color: "#b0b0b0",
-    fontSize: 13,
+  brandText: {
+    color: "#ffffff",
+    fontSize: 17,
+    fontWeight: "600",
   },
   statusText: {
     flexShrink: 1,

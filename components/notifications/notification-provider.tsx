@@ -18,12 +18,16 @@ import type { FunctionReturnType } from "convex/server"
 import { useBackgroundNotice } from "@/components/background-notices"
 import { api } from "@/convex/_generated/api"
 
-/** Browser storage key for the latest time the notification center was opened. */
+/** Browser storage key for individual read notification IDs. */
+const READ_IDS_KEY = "blitz-notifications-read-ids-v1"
+/** Legacy browser storage key for the latest time the notification center was opened. */
 const LAST_READ_KEY = "blitz-notifications-last-read-v1"
 /** Browser storage key for finished rows already announced on this device. */
 const DELIVERED_KEY = "blitz-notifications-delivered-v1"
 /** Maximum delivered identifiers kept on one device. */
 const MAX_DELIVERED_IDS = 120
+/** Maximum read notification identifiers kept in local storage. */
+const MAX_READ_IDS = 200
 
 /** Live notification-center response inferred from the public Convex query. */
 export type NotificationSnapshot = FunctionReturnType<typeof api.activity.list>
@@ -34,24 +38,38 @@ export type BrowserNotificationPermission =
   NotificationPermission | "unsupported"
 
 /** Values shared by the navigation and notification page. */
-type NotificationContextValue = {
+export type NotificationContextValue = {
   snapshot: NotificationSnapshot | undefined
   unreadCount: number
   browserPermission: BrowserNotificationPermission
+  isRead: (id: string) => boolean
+  markAsRead: (id: string) => void
+  markAsUnread: (id: string) => void
   markAllRead: () => void
   requestBrowserNotifications: () => Promise<BrowserNotificationPermission>
 }
 
 const NotificationContext = createContext<NotificationContextValue | null>(null)
 
-/** Reads a finite timestamp or initializes the first-read baseline. */
-function readTimestamp(key: string): number {
-  const stored = window.localStorage.getItem(key)
-  const parsed = Number.parseInt(stored ?? "", 10)
-  if (stored !== null && Number.isFinite(parsed) && parsed >= 0) return parsed
-  const baseline = Date.now()
-  window.localStorage.setItem(key, String(baseline))
-  return baseline
+/** Reads the persisted read notification identifiers from local storage. */
+function readStoredReadIds(): { ids: Set<string>; initialized: boolean } {
+  const stored = window.localStorage.getItem(READ_IDS_KEY)
+  if (stored !== null) {
+    try {
+      const parsed = JSON.parse(stored)
+      if (Array.isArray(parsed)) {
+        return {
+          ids: new Set(
+            parsed.filter((id): id is string => typeof id === "string")
+          ),
+          initialized: true,
+        }
+      }
+    } catch {
+      // Fall through to uninitialized if corrupted.
+    }
+  }
+  return { ids: new Set(), initialized: false }
 }
 
 /** Reads the delivered identifiers and whether this device has a prior baseline. */
@@ -95,24 +113,81 @@ function announceInBrowser(item: NotificationRow): void {
   }
 }
 
-/** Provides live task state and announces newly finished work once per browser. */
+/** Provides live task state, unread tracking, and in-app or browser alerts. */
 export function NotificationProvider({ children }: { children: ReactNode }) {
   const snapshot = useQuery(api.activity.list)
   const notifyBackground = useBackgroundNotice()
   const deliveredIds = useRef<Set<string> | null>(null)
-  const [lastReadAt, setLastReadAt] = useState<number | null>(null)
+  const legacyMigrated = useRef(false)
+  const [readIds, setReadIds] = useState<Set<string>>(() => new Set())
+  const [readIdsInitialized, setReadIdsInitialized] = useState(false)
   const [browserPermission, setBrowserPermission] =
     useState<BrowserNotificationPermission>("unsupported")
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
-      setLastReadAt(readTimestamp(LAST_READ_KEY))
+      const stored = readStoredReadIds()
+      if (stored.initialized) {
+        setReadIds(stored.ids)
+        setReadIdsInitialized(true)
+      }
       setBrowserPermission(
         "Notification" in window ? Notification.permission : "unsupported"
       )
     }, 0)
     return () => window.clearTimeout(timer)
   }, [])
+
+  // Synchronize read identifiers across concurrent browser tabs.
+  useEffect(() => {
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === READ_IDS_KEY) {
+        const stored = readStoredReadIds()
+        if (stored.initialized) {
+          setReadIds(stored.ids)
+        }
+      }
+    }
+    window.addEventListener("storage", onStorage)
+    return () => window.removeEventListener("storage", onStorage)
+  }, [])
+
+  // Migrate legacy lastReadAt timestamp or initialize baseline when snapshot loads.
+  useEffect(() => {
+    if (!snapshot || legacyMigrated.current || readIdsInitialized) return
+    legacyMigrated.current = true
+
+    const hasStoredReadIds = window.localStorage.getItem(READ_IDS_KEY) !== null
+    if (!hasStoredReadIds) {
+      const legacyStored = window.localStorage.getItem(LAST_READ_KEY)
+      const legacyLastReadAt = legacyStored
+        ? Number.parseInt(legacyStored, 10)
+        : null
+
+      if (legacyLastReadAt !== null && Number.isFinite(legacyLastReadAt)) {
+        const migrated = new Set<string>()
+        for (const item of snapshot.notifications) {
+          if (item.updatedAt <= legacyLastReadAt) {
+            migrated.add(item.id)
+          }
+        }
+        const serialized = [...migrated].slice(-MAX_READ_IDS)
+        try {
+          window.localStorage.setItem(READ_IDS_KEY, JSON.stringify(serialized))
+        } catch {
+          // Continue if storage is unavailable.
+        }
+        window.setTimeout(() => setReadIds(new Set(serialized)), 0)
+      } else {
+        try {
+          window.localStorage.setItem(READ_IDS_KEY, JSON.stringify([]))
+        } catch {
+          // Continue if storage is unavailable.
+        }
+      }
+    }
+    setReadIdsInitialized(true)
+  }, [readIdsInitialized, snapshot])
 
   useEffect(() => {
     if (!snapshot) return
@@ -147,12 +222,58 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
       )
   }, [notifyBackground, snapshot])
 
-  /** Marks every result currently visible to the browser as read. */
-  const markAllRead = useCallback(() => {
-    const readAt = Date.now()
-    window.localStorage.setItem(LAST_READ_KEY, String(readAt))
-    setLastReadAt(readAt)
+  /** Marks one notification as read and persists the updated identifiers. */
+  const markAsRead = useCallback((id: string) => {
+    setReadIds((current) => {
+      if (current.has(id)) return current
+      const updated = new Set(current)
+      updated.add(id)
+      const serialized = [...updated].slice(-MAX_READ_IDS)
+      try {
+        window.localStorage.setItem(READ_IDS_KEY, JSON.stringify(serialized))
+      } catch {
+        // Continue if storage quota is exceeded.
+      }
+      return new Set(serialized)
+    })
   }, [])
+
+  /** Marks one notification as unread and persists the updated identifiers. */
+  const markAsUnread = useCallback((id: string) => {
+    setReadIds((current) => {
+      if (!current.has(id)) return current
+      const updated = new Set(current)
+      updated.delete(id)
+      const serialized = [...updated]
+      try {
+        window.localStorage.setItem(READ_IDS_KEY, JSON.stringify(serialized))
+      } catch {
+        // Continue if storage quota is exceeded.
+      }
+      return updated
+    })
+  }, [])
+
+  /** Marks every finished notification currently in the snapshot as read. */
+  const markAllRead = useCallback(() => {
+    if (!snapshot) return
+    setReadIds((current) => {
+      const updated = new Set(current)
+      for (const item of snapshot.notifications) {
+        updated.add(item.id)
+      }
+      const serialized = [...updated].slice(-MAX_READ_IDS)
+      try {
+        window.localStorage.setItem(READ_IDS_KEY, JSON.stringify(serialized))
+      } catch {
+        // Continue if storage quota is exceeded.
+      }
+      return new Set(serialized)
+    })
+  }, [snapshot])
+
+  /** Checks whether one notification ID has been marked read on this device. */
+  const isRead = useCallback((id: string) => readIds.has(id), [readIds])
 
   /** Requests browser alert permission from an explicit user action. */
   const requestBrowserNotifications = useCallback(async () => {
@@ -176,23 +297,28 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
 
   const unreadCount = useMemo(
     () =>
-      lastReadAt === null || !snapshot
+      !snapshot
         ? 0
-        : snapshot.notifications.filter((item) => item.updatedAt > lastReadAt)
-            .length,
-    [lastReadAt, snapshot]
+        : snapshot.notifications.filter((item) => !readIds.has(item.id)).length,
+    [readIds, snapshot]
   )
   const value = useMemo<NotificationContextValue>(
     () => ({
       snapshot,
       unreadCount,
       browserPermission,
+      isRead,
+      markAsRead,
+      markAsUnread,
       markAllRead,
       requestBrowserNotifications,
     }),
     [
       browserPermission,
+      isRead,
       markAllRead,
+      markAsRead,
+      markAsUnread,
       requestBrowserNotifications,
       snapshot,
       unreadCount,

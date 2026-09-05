@@ -133,7 +133,7 @@ export function LearningCard({
     <View
       style={[
         styles.card,
-        { paddingTop: 88 + insets.top, paddingBottom: 32 + insets.bottom },
+        { paddingTop: 88 + insets.top, paddingBottom: 96 + insets.bottom },
       ]}
     >
       <ScrollView

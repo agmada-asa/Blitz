@@ -8,7 +8,7 @@
 
 Each local worker reads the saved choices before it starts an AI turn. A turn that is already running keeps the model and reasoning level it started with. Queued work uses the latest saved choices when the worker begins its next turn.
 
-The settings page uses pickers rather than free-text model IDs. It offers the curated models available to Blitz's local Codex setup and limits each reasoning picker to levels that work with the selected model. Existing custom saved model IDs remain visible so they can be replaced without losing a prior configuration. Blitz saves every model and reasoning choice together so a worker never receives a partial configuration.
+The settings page uses one combined model-and-reasoning picker per task rather than free-text model IDs or separate dropdowns. Its menu separates model generations, and each model opens a nested reasoning menu limited to the levels it supports. Existing custom saved model IDs remain visible so they can be replaced without losing a prior configuration. Picker changes stay local until `Save AI settings`; Blitz saves every model and reasoning choice together so a worker never receives a partial configuration.
 
 The general `/chat` workspace also includes one compact Reply model picker alongside the attachment button. Its menu separates model generations, and each model opens a nested reasoning menu. Changing a selection saves the shared Reply setting immediately and briefly pauses the composer until the change is confirmed. The next general or card-chat reply then uses that saved pair.
 

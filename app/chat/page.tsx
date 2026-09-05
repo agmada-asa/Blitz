@@ -1,6 +1,6 @@
 "use client"
 
-/** Opens general workspace chat or a persisted card conversation from a deep link. */
+/** Opens general workspace chat, a new card chat, or a legacy card deep link. */
 
 import Link from "next/link"
 import { use } from "react"
@@ -19,17 +19,19 @@ function chatIdFromQuery(value?: string): Id<"workspaceChats"> | undefined {
     : undefined
 }
 
-/** Routes card deep links to their dialog and otherwise renders general workspace chat. */
+/** Routes new card links to workspace chat while keeping legacy card links readable. */
 export default function ChatPage({
   searchParams,
 }: {
   searchParams: Promise<{
     projectId?: string
     itemId?: string
+    cardProjectId?: string
+    cardId?: string
     chatId?: string
   }>
 }) {
-  const { projectId, itemId, chatId } = use(searchParams)
+  const { projectId, itemId, cardProjectId, cardId, chatId } = use(searchParams)
   const router = useRouter()
   const card = useQuery(
     api.conversations.getAttachment,
@@ -40,8 +42,71 @@ export default function ChatPage({
         }
       : "skip"
   )
+  const newCard = useQuery(
+    api.conversations.getAttachment,
+    cardProjectId && cardId
+      ? {
+          projectId: cardProjectId as Id<"projects">,
+          itemId: cardId as Id<"learningItems">,
+        }
+      : "skip"
+  )
+  const workingProject = useQuery(
+    api.projects.getProject,
+    projectId ? { projectId: projectId as Id<"projects"> } : "skip"
+  )
+  if (cardProjectId && cardId) {
+    if (newCard === undefined)
+      return (
+        <main className="flex min-h-[calc(100svh-68px-env(safe-area-inset-bottom))] items-center justify-center px-5">
+          <p className="text-sm text-muted-foreground" role="status">
+            Loading card…
+          </p>
+        </main>
+      )
+    if (!newCard)
+      return (
+        <main className="flex min-h-[calc(100svh-68px-env(safe-area-inset-bottom))] items-center justify-center px-5">
+          <p className="text-sm text-muted-foreground" role="status">
+            That card is no longer available.
+          </p>
+        </main>
+      )
+    return (
+      <ChatWorkspace
+        key={`${newCard.projectId}:${newCard.id}`}
+        initialCard={newCard}
+      />
+    )
+  }
   if (!projectId || !itemId)
-    return <ChatWorkspace initialChatId={chatIdFromQuery(chatId)} />
+    if (projectId && workingProject === undefined)
+      return (
+        <main className="flex min-h-[calc(100svh-68px-env(safe-area-inset-bottom))] items-center justify-center px-5">
+          <p className="text-sm text-muted-foreground" role="status">
+            Loading project…
+          </p>
+        </main>
+      )
+  if (projectId && workingProject === null)
+    return (
+      <main className="flex min-h-[calc(100svh-68px-env(safe-area-inset-bottom))] items-center justify-center px-5">
+        <p className="text-sm text-destructive" role="alert">
+          That project is no longer available.
+        </p>
+      </main>
+    )
+  return (
+    <ChatWorkspace
+      key={workingProject?._id ?? "chat"}
+      initialChatId={chatIdFromQuery(chatId)}
+      initialProject={
+        workingProject
+          ? { _id: workingProject._id, title: workingProject.title }
+          : undefined
+      }
+    />
+  )
 
   return (
     <main className="mx-auto max-w-4xl px-5 py-8 sm:px-8 sm:py-12">
@@ -52,7 +117,7 @@ export default function ChatPage({
         </p>
       ) : (
         <FeedChatDialog
-          card={card}
+          card={card ?? null}
           open
           onOpenChange={(open) => {
             if (!open) router.push("/notifications")

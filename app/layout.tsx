@@ -15,6 +15,10 @@ export const metadata: Metadata = {
   description: "Turn your study material into a focused learning feed.",
 }
 
+/** Applies a saved accent before the first paint on a full page load. */
+const accentBootstrapScript =
+  '(function(){try{var a=localStorage.getItem("blitz-accent");if(["red","orange","yellow","green","blue","indigo","violet"].indexOf(a)!==-1)document.documentElement.setAttribute("data-accent",a)}catch(e){}})()'
+
 /** Wraps every route with theme, Convex, and navigation providers. */
 export default function RootLayout({
   children,
@@ -22,7 +26,10 @@ export default function RootLayout({
   children: React.ReactNode
 }>) {
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html lang="en" data-accent="orange" suppressHydrationWarning>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: accentBootstrapScript }} />
+      </head>
       <body>
         <ThemeProvider>
           <ConvexClientProvider>

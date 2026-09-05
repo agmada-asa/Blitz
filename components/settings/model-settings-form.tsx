@@ -5,6 +5,7 @@
 import { useState, type FormEvent } from "react"
 import { useMutation, useQuery } from "convex/react"
 
+import { ModelReasoningPicker } from "@/components/settings/model-reasoning-picker"
 import { Button } from "@/components/ui/button"
 import {
   Card,
@@ -14,20 +15,10 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
 import { api } from "@/convex/_generated/api"
 import {
   DEFAULT_AI_MODEL_SETTINGS,
-  DEFAULT_AI_REASONING_EFFORTS,
-  getCodexModelPickerOptions,
-  getSupportedAiReasoningEfforts,
   validateAiModelSettings,
   type AiModelField,
   type AiModelSettings,
@@ -66,13 +57,6 @@ const MODEL_FIELDS: Array<{
 /** Copy and intent for the save result announced to assistive technology. */
 type SaveFeedback = { tone: "error" | "success"; message: string } | null
 
-/** Formats a machine-readable effort value for a compact picker label. */
-function reasoningLabel(effort: AiReasoningEffort): string {
-  return effort === "xhigh"
-    ? "Extra high"
-    : `${effort.slice(0, 1).toUpperCase()}${effort.slice(1)}`
-}
-
 /** Renders saved model fields and submits a complete update as one configuration. */
 export function ModelSettingsForm() {
   const savedSettings = useQuery(api.settings.get)
@@ -104,28 +88,18 @@ function ModelSettingsEditor({
     setFeedback(null)
   }
 
-  /** Updates one task's model and resets its reasoning only when the new model requires it. */
-  const updateModel = (
+  /** Updates one task's local model and reasoning pair without saving yet. */
+  const updateSelection = (
     modelField: AiModelField,
     effortField: AiReasoningField,
-    model: string
+    model: string,
+    reasoning: AiReasoningEffort
   ): void => {
-    setDraft((current) => {
-      const supportedEfforts = getSupportedAiReasoningEfforts(model)
-      const effort = supportedEfforts.includes(current[effortField])
-        ? current[effortField]
-        : DEFAULT_AI_REASONING_EFFORTS[effortField]
-      return { ...current, [modelField]: model, [effortField]: effort }
-    })
-    markDirty()
-  }
-
-  /** Updates one task's local reasoning choice and makes the pending change visible. */
-  const updateReasoning = (
-    field: AiReasoningField,
-    effort: AiReasoningEffort
-  ): void => {
-    setDraft((current) => ({ ...current, [field]: effort }))
+    setDraft((current) => ({
+      ...current,
+      [modelField]: model,
+      [effortField]: reasoning,
+    }))
     markDirty()
   }
 
@@ -178,8 +152,6 @@ function ModelSettingsEditor({
             ({ modelField, effortField, label, description }) => {
               const inputId = `ai-model-${modelField}`
               const descriptionId = `${inputId}-description`
-              const modelId = `${inputId}-picker`
-              const effortId = `${inputId}-reasoning`
               const selectedModel = draft[modelField]
               const selectedEffort = draft[effortField]
               return (
@@ -196,68 +168,26 @@ function ModelSettingsEditor({
                       {description}
                     </p>
                   </div>
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    <div className="space-y-1.5">
-                      <label htmlFor={modelId} className="text-xs font-medium">
-                        Model
-                      </label>
-                      <Select
-                        value={selectedModel}
-                        onValueChange={(value) =>
-                          updateModel(modelField, effortField, value)
-                        }
-                        disabled={isSaving}
-                      >
-                        <SelectTrigger
-                          id={modelId}
-                          aria-describedby={descriptionId}
-                          className="h-11"
-                        >
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {getCodexModelPickerOptions(selectedModel).map(
-                            (option) => (
-                              <SelectItem key={option.id} value={option.id}>
-                                {option.label}
-                              </SelectItem>
-                            )
-                          )}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="space-y-1.5">
-                      <label htmlFor={effortId} className="text-xs font-medium">
-                        Reasoning
-                      </label>
-                      <Select
-                        value={selectedEffort}
-                        onValueChange={(value) =>
-                          updateReasoning(
-                            effortField,
-                            value as AiReasoningEffort
-                          )
-                        }
-                        disabled={isSaving}
-                      >
-                        <SelectTrigger
-                          id={effortId}
-                          aria-describedby={descriptionId}
-                          className="h-11"
-                        >
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {getSupportedAiReasoningEfforts(selectedModel).map(
-                            (effort) => (
-                              <SelectItem key={effort} value={effort}>
-                                {reasoningLabel(effort)}
-                              </SelectItem>
-                            )
-                          )}
-                        </SelectContent>
-                      </Select>
-                    </div>
+                  <div className="space-y-1.5">
+                    <span className="text-xs font-medium">
+                      Model and reasoning
+                    </span>
+                    <ModelReasoningPicker
+                      model={selectedModel}
+                      reasoning={selectedEffort}
+                      disabled={isSaving}
+                      labelPrefix={label}
+                      aria-describedby={descriptionId}
+                      className="h-11 w-full max-w-none justify-between rounded-lg border border-input bg-transparent px-3 text-sm text-foreground hover:bg-muted dark:bg-input/30"
+                      onChange={(model, reasoning) =>
+                        updateSelection(
+                          modelField,
+                          effortField,
+                          model,
+                          reasoning
+                        )
+                      }
+                    />
                   </div>
                 </div>
               )
@@ -303,10 +233,7 @@ function ModelSettingsLoading() {
         {MODEL_FIELDS.map(({ modelField }) => (
           <div key={modelField} className="space-y-3">
             <Skeleton className="h-4 w-32" />
-            <div className="grid gap-3 sm:grid-cols-2">
-              <Skeleton className="h-11 w-full" />
-              <Skeleton className="h-11 w-full" />
-            </div>
+            <Skeleton className="h-11 w-full" />
           </div>
         ))}
       </CardContent>

@@ -4,8 +4,11 @@ The Android client lives in `mobile/` as an independent Expo project. It uses
 Expo SDK 57, React Native 0.86, and React 19.2. The mobile lockfile is kept
 separate from the browser app's root lockfile so native tooling can evolve
 without changing browser dependencies. The current native surface is the
-full-screen prepared learning feed and native project library. Source imports
-and detailed source management open the selected project's browser page.
+full-screen prepared learning feed and native project library. The feed now
+uses an icon-only bottom navigation: Home returns to the feed, Library opens
+native projects, and Chat, Activity, and Settings open the matching browser
+routes against the same server. Source imports and detailed source management
+open the selected project's browser page.
 
 The app identity is configured as `Blitz` with the local Android application
 ID `com.blitz.study`. This is a development identity only; no signing keys,

@@ -317,12 +317,12 @@ export function FeedChatDialog({
       <DialogContent
         aria-describedby={undefined}
         showCloseButton={false}
-        className="!top-auto !right-0 !bottom-0 !left-0 !h-[88dvh] !max-h-[100dvh] !max-w-none !translate-x-0 !translate-y-0 !gap-0 !overflow-hidden !rounded-t-[28px] !rounded-b-none border-white/10 bg-[#151515] p-0 text-white shadow-2xl shadow-black/45 sm:!top-0 sm:!bottom-auto sm:!left-auto sm:!h-full sm:!max-w-md sm:!rounded-t-none sm:!rounded-l-[28px]"
+        className="!top-auto !right-0 !bottom-0 !left-0 !h-[88dvh] !max-h-[100dvh] !max-w-none !translate-x-0 !translate-y-0 !gap-0 !overflow-hidden !rounded-t-[28px] !rounded-b-none border-border bg-card p-0 text-foreground shadow-2xl shadow-black/20 sm:!top-0 sm:!bottom-auto sm:!left-auto sm:!h-full sm:!max-w-md sm:!rounded-t-none sm:!rounded-l-[28px]"
       >
         <div className="flex h-full min-h-0 flex-col">
-          <DialogHeader className="shrink-0 border-b border-white/10 px-5 pt-5 pb-5 sm:px-7 sm:pt-7">
+          <DialogHeader className="shrink-0 border-b border-border px-5 pt-5 pb-5 sm:px-7 sm:pt-7">
             <div className="flex items-start justify-between gap-5">
-              <DialogTitle className="font-sans text-xl tracking-[-0.03em] text-white">
+              <DialogTitle className="font-sans text-xl tracking-[-0.03em] text-foreground">
                 Ask about this card
               </DialogTitle>
               <DialogClose asChild>
@@ -331,7 +331,7 @@ export function FeedChatDialog({
                   variant="ghost"
                   size="icon"
                   aria-label="Close chat"
-                  className="-mt-2 -mr-2 shrink-0 rounded-xl text-white/55 hover:bg-white/10 hover:text-white"
+                  className="-mt-2 -mr-2 shrink-0 rounded-xl text-muted-foreground hover:bg-muted hover:text-foreground"
                 >
                   <CancelIcon aria-hidden="true" />
                 </Button>
@@ -340,11 +340,11 @@ export function FeedChatDialog({
           </DialogHeader>
 
           {card ? (
-            <div className="mx-5 mt-5 shrink-0 rounded-2xl border border-white/10 bg-white/[0.045] p-4 sm:mx-7 sm:mt-7">
-              <p className="line-clamp-3 text-sm leading-relaxed text-white/80">
+            <div className="mx-5 mt-5 shrink-0 rounded-2xl border border-border bg-muted/40 p-4 sm:mx-7 sm:mt-7">
+              <p className="line-clamp-3 text-sm leading-relaxed text-foreground/90">
                 {card.title}
               </p>
-              <p className="mt-2 text-xs text-white/45">
+              <p className="mt-2 text-xs text-muted-foreground">
                 Source · {card.sourceLabel}
               </p>
             </div>
@@ -360,34 +360,34 @@ export function FeedChatDialog({
             className="min-h-0 min-w-0 flex-1 overflow-y-auto px-5 pt-5 sm:px-7"
           >
             {state.loading && !state.messages.length ? (
-              <p className="text-sm text-white/45" role="status">
+              <p className="text-sm text-muted-foreground" role="status">
                 Loading chat…
               </p>
             ) : null}
             <div className="space-y-4">
               {state.messages.map((message) => (
                 <div key={message.id} className="space-y-2">
-                  <div className="rounded-2xl bg-white/[0.045] px-4 py-3 text-sm leading-relaxed text-white/80">
+                  <div className="rounded-2xl bg-brand px-4 py-3 text-sm leading-relaxed text-brand-foreground">
                     {message.question}
                   </div>
                   {message.reply ? (
-                    <div className="rounded-2xl border border-white/10 px-4 py-3 text-sm leading-relaxed text-white/68">
+                    <div className="rounded-2xl border border-border bg-card px-4 py-3 text-sm leading-relaxed text-foreground/90">
                       <Markdown text={message.reply} />
                     </div>
                   ) : null}
                   {message.status === "queued" ? (
-                    <p className="text-xs text-white/60">
+                    <p className="text-xs text-muted-foreground">
                       Queued · <ElapsedTime since={message.updatedAt} />
                     </p>
                   ) : null}
                   {message.status === "running" ? (
-                    <p className="text-xs text-white/60">
+                    <p className="text-xs text-muted-foreground">
                       {message.reply ? "Replying…" : "Preparing reply…"}
                     </p>
                   ) : null}
                   {message.status === "failed" ? (
                     <div className="flex items-center justify-between gap-3">
-                      <p className="text-xs leading-relaxed text-red-300">
+                      <p className="text-xs leading-relaxed text-destructive">
                         {message.error || "Could not answer that question."}
                       </p>
                       <Button
@@ -395,7 +395,7 @@ export function FeedChatDialog({
                         variant="ghost"
                         onClick={() => retryMessage(message)}
                         disabled={state.sending}
-                        className="h-9 shrink-0 rounded-xl px-3 text-xs text-white/72 hover:bg-white/10 hover:text-white"
+                        className="h-9 shrink-0 rounded-xl px-3 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
                       >
                         Retry
                       </Button>
@@ -408,7 +408,7 @@ export function FeedChatDialog({
               (message) =>
                 message.status === "queued" || message.status === "running"
             ) ? (
-              <p className="mt-4 text-xs text-white/60" role="status">
+              <p className="mt-4 text-xs text-muted-foreground" role="status">
                 You can close chat. Your reply will be saved here.
               </p>
             ) : null}
@@ -420,7 +420,7 @@ export function FeedChatDialog({
           >
             <label
               htmlFor="feed-chat-question"
-              className="text-sm font-medium text-white/72"
+              className="text-sm font-medium text-foreground/80"
             >
               Your question
             </label>
@@ -431,15 +431,15 @@ export function FeedChatDialog({
               placeholder="Ask a follow-up"
               rows={2}
               disabled={state.sending}
-              className="min-h-20 resize-none rounded-2xl border-white/12 bg-white/[0.045] text-white placeholder:text-white/30 focus-visible:border-[#ff8065] focus-visible:ring-[#ff8065]/30"
+              className="min-h-20 resize-none rounded-2xl border-input bg-background text-foreground placeholder:text-muted-foreground focus-visible:border-brand focus-visible:ring-brand/30"
             />
             {state.requestError ? (
-              <p className="text-xs leading-relaxed text-red-300" role="alert">
+              <p className="text-xs leading-relaxed text-destructive" role="alert">
                 {state.requestError}
               </p>
             ) : state.lastError &&
               !state.messages.some((message) => message.status === "failed") ? (
-              <p className="text-xs leading-relaxed text-red-300" role="alert">
+              <p className="text-xs leading-relaxed text-destructive" role="alert">
                 {state.lastError}
               </p>
             ) : null}
@@ -447,7 +447,7 @@ export function FeedChatDialog({
               <Button
                 type="submit"
                 disabled={!state.draftQuestion.trim() || state.sending}
-                className="h-11 shrink-0 rounded-[20px] bg-[#ff8065] px-5 text-sm font-medium text-[#1b0d0a] hover:bg-[#ff9b86] focus-visible:ring-[#ff8065]/50"
+                className="h-11 shrink-0 rounded-full bg-brand px-5 text-sm font-medium text-brand-foreground hover:bg-brand/85 focus-visible:ring-brand/50"
               >
                 {state.sending ? "Sending…" : "Send question"}
               </Button>
