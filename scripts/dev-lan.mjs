@@ -1,11 +1,19 @@
 /** Starts the local web, database, and learning workers with a shared LAN address. */
 
 import { spawn } from "node:child_process"
+import { existsSync } from "node:fs"
 import { networkInterfaces } from "node:os"
 import { isIP } from "node:net"
+import { fileURLToPath } from "node:url"
 
 const port = process.env.BLITZ_PORT ?? "3001"
 const lanAddress = process.env.BLITZ_LAN_ADDRESS?.trim() || findLanAddress()
+const defaultApkPath = fileURLToPath(
+  new URL("../build/android/blitz-android-debug.apk", import.meta.url)
+)
+const apkPath =
+  process.env.BLITZ_ANDROID_APK_PATH?.trim() ||
+  (existsSync(defaultApkPath) ? defaultApkPath : undefined)
 const children = new Set()
 let stopping = false
 
@@ -22,12 +30,15 @@ const sharedEnvironment = {
   BLITZ_CONVEX_URL: process.env.BLITZ_CONVEX_URL ?? "http://127.0.0.1:3210",
   NEXT_PUBLIC_CONVEX_URL: `http://${lanAddress}:3210`,
   NEXT_PUBLIC_CONVEX_SITE_URL: `http://${lanAddress}:3211`,
+  ...(apkPath ? { BLITZ_ANDROID_APK_PATH: apkPath } : {}),
 }
 
 console.log(`\nBlitz will be available on this Mac at http://localhost:${port}`)
 console.log(
   `Open http://${lanAddress}:${port} on a phone connected to the same Wi-Fi.\n`
 )
+if (apkPath)
+  console.log(`Android installer: http://${lanAddress}:${port}/api/android\n`)
 
 start("npx", ["convex", "dev", "--tail-logs", "disable"], process.env)
 start(

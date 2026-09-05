@@ -201,8 +201,9 @@ and 83 prepared learning items.
 
 ## Install over the local network
 
-Set `BLITZ_ANDROID_APK_PATH` to the absolute path of a built `.apk` when starting
-Blitz. `GET /api/android` streams that file as an Android package download;
+`npm run dev:lan` detects `build/android/blitz-android-debug.apk` and prints its
+download link. Set `BLITZ_ANDROID_APK_PATH` to the absolute path of another built
+`.apk` to override it. `GET /api/android` streams that file as an Android package download;
 without a configured artifact it returns 404. The route never accepts a path
 from the request and the APK is never committed.
 

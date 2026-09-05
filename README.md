@@ -43,6 +43,8 @@ The React Native app lives in `mobile/` with its own dependencies and checks. It
 
 See [Android setup](docs/mobile.md) for development and the bundled debug APK build. Browser imports remain available through the native Library action.
 
+After building the APK, `npm run dev:lan` also prints its download link. The launcher uses the ignored `build/android/blitz-android-debug.apk` when present; set `BLITZ_ANDROID_APK_PATH` to serve a different local build.
+
 ## Checks and implementation
 
 ```bash
