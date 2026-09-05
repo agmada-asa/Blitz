@@ -8,11 +8,14 @@ import {
   getProjectDirectory,
   normalizeProjectFileKey,
   resolveProjectFile,
+  readProjectFileBytes,
   storeProjectFile,
 } from "../lib/server/project-files.ts"
 
 /** Runs a test with an isolated data root and removes it afterward. */
-async function withDataRoot(run: (root: string) => Promise<void>): Promise<void> {
+async function withDataRoot(
+  run: (root: string) => Promise<void>
+): Promise<void> {
   const root = await fs.mkdtemp(join(tmpdir(), "blitz-project-files-"))
   const previous = process.env.BLITZ_DATA_DIR
   process.env.BLITZ_DATA_DIR = root
@@ -30,10 +33,26 @@ test("same-named projects have stable isolated directories", async () => {
     const first = getProjectDirectory("project-a", "Same name")
     const second = getProjectDirectory("project-b", "Same name")
     assert.notEqual(first, second)
-    await storeProjectFile("project-a", "Sources/notes.txt", "first", "Same name")
-    await storeProjectFile("project-b", "Sources/notes.txt", "second", "Same name")
-    assert.equal(await fs.readFile(join(first, "Sources/notes.txt"), "utf8"), "first")
-    assert.equal(await fs.readFile(join(second, "Sources/notes.txt"), "utf8"), "second")
+    await storeProjectFile(
+      "project-a",
+      "Sources/notes.txt",
+      "first",
+      "Same name"
+    )
+    await storeProjectFile(
+      "project-b",
+      "Sources/notes.txt",
+      "second",
+      "Same name"
+    )
+    assert.equal(
+      await fs.readFile(join(first, "Sources/notes.txt"), "utf8"),
+      "first"
+    )
+    assert.equal(
+      await fs.readFile(join(second, "Sources/notes.txt"), "utf8"),
+      "second"
+    )
     assert.ok(first.startsWith(root))
   })
 })
@@ -50,8 +69,12 @@ test("file keys reject absolute paths, traversal, null bytes, and reserved direc
     "C:\\escape.txt",
     "c:/escape.txt",
     ".BLITZ/state.json",
-  ]) assert.throws(() => normalizeProjectFileKey(key))
-  assert.equal(normalizeProjectFileKey("Sources\\notes.txt"), "Sources/notes.txt")
+  ])
+    assert.throws(() => normalizeProjectFileKey(key))
+  assert.equal(
+    normalizeProjectFileKey("Sources\\notes.txt"),
+    "Sources/notes.txt"
+  )
 })
 
 test("symlinked data roots and Projects directories are rejected before creation", async () => {
@@ -61,13 +84,19 @@ test("symlinked data roots and Projects directories are rejected before creation
   try {
     await fs.symlink(outside, join(root, "Projects"), "dir")
     process.env.BLITZ_DATA_DIR = root
-    await assert.rejects(storeProjectFile("linked-projects", "file.txt", "blocked"), /symlink/)
+    await assert.rejects(
+      storeProjectFile("linked-projects", "file.txt", "blocked"),
+      /symlink/
+    )
     assert.deepEqual(await fs.readdir(outside), [])
 
     const linkedRoot = join(root, "linked-root")
     await fs.symlink(outside, linkedRoot, "dir")
     process.env.BLITZ_DATA_DIR = linkedRoot
-    await assert.rejects(storeProjectFile("linked-root", "file.txt", "blocked"), /symlink/)
+    await assert.rejects(
+      storeProjectFile("linked-root", "file.txt", "blocked"),
+      /symlink/
+    )
     assert.deepEqual(await fs.readdir(outside), [])
   } finally {
     if (previous === undefined) delete process.env.BLITZ_DATA_DIR
@@ -85,7 +114,10 @@ test("missing data roots cannot hide behind a symlink ancestor", async () => {
     const linkedAncestor = join(root, "linked-ancestor")
     await fs.symlink(outside, linkedAncestor, "dir")
     process.env.BLITZ_DATA_DIR = join(linkedAncestor, "missing-root")
-    await assert.rejects(storeProjectFile("nested-link", "file.txt", "blocked"), /symlink/)
+    await assert.rejects(
+      storeProjectFile("nested-link", "file.txt", "blocked"),
+      /symlink/
+    )
     assert.deepEqual(await fs.readdir(outside), [])
   } finally {
     if (previous === undefined) delete process.env.BLITZ_DATA_DIR
@@ -102,10 +134,13 @@ test("symlinked project paths cannot be read or written", async () => {
     const outside = await fs.mkdtemp(join(tmpdir(), "blitz-outside-"))
     try {
       await fs.symlink(outside, join(projectRoot, "escape"), "dir")
-      await assert.rejects(resolveProjectFile("symlinked", "escape/file.txt"), /symlink/)
+      await assert.rejects(
+        resolveProjectFile("symlinked", "escape/file.txt"),
+        /symlink/
+      )
       await assert.rejects(
         storeProjectFile("symlinked", "escape/file.txt", "secret"),
-        /symlink/,
+        /symlink/
       )
       await assert.rejects(fs.access(join(outside, "file.txt")))
     } finally {
@@ -124,12 +159,12 @@ test("uploads hash and rename atomically without leaving partial files", async (
     assert.equal(result.size, 11)
     assert.equal(
       result.sha256,
-      "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9",
+      "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
     )
     assert.equal(await fs.readFile(result.path, "utf8"), "hello world")
     assert.deepEqual(
       (await fs.readdir(join(getProjectDirectory("upload"), "Sources"))).sort(),
-      ["data.txt"],
+      ["data.txt"]
     )
   })
 })
@@ -140,8 +175,35 @@ test("interrupted uploads remove their temporary file", async () => {
       yield new TextEncoder().encode("partial")
       throw new Error("stream interrupted")
     })()
-    await assert.rejects(storeProjectFile("interrupted", "Sources/data.txt", input), /interrupted/)
+    await assert.rejects(
+      storeProjectFile("interrupted", "Sources/data.txt", input),
+      /interrupted/
+    )
     const sourceDirectory = join(getProjectDirectory("interrupted"), "Sources")
     assert.deepEqual(await fs.readdir(sourceDirectory), [])
+  })
+})
+
+test("downloads enforce byte limits and reject symlink targets", async () => {
+  await withDataRoot(async () => {
+    await storeProjectFile("download", "Sources/file.txt", "original")
+    assert.equal(
+      (
+        await readProjectFileBytes("download", "Sources/file.txt", 20)
+      ).toString(),
+      "original"
+    )
+    await assert.rejects(
+      readProjectFileBytes("download", "Sources/file.txt", 2),
+      /size limit/
+    )
+    await fs.symlink(
+      "Sources/file.txt",
+      join(getProjectDirectory("download"), "alias.txt")
+    )
+    await assert.rejects(
+      readProjectFileBytes("download", "alias.txt", 20),
+      /symlink/
+    )
   })
 })

@@ -6,11 +6,9 @@
  * written to a sibling temporary file and renamed into place only after the
  * complete stream has been hashed.
  */
+import { createHash, randomBytes } from "node:crypto"
 import {
-  createHash,
-  randomBytes,
-} from "node:crypto"
-import {
+  constants,
   createWriteStream,
   promises as fs,
   type Stats,
@@ -38,13 +36,20 @@ export type StoredProjectFile = {
 /** Returns the configured absolute data root, defaulting to the user's Documents folder. */
 export function getDataRoot(): string {
   const configured = process.env[DATA_ROOT_ENV]?.trim()
-  return resolve(configured || join(homedir(), "Documents", "Blitz"))
+  // User files are runtime data and must not be bundled into the Next server.
+  return resolve(
+    /* turbopackIgnore: true */ configured ||
+      join(homedir(), "Documents", "Blitz")
+  )
 }
 
 /** Returns a stable, collision-resistant directory path for a Convex project. */
 export function getProjectDirectory(projectId: string, title?: string): string {
   assertProjectId(projectId)
-  const idHash = createHash("sha256").update(projectId).digest("hex").slice(0, 24)
+  const idHash = createHash("sha256")
+    .update(projectId)
+    .digest("hex")
+    .slice(0, 24)
   // The ID hash is the complete identity of the directory. Titles can change
   // without moving a user's files, while the optional slug remains useful in
   // the API for callers that want to display it.
@@ -80,7 +85,7 @@ export function normalizeProjectFileKey(fileKey: string): string {
 /** Ensures a project root exists and is a real directory rather than a symlink. */
 export async function ensureProjectDirectory(
   projectId: string,
-  title?: string,
+  title?: string
 ): Promise<string> {
   const projectDirectory = getProjectDirectory(projectId, title)
   const dataRoot = getDataRoot()
@@ -105,7 +110,10 @@ async function assertExistingPathHasNoSymlinks(target: string): Promise<void> {
   const absoluteTarget = resolve(target)
   const parsedRoot = absoluteTarget.startsWith(sep) ? sep : ""
   let current = parsedRoot
-  for (const part of absoluteTarget.slice(parsedRoot.length).split(sep).filter(Boolean)) {
+  for (const part of absoluteTarget
+    .slice(parsedRoot.length)
+    .split(sep)
+    .filter(Boolean)) {
     current = join(current || parsedRoot, part)
     try {
       const entry = await fs.lstat(current)
@@ -125,7 +133,10 @@ async function assertExistingPathHasNoSymlinks(target: string): Promise<void> {
 }
 
 /** Checks every existing path component below a project root for symlinks. */
-async function assertSafePath(projectRoot: string, target: string): Promise<void> {
+async function assertSafePath(
+  projectRoot: string,
+  target: string
+): Promise<void> {
   const root = resolve(projectRoot)
   const targetPath = resolve(target)
   const outside = relative(root, targetPath)
@@ -142,7 +153,8 @@ async function assertSafePath(projectRoot: string, target: string): Promise<void
       if ((error as NodeJS.ErrnoException).code === "ENOENT") break
       throw error
     }
-    if (entry.isSymbolicLink()) throw new Error("Project paths may not use symlinks")
+    if (entry.isSymbolicLink())
+      throw new Error("Project paths may not use symlinks")
     if (!entry.isDirectory() && current !== targetPath)
       throw new Error("A project path component is not a directory")
   }
@@ -152,7 +164,7 @@ async function assertSafePath(projectRoot: string, target: string): Promise<void
 export async function resolveProjectFile(
   projectId: string,
   fileKey: string,
-  title?: string,
+  title?: string
 ): Promise<string> {
   const key = normalizeProjectFileKey(fileKey)
   const projectRoot = await ensureProjectDirectory(projectId, title)
@@ -166,7 +178,7 @@ export async function storeProjectFile(
   projectId: string,
   fileKey: string,
   input: AsyncIterable<Uint8Array> | Readable | Uint8Array | string,
-  title?: string,
+  title?: string
 ): Promise<StoredProjectFile> {
   const key = normalizeProjectFileKey(fileKey)
   const filePath = await resolveProjectFile(projectId, key, title)
@@ -175,7 +187,10 @@ export async function storeProjectFile(
   await assertSafePath(projectRoot, parent)
   await fs.mkdir(parent, { recursive: true })
   await assertSafePath(projectRoot, parent)
-  const temporaryPath = join(parent, `.${randomBytes(16).toString("hex")}.uploading`)
+  const temporaryPath = join(
+    parent,
+    `.${randomBytes(16).toString("hex")}.uploading`
+  )
   const hash = createHash("sha256")
   let size = 0
   const source =
@@ -186,7 +201,11 @@ export async function storeProjectFile(
     size += chunk.length
   })
   try {
-    await pipeline(source, hashing, createWriteStream(temporaryPath, { flags: "wx" }))
+    await pipeline(
+      source,
+      hashing,
+      createWriteStream(temporaryPath, { flags: "wx" })
+    )
     await fs.rename(temporaryPath, filePath)
   } catch (error) {
     await fs.rm(temporaryPath, { force: true })
@@ -203,7 +222,7 @@ class TransformHash extends Transform {
   /** Creates the hashing transform and records each chunk's byte count. */
   constructor(
     hash: ReturnType<typeof createHash>,
-    onChunk: (chunk: Buffer) => void,
+    onChunk: (chunk: Buffer) => void
   ) {
     super()
     this.hash = hash
@@ -211,10 +230,46 @@ class TransformHash extends Transform {
   }
 
   /** Hashes and forwards one chunk, preserving backpressure. */
-  _transform(chunk: Buffer, _encoding: BufferEncoding, callback: (error?: Error) => void): void {
+  _transform(
+    chunk: Buffer,
+    _encoding: BufferEncoding,
+    callback: (error?: Error) => void
+  ): void {
     this.hash.update(chunk)
     this.onChunk(chunk)
     this.push(chunk)
     callback(undefined)
+  }
+}
+
+/** Reads a regular project file through a no-follow descriptor under a hard byte bound. */
+export async function readProjectFileBytes(
+  projectId: string,
+  key: string,
+  maximumBytes: number
+): Promise<Buffer> {
+  const path = await resolveProjectFile(projectId, key)
+  const handle = await fs.open(path, constants.O_RDONLY | constants.O_NOFOLLOW)
+  try {
+    const info = await handle.stat()
+    if (!info.isFile() || info.size > maximumBytes)
+      throw new Error("File is not a regular file within the size limit")
+    const bytes = Buffer.alloc(Math.min(maximumBytes + 1, info.size + 1))
+    let offset = 0
+    while (offset < bytes.length) {
+      const read = await handle.read(
+        bytes,
+        offset,
+        bytes.length - offset,
+        offset
+      )
+      if (!read.bytesRead) break
+      offset += read.bytesRead
+    }
+    if (offset > info.size || offset > maximumBytes)
+      throw new Error("File changed while reading; try again")
+    return bytes.subarray(0, offset)
+  } finally {
+    await handle.close()
   }
 }

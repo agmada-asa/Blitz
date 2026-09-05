@@ -239,6 +239,204 @@ export const createAndEnqueue = mutation({
   },
 })
 
+/** Creates an original-file record and durable ingestion job after filesystem commit. */
+export const createOriginalSource = mutation({
+  args: {
+    projectId: v.id("projects"),
+    filename: v.string(),
+    kind: sourceKind,
+    relativeKey: v.string(),
+    mimeType: v.optional(v.string()),
+    sizeBytes: v.number(),
+    contentHash: v.string(),
+    unsupported: v.optional(v.boolean()),
+  },
+  handler: async (ctx, args) => {
+    if (!(await ctx.db.get(args.projectId)))
+      throw new Error("Project not found")
+    if (!args.relativeKey.startsWith("Sources/") || args.sizeBytes < 1)
+      throw new Error("Original source metadata is invalid")
+    const duplicate = await ctx.db
+      .query("sources")
+      .withIndex("by_project_contentHash", (q) =>
+        q.eq("projectId", args.projectId).eq("contentHash", args.contentHash)
+      )
+      .first()
+    if (duplicate) {
+      const job = await ctx.db
+        .query("ingestionJobs")
+        .withIndex("by_source", (q) => q.eq("sourceId", duplicate._id))
+        .first()
+      if (
+        job &&
+        job.status !== "completed" &&
+        !(job.status === "running" && (job.leaseExpiresAt ?? 0) > Date.now())
+      ) {
+        await ctx.db.patch(job._id, {
+          status: "queued",
+          error: undefined,
+          updatedAt: Date.now(),
+        })
+        await ctx.db.patch(duplicate._id, {
+          status: "processing",
+          error: undefined,
+        })
+        return {
+          sourceId: duplicate._id,
+          ingestionJobId: job._id,
+          duplicate: false,
+        }
+      }
+      return {
+        sourceId: duplicate._id,
+        ingestionJobId: job?._id,
+        duplicate: true,
+      }
+    }
+    const sourceId = await ctx.db.insert("sources", {
+      projectId: args.projectId,
+      filename: args.filename.trim().slice(0, 255),
+      kind: args.kind,
+      extractedText: "",
+      relativeKey: args.relativeKey,
+      mimeType: args.mimeType,
+      sizeBytes: args.sizeBytes,
+      contentHash: args.contentHash,
+      unsupported: args.unsupported,
+      status: "processing",
+      createdAt: Date.now(),
+    })
+    const ingestionJobId = await ctx.db.insert("ingestionJobs", {
+      projectId: args.projectId,
+      sourceId,
+      status: "queued",
+      sourceHash: args.contentHash,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    })
+    return { sourceId, ingestionJobId, duplicate: false }
+  },
+})
+
+/** Lists a bounded page of queued or interrupted original ingestions for the local worker. */
+export const listPendingOriginalIngestions = query({
+  args: {},
+  handler: async (ctx) => {
+    const queued = await ctx.db
+      .query("ingestionJobs")
+      .withIndex("by_status_createdAt", (q) => q.eq("status", "queued"))
+      .take(20)
+    const running = await ctx.db
+      .query("ingestionJobs")
+      .withIndex("by_status_createdAt", (q) => q.eq("status", "running"))
+      .take(20)
+    return [
+      ...queued,
+      ...running.filter((job) => (job.leaseExpiresAt ?? 0) <= Date.now()),
+    ]
+      .slice(0, 20)
+      .map((job) => ({ projectId: job.projectId, sourceId: job.sourceId }))
+  },
+})
+
+/** Claims one ingestion operation; an expired worker cannot overwrite its replacement. */
+export const claimOriginalIngestion = mutation({
+  args: { ingestionJobId: v.id("ingestionJobs"), leaseToken: v.string() },
+  handler: async (ctx, args) => {
+    const job = await ctx.db.get(args.ingestionJobId)
+    if (!job || job.status === "completed" || job.status === "failed")
+      return false
+    if (job.status === "running" && (job.leaseExpiresAt ?? 0) > Date.now())
+      return false
+    await ctx.db.patch(job._id, {
+      status: "running",
+      leaseToken: args.leaseToken,
+      leaseExpiresAt: Date.now() + 300_000,
+      updatedAt: Date.now(),
+    })
+    return true
+  },
+})
+
+/** Returns original source metadata for a project scoped retry route. */
+export const getOriginalSource = query({
+  args: { projectId: v.id("projects"), sourceId: v.id("sources") },
+  handler: async (ctx, args) => {
+    const source = await ctx.db.get(args.sourceId)
+    if (!source || source.projectId !== args.projectId) return null
+    return {
+      relativeKey: source.relativeKey,
+      filename: source.filename,
+      mimeType: source.mimeType,
+      contentHash: source.contentHash,
+    }
+  },
+})
+
+/** Completes or fails deterministic original-file extraction and records bounded text. */
+export const completeOriginalIngestion = mutation({
+  args: {
+    sourceId: v.id("sources"),
+    ingestionJobId: v.id("ingestionJobs"),
+    leaseToken: v.string(),
+    extractedText: v.string(),
+    status: v.union(v.literal("completed"), v.literal("failed")),
+    error: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const source = await ctx.db.get(args.sourceId)
+    const job = await ctx.db.get(args.ingestionJobId)
+    if (!source || !job || job.sourceId !== source._id)
+      throw new Error("Ingestion job is invalid")
+    if (
+      job.leaseToken !== args.leaseToken ||
+      (job.leaseExpiresAt ?? 0) <= Date.now()
+    )
+      throw new Error("Ingestion lease expired")
+    if (args.status === "completed") {
+      if (
+        !args.extractedText.trim() ||
+        new TextEncoder().encode(args.extractedText).byteLength > 500_000
+      )
+        throw new Error("Extracted source text is empty or exceeds 500 KB")
+      // Completion and card preparation share one transaction, so a restart
+      // cannot leave an indexed source without its resumable preparation job.
+      const existing = await ctx.db
+        .query("preparationJobs")
+        .withIndex("by_project_source", (q) =>
+          q.eq("projectId", source.projectId).eq("sourceId", source._id)
+        )
+        .first()
+      if (!existing)
+        await ctx.db.insert("preparationJobs", {
+          projectId: source.projectId,
+          sourceId: source._id,
+          sourceTextSnapshot: args.extractedText,
+          sourceFilename: source.filename,
+          sourceKind: source.kind,
+          status: "queued",
+          nextChunkOrdinal: 0,
+          generatedItemCount: 0,
+          attemptCount: 0,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        })
+    }
+    await ctx.db.patch(source._id, {
+      extractedText: args.extractedText,
+      status: args.status === "completed" ? "ready" : "failed",
+      ...(args.error ? { error: args.error.slice(0, 500) } : {}),
+    })
+    await ctx.db.patch(job._id, {
+      leaseToken: undefined,
+      leaseExpiresAt: undefined,
+      status: args.status,
+      ...(args.error ? { error: args.error.slice(0, 500) } : {}),
+      updatedAt: Date.now(),
+    })
+  },
+})
+
 /** Records a source result while bounding generated summaries and safe error details. */
 export const updateSource = mutation({
   args: {
