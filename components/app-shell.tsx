@@ -34,7 +34,7 @@ export function AppShell({ children }: AppShellProps) {
     pathname === "/preview" || pathname.startsWith("/preview/")
   const isHomeRoute = pathname === "/"
   const [collapsed, setCollapsed] = useState(false)
-  const isStudyRoute = /\/(study|practice|test)$/.test(pathname)
+  const isStudyRoute = /\/(study|practice|test|write)$/.test(pathname)
   const projectId = pathname.match(/^\/projects\/([^/]+)/)?.[1]
   const projectHref = projectId ? `/projects/${projectId}` : "/"
   const links: NavLink[] = [

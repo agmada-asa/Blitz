@@ -220,6 +220,13 @@ export function TopicList({ projectId }: TopicListProps) {
                         </DropdownMenuItem>
                         <DropdownMenuItem asChild>
                           <Link
+                            href={`/projects/${projectPath}/write?topicId=${topicPath}`}
+                          >
+                            Written answers
+                          </Link>
+                        </DropdownMenuItem>
+                        <DropdownMenuItem asChild>
+                          <Link
                             href={`/projects/${projectPath}/test?topicId=${topicPath}`}
                           >
                             Test

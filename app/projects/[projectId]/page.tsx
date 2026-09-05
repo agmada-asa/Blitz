@@ -11,6 +11,12 @@ import { TopicList } from "@/components/projects/topic-list"
 import { SourceUploader } from "@/components/projects/source-uploader"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import { Skeleton } from "@/components/ui/skeleton"
 import {
   ArrowLeftIcon,
@@ -73,13 +79,29 @@ export default function ProjectPage({
           <ResearchPanel key={projectId} projectId={projectId} />
           {hasLearningItems ? (
             <>
-              <Button asChild variant="outline" className="rounded-full">
-                <Link
-                  href={`/projects/${encodeURIComponent(projectId)}/practice`}
-                >
-                  Study
-                </Link>
-              </Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline" className="rounded-full">
+                    Study
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem asChild>
+                    <Link
+                      href={`/projects/${encodeURIComponent(projectId)}/practice`}
+                    >
+                      Quick questions
+                    </Link>
+                  </DropdownMenuItem>
+                  <DropdownMenuItem asChild>
+                    <Link
+                      href={`/projects/${encodeURIComponent(projectId)}/write`}
+                    >
+                      Written answers
+                    </Link>
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
               <Button asChild variant="outline" className="rounded-full">
                 <Link href={`/projects/${encodeURIComponent(projectId)}/test`}>
                   Test
