@@ -18,10 +18,9 @@ The host takes the normal `.env.local` configuration and supports
 `BLITZ_PORT` plus `BLITZ_DATA_DIR`. The data root defaults to
 `~/Documents/Blitz`; project-scoped native actions resolve files under the
 same hashed `Projects/project-<id-hash>` layout used by the local file store.
-The preload bridge exposes only service status, file selection, open, and Finder
-reveal methods. Native selection returns bounded byte descriptors (up to 50 MB)
-for the existing upload boundary; it does not expose arbitrary native paths to
-the renderer. Renderer access uses
+The preload bridge exposes only service status, open, and Finder reveal methods.
+Uploads use Chromium's file input and streaming request body, avoiding a second
+full-file copy through Electron IPC. Renderer access uses
 context isolation, disabled Node integration, and a sandboxed preload. Native
 paths are checked after realpath resolution to block traversal and symlink
 escapes.
@@ -36,10 +35,11 @@ intentionally not a packaged installer yet.
 
 Original uploads use `POST /api/sources/upload` with `x-blitz-project-id`,
 `x-blitz-filename`, and the raw file body. The same endpoint accepts browser,
-Electron, and Android LAN requests. Uploads have a 50 MB byte limit. The existing
-deterministic parser accepts up to 5 MB of input, and persisted extracted text
-is limited to 500 KB in UTF-8. Larger inputs stay retained with an error asking
-for smaller files; they are never silently truncated into searchable evidence.
+Electron, and Android LAN requests. Uploads have a 1 GiB byte limit. Local PDF
+extraction uses file-backed range reads, while approved public research downloads
+retain their separate 5 MB network boundary. Persisted extracted text is limited
+to 500 KB in UTF-8. Inputs that cross a later parsing or text limit stay retained
+with an actionable error; Blitz never silently truncates searchable evidence.
 
 `worker:ingestion` recovers queued uploads and expired five-minute ingestion
 leases through `/api/sources/retry`. Failed files require an explicit retry.

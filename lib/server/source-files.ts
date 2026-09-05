@@ -12,7 +12,10 @@ import {
 } from "./project-files.ts"
 
 /** Maximum original upload size accepted by local desktop and Android clients. */
-export const MAX_ORIGINAL_SOURCE_BYTES = 50_000_000
+export const MAX_ORIGINAL_SOURCE_BYTES = 1024 * 1024 * 1024
+
+/** User-facing label for the original upload boundary. */
+export const ORIGINAL_SOURCE_LIMIT_LABEL = "1 GB"
 
 /** Durable metadata returned after an upload is stored or deduplicated. */
 export interface StoredSourceFile {
@@ -39,7 +42,12 @@ async function* boundedChunks(body: ReadableStream<Uint8Array>, maxBytes: number
       const next = await reader.read()
       if (next.done) return
       size += next.value.byteLength
-      if (size > maxBytes) throw new Error("Source upload exceeds the size limit")
+      if (size > maxBytes)
+        throw new Error(
+          maxBytes === MAX_ORIGINAL_SOURCE_BYTES
+            ? `Source upload exceeds the ${ORIGINAL_SOURCE_LIMIT_LABEL} limit`
+            : "Source upload exceeds the size limit"
+        )
       yield next.value
     }
   } finally {

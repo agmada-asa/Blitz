@@ -2,14 +2,14 @@
 
 import {
   MAX_ORIGINAL_SOURCE_BYTES,
+  ORIGINAL_SOURCE_LIMIT_LABEL,
   storeOriginalSource,
 } from "@/lib/server/source-files"
-import { promises as fs } from "node:fs"
 import { randomUUID } from "node:crypto"
 import { ConvexHttpClient } from "convex/browser"
 import { api } from "@/convex/_generated/api"
 import { resolveProjectFile } from "@/lib/server/project-files"
-import { extractDownloadedSource } from "@/lib/server/source-ingestion/extract"
+import { extractStoredSource } from "@/lib/server/source-ingestion/extract"
 import { normalizeSourceDocument } from "@/lib/server/source-ingestion/normalize"
 import { segmentSourceDocument } from "@/lib/server/source-ingestion/segment"
 
@@ -52,7 +52,9 @@ export async function POST(request: Request): Promise<Response> {
   const contentLength = request.headers.get("content-length")
   if (contentLength && Number(contentLength) > MAX_ORIGINAL_SOURCE_BYTES)
     return Response.json(
-      { error: "Source upload exceeds the size limit" },
+      {
+        error: `Source upload exceeds the ${ORIGINAL_SOURCE_LIMIT_LABEL} limit`,
+      },
       { status: 413 }
     )
   try {
@@ -111,13 +113,11 @@ export async function POST(request: Request): Promise<Response> {
       )
     }
     try {
-      const bytes = new Uint8Array(
-        await fs.readFile(await resolveProjectFile(projectId, stored.key))
-      )
-      const extracted = await extractDownloadedSource({
-        bytes,
+      const extracted = await extractStoredSource({
+        path: await resolveProjectFile(projectId, stored.key),
+        sizeBytes: stored.size,
+        filename: stored.filename,
         contentType: stored.mimeType,
-        url: `https://local.invalid/${stored.filename}`,
       })
       const normalized = normalizeSourceDocument({
         sourceId: String(record.sourceId),

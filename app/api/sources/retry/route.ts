@@ -2,7 +2,8 @@
 
 import { ConvexHttpClient } from "convex/browser"
 import { api } from "@/convex/_generated/api"
-import { promises as fs } from "node:fs"
+import { createReadStream } from "node:fs"
+import { Readable } from "node:stream"
 import { resolveProjectFile } from "@/lib/server/project-files"
 
 /** Runs on Node because retries read project-local files and call Convex. */
@@ -50,18 +51,25 @@ export async function POST(request: Request): Promise<Response> {
           sourceId: body.sourceId as never,
         })
       )
-    const bytes = await fs.readFile(
-      await resolveProjectFile(body.projectId, source.relativeKey)
+    const fileStream = Readable.toWeb(
+      createReadStream(
+        await resolveProjectFile(body.projectId, source.relativeKey)
+      )
     )
-    const replay = new Request(new URL("/api/sources/upload", request.url), {
+    const replayInit: RequestInit & { duplex: "half" } = {
       method: "POST",
       headers: {
         "x-blitz-project-id": body.projectId,
         "x-blitz-filename": source.filename,
         ...(source.mimeType ? { "content-type": source.mimeType } : {}),
       },
-      body: bytes,
-    })
+      body: fileStream as ReadableStream<Uint8Array>,
+      duplex: "half",
+    }
+    const replay = new Request(
+      new URL("/api/sources/upload", request.url),
+      replayInit
+    )
     return POST_REPLAY(replay)
   } catch (error) {
     return Response.json(

@@ -1,8 +1,12 @@
-/** Extracts bounded text from approved downloaded PDF, HTML, Markdown, and text sources. */
+/** Extracts bounded text from downloaded or project-local PDF, HTML, Markdown, text, and PPTX sources. */
 
+import { createReadStream } from "node:fs"
+import { open, readFile } from "node:fs/promises"
+import { pathToFileURL } from "node:url"
 import { getDocument } from "pdfjs-dist/legacy/build/pdf.mjs"
 import { unzipSync } from "fflate"
 import { SourceIngestionError } from "./errors.ts"
+import { MAX_ORIGINAL_SOURCE_BYTES } from "../source-files.ts"
 
 /** Maximum downloaded bytes accepted by the research extraction boundary. */
 export const MAX_DOWNLOADED_SOURCE_BYTES = 5_000_000
@@ -14,6 +18,8 @@ export const MAX_PDF_PAGES = 500
 export const MAX_PPTX_XML_BYTES = 20_000_000
 /** Maximum uncompressed size accepted for one PPTX slide XML entry. */
 export const MAX_PPTX_SLIDE_BYTES = 1_000_000
+/** Maximum local PPTX bytes read into memory by the ZIP parser. */
+export const MAX_LOCAL_PPTX_BYTES = 20_000_000
 
 /** Download payload accepted by the bounded server extractor. */
 export interface DownloadedSourceInput {
@@ -33,6 +39,18 @@ export interface ExtractedDownloadedSource {
   readonly kind: "pdf" | "markdown" | "text"
   /** Bounded readable text, with PDF page markers retained. */
   readonly extractedText: string
+}
+
+/** Project-local original file accepted by the file-backed extraction path. */
+export interface StoredSourceInput {
+  /** Validated absolute path resolved through the project filesystem boundary. */
+  readonly path: string
+  /** Original user-visible filename without the storage hash prefix. */
+  readonly filename: string
+  /** Media type reported when the original upload was stored. */
+  readonly contentType: string | null
+  /** Stored byte count used to reject files beyond the upload boundary. */
+  readonly sizeBytes: number
 }
 
 /** Returns the URL path's final segment as a safe bounded filename. */
@@ -204,16 +222,29 @@ function extractHtmlText(raw: string): string {
 }
 
 /** Extracts text from every PDF page while retaining bounded page attribution. */
-async function extractPdfText(bytes: Uint8Array): Promise<string> {
-  const pdfOptions = {
-    data: bytes,
-    disableAutoFetch: true,
-    disableRange: true,
-    disableStream: true,
+async function extractPdfText(
+  source: { bytes: Uint8Array } | { path: string }
+): Promise<string> {
+  const pdfOptions = (
+    "bytes" in source
+      ? {
+          data: source.bytes,
+          disableAutoFetch: true,
+          disableRange: true,
+          disableStream: true,
+        }
+      : {
+          url: pathToFileURL(source.path),
+          // Range reads keep large local PDFs out of the server's heap.
+          disableAutoFetch: true,
+          disableStream: true,
+        }
+  ) as Parameters<typeof getDocument>[0] & { isEvalSupported?: boolean }
+  Object.assign(pdfOptions, {
     isEvalSupported: false,
     stopAtErrors: true,
     useSystemFonts: true,
-  } as Parameters<typeof getDocument>[0] & { isEvalSupported?: boolean }
+  })
   const loadingTask = getDocument(pdfOptions)
   try {
     const document = await loadingTask.promise
@@ -271,6 +302,106 @@ async function extractPdfText(bytes: Uint8Array): Promise<string> {
     return pages.join("\n\n")
   } finally {
     await loadingTask.destroy().catch(() => undefined)
+  }
+}
+
+/** Reads enough local bytes to identify a stored source without loading its body. */
+async function readStoredSourceHeader(path: string): Promise<Uint8Array> {
+  const handle = await open(path, "r")
+  try {
+    const bytes = new Uint8Array(16)
+    const { bytesRead } = await handle.read(bytes, 0, bytes.length, 0)
+    return bytes.slice(0, bytesRead)
+  } finally {
+    await handle.close()
+  }
+}
+
+/** Reads bounded UTF-8 text from disk and stops once the import limit is crossed. */
+async function readStoredText(path: string): Promise<string> {
+  const chunks: string[] = []
+  let characterCount = 0
+  const stream = createReadStream(path, { encoding: "utf8" })
+  for await (const chunk of stream) {
+    characterCount += chunk.length
+    if (characterCount > MAX_DOWNLOADED_TEXT_LENGTH) {
+      stream.destroy()
+      throw new SourceIngestionError(
+        "input-too-large",
+        "The stored source contains more text than the import limit",
+        { maxCharacters: MAX_DOWNLOADED_TEXT_LENGTH }
+      )
+    }
+    chunks.push(chunk)
+  }
+  return chunks.join("")
+}
+
+/** Extracts a project-local original while keeping large PDF bytes on disk. */
+export async function extractStoredSource(
+  input: StoredSourceInput
+): Promise<ExtractedDownloadedSource> {
+  if (
+    !input ||
+    typeof input.path !== "string" ||
+    !input.path ||
+    !Number.isSafeInteger(input.sizeBytes) ||
+    input.sizeBytes < 1
+  )
+    throw new SourceIngestionError(
+      "invalid-input",
+      "Stored source metadata is required"
+    )
+  if (input.sizeBytes > MAX_ORIGINAL_SOURCE_BYTES)
+    throw new SourceIngestionError(
+      "input-too-large",
+      "Stored source exceeds the 1 GB import limit",
+      {
+        byteCount: input.sizeBytes,
+        maxBytes: MAX_ORIGINAL_SOURCE_BYTES,
+      }
+    )
+
+  const url = `https://local.invalid/${encodeURIComponent(input.filename)}`
+  const header = await readStoredSourceHeader(input.path)
+  const format = detectFormat(header, input.contentType, url)
+  let extractedText: string
+  if (format === "pdf") {
+    try {
+      extractedText = await extractPdfText({ path: input.path })
+    } catch (error) {
+      if (error instanceof SourceIngestionError) throw error
+      throw new SourceIngestionError(
+        "invalid-input",
+        "The PDF could not be read. It may be encrypted or malformed.",
+        { format: "pdf" }
+      )
+    }
+  } else if (format === "pptx") {
+    if (input.sizeBytes > MAX_LOCAL_PPTX_BYTES)
+      throw new SourceIngestionError(
+        "input-too-large",
+        "The PowerPoint file exceeds the 20 MB extraction limit",
+        { maxBytes: MAX_LOCAL_PPTX_BYTES }
+      )
+    extractedText = extractPptxText(new Uint8Array(await readFile(input.path)))
+  } else {
+    const raw = await readStoredText(input.path)
+    extractedText = format === "html" ? extractHtmlText(raw) : raw
+  }
+  const extension =
+    format === "pdf"
+      ? ".pdf"
+      : format === "pptx"
+        ? ".pptx"
+        : format === "markdown"
+          ? ".md"
+          : ".txt"
+  return {
+    filename: filenameForUrl(url, extension),
+    kind:
+      format === "pdf" ? "pdf" : format === "markdown" ? "markdown" : "text",
+    extractedText: boundExtractedText(extractedText, format),
   }
 }
 
@@ -352,7 +483,7 @@ export async function extractDownloadedSource(
   let extractedText: string
   if (format === "pdf") {
     try {
-      extractedText = await extractPdfText(input.bytes)
+      extractedText = await extractPdfText({ bytes: input.bytes })
     } catch (error) {
       if (error instanceof SourceIngestionError) throw error
       throw new SourceIngestionError(

@@ -25,7 +25,6 @@ import {
   extractSourceResponse,
   type SourceKind,
 } from "@/lib/client/extract-source"
-import type {} from "@/lib/client/desktop"
 import { sourcePartFilename, splitSourceText } from "@/lib/source-splitting"
 
 /** Convex operations and project identity required by source ingestion. */
@@ -253,30 +252,6 @@ export function SourceUploader({
     setBusy(false)
   }
 
-  /** Uses native file selection in Electron and the browser picker everywhere else. */
-  const selectFiles = async (): Promise<void> => {
-    if (!window.blitzDesktop) {
-      inputRef.current?.click()
-      return
-    }
-    try {
-      const selected = await window.blitzDesktop.selectFiles(String(projectId))
-      await chooseFiles(
-        selected.map(
-          (file) =>
-            new File([new Uint8Array(file.contents)], file.filename, {
-              type: file.mimeType,
-            })
-        )
-      )
-    } catch (error) {
-      setMessage({
-        type: "error",
-        text: messageForError(error, "Files could not be selected."),
-      })
-    }
-  }
-
   /** Queues pasted notes without waiting for local concept generation. */
   const queuePaste = async (): Promise<void> => {
     if (!paste.trim()) return
@@ -431,7 +406,7 @@ export function SourceUploader({
           <div className="rounded-xl border border-border/70 p-3 sm:p-4">
             <TabsContent
               value="files"
-              className="mt-0 flex items-center justify-between gap-4"
+              className="mt-0 flex flex-col items-stretch gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4"
             >
               <div className="flex min-w-0 items-center gap-3">
                 <FileUploadIconComponent
@@ -441,7 +416,7 @@ export function SourceUploader({
                 <div className="min-w-0">
                   <p className="text-sm font-medium">Upload files</p>
                   <p className="truncate text-xs text-muted-foreground">
-                    PDF · MD · TXT · PPTX · multiple files supported
+                    PDF · MD · TXT · PPTX · up to 1 GB each
                   </p>
                 </div>
               </div>
@@ -449,11 +424,8 @@ export function SourceUploader({
                 type="button"
                 size="sm"
                 disabled={busy}
-                onClick={() => {
-                  if (window.blitzDesktop) void selectFiles()
-                  else inputRef.current?.click()
-                }}
-                className="shrink-0 rounded-lg"
+                onClick={() => inputRef.current?.click()}
+                className="w-full shrink-0 rounded-lg sm:w-auto"
               >
                 Choose files
               </Button>

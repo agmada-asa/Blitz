@@ -59,16 +59,18 @@ test("stores original bytes atomically and deduplicates retries", async () => {
   }
 })
 
-test("rejects an oversized stream without leaving a temporary file", async () => {
+test("allows 1 GB uploads and rejects a stream above its configured boundary", async () => {
   const root = await mkdtemp(join(tmpdir(), "blitz-source-files-"))
   const previous = process.env.BLITZ_DATA_DIR
   process.env.BLITZ_DATA_DIR = root
   try {
+    assert.ok(MAX_ORIGINAL_SOURCE_BYTES >= 1_000_000_000)
     await assert.rejects(
       storeOriginalSource({
         projectId: "project-b",
         filename: "huge.bin",
-        body: streamFor(new Uint8Array(MAX_ORIGINAL_SOURCE_BYTES + 1)),
+        body: streamFor(new Uint8Array(17)),
+        maxBytes: 16,
       }),
       /size limit/
     )
