@@ -5,6 +5,7 @@ import { existsSync } from "node:fs"
 import { networkInterfaces } from "node:os"
 import { isIP } from "node:net"
 import { fileURLToPath } from "node:url"
+import { formatTerminalQr } from "./lan-qr.mjs"
 import {
   killProcessGroups,
   processGroupExists,
@@ -39,12 +40,23 @@ const sharedEnvironment = {
   ...(apkPath ? { BLITZ_ANDROID_APK_PATH: apkPath } : {}),
 }
 
+const lanUrl = `http://${lanAddress}:${port}`
+
 console.log(`\nBlitz will be available on this Mac at http://localhost:${port}`)
 console.log(
-  `Open http://${lanAddress}:${port} on a phone connected to the same Wi-Fi.\n`
+  `Open ${lanUrl} on a phone connected to the same Wi-Fi or scan the QR code:\n`
 )
+
+try {
+  const qrCode = await formatTerminalQr(lanUrl)
+  console.log(qrCode)
+  console.log()
+} catch (error) {
+  console.error("Could not render QR code for terminal:", error)
+}
+
 if (apkPath)
-  console.log(`Android installer: http://${lanAddress}:${port}/api/android\n`)
+  console.log(`Android installer: ${lanUrl}/api/android\n`)
 
 start("npx", ["convex", "dev", "--tail-logs", "disable"], process.env)
 start(
