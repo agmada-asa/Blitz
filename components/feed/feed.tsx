@@ -427,17 +427,29 @@ export function Feed({ initialFilter }: { initialFilter?: FeedFilter }) {
   return (
     <main className="relative h-svh overflow-hidden bg-[#080808] text-white selection:bg-[#ff8065] selection:text-[#1b0d0a]">
       <div className="pointer-events-none absolute inset-x-0 top-0 z-20 flex items-center justify-between gap-3 px-4 pt-4 sm:px-8 sm:pt-6">
-        <Link
-          href="/library"
-          className="pointer-events-auto inline-flex h-10 items-center gap-2 rounded-[20px] bg-white/[0.045] px-3.5 text-sm text-white/65 ring-1 ring-white/10 hover:bg-white/[0.09] hover:text-white focus-visible:ring-2 focus-visible:ring-[#ff8065] focus-visible:outline-none"
-        >
-          <HugeiconsIcon
-            icon={Folder01Icon}
-            aria-hidden="true"
-            className="size-4"
-          />
-          Library
-        </Link>
+        <div className="pointer-events-auto flex items-center gap-2">
+          <Button
+            asChild
+            variant="ghost"
+            className="h-11 rounded-full bg-white/10 px-4 text-sm text-white/90 ring-1 ring-white/15 hover:bg-white/15 hover:text-white"
+          >
+            <Link href="/library">
+              <HugeiconsIcon
+                icon={Folder01Icon}
+                aria-hidden="true"
+                className="size-4"
+              />
+              Library
+            </Link>
+          </Button>
+          <Button
+            asChild
+            variant="ghost"
+            className="h-11 rounded-full px-3 text-sm text-white/65 hover:bg-white/10 hover:text-white"
+          >
+            <Link href="/activity">Activity</Link>
+          </Button>
+        </div>
 
         <Dialog
           open={filterOpen}

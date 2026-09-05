@@ -3,6 +3,7 @@
 /** Coordinates browser extraction, public-link fetching, and queue persistence. */
 
 import type { FunctionArgs, FunctionReturnType } from "convex/server"
+import { useBackgroundNotice } from "@/components/background-notices"
 import { useRef, useState } from "react"
 
 import { Button } from "@/components/ui/button"
@@ -25,6 +26,7 @@ import {
   extractSourceResponse,
   type SourceKind,
 } from "@/lib/client/extract-source"
+import { sourcePartFilename, splitSourceText } from "@/lib/source-splitting"
 
 /** Convex operations and project identity required by source ingestion. */
 type Props = {
@@ -38,6 +40,10 @@ type Props = {
   enqueue: (
     input: FunctionArgs<typeof api.preparation.enqueue>
   ) => Promise<FunctionReturnType<typeof api.preparation.enqueue>>
+  /** Optional atomic source and preparation mutation used by the live route. */
+  createAndEnqueue?: (
+    input: FunctionArgs<typeof api.sources.createAndEnqueue>
+  ) => Promise<FunctionReturnType<typeof api.sources.createAndEnqueue>>
 }
 
 /** One recoverable result from a bulk source import. */
@@ -45,6 +51,12 @@ type ImportResult = {
   filename: string
   status: "queued" | "failed"
   detail: string
+}
+
+/** Outcome of sequentially saving a bounded source part list. */
+type QueuePartsResult = {
+  queuedFilenames: string[]
+  failed?: { filename: string; detail: string }
 }
 
 /** Returns a useful error message without exposing arbitrary response objects. */
@@ -80,7 +92,9 @@ export function SourceUploader({
   createSource,
   updateSource,
   enqueue,
+  createAndEnqueue,
 }: Props) {
+  const notifyBackground = useBackgroundNotice()
   const inputRef = useRef<HTMLInputElement>(null)
   const [paste, setPaste] = useState("")
   const [url, setUrl] = useState("")
@@ -100,6 +114,16 @@ export function SourceUploader({
   ): Promise<void> => {
     if (!text.trim())
       throw new Error("There was no readable text in that source.")
+    if (createAndEnqueue) {
+      await createAndEnqueue({
+        projectId,
+        filename,
+        kind,
+        extractedText: text,
+        ...(originalUrl ? { originalUrl } : {}),
+      })
+      return
+    }
     let sourceId: Id<"sources"> | undefined
     try {
       sourceId = await createSource({
@@ -122,6 +146,39 @@ export function SourceUploader({
     }
   }
 
+  /** Saves every bounded part while retaining successful parts after a later failure. */
+  const queueSourceParts = async (
+    filename: string,
+    kind: SourceKind,
+    text: string,
+    originalUrl?: string
+  ): Promise<QueuePartsResult> => {
+    if (!text.trim())
+      throw new Error("There was no readable text in that source.")
+    const parts = splitSourceText(text)
+    const queuedFilenames: string[] = []
+    for (const part of parts) {
+      const partFilename = sourcePartFilename(
+        filename,
+        part.partNumber,
+        part.totalParts
+      )
+      try {
+        await queueSource(partFilename, kind, part.text, originalUrl)
+        queuedFilenames.push(partFilename)
+      } catch (error) {
+        return {
+          queuedFilenames,
+          failed: {
+            filename: partFilename,
+            detail: messageForError(error, "This part could not be queued."),
+          },
+        }
+      }
+    }
+    return { queuedFilenames }
+  }
+
   /** Imports selected files one at a time so later files can still be saved after a failure. */
   const chooseFiles = async (files: File[]): Promise<void> => {
     const selected = files
@@ -133,12 +190,27 @@ export function SourceUploader({
     for (const file of selected) {
       try {
         const source = await extractSource(file)
-        await queueSource(source.filename, source.kind, source.text)
-        imported.push({
-          filename: source.filename,
-          status: "queued",
-          detail: "Queued",
-        })
+        const result = await queueSourceParts(
+          source.filename,
+          source.kind,
+          source.text
+        )
+        imported.push(
+          result.failed
+            ? {
+                filename: file.name,
+                status: "failed",
+                detail: `${result.queuedFilenames.length} part${result.queuedFilenames.length === 1 ? "" : "s"} queued; ${result.failed.filename}: ${result.failed.detail}`,
+              }
+            : {
+                filename: file.name,
+                status: "queued",
+                detail:
+                  result.queuedFilenames.length === 1
+                    ? "Queued"
+                    : `Queued ${result.queuedFilenames.length} parts`,
+              }
+        )
       } catch (error) {
         imported.push({
           filename: file.name,
@@ -155,6 +227,15 @@ export function SourceUploader({
         ? `${imported.length - failed} source${imported.length - failed === 1 ? "" : "s"} queued; ${failed} could not be imported.`
         : `${imported.length} source${imported.length === 1 ? "" : "s"} queued for preparation.`,
     })
+    const queuedCount = imported.filter(
+      (item) => item.status === "queued"
+    ).length
+    if (queuedCount)
+      notifyBackground(
+        "Card preparation continues in the background.",
+        "/activity",
+        "View activity"
+      )
     setBusy(false)
   }
 
@@ -164,16 +245,40 @@ export function SourceUploader({
     setBusy(true)
     setMessage(undefined)
     try {
-      await queueSource("Pasted notes", "paste", paste)
-      setResults([
-        {
-          filename: "Pasted notes",
-          status: "queued",
-          detail: "Queued",
-        },
-      ])
-      setMessage({ type: "success", text: "Notes queued for preparation." })
-      setPaste("")
+      const result = await queueSourceParts("Pasted notes", "paste", paste)
+      if (result.failed) {
+        setResults([
+          {
+            filename: "Pasted notes",
+            status: "failed",
+            detail: `${result.queuedFilenames.length} part${result.queuedFilenames.length === 1 ? "" : "s"} queued; ${result.failed.filename}: ${result.failed.detail}`,
+          },
+        ])
+        setMessage({
+          type: "error",
+          text: result.queuedFilenames.length
+            ? "Some notes were queued. Select them again to retry the remaining parts."
+            : "The notes could not be saved. Try again.",
+        })
+      } else {
+        setResults([
+          {
+            filename: "Pasted notes",
+            status: "queued",
+            detail:
+              result.queuedFilenames.length === 1
+                ? "Queued"
+                : `Queued ${result.queuedFilenames.length} parts`,
+          },
+        ])
+        setMessage({ type: "success", text: "Notes queued for preparation." })
+        notifyBackground(
+          "Card preparation continues in the background.",
+          "/activity",
+          "View activity"
+        )
+        setPaste("")
+      }
     } catch (error) {
       setMessage({
         type: "error",
@@ -198,21 +303,45 @@ export function SourceUploader({
       if (!response.ok)
         throw await responseError(response, "That source could not be fetched.")
       const source = await extractSourceResponse(response, url.trim())
-      await queueSource(
+      const result = await queueSourceParts(
         source.filename,
         source.kind,
         source.text,
         response.headers.get("x-source-url") ?? url.trim()
       )
-      setResults([
-        {
-          filename: source.filename,
-          status: "queued",
-          detail: "Queued",
-        },
-      ])
-      setMessage({ type: "success", text: "Link queued for preparation." })
-      setUrl("")
+      if (result.failed) {
+        setResults([
+          {
+            filename: source.filename,
+            status: "failed",
+            detail: `${result.queuedFilenames.length} part${result.queuedFilenames.length === 1 ? "" : "s"} queued; ${result.failed.filename}: ${result.failed.detail}`,
+          },
+        ])
+        setMessage({
+          type: "error",
+          text: result.queuedFilenames.length
+            ? "Some link content was queued. Retry to save the remaining parts."
+            : "The link content could not be saved. Try again.",
+        })
+      } else {
+        setResults([
+          {
+            filename: source.filename,
+            status: "queued",
+            detail:
+              result.queuedFilenames.length === 1
+                ? "Queued"
+                : `Queued ${result.queuedFilenames.length} parts`,
+          },
+        ])
+        setMessage({ type: "success", text: "Link queued for preparation." })
+        notifyBackground(
+          "Card preparation continues in the background.",
+          "/activity",
+          "View activity"
+        )
+        setUrl("")
+      }
     } catch (error) {
       setMessage({
         type: "error",
@@ -231,6 +360,11 @@ export function SourceUploader({
     >
       <CardContent className="p-5 sm:p-7">
         <h2 className="mb-4 font-heading text-xl">Add sources</h2>
+        {busy ? (
+          <p role="status" className="mb-4 text-sm text-muted-foreground">
+            Keep this page open while uploading.
+          </p>
+        ) : null}
 
         <Tabs defaultValue="files" className="gap-0">
           <TabsList aria-label="Source input type" className="mb-4">
@@ -357,7 +491,7 @@ export function SourceUploader({
                       : "text-muted-foreground"
                   }
                 >
-                  {result.status === "failed" ? result.detail : "Queued"}
+                  {result.detail}
                 </span>
               </div>
             ))}

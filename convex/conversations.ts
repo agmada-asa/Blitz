@@ -63,6 +63,29 @@ function messageForClient(message: Doc<"conversationMessages">) {
   }
 }
 
+/** Resolves only the card identity and attribution needed to reopen a saved chat. */
+export const getAttachment = query({
+  args: { projectId: v.id("projects"), itemId: v.id("learningItems") },
+  handler: async (ctx, args) => {
+    const item = await requireItem(ctx, args.projectId, args.itemId)
+    const sources = await Promise.all(
+      item.sourceIds.slice(0, 3).map((id) => ctx.db.get(id))
+    )
+    return {
+      id: item._id,
+      projectId: item.projectId,
+      title: item.title,
+      sourceLabel:
+        sources
+          .filter(
+            (source) => source !== null && source.projectId === args.projectId
+          )
+          .map((source) => source!.filename)
+          .join(", ") || "Source unavailable",
+    }
+  },
+})
+
 /** Enqueues an idempotent learner question for one project card. */
 export const enqueue = mutation({
   args: {

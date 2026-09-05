@@ -15,6 +15,8 @@ import {
 } from "@/components/ui/dialog"
 import { Textarea } from "@/components/ui/textarea"
 import { CancelIcon } from "@/components/ui/icon"
+import { ElapsedTime } from "@/components/ui/elapsed-time"
+import { useBackgroundNotice } from "@/components/background-notices"
 
 /** Status values returned for one persisted learner message. */
 type ChatMessageStatus = "queued" | "running" | "completed" | "failed"
@@ -75,7 +77,7 @@ const EMPTY_CHAT_STATE: ChatCardState = {
 
 /** Props controlling the attached-card chat dialog. */
 type FeedChatDialogProps = {
-  card: FeedCard | null
+  card: Pick<FeedCard, "id" | "projectId" | "title" | "sourceLabel"> | null
   open: boolean
   onOpenChange: (open: boolean) => void
 }
@@ -107,6 +109,26 @@ export function FeedChatDialog({
   const [states, setStates] = useState<Record<string, ChatCardState>>({})
   const cardKey = card ? `${card.projectId}:${card.id}` : ""
   const state = states[cardKey] ?? EMPTY_CHAT_STATE
+  const notify = useBackgroundNotice()
+
+  /** Acknowledges persisted replies that continue after the drawer closes. */
+  function changeOpen(nextOpen: boolean) {
+    if (
+      !nextOpen &&
+      state.messages.some(
+        (message) => message.status === "queued" || message.status === "running"
+      )
+    ) {
+      notify(
+        "Your reply is being prepared in the background.",
+        card
+          ? `/chat?projectId=${encodeURIComponent(card.projectId)}&itemId=${encodeURIComponent(card.id)}`
+          : "/activity",
+        "View"
+      )
+    }
+    onOpenChange(nextOpen)
+  }
 
   /** Updates only the conversation state belonging to the selected card. */
   const updateState = useCallback(
@@ -306,7 +328,7 @@ export function FeedChatDialog({
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={changeOpen}>
       <DialogContent
         aria-describedby={undefined}
         showCloseButton={false}
@@ -361,13 +383,14 @@ export function FeedChatDialog({
                     </div>
                   ) : null}
                   {message.status === "queued" ? (
-                    <p className="text-xs text-white/42" role="status">
-                      Waiting for a reply…
+                    <p className="text-xs text-white/60">
+                      Queued · <ElapsedTime since={message.updatedAt} />
                     </p>
                   ) : null}
                   {message.status === "running" ? (
-                    <p className="text-xs text-white/42" role="status">
-                      Working on it…
+                    <p className="text-xs text-white/60">
+                      Preparing reply ·{" "}
+                      <ElapsedTime since={message.updatedAt} />
                     </p>
                   ) : null}
                   {message.status === "failed" ? (
@@ -389,6 +412,14 @@ export function FeedChatDialog({
                 </div>
               ))}
             </div>
+            {state.messages.some(
+              (message) =>
+                message.status === "queued" || message.status === "running"
+            ) ? (
+              <p className="mt-4 text-xs text-white/60" role="status">
+                You can close chat. Your reply will be saved here.
+              </p>
+            ) : null}
           </div>
 
           <form

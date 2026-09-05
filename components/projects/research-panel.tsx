@@ -2,8 +2,11 @@
 
 /** Owns the approval-first research proposal dialog for one project. */
 
+import Link from "next/link"
 import { useCallback, useEffect, useRef, useState } from "react"
+import { useQuery } from "convex/react"
 
+import { useBackgroundNotice } from "@/components/background-notices"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import {
@@ -14,9 +17,23 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Textarea } from "@/components/ui/textarea"
+import { api } from "@/convex/_generated/api"
+import type { Id } from "@/convex/_generated/dataModel"
 
 type ProposalStatus = "queued" | "running" | "ready" | "failed"
 type ImportStatus = "queued" | "running" | "imported" | "failed"
+type ResearchActivityStage =
+  "queued" | "running" | "searching" | "synthesizing" | "completed" | "failed"
+
+/** Describes one safe, persisted planning activity event. */
+type ResearchActivity = {
+  stage: ResearchActivityStage
+  label?: string
+  query?: string
+  tool?: "web_search"
+  occurredAt: number
+  elapsedMs: number
+}
 
 /** Describes one source suggestion in a server-generated proposal. */
 type ProposalSource = {
@@ -51,6 +68,7 @@ type ProposalSnapshot = {
   status: ProposalStatus
   proposal: ResearchProposal | null
   error?: string
+  activity?: ResearchActivity[]
   createdAt: number
   updatedAt: number
 }
@@ -62,10 +80,96 @@ type ResearchImport = {
   sourceIndex: number
   status: ImportStatus
   sourceId?: string
+  sourceIds?: string[]
+  partSourceIds?: string[]
   preparationJobId?: string
+  failureCategory?: string
   error?: string
   createdAt: number
   updatedAt: number
+}
+
+/** Shows durable preparation progress for a downloaded research source. */
+function ImportPreparationStatus({
+  projectId,
+  sourceIds,
+}: {
+  projectId: string
+  sourceIds: string[]
+}) {
+  const boundedSourceIds = sourceIds.slice(0, 20)
+  const jobs = useQuery(api.preparation.listJobsForProject, {
+    projectId: projectId as Id<"projects">,
+    sourceIds: boundedSourceIds as Id<"sources">[],
+  })
+
+  if (jobs === undefined || !jobs.length)
+    return (
+      <span className="text-white/50">Downloaded · preparation queued</span>
+    )
+
+  const failed = jobs.find((job) => job.status === "failed")
+  if (failed)
+    return (
+      <span className="text-red-200">
+        Needs retry
+        <Link
+          href="/activity"
+          className="ml-2 underline underline-offset-2 hover:text-white"
+        >
+          View preparation
+        </Link>
+      </span>
+    )
+
+  const active = jobs.filter(
+    (job) => job.status === "queued" || job.status === "leased"
+  )
+  if (active.length) {
+    if (sourceIds.length === 1) {
+      const job = active[0]
+      const currentSection = job.totalChunks
+        ? Math.min(job.nextChunkOrdinal + 1, job.totalChunks)
+        : undefined
+      return (
+        <span className="text-white/50">
+          {job.status === "queued"
+            ? "Queued for preparation"
+            : currentSection && job.totalChunks
+              ? `Preparing section ${currentSection} of ${job.totalChunks}`
+              : "Preparing source…"}
+        </span>
+      )
+    }
+    return (
+      <span className="text-white/50">
+        {active.some((job) => job.status === "leased")
+          ? "Preparing cards"
+          : "Queued for preparation"}
+      </span>
+    )
+  }
+
+  if (sourceIds.length > 20)
+    return <span className="text-white/50">Preparation continues</span>
+
+  const completed = jobs.filter((job) => job.status === "completed")
+  if (
+    completed.length === sourceIds.length &&
+    completed.some(
+      (job) =>
+        typeof job.generatedItemCount === "number" && job.generatedItemCount > 0
+    )
+  )
+    return <span className="text-emerald-200">Ready</span>
+  if (
+    completed.length === sourceIds.length &&
+    completed.some((job) => job.generatedItemCount === 0)
+  )
+    return <span className="text-amber-200">No study content</span>
+  if (completed.length === sourceIds.length)
+    return <span className="text-white/50">Preparation complete</span>
+  return <span className="text-white/50">Preparing cards</span>
 }
 
 type ApplyState =
@@ -113,10 +217,92 @@ function isImportLocked(status: ImportStatus | undefined) {
 
 /** Returns the short status label shown beside a source row. */
 function importStatusLabel(status: ImportStatus) {
-  if (status === "imported") return "Imported"
+  if (status === "imported") return "Downloaded"
   if (status === "running") return "Importing…"
   if (status === "queued") return "Queued"
   return "Import failed"
+}
+
+/** Maps persisted import failure categories to concise recovery copy. */
+function importFailureLabel(importRow: ResearchImport): string {
+  if (importRow.failureCategory === "site-refused")
+    return "The site declined access"
+  if (importRow.failureCategory === "not-found") return "Source not found"
+  if (importRow.failureCategory === "unsupported-format")
+    return "Unsupported source format"
+  if (importRow.failureCategory === "needs-ocr") return "This source needs OCR"
+  if (importRow.failureCategory === "too-large") return "Source is too large"
+  if (importRow.failureCategory === "timeout") return "Download timed out"
+  return "Download failed"
+}
+
+/** Formats a bounded duration for a compact status line. */
+function formatElapsed(elapsedMs: number): string {
+  const seconds = Math.max(0, Math.floor(elapsedMs / 1_000))
+  if (seconds < 60) return `${seconds}s`
+  const minutes = Math.floor(seconds / 60)
+  return `${minutes}m ${seconds % 60}s`
+}
+
+/** Returns the latest persisted planning event for a proposal. */
+function latestActivity(activity: ResearchActivity[] | undefined) {
+  return activity?.length ? activity[activity.length - 1] : undefined
+}
+
+/** Returns whether an activity stage may still be running. */
+function isActiveActivityStage(stage: ResearchActivityStage): boolean {
+  return (
+    stage === "queued" ||
+    stage === "running" ||
+    stage === "searching" ||
+    stage === "synthesizing"
+  )
+}
+
+/** Returns elapsed planning time, including the current active interval. */
+function activityElapsed(event: ResearchActivity | undefined, now: number) {
+  if (!event) return 0
+  return (
+    event.elapsedMs +
+    (isActiveActivityStage(event.stage)
+      ? Math.max(0, now - event.occurredAt)
+      : 0)
+  )
+}
+
+/** Gives each persisted activity stage a short label suitable for the dialog. */
+function activityStageLabel(stage: ResearchActivityStage): string {
+  if (stage === "searching") return "Searching"
+  if (stage === "synthesizing") return "Preparing sources"
+  if (stage === "completed") return "Ready"
+  if (stage === "failed") return "Could not prepare sources"
+  if (stage === "running") return "Working"
+  return "Queued"
+}
+
+/** Renders the bounded server activity trace without exposing worker internals. */
+function ActivityDetails({ activity }: { activity: ResearchActivity[] }) {
+  return (
+    <details className="rounded-xl border border-white/10 bg-white/[0.025] px-3">
+      <summary className="flex min-h-11 cursor-pointer items-center text-sm text-white/70">
+        Activity details
+      </summary>
+      <ol className="space-y-2 pb-3">
+        {activity.map((event, index) => (
+          <li
+            key={`${event.occurredAt}-${index}`}
+            className="text-xs leading-relaxed text-white/60"
+          >
+            <span>{event.label ?? activityStageLabel(event.stage)}</span>
+            {event.query ? ` · ${event.query}` : null}
+            <span className="block text-white/40">
+              {formatElapsed(event.elapsedMs)}
+            </span>
+          </li>
+        ))}
+      </ol>
+    </details>
+  )
 }
 
 /** Props for the project-scoped research proposal entry. */
@@ -138,12 +324,24 @@ export function ResearchPanel({ projectId }: ResearchPanelProps) {
   const [retryingSourceIndex, setRetryingSourceIndex] = useState<
     number | undefined
   >(undefined)
+  const [now, setNow] = useState(() => Date.now())
   const recentGeneration = useRef(0)
   const pollGeneration = useRef(0)
   const importGeneration = useRef(0)
   const projectGeneration = useRef(0)
   const selectedRequestId = useRef<string | undefined>(undefined)
   const requestIdsByText = useRef(new Map<string, string>())
+  const openRef = useRef(open)
+  const backgroundNoticeKeys = useRef(new Set<string>())
+  const notifyBackground = useBackgroundNotice()
+  const hasActiveImports = imports.some(
+    (importRow) =>
+      importRow.status === "queued" || importRow.status === "running"
+  )
+
+  useEffect(() => {
+    openRef.current = open
+  }, [open])
 
   useEffect(() => {
     projectGeneration.current += 1
@@ -167,9 +365,56 @@ export function ResearchPanel({ projectId }: ResearchPanelProps) {
     }
   }, [])
 
+  /** Sends one durable acknowledgement for work that continues off dialog. */
+  function notifyBackgroundWork(
+    key: string,
+    message: string,
+    href = `/projects/${encodeURIComponent(projectId)}`
+  ): void {
+    if (backgroundNoticeKeys.current.has(key)) return
+    backgroundNoticeKeys.current.add(key)
+    notifyBackground(message, href, "View project")
+  }
+
+  /** Records active research and import work when the dialog closes. */
+  function notifyActiveWork(): void {
+    if (
+      proposal &&
+      (proposal.status === "queued" || proposal.status === "running")
+    )
+      notifyBackgroundWork(
+        `research:${proposal.requestId}`,
+        "Finding sources in background"
+      )
+    const activeImports = imports.filter(
+      (importRow) =>
+        importRow.status === "queued" || importRow.status === "running"
+    )
+    if (activeImports.length && requestId)
+      notifyBackgroundWork(
+        `imports:${requestId}`,
+        "Importing sources in background"
+      )
+  }
+
+  /** Closes the dialog and acknowledges any persisted work that continues. */
+  function handleOpenChange(nextOpen: boolean): void {
+    if (!nextOpen) notifyActiveWork()
+    setOpen(nextOpen)
+  }
+
+  useEffect(() => {
+    const active =
+      proposal?.status === "queued" ||
+      proposal?.status === "running" ||
+      hasActiveImports
+    if (!active) return
+    const interval = window.setInterval(() => setNow(Date.now()), 1_000)
+    return () => window.clearInterval(interval)
+  }, [hasActiveImports, proposal?.requestId, proposal?.status])
+
   /** Loads recent project proposals so the latest request survives reloads. */
   useEffect(() => {
-    if (!open) return
     const controller = new AbortController()
     const generation = recentGeneration.current + 1
     recentGeneration.current = generation
@@ -203,11 +448,11 @@ export function ResearchPanel({ projectId }: ResearchPanelProps) {
     }
     void loadRecent()
     return () => controller.abort()
-  }, [open, projectId, showProposal])
+  }, [projectId, showProposal])
 
   /** Polls the active proposal until its server-owned state changes. */
   useEffect(() => {
-    if (!open || !requestId) return
+    if (!requestId) return
     const activeRequestId = requestId
     const controller = new AbortController()
     const generation = pollGeneration.current + 1
@@ -243,11 +488,11 @@ export function ResearchPanel({ projectId }: ResearchPanelProps) {
       controller.abort()
       window.clearInterval(interval)
     }
-  }, [open, projectId, requestId, showProposal])
+  }, [projectId, requestId, showProposal])
 
   /** Polls per-source import state while the current proposal is visible. */
   useEffect(() => {
-    if (!open || !requestId || proposal?.status !== "ready") return
+    if (!requestId || proposal?.status !== "ready") return
     const activeRequestId = requestId
     const controller = new AbortController()
     const generation = importGeneration.current + 1
@@ -291,7 +536,7 @@ export function ResearchPanel({ projectId }: ResearchPanelProps) {
       controller.abort()
       window.clearInterval(interval)
     }
-  }, [open, projectId, proposal?.status, requestId])
+  }, [projectId, proposal?.status, requestId])
 
   /** Clears stale plan state before queuing a request and invalidates old responses. */
   function beginRequest(nextRequestId: string) {
@@ -338,6 +583,14 @@ export function ResearchPanel({ projectId }: ResearchPanelProps) {
       const next = (await response.json()) as ProposalSnapshot
       if (next.requestId !== stableRequestId) return
       showProposal(next)
+      if (
+        !openRef.current &&
+        (next.status === "queued" || next.status === "running")
+      )
+        notifyBackgroundWork(
+          `research:${next.requestId}`,
+          "Finding sources in background"
+        )
     } catch (error) {
       if (projectGeneration.current === actionProjectGeneration)
         setRequestError(
@@ -429,6 +682,16 @@ export function ResearchPanel({ projectId }: ResearchPanelProps) {
         return
       if (body.imports)
         setImports((current) => mergeImportRows(current, body.imports ?? []))
+      if (
+        !openRef.current &&
+        body.imports?.some(
+          (row) => row.status === "queued" || row.status === "running"
+        )
+      )
+        notifyBackgroundWork(
+          `imports:${activeRequestId}`,
+          "Importing sources in background"
+        )
       setSelectedSources(
         (current) =>
           new Set(
@@ -489,6 +752,16 @@ export function ResearchPanel({ projectId }: ResearchPanelProps) {
         return
       if (body.imports)
         setImports((current) => mergeImportRows(current, body.imports ?? []))
+      if (
+        !openRef.current &&
+        body.imports?.some(
+          (row) => row.status === "queued" || row.status === "running"
+        )
+      )
+        notifyBackgroundWork(
+          `imports:${activeRequestId}`,
+          "Importing sources in background"
+        )
       setApplyState({ status: "idle" })
     } catch (error) {
       if (projectGeneration.current === actionProjectGeneration)
@@ -535,18 +808,46 @@ export function ResearchPanel({ projectId }: ResearchPanelProps) {
     ) &&
     applyState.status !== "pending"
 
+  const latestProposalActivity = latestActivity(proposal?.activity)
+  const proposalIsActive =
+    proposal?.status === "queued" || proposal?.status === "running"
+  const activeImports = imports.filter(
+    (importRow) =>
+      importRow.status === "queued" || importRow.status === "running"
+  )
+  const importStartedAt = activeImports.length
+    ? Math.min(...activeImports.map((importRow) => importRow.createdAt))
+    : undefined
+  const backgroundStatus = !open
+    ? proposalIsActive
+      ? `Finding sources · ${formatElapsed(
+          activityElapsed(latestProposalActivity, now) ||
+            Math.max(0, now - (proposal?.createdAt ?? now))
+        )}`
+      : importStartedAt !== undefined
+        ? `Importing · ${formatElapsed(Math.max(0, now - importStartedAt))}`
+        : undefined
+    : undefined
+
   return (
     <>
-      <Button
-        type="button"
-        variant="outline"
-        onClick={() => setOpen(true)}
-        className="h-11 rounded-full"
-      >
-        Find sources
-      </Button>
+      <div className="flex flex-wrap items-center gap-3">
+        <Button
+          type="button"
+          variant="outline"
+          onClick={() => setOpen(true)}
+          className="h-11 rounded-full"
+        >
+          Find sources
+        </Button>
+        {backgroundStatus ? (
+          <p className="text-sm text-muted-foreground" role="status">
+            {backgroundStatus}
+          </p>
+        ) : null}
+      </div>
 
-      <Dialog open={open} onOpenChange={setOpen}>
+      <Dialog open={open} onOpenChange={handleOpenChange}>
         <DialogContent
           aria-describedby={undefined}
           showCloseButton={false}
@@ -596,7 +897,14 @@ export function ResearchPanel({ projectId }: ResearchPanelProps) {
               {proposal?.status === "queued" ||
               proposal?.status === "running" ? (
                 <p className="text-sm text-white/50" role="status">
-                  {proposal.status === "queued" ? "Queued" : "Preparing…"}
+                  {activityStageLabel(
+                    latestProposalActivity?.stage ?? proposal.status
+                  )}
+                  {latestProposalActivity
+                    ? ` · ${formatElapsed(
+                        activityElapsed(latestProposalActivity, now)
+                      )}`
+                    : null}
                 </p>
               ) : null}
             </div>
@@ -605,6 +913,10 @@ export function ResearchPanel({ projectId }: ResearchPanelProps) {
               <p className="text-sm text-red-200" role="alert">
                 {requestError}
               </p>
+            ) : null}
+
+            {proposal?.activity?.length ? (
+              <ActivityDetails activity={proposal.activity} />
             ) : null}
 
             {proposal?.status === "failed" ? (
@@ -684,8 +996,24 @@ export function ResearchPanel({ projectId }: ResearchPanelProps) {
                                     : "status"
                                 }
                               >
-                                {importStatusLabel(importRow.status)}
-                                {importRow.error ? `: ${importRow.error}` : ""}
+                                {importRow.status === "imported"
+                                  ? null
+                                  : importStatusLabel(importRow.status)}
+                                {importRow.status === "failed"
+                                  ? `: ${importFailureLabel(importRow)}`
+                                  : null}
+                                {importRow.status === "imported" ? (
+                                  <ImportPreparationStatus
+                                    projectId={projectId}
+                                    sourceIds={[
+                                      ...(importRow.sourceIds ??
+                                        importRow.partSourceIds ??
+                                        (importRow.sourceId
+                                          ? [importRow.sourceId]
+                                          : [])),
+                                    ]}
+                                  />
+                                ) : null}
                               </span>
                             ) : null}
                           </span>

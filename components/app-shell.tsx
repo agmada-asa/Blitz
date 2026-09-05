@@ -5,9 +5,9 @@
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 import {
-  Add01Icon,
   Folder01Icon,
   Home01Icon,
+  Clock01Icon,
   SidebarLeftIcon,
 } from "@hugeicons/core-free-icons"
 import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react"
@@ -35,8 +35,6 @@ export function AppShell({ children }: AppShellProps) {
   const isHomeRoute = pathname === "/"
   const [collapsed, setCollapsed] = useState(false)
   const isStudyRoute = /\/(study|practice|test|write)$/.test(pathname)
-  const projectId = pathname.match(/^\/projects\/([^/]+)/)?.[1]
-  const projectHref = projectId ? `/projects/${projectId}` : "/"
   const links: NavLink[] = [
     {
       href: "/",
@@ -53,10 +51,10 @@ export function AppShell({ children }: AppShellProps) {
         (pathname.startsWith("/projects/") && !isStudyRoute),
     },
     {
-      href: projectId ? `${projectHref}#add-source` : "/library#new-project",
-      label: "Add source",
-      icon: Add01Icon,
-      active: false,
+      href: "/activity",
+      label: "Activity",
+      icon: Clock01Icon,
+      active: pathname === "/activity",
     },
   ]
 

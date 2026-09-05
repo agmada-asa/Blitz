@@ -50,6 +50,7 @@ export default function ProjectPage({
     { initialNumItems: 20 }
   )
   const createSource = useMutation(api.sources.createSource)
+  const createAndEnqueue = useMutation(api.sources.createAndEnqueue)
   const updateSource = useMutation(api.sources.updateSource)
   const enqueue = useMutation(api.preparation.enqueue)
   const retryPreparation = useMutation(api.preparation.retry)
@@ -123,6 +124,7 @@ export default function ProjectPage({
         <SourceUploader
           projectId={convexProjectId}
           createSource={createSource}
+          createAndEnqueue={createAndEnqueue}
           updateSource={updateSource}
           enqueue={enqueue}
         />
