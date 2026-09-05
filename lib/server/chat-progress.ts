@@ -1,9 +1,12 @@
 /** Coalesces assistant fragments into ordered, bounded persistence writes. */
 
 /** Creates a writer that saves at most four snapshots per second and drains before terminal writes. */
-export function createChatProgress(save: (reply: string) => Promise<unknown>) {
-  let text = ""
-  let saved = ""
+export function createChatProgress(
+  save: (reply: string) => Promise<unknown>,
+  initialText = ""
+) {
+  let text = initialText
+  let saved = initialText
   let pending: Promise<void> | undefined
   let timer: ReturnType<typeof setTimeout> | undefined
   let stopped = false

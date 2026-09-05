@@ -45,7 +45,8 @@ export async function GET(request: Request): Promise<Response> {
       headers: {
         "cache-control": "no-store",
         "content-type": source.mimeType || "application/octet-stream",
-        "content-disposition": `attachment; filename*=UTF-8''${encodeURIComponent(basename(source.filename))}`,
+        "content-disposition": `${url.searchParams.get("inline") === "1" && ["application/pdf", "text/plain", "text/markdown"].includes(source.mimeType ?? "") ? "inline" : "attachment"}; filename*=UTF-8''${encodeURIComponent(basename(source.filename))}`,
+        "content-security-policy": "sandbox",
         "x-content-type-options": "nosniff",
         "content-length": String(bytes.byteLength),
       },

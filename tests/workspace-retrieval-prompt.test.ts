@@ -10,6 +10,7 @@ import type { Id } from "../convex/_generated/dataModel.js"
 test("retrieved source labels survive prompt assembly without becoming instructions", () => {
   const request = parseWorkspaceChatRequest({
     message: "Where does the final section explain diffusion?",
+    projectId: "project-1",
     clientMessageId: "retrieval-prompt",
     projectIds: ["project-1"],
     attachments: [],

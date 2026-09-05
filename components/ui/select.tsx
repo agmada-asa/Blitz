@@ -29,28 +29,47 @@ function SelectValue({
   return <SelectPrimitive.Value data-slot="select-value" {...props} />
 }
 
+/** Visual style options for select triggers. */
+type SelectTriggerVariant = "default" | "ghost"
+
+/** Props accepted by the accessible picker trigger. */
+type SelectTriggerProps = React.ComponentProps<
+  typeof SelectPrimitive.Trigger
+> & {
+  variant?: SelectTriggerVariant
+  showArrow?: boolean
+}
+
 /** Opens a picker and renders its current selection with the shared field styling. */
 function SelectTrigger({
   className,
   children,
+  variant = "default",
+  showArrow = true,
   ...props
-}: React.ComponentProps<typeof SelectPrimitive.Trigger>) {
+}: SelectTriggerProps) {
   return (
     <SelectPrimitive.Trigger
       data-slot="select-trigger"
       className={cn(
-        "flex h-8 w-full min-w-0 items-center justify-between gap-2 rounded-lg border border-input bg-transparent px-2.5 py-1 text-left text-sm transition-colors outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:cursor-not-allowed disabled:bg-input/50 disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 data-[placeholder]:text-muted-foreground dark:bg-input/30 dark:disabled:bg-input/80 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 [&>span]:line-clamp-1 [&>span]:flex-1",
+        "flex h-8 w-full min-w-0 items-center justify-between gap-1.5 rounded-lg text-left text-sm transition-colors outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 data-[placeholder]:text-muted-foreground [&>[data-slot=select-value]]:line-clamp-1",
+        variant === "default" &&
+          "border border-input bg-transparent px-2.5 py-1 disabled:bg-input/50 dark:bg-input/30 dark:disabled:bg-input/80 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40",
+        variant === "ghost" &&
+          "border-transparent bg-transparent px-2 py-1 text-muted-foreground hover:bg-muted hover:text-foreground dark:hover:bg-muted/50",
         className
       )}
       {...props}
     >
       {children}
-      <SelectPrimitive.Icon>
-        <ArrowDownIcon
-          aria-hidden="true"
-          className="size-4 shrink-0 opacity-60"
-        />
-      </SelectPrimitive.Icon>
+      {showArrow ? (
+        <SelectPrimitive.Icon className="inline-flex shrink-0 items-center justify-center">
+          <ArrowDownIcon
+            aria-hidden="true"
+            className="size-3.5 opacity-60"
+          />
+        </SelectPrimitive.Icon>
+      ) : null}
     </SelectPrimitive.Trigger>
   )
 }
@@ -154,4 +173,6 @@ export {
   SelectSeparator,
   SelectTrigger,
   SelectValue,
+  type SelectTriggerProps,
+  type SelectTriggerVariant,
 }

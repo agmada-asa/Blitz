@@ -2,12 +2,21 @@
 
 import {
   Add01Icon,
-  BubbleChatIcon,
+  Chat01Icon,
+  CheckUnread01Icon,
   Loading03Icon,
+  PencilEdit02Icon,
+  Pin02Icon,
 } from "@hugeicons/core-free-icons"
 import { HugeiconsIcon } from "@hugeicons/react"
 
 import { Button } from "@/components/ui/button"
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu"
 import type { Id } from "@/convex/_generated/dataModel"
 import { cn } from "@/lib/utils"
 
@@ -16,6 +25,8 @@ export type ChatHistoryItem = {
   id: Id<"workspaceChats">
   title: string
   status: "idle" | "running" | "failed"
+  isUnread: boolean
+  isPinned: boolean
   updatedAt: number
 }
 
@@ -25,6 +36,9 @@ type ChatHistoryProps = {
   activeChatId?: Id<"workspaceChats">
   onSelect: (chatId: Id<"workspaceChats">) => void
   onNew: () => void
+  onRename: (chatId: Id<"workspaceChats">) => void
+  onToggleUnread: (chatId: Id<"workspaceChats">, unread: boolean) => void
+  onTogglePin: (chatId: Id<"workspaceChats">, pinned: boolean) => void
   className?: string
 }
 
@@ -34,6 +48,9 @@ export function ChatHistory({
   activeChatId,
   onSelect,
   onNew,
+  onRename,
+  onToggleUnread,
+  onTogglePin,
   className,
 }: ChatHistoryProps) {
   return (
@@ -70,28 +87,81 @@ export function ChatHistory({
               const selected = chat.id === activeChatId
               return (
                 <li key={chat.id} className="min-w-0">
-                  <button
-                    type="button"
-                    aria-current={selected ? "page" : undefined}
-                    className={cn(
-                      "flex min-h-14 w-full min-w-0 items-center gap-3 overflow-hidden rounded-[18px] px-4 py-3 text-left text-sm text-foreground transition-colors hover:bg-muted/70 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none",
-                      selected && "bg-muted hover:bg-muted"
-                    )}
-                    onClick={() => onSelect(chat.id)}
-                  >
-                    <span className="min-w-0 flex-1 truncate">
-                      {chat.title}
-                    </span>
-                    {chat.status === "running" ? (
-                      <HugeiconsIcon
-                        icon={Loading03Icon}
-                        size={18}
-                        strokeWidth={2}
-                        className="shrink-0 animate-spin text-muted-foreground motion-reduce:animate-none"
-                        aria-label="Reply in progress"
-                      />
-                    ) : null}
-                  </button>
+                  <ContextMenu>
+                    <ContextMenuTrigger asChild>
+                      <button
+                        type="button"
+                        aria-current={selected ? "page" : undefined}
+                        aria-label={`${chat.title}${chat.isUnread ? " (unread)" : ""}${chat.isPinned ? " (pinned)" : ""}`}
+                        className={cn(
+                          "flex h-8 w-full min-w-0 items-center gap-2 overflow-hidden rounded-lg px-3 text-left text-sm text-foreground transition-colors hover:bg-muted/70 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none",
+                          chat.isUnread && "font-medium",
+                          selected && "bg-muted hover:bg-muted"
+                        )}
+                        onClick={() => onSelect(chat.id)}
+                      >
+                        <span className="min-w-0 flex-1 truncate">
+                          {chat.title}
+                        </span>
+                        <span className="flex shrink-0 items-center gap-1.5">
+                          {chat.isUnread ? (
+                            <span
+                              className="size-1.5 rounded-full bg-brand"
+                              aria-hidden="true"
+                            />
+                          ) : null}
+                          {chat.isPinned ? (
+                            <HugeiconsIcon
+                              icon={Pin02Icon}
+                              size={15}
+                              strokeWidth={1.8}
+                              className="text-muted-foreground"
+                              aria-hidden="true"
+                            />
+                          ) : null}
+                          {chat.status === "running" ? (
+                            <HugeiconsIcon
+                              icon={Loading03Icon}
+                              size={15}
+                              strokeWidth={2}
+                              className="animate-spin text-muted-foreground motion-reduce:animate-none"
+                              aria-label="Reply in progress"
+                            />
+                          ) : null}
+                        </span>
+                      </button>
+                    </ContextMenuTrigger>
+                    <ContextMenuContent>
+                      <ContextMenuItem onSelect={() => onRename(chat.id)}>
+                        <HugeiconsIcon
+                          icon={PencilEdit02Icon}
+                          size={17}
+                          aria-hidden="true"
+                        />
+                        Rename chat
+                      </ContextMenuItem>
+                      <ContextMenuItem
+                        onSelect={() => onToggleUnread(chat.id, !chat.isUnread)}
+                      >
+                        <HugeiconsIcon
+                          icon={CheckUnread01Icon}
+                          size={17}
+                          aria-hidden="true"
+                        />
+                        {chat.isUnread ? "Mark as read" : "Mark as unread"}
+                      </ContextMenuItem>
+                      <ContextMenuItem
+                        onSelect={() => onTogglePin(chat.id, !chat.isPinned)}
+                      >
+                        <HugeiconsIcon
+                          icon={Pin02Icon}
+                          size={17}
+                          aria-hidden="true"
+                        />
+                        {chat.isPinned ? "Unpin chat" : "Pin chat"}
+                      </ContextMenuItem>
+                    </ContextMenuContent>
+                  </ContextMenu>
                 </li>
               )
             })}
@@ -99,7 +169,7 @@ export function ChatHistory({
         ) : (
           <div className="px-3 py-8 text-center text-muted-foreground">
             <HugeiconsIcon
-              icon={BubbleChatIcon}
+              icon={Chat01Icon}
               size={22}
               strokeWidth={1.6}
               className="mx-auto"

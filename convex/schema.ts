@@ -2,6 +2,7 @@
 
 import { defineSchema, defineTable } from "convex/server"
 import { v } from "convex/values"
+import { citationFields } from "./citationFields"
 
 /** Validator shared by the cards table's supported learning formats. */
 const cardType = v.union(
@@ -56,6 +57,11 @@ const researchActivityEvent = v.object({
 /** Convex schema for projects, uploaded sources, generated cards, and attempts. */
 export default defineSchema({
   projects: defineTable({
+    /** Transitional metadata retained for legacy standalone agent tasks. */
+    agentAutonomy: v.optional(
+      v.union(v.literal("approval"), v.literal("project"), v.literal("full"))
+    ),
+    agentInstructions: v.optional(v.string()),
     title: v.string(),
     createdAt: v.number(),
     /** Optional stable key for the project-local desktop workspace. */
@@ -355,6 +361,17 @@ export default defineSchema({
 
   /** Bounded lifecycle metadata for a project-local agent task. */
   agentTasks: defineTable({
+    /** Legacy task snapshots; new agent turns belong to workspace chats. */
+    autonomy: v.optional(
+      v.union(v.literal("approval"), v.literal("project"), v.literal("full"))
+    ),
+    additionalInstructions: v.optional(v.string()),
+    cancelRequested: v.optional(v.boolean()),
+    expiresAt: v.optional(v.number()),
+    response: v.optional(v.string()),
+    threadId: v.optional(v.string()),
+    turnId: v.optional(v.string()),
+
     projectId: v.id("projects"),
     status: v.union(
       v.literal("queued"),
@@ -384,8 +401,22 @@ export default defineSchema({
 
   /** General Codex threads opened from the top-level Chat tab. */
   workspaceChats: defineTable({
+    /** Owning project. Optional only for chats created before project ownership. */
+    projectId: v.optional(v.id("projects")),
     title: v.string(),
+    /** Optional chat agent policy; legacy chats use approval with no extra instructions. */
+    agentAutonomy: v.optional(
+      v.union(v.literal("approval"), v.literal("project"), v.literal("full"))
+    ),
+    agentInstructions: v.optional(v.string()),
+    workingProjectId: v.optional(v.id("projects")),
+    /** Manual history state. Optional keeps chats created before this feature readable. */
+    isUnread: v.optional(v.boolean()),
+    isPinned: v.optional(v.boolean()),
+    branchedFromChatId: v.optional(v.id("workspaceChats")),
+    branchedFromMessageId: v.optional(v.id("workspaceChatMessages")),
     codexThreadId: v.optional(v.string()),
+    codexContextReady: v.optional(v.boolean()),
     status: v.union(
       v.literal("idle"),
       v.literal("running"),
@@ -395,10 +426,15 @@ export default defineSchema({
     lastError: v.optional(v.string()),
     createdAt: v.number(),
     updatedAt: v.number(),
-  }).index("by_updatedAt", ["updatedAt"]),
+  })
+    .index("by_updatedAt", ["updatedAt"])
+    .index("by_project_updatedAt", ["projectId", "updatedAt"])
+    .index("by_pinned_updatedAt", ["isPinned", "updatedAt"]),
 
   /** User and assistant messages retained for a general Codex thread. */
   workspaceChatMessages: defineTable({
+    /** Immutable passages allowed as links in this reply, retained across branches. */
+    citations: v.optional(v.array(citationFields)),
     chatId: v.id("workspaceChats"),
     clientMessageId: v.string(),
     role: v.union(v.literal("user"), v.literal("assistant")),
@@ -409,6 +445,20 @@ export default defineSchema({
       v.literal("failed")
     ),
     codexTurnId: v.optional(v.string()),
+    /** Pending or decided file operation approval attached to this assistant turn. */
+    agentApproval: v.optional(
+      v.object({
+        id: v.string(),
+        method: v.string(),
+        details: v.string(),
+        status: v.union(
+          v.literal("pending"),
+          v.literal("approved"),
+          v.literal("denied")
+        ),
+        expiresAt: v.number(),
+      })
+    ),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
@@ -417,15 +467,33 @@ export default defineSchema({
 
   /** Context items introduced by one message in a general Codex thread. */
   workspaceChatAttachments: defineTable({
+    documentId: v.optional(v.id("chatDocuments")),
     chatId: v.id("workspaceChats"),
     clientMessageId: v.string(),
-    kind: v.union(v.literal("project"), v.literal("file"), v.literal("link")),
+    kind: v.union(
+      v.literal("card"),
+      v.literal("project"),
+      v.literal("file"),
+      v.literal("link")
+    ),
     label: v.string(),
     projectId: v.optional(v.id("projects")),
+    itemId: v.optional(v.id("learningItems")),
     text: v.optional(v.string()),
     url: v.optional(v.string()),
     createdAt: v.number(),
   }).index("by_chat_createdAt", ["chatId", "createdAt"]),
+
+  /** Ad hoc chat uploads retain originals without entering study generation. */
+  chatDocuments: defineTable({
+    projectId: v.id("projects"),
+    filename: v.string(),
+    relativeKey: v.string(),
+    mimeType: v.string(),
+    text: v.string(),
+    sizeBytes: v.number(),
+    createdAt: v.number(),
+  }).index("by_project", ["projectId"]),
 
   conversations: defineTable({
     projectId: v.id("projects"),

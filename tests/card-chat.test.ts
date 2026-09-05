@@ -277,6 +277,10 @@ test("returns IDs and handles completion racing the turn/start response", async 
     text: "A clear answer.",
   })
   assert.equal(events.filter((event) => event.type === "text-delta").length, 1)
+  assert.deepEqual(
+    events.find((event) => event.type === "turn-started"),
+    { type: "turn-started", threadId: "thr_new", turnId: "turn_1" }
+  )
   assert.equal(events.filter((event) => event.type === "completed").length, 1)
   assert.equal(transport.closed, true)
   assert.equal(transport.startOptions?.approvalPolicy, "on-request")
@@ -336,6 +340,10 @@ test("aborts an in-flight turn, interrupts it, closes transport, and emits one e
   )
   assert.equal(transport.interruptCalls, 1)
   assert.equal(transport.closed, true)
+  assert.deepEqual(
+    events.find((event) => event.type === "turn-started"),
+    { type: "turn-started", threadId: "thr_new", turnId: "turn_1" }
+  )
   assert.equal(events.filter((event) => event.type === "error").length, 1)
 })
 
@@ -363,6 +371,10 @@ test("times out an in-flight turn and cleans up its transport", async () => {
   )
   assert.equal(transport.interruptCalls, 1)
   assert.equal(transport.closed, true)
+  assert.deepEqual(
+    events.find((event) => event.type === "turn-started"),
+    { type: "turn-started", threadId: "thr_new", turnId: "turn_1" }
+  )
   assert.equal(events.filter((event) => event.type === "error").length, 1)
 })
 

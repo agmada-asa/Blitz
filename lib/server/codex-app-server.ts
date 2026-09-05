@@ -80,7 +80,7 @@ export type CodexWebSearchMode = "cached" | "indexed" | "live" | "disabled"
 export interface CodexPermissionApprovalResponse {
   /** Explicitly granted filesystem and network permissions. */
   permissions: {
-    fileSystem?: unknown[] | null
+    fileSystem?: Record<string, unknown> | unknown[] | null
     network?: { enabled?: boolean | null } | null
   }
   /** Permission lifetime; defaults to the current turn. */
@@ -222,6 +222,10 @@ interface PendingRequest {
 export interface CodexStartThreadOptions {
   /** Optional model override supported by the installed protocol. */
   model?: string
+  /** Application-owned instructions attached separately from the user request. */
+  developerInstructions?: string
+  /** Routes interactive approvals to the human using Blitz. */
+  approvalsReviewer?: "user"
   /** Optional persisted or in-memory thread selection. */
   ephemeral?: boolean
   /** Optional approval policy; defaults to the safe on-request policy. */
@@ -232,6 +236,10 @@ export interface CodexStartThreadOptions {
 
 /** Explicit policy overrides accepted when resuming a stored thread. */
 export interface CodexResumeThreadOptions {
+  /** Reattaches current application instructions on each resumed turn. */
+  developerInstructions?: string
+  /** Keeps approval decisions with the user. */
+  approvalsReviewer?: "user"
   /** Optional model override supported by the installed protocol. */
   model?: string
   /** Approval policy; defaults to on-request for this bridge. */
@@ -242,6 +250,17 @@ export interface CodexResumeThreadOptions {
 
 /** Parameters accepted by the bridge's narrow turn/start API. */
 export interface CodexStartTurnOptions {
+  /** Explicit per-turn sandbox overrides, independent of local user configuration. */
+  sandboxPolicy?:
+    | { type: "dangerFullAccess" }
+    | { type: "readOnly"; networkAccess: boolean }
+    | {
+        type: "workspaceWrite"
+        writableRoots: string[]
+        networkAccess: boolean
+        excludeSlashTmp: boolean
+        excludeTmpdirEnvVar: boolean
+      }
   /** User text sent as the supported text input item. */
   text: string
   /** Optional model override supported by the installed protocol. */
@@ -510,12 +529,16 @@ export class CodexAppServerClient {
     if (!threadId) throw new CodexAppServerError("threadId is required")
     const {
       model,
+      developerInstructions,
+      approvalsReviewer,
       approvalPolicy = "on-request",
       sandbox = "read-only",
     } = options
     const result = await this.request("thread/resume", {
       threadId,
       cwd: this.workspaceDirectory,
+      ...(developerInstructions === undefined ? {} : { developerInstructions }),
+      ...(approvalsReviewer === undefined ? {} : { approvalsReviewer }),
       approvalPolicy,
       sandbox,
       ...(model === undefined ? {} : { model }),
@@ -534,6 +557,9 @@ export class CodexAppServerClient {
       threadId,
       cwd: this.workspaceDirectory,
       input: [{ type: "text", text: options.text }],
+      ...(options.sandboxPolicy === undefined
+        ? {}
+        : { sandboxPolicy: options.sandboxPolicy }),
       ...(options.model === undefined ? {} : { model: options.model }),
       ...(options.effort === undefined ? {} : { effort: options.effort }),
     })

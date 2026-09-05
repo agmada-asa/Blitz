@@ -1,6 +1,7 @@
-/** Supplies bounded project source snapshots to the server-side workspace chat route. */
+/** Supplies bounded project and card source snapshots to the workspace chat route. */
 
-import { query } from "./_generated/server"
+import { query, type QueryCtx } from "./_generated/server"
+import type { Doc, Id } from "./_generated/dataModel"
 import { v } from "convex/values"
 import { retrieveProjectContext } from "./sourceRetrieval"
 
@@ -8,6 +9,55 @@ import { retrieveProjectContext } from "./sourceRetrieval"
 const MAX_PROJECTS = 3
 /** Maximum source characters returned across all attached projects. */
 const MAX_CONTEXT_CHARACTERS = 48_000
+/** Maximum source characters returned for one card attachment. */
+const MAX_CARD_CONTEXT_CHARACTERS = 48_000
+
+/** Loads and validates the prepared source snapshot associated with one card. */
+async function requirePreparedCard(
+  ctx: Pick<QueryCtx, "db">,
+  projectId: Id<"projects">,
+  itemId: Id<"learningItems">
+): Promise<{
+  projectId: Id<"projects">
+  item: Doc<"learningItems">
+  source: {
+    filename: string
+    kind: "pdf" | "markdown" | "text" | "paste"
+    extractedText: string
+  }
+}> {
+  if (!(await ctx.db.get(projectId))) throw new Error("Project not found")
+  const item = await ctx.db.get(itemId)
+  if (!item || item.projectId !== projectId)
+    throw new Error("Learning item does not belong to project")
+  if (!item.sourceChunkId)
+    throw new Error("Card source chunk is not available for chat")
+  const chunk = await ctx.db.get(item.sourceChunkId)
+  if (!chunk) throw new Error("Card source chunk was not found")
+  const job = await ctx.db.get(chunk.jobId)
+  if (!job || job.projectId !== projectId || job.sourceId !== chunk.sourceId)
+    throw new Error("Card source preparation snapshot was not found")
+  const source = await ctx.db.get(chunk.sourceId)
+  if (!source || source.projectId !== projectId)
+    throw new Error("Card source was not found")
+  if (
+    item.sourceChunkOrdinal !== undefined &&
+    item.sourceChunkOrdinal !== chunk.ordinal
+  )
+    throw new Error("Card source chunk ordinal no longer matches")
+  return {
+    projectId,
+    item,
+    source: {
+      filename: source.filename,
+      kind: source.kind,
+      extractedText: job.sourceTextSnapshot.slice(
+        0,
+        MAX_CARD_CONTEXT_CHARACTERS
+      ),
+    },
+  }
+}
 
 /** Loads real project titles and bounded ready-source text for one chat turn. */
 export const getProjects = query({
@@ -62,5 +112,29 @@ export const getProjects = query({
       })
     }
     return projects
+  },
+})
+
+/** Returns one card with its bounded prepared source context for a new chat. */
+export const getCard = query({
+  args: { projectId: v.id("projects"), itemId: v.id("learningItems") },
+  handler: async (ctx, args) => {
+    const { item, source } = await requirePreparedCard(
+      ctx,
+      args.projectId,
+      args.itemId
+    )
+    return {
+      id: item._id,
+      projectId: args.projectId,
+      title: item.title,
+      body: item.body,
+      ...(item.question === undefined ? {} : { question: item.question }),
+      ...(item.options === undefined
+        ? {}
+        : { options: item.options.map((option) => option.text) }),
+      sourceLabel: source.filename,
+      source,
+    }
   },
 })

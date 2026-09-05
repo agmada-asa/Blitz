@@ -2,28 +2,13 @@
 
 /** Lets learners choose the saved model and reasoning level for replies without leaving chat. */
 
-import { Fragment, useEffect, useState } from "react"
+import { useEffect, useState } from "react"
 import { useMutation, useQuery } from "convex/react"
 
-import { Button } from "@/components/ui/button"
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuSub,
-  DropdownMenuSubContent,
-  DropdownMenuSubTrigger,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
-import { CheckIcon } from "@/components/ui/icon"
+import { ModelReasoningPicker } from "@/components/settings/model-reasoning-picker"
 import { api } from "@/convex/_generated/api"
 import {
   DEFAULT_AI_MODEL_SETTINGS,
-  type CodexModelOption,
-  getCodexModelPickerOptions,
-  getSupportedAiReasoningEfforts,
   validateAiModelSettings,
   type AiModelSettings,
   type AiReasoningEffort,
@@ -33,30 +18,6 @@ import {
 type ReplyModelPickerProps = {
   disabled?: boolean
   onSaveStateChange?: (saving: boolean) => void
-}
-
-/** Formats a machine-readable effort value for a compact picker label. */
-function reasoningLabel(effort: AiReasoningEffort): string {
-  return effort === "xhigh"
-    ? "Extra high"
-    : `${effort.slice(0, 1).toUpperCase()}${effort.slice(1)}`
-}
-
-/** Groups model choices by their visible GPT generation for a readable menu. */
-function groupModelOptions(
-  options: readonly CodexModelOption[]
-): Array<{ generation: string; options: CodexModelOption[] }> {
-  const grouped = new Map<string, CodexModelOption[]>()
-  for (const option of options) {
-    const generation = option.label.match(/^GPT-[\d.]+/i)?.[0] ?? "Other"
-    const group = grouped.get(generation)
-    if (group) group.push(option)
-    else grouped.set(generation, [option])
-  }
-  return Array.from(grouped, ([generation, groupedOptions]) => ({
-    generation,
-    options: groupedOptions,
-  }))
 }
 
 /** Loads the saved reply configuration before rendering its compact controls. */
@@ -131,75 +92,16 @@ function ReplyModelPickerEditor({
   }
 
   const isDisabled = disabled || isSaving
-  const modelOptions = getCodexModelPickerOptions(draft.replyModel)
-  const selectedModel = modelOptions.find(
-    (option) => option.id === draft.replyModel
-  )
-  const selectedModelLabel = selectedModel?.label ?? draft.replyModel
-  const groups = groupModelOptions(modelOptions)
 
   return (
     <div className="flex min-w-0 items-center">
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button
-            type="button"
-            variant="ghost"
-            disabled={isDisabled}
-            aria-label={`Reply model ${selectedModelLabel}, ${reasoningLabel(draft.replyEffort)} reasoning`}
-            title={`${selectedModelLabel}, ${reasoningLabel(draft.replyEffort)} reasoning`}
-            className="h-8 max-w-[15rem] min-w-0 gap-1 rounded-lg px-2 text-xs text-muted-foreground hover:text-foreground"
-          >
-            <span className="truncate">{selectedModelLabel}</span>
-            <span className="shrink-0 text-muted-foreground/70">
-              · {reasoningLabel(draft.replyEffort)}
-            </span>
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="start" className="w-60">
-          <DropdownMenuLabel>Model</DropdownMenuLabel>
-          {groups.map((group, groupIndex) => (
-            <Fragment key={group.generation}>
-              {groupIndex ? <DropdownMenuSeparator /> : null}
-              {group.options.map((option) => (
-                <DropdownMenuSub key={option.id}>
-                  <DropdownMenuSubTrigger
-                    disabled={isDisabled}
-                    className="min-w-0"
-                  >
-                    <span className="truncate">{option.label}</span>
-                  </DropdownMenuSubTrigger>
-                  <DropdownMenuSubContent className="w-40">
-                    <DropdownMenuLabel>Reasoning</DropdownMenuLabel>
-                    {getSupportedAiReasoningEfforts(option.id).map((effort) => {
-                      const isSelected =
-                        option.id === draft.replyModel &&
-                        effort === draft.replyEffort
-                      return (
-                        <DropdownMenuItem
-                          key={effort}
-                          onSelect={() =>
-                            selectModelAndReasoning(option.id, effort)
-                          }
-                          className="justify-between"
-                        >
-                          <span>{reasoningLabel(effort)}</span>
-                          {isSelected ? (
-                            <CheckIcon
-                              aria-hidden="true"
-                              className="size-4 text-brand"
-                            />
-                          ) : null}
-                        </DropdownMenuItem>
-                      )
-                    })}
-                  </DropdownMenuSubContent>
-                </DropdownMenuSub>
-              ))}
-            </Fragment>
-          ))}
-        </DropdownMenuContent>
-      </DropdownMenu>
+      <ModelReasoningPicker
+        model={draft.replyModel}
+        reasoning={draft.replyEffort}
+        disabled={isDisabled}
+        labelPrefix="Reply model"
+        onChange={selectModelAndReasoning}
+      />
       <span aria-live="polite" className="sr-only">
         {isSaving ? "Saving reply model" : feedback}
       </span>

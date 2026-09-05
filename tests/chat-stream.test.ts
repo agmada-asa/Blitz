@@ -87,3 +87,15 @@ test("failed progress writes do not prevent final persistence", async () => {
   writer.append("retained by completion")
   await writer.finish()
 })
+
+test("continued progress appends to the saved partial response", async () => {
+  const snapshots: string[] = []
+  const writer = createChatProgress(async (reply) => {
+    snapshots.push(reply)
+  }, "Partial ")
+
+  writer.append("answer.")
+  await writer.finish()
+
+  assert.deepEqual(snapshots, ["Partial answer."])
+})
