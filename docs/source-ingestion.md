@@ -10,4 +10,8 @@ Markers are recognized only when they are explicit line prefixes: `[Page …]`, 
 
 Normalization rejects empty input, filenames longer than 255 characters, and text above 2,000,000 characters or 8,000,000 UTF-8 bytes. Segmentation reports the source ID and configured chunk limit when the maximum chunk count is exceeded. `SourceIngestionError` exposes a stable error code and safe bounded context without storing source contents.
 
+Large browser imports use the shared bounded splitter described in
+`docs/source-splitting.md`; source parts retain their complete extracted text
+and visible part attribution instead of truncating at the persistence limit.
+
 `fetchPublicSource` is a small optional URL adapter. It accepts only HTTP(S), rejects userinfo and nonstandard ports, blocks localhost and local hostnames, resolves every hostname and rejects private, link-local, documentation, multicast, and other non-public addresses, validates each redirect, and enforces one total deadline plus a response byte cap. Its default Node `http`/`https` transport connects through the validated DNS address while retaining the original hostname for TLS SNI and `Host`, which prevents a second DNS lookup from rebinding the request. The injectable fetch implementation exists for deterministic tests and must not be used as an unpinned production transport. It returns bounded bytes and content type; it does not parse HTML. Requests do not use browser cookies or local file access. HTML extraction needs a vetted parser dependency or a dedicated upstream adapter before web pages can be treated as faithful learning sources.

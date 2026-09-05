@@ -10,6 +10,7 @@ import {
   buildResearchProposalPrompt,
   parseResearchProposal,
   ResearchProposalError,
+  type ResearchActivityEvent,
   type ResearchProposal,
 } from "./research-proposal.ts"
 import {
@@ -49,6 +50,12 @@ export interface ResearchProposalQueue {
     proposalId: string
     leaseToken: string
     error: string
+  }): Promise<unknown>
+  /** Appends one bounded observable activity event while the lease is live. */
+  recordActivity?(args: {
+    proposalId: string
+    leaseToken: string
+    event: ResearchActivityEvent
   }): Promise<unknown>
 }
 
@@ -119,8 +126,34 @@ export async function runResearchProposalStep(
     leaseToken,
   })
   if (!claim) return { status: "idle" }
+  const activityStartedAt = Date.now()
+  const activityWrites: Promise<unknown>[] = []
   try {
     options.signal?.throwIfAborted()
+    /** Persists and forwards one safe lifecycle event without blocking the turn. */
+    const emitActivity = (
+      event: Omit<ResearchActivityEvent, "occurredAt" | "elapsedMs">
+    ): void => {
+      const safeEvent: ResearchActivityEvent = {
+        ...event,
+        occurredAt: Date.now(),
+        elapsedMs: Math.max(0, Date.now() - activityStartedAt),
+      }
+      const write = options.queue.recordActivity?.({
+        proposalId: claim.proposalId,
+        leaseToken,
+        event: safeEvent,
+      })
+      if (write) activityWrites.push(write.catch(() => undefined))
+      options.onEvent?.({
+        type: "activity",
+        notification: {
+          method: "research/activity",
+          params: safeEvent,
+        },
+      })
+    }
+    emitActivity({ stage: "running", label: "Preparing research" })
     const prompt = buildResearchProposalPrompt(claim.request)
     const runTurn =
       options.runTurn ??
@@ -155,6 +188,26 @@ export async function runResearchProposalStep(
           ?.type === "webSearch"
       ) {
         webSearchCount += 1
+        const item = (
+          event.notification.params as { item?: Record<string, unknown> }
+        ).item
+        const action = item?.action as Record<string, unknown> | undefined
+        const rawQuery = action?.query
+        const rawQueries = action?.queries
+        const query =
+          typeof rawQuery === "string"
+            ? rawQuery
+            : Array.isArray(rawQueries)
+              ? rawQueries
+                  .filter((value): value is string => typeof value === "string")
+                  .join("; ")
+              : undefined
+        emitActivity({
+          stage: "searching",
+          label: "Searching the web",
+          tool: "web_search",
+          ...(query === undefined ? {} : { query: query.slice(0, 500) }),
+        })
       }
       options.onEvent?.(event)
     }
@@ -162,6 +215,7 @@ export async function runResearchProposalStep(
       signal: options.signal,
       onEvent: handleTurnEvent,
     })
+    emitActivity({ stage: "synthesizing", label: "Preparing the proposal" })
     options.signal?.throwIfAborted()
     let proposal: ResearchProposal
     try {
@@ -186,6 +240,8 @@ export async function runResearchProposalStep(
         "Research proposal contained sources without a hosted web search"
       )
     }
+    emitActivity({ stage: "completed", label: "Research proposal ready" })
+    await Promise.all(activityWrites)
     await options.queue.complete({
       proposalId: claim.proposalId,
       leaseToken,
@@ -198,6 +254,21 @@ export async function runResearchProposalStep(
       proposal,
     }
   } catch (error) {
+    const failedActivity: ResearchActivityEvent = {
+      stage: "failed",
+      label: "Research proposal failed",
+      occurredAt: Date.now(),
+      elapsedMs: Math.max(0, Date.now() - activityStartedAt),
+    }
+    if (options.queue.recordActivity) {
+      await options.queue
+        .recordActivity({
+          proposalId: claim.proposalId,
+          leaseToken,
+          event: failedActivity,
+        })
+        .catch(() => undefined)
+    }
     await options.queue
       .fail({ proposalId: claim.proposalId, leaseToken, error: safeFailure() })
       .catch(() => undefined)

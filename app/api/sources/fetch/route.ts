@@ -21,6 +21,24 @@ function statusForError(error: SourceIngestionError): number {
   return 502
 }
 
+/** Maps bounded URL failure context to concise recovery copy for the uploader. */
+function messageForError(error: SourceIngestionError): string {
+  const status =
+    typeof error.context.status === "number" ? error.context.status : undefined
+  if (error.code === "url-fetch-failed") {
+    if (status === 401 || status === 403)
+      return "The source site refused the download. Try a public direct link."
+    if (status === 404)
+      return "The source was not found at that link. Check the URL and try again."
+    if (status !== undefined && status >= 500)
+      return "The source site returned an error. Try again later or choose another link."
+    return "The source link returned an error. Check the URL or choose another public link."
+  }
+  if (error.code === "url-redirect-limit")
+    return "That link redirected too many times. Try the final public URL."
+  return error.message
+}
+
 /** Handles one URL import request without forwarding browser cookies or local data. */
 export async function POST(request: Request): Promise<Response> {
   let body: unknown
@@ -91,7 +109,7 @@ export async function POST(request: Request): Promise<Response> {
   } catch (error) {
     if (error instanceof SourceIngestionError) {
       return Response.json(
-        { error: error.message },
+        { error: messageForError(error) },
         { status: statusForError(error) }
       )
     }

@@ -9,8 +9,9 @@ import {
   MAX_DOWNLOADED_SOURCE_BYTES,
 } from "../lib/server/source-ingestion/extract.ts"
 import { SourceIngestionError } from "../lib/server/source-ingestion/errors.ts"
+import { splitSourceText } from "../lib/source-splitting.ts"
 
-/** Builds a tiny deterministic two-page PDF fixture with selectable text. */
+/** Builds deterministic PDF pages with selectable text kept inside each page's bounds. */
 function makePdf(pageTexts: readonly string[]): Uint8Array {
   const pageReferences = pageTexts
     .map((_, index) => `${3 + index} 0 R`)
@@ -20,7 +21,8 @@ function makePdf(pageTexts: readonly string[]): Uint8Array {
     return `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 ${3 + pageTexts.length * 2} 0 R >> >> /Contents ${contentNumber} 0 R >>`
   })
   const contentObjects = pageTexts.map((text) => {
-    const stream = `BT /F1 18 Tf 72 720 Td (${text}) Tj ET`
+    const lines = text.match(/.{1,80}/g) ?? [""]
+    const stream = `BT /F1 11 Tf 14 TL 72 720 Td ${lines.map((line, index) => `${index ? "T* " : ""}(${line}) Tj`).join(" ")} ET`
     return `<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`
   })
   const objects = [
@@ -61,6 +63,30 @@ test("extracts PDF text with page markers", async () => {
   assert.equal(result.kind, "pdf")
   assert.match(result.extractedText, /\[Page 1\]\nFirst page notes/)
   assert.match(result.extractedText, /\[Page 2\]\nSecond page notes/)
+})
+
+/** Covers book-sized extraction and splitting together so the old cap cannot return upstream. */
+test("extracts and splits a PDF longer than one source document", async () => {
+  const pages = Array.from(
+    { length: 160 },
+    (_, index) => `Page ${index + 1} ${"Learning source text. ".repeat(40)}`
+  )
+  const result = await extractDownloadedSource({
+    bytes: makePdf(pages),
+    contentType: "application/pdf",
+    url: "https://example.com/book.pdf",
+  })
+  assert.ok(result.extractedText.length > 120_000)
+  const parts = splitSourceText(result.extractedText)
+  assert.ok(parts.length > 1)
+  assert.ok(parts.every((part) => part.text.length <= 120_000))
+  assert.equal(
+    parts
+      .map((part) => part.text.replace(/^\[Part \d+ of \d+\]\n/, ""))
+      .join(""),
+    result.extractedText
+  )
+  assert.match(result.extractedText, /\[Page 160\]/)
 })
 
 test("extracts readable main HTML text and markdown", async () => {

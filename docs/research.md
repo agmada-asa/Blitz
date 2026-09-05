@@ -11,3 +11,17 @@ The queue has bounded leases, idempotent request IDs, safe failure text, and an 
 The interface must send an explicit `POST /api/research/proposals/apply` with `projectId`, `requestId`, and selected `sourceIndexes` from the stored ready proposal. It sends indexes only; the server resolves URLs from that immutable proposal. Repeating the request is safe: imported sources remain imported, queued or running imports remain unchanged, and a failed selected import is deliberately requeued.
 
 Poll `GET /api/research/proposals/imports?projectId=...&requestId=...` for an `imports` array containing each selected source index, status, and resulting source and preparation job IDs. The local worker performs bounded public URL validation, follows at most three redirects, retains at most 5 MB, extracts readable PDF, PPTX, Markdown, HTML, or text, and atomically creates the source and queued preparation job. Article links that redirect to a site homepage are rejected before preparation. Failed imports include a fixed `failureCategory` such as `site-refused`, `not-found`, `unsupported-format`, `needs-ocr`, `too-large`, `timeout`, or `download-failed`, plus safe recovery copy. Retry a failed item deliberately with another explicit apply request. No planned generated note is created in this flow.
+
+
+## Progress and large sources
+
+Proposals retain up to 32 observable activity events: queue/start, hosted search
+queries, proposal assembly, completion, and failure. Search queries are capped
+at 500 characters. Raw tool results and private reasoning are not recorded.
+Legacy proposals have an empty activity list.
+
+Extraction accepts up to 2,000,000 characters, then splits approved downloads
+into attributed parts no larger than 120,000 characters. Each part commits a
+source and preparation job atomically, with its IDs checkpointed on the import.
+The lease remains live until the final part. Replayed parts must match saved
+content before a retry can continue. See `docs/source-splitting.md`.

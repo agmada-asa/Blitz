@@ -3,6 +3,11 @@
 import { mutation, query, type QueryCtx } from "./_generated/server"
 import type { Doc, Id } from "./_generated/dataModel"
 import { v } from "convex/values"
+import {
+  buildResearchImportCheckpoint,
+  researchImportPartMatchesSource,
+  validateResearchImportPartSequence,
+} from "./research-import-checkpoint"
 
 /** Maximum request text retained for one proposal. */
 export const MAX_RESEARCH_REQUEST_LENGTH = 2_000
@@ -13,6 +18,8 @@ const CLAIM_SCAN_LIMIT = 50
 
 /** Lease duration for one selected-source import. */
 export const RESEARCH_IMPORT_LEASE_MS = 5 * 60 * 1_000
+/** Maximum activity records retained for one proposal. */
+const MAX_RESEARCH_ACTIVITY_EVENTS = 32
 
 /** Stable source-import failure categories retained for client recovery copy. */
 type ResearchImportFailureCategory =
@@ -72,6 +79,23 @@ const proposalValidator = v.object({
   topics: v.array(v.string()),
   sources: v.array(sourceValidator),
   generatedNotes: v.array(generatedNoteValidator),
+})
+
+/** Safe lifecycle event accepted from the local research worker. */
+const activityEventValidator = v.object({
+  stage: v.union(
+    v.literal("queued"),
+    v.literal("running"),
+    v.literal("searching"),
+    v.literal("synthesizing"),
+    v.literal("completed"),
+    v.literal("failed")
+  ),
+  label: v.optional(v.string()),
+  query: v.optional(v.string()),
+  tool: v.optional(v.literal("web_search")),
+  occurredAt: v.number(),
+  elapsedMs: v.number(),
 })
 
 /** Bounds a required text value and returns its trimmed form. */
@@ -163,6 +187,7 @@ function proposalForClient(proposal: Doc<"researchProposals">) {
         }
       : { proposal: null }),
     ...(proposal.lastError === undefined ? {} : { error: proposal.lastError }),
+    activity: proposal.activity ?? [],
     createdAt: proposal.createdAt,
     updatedAt: proposal.updatedAt,
   }
@@ -200,6 +225,14 @@ export const enqueue = mutation({
       topics: [],
       sources: [],
       generatedNotes: [],
+      activity: [
+        {
+          stage: "queued" as const,
+          label: "Research queued",
+          occurredAt: now,
+          elapsedMs: 0,
+        },
+      ],
       createdAt: now,
       updatedAt: now,
     })
@@ -277,6 +310,15 @@ export const claimNext = mutation({
       leaseToken,
       leaseExpiresAt,
       lastError: undefined,
+      activity: [
+        ...(candidate.activity ?? []),
+        {
+          stage: "running" as const,
+          label: "Research started",
+          occurredAt: now,
+          elapsedMs: Math.max(0, now - candidate.createdAt),
+        },
+      ].slice(-MAX_RESEARCH_ACTIVITY_EVENTS),
       updatedAt: now,
     })
     return {
@@ -286,6 +328,41 @@ export const claimNext = mutation({
       request: candidate.request,
       leaseToken,
     }
+  },
+})
+
+/** Appends one bounded observable activity event while a proposal lease is live. */
+export const recordActivity = mutation({
+  args: {
+    proposalId: v.id("researchProposals"),
+    leaseToken: v.string(),
+    event: activityEventValidator,
+  },
+  handler: async (ctx, args) => {
+    const proposal = await ctx.db.get(args.proposalId)
+    if (
+      !proposal ||
+      proposal.status !== "running" ||
+      proposal.leaseToken !== args.leaseToken ||
+      (proposal.leaseExpiresAt ?? 0) <= Date.now()
+    )
+      throw new Error("Research proposal lease is missing or expired")
+    if (args.event.label !== undefined && args.event.label.length > 120)
+      throw new Error("Research activity label is too long")
+    if (args.event.query !== undefined && args.event.query.length > 500)
+      throw new Error("Research activity query is too long")
+    if (
+      !Number.isSafeInteger(args.event.occurredAt) ||
+      args.event.occurredAt < 0
+    )
+      throw new Error("Research activity timestamp is invalid")
+    if (!Number.isSafeInteger(args.event.elapsedMs) || args.event.elapsedMs < 0)
+      throw new Error("Research activity elapsed time is invalid")
+    const activity = [...(proposal.activity ?? []), args.event].slice(
+      -MAX_RESEARCH_ACTIVITY_EVENTS
+    )
+    await ctx.db.patch(proposal._id, { activity, updatedAt: Date.now() })
+    return { status: "recorded" as const }
   },
 })
 
@@ -395,6 +472,14 @@ function importForClient(importRow: Doc<"researchProposalImports">) {
     ...(importRow.preparationJobId === undefined
       ? {}
       : { preparationJobId: importRow.preparationJobId }),
+    ...(importRow.partCount === undefined
+      ? {}
+      : {
+          partCount: importRow.partCount,
+          completedPartCount: importRow.completedPartCount ?? 0,
+          partSourceIds: importRow.partSourceIds ?? [],
+          partPreparationJobIds: importRow.partPreparationJobIds ?? [],
+        }),
     ...(importRow.lastError === undefined
       ? {}
       : { error: importRow.lastError }),
@@ -582,20 +667,30 @@ export const completeImport = mutation({
     ),
     extractedText: v.string(),
     originalUrl: v.string(),
+    partNumber: v.optional(v.number()),
+    totalParts: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const row = await ctx.db.get(args.importId)
-    if (row?.status === "imported" && row.sourceId && row.preparationJobId)
+    if (
+      row?.status === "imported" &&
+      row.sourceId &&
+      row.preparationJobId &&
+      row.partSourceIds === undefined
+    )
       return {
         status: "imported" as const,
         sourceId: row.sourceId,
         preparationJobId: row.preparationJobId,
       }
+    const completedMultipartImport =
+      row?.status === "imported" && row.partSourceIds !== undefined
     if (
       !row ||
-      row.status !== "running" ||
-      row.leaseToken !== args.leaseToken ||
-      (row.leaseExpiresAt ?? 0) <= Date.now()
+      (!completedMultipartImport && row.status !== "running") ||
+      (!completedMultipartImport &&
+        (row.leaseToken !== args.leaseToken ||
+          (row.leaseExpiresAt ?? 0) <= Date.now()))
     )
       throw new Error("Research import lease is missing or expired")
     const proposal = await ctx.db.get(row.proposalId)
@@ -615,6 +710,44 @@ export const completeImport = mutation({
       120_000
     )
     const originalUrl = boundedText(args.originalUrl, "Source URL", 2_048)
+    const partNumber = args.partNumber ?? 1
+    const totalParts = args.totalParts ?? 1
+    const existingPartSourceIds = row.partSourceIds ?? []
+    const existingPartJobIds = row.partPreparationJobIds ?? []
+    validateResearchImportPartSequence({
+      existingPartCount: existingPartSourceIds.length,
+      partNumber,
+      totalParts,
+    })
+    if (
+      (row.partCount !== undefined && row.partCount !== totalParts) ||
+      (row.partCount === undefined && partNumber !== 1) ||
+      existingPartSourceIds.length !== existingPartJobIds.length
+    )
+      throw new Error("Research import part checkpoint is invalid")
+    if (
+      existingPartSourceIds.length >= partNumber &&
+      existingPartJobIds.length >= partNumber
+    ) {
+      const existingSource = await ctx.db.get(
+        existingPartSourceIds[partNumber - 1]
+      )
+      if (
+        !researchImportPartMatchesSource({
+          existingSource,
+          filename,
+          kind: args.kind,
+          extractedText,
+          originalUrl,
+        })
+      )
+        throw new Error("Research import part changed during retry")
+      return {
+        status: "partially_imported" as const,
+        sourceId: existingPartSourceIds[partNumber - 1],
+        preparationJobId: existingPartJobIds[partNumber - 1],
+      }
+    }
     const now = Date.now()
     const sourceId = await ctx.db.insert("sources", {
       projectId: row.projectId,
@@ -639,13 +772,29 @@ export const completeImport = mutation({
       createdAt: now,
       updatedAt: now,
     })
-    await ctx.db.patch(row._id, {
-      status: "imported",
+    const checkpoint = buildResearchImportCheckpoint({
+      existingSourceIds: existingPartSourceIds,
+      existingPreparationJobIds: existingPartJobIds,
       sourceId,
       preparationJobId,
-      workerId: undefined,
-      leaseToken: undefined,
-      leaseExpiresAt: undefined,
+      totalParts,
+    })
+    const completedPartCount = checkpoint.sourceIds.length
+    await ctx.db.patch(row._id, {
+      status: checkpoint.status,
+      ...(row.sourceId === undefined ? { sourceId } : {}),
+      ...(row.preparationJobId === undefined ? { preparationJobId } : {}),
+      partCount: totalParts,
+      completedPartCount,
+      partSourceIds: checkpoint.sourceIds,
+      partPreparationJobIds: checkpoint.preparationJobIds,
+      ...(checkpoint.clearLease
+        ? {
+            workerId: undefined,
+            leaseToken: undefined,
+            leaseExpiresAt: undefined,
+          }
+        : {}),
       failureCategory: undefined,
       lastError: undefined,
       updatedAt: now,

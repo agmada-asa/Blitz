@@ -6,6 +6,7 @@ import {
   type ResearchImportedSource,
 } from "./research-import.ts"
 import { SourceIngestionError } from "./source-ingestion/errors.ts"
+import { splitSourceText, sourcePartFilename } from "../source-splitting.ts"
 
 /** Stable source-import categories suitable for retry and recovery copy. */
 export type ResearchImportFailureCategory =
@@ -84,6 +85,8 @@ export interface ResearchImportQueue {
     kind: "pdf" | "markdown" | "text"
     extractedText: string
     originalUrl: string
+    partNumber?: number
+    totalParts?: number
   }): Promise<unknown>
   /** Records a classified per-source error while preserving deliberate retry. */
   failImport(args: {
@@ -135,16 +138,43 @@ export async function runResearchImportStep(
       claim.source.url
     )
     options.signal?.throwIfAborted()
-    const result = await options.queue.completeImport({
-      importId: claim.importId,
-      leaseToken: claim.leaseToken,
-      // Use the reviewed source title instead of generic URL names such as index.html.
-      filename: claim.source.title,
-      kind: source.kind,
-      extractedText: source.extractedText,
-      originalUrl: source.originalUrl,
-    })
-    const persisted = result as { sourceId?: string; preparationJobId?: string }
+    const parts = splitSourceText(source.extractedText)
+    let persisted: {
+      sourceId?: string
+      preparationJobId?: string
+      sourceIds?: string[]
+      preparationJobIds?: string[]
+    } = {}
+    for (const part of parts) {
+      options.signal?.throwIfAborted()
+      const result = await options.queue.completeImport({
+        importId: claim.importId,
+        leaseToken: claim.leaseToken,
+        filename: sourcePartFilename(
+          claim.source.title,
+          part.partNumber,
+          part.totalParts
+        ),
+        kind: source.kind,
+        extractedText: part.text,
+        originalUrl: source.originalUrl,
+        partNumber: part.partNumber,
+        totalParts: part.totalParts,
+      })
+      const current = result as typeof persisted
+      persisted = {
+        ...persisted,
+        ...current,
+        sourceIds: [
+          ...(persisted.sourceIds ?? []),
+          ...(current.sourceId ? [current.sourceId] : []),
+        ],
+        preparationJobIds: [
+          ...(persisted.preparationJobIds ?? []),
+          ...(current.preparationJobId ? [current.preparationJobId] : []),
+        ],
+      }
+    }
     return {
       status: "imported",
       importId: claim.importId,
@@ -154,6 +184,12 @@ export async function runResearchImportStep(
       ...(persisted.preparationJobId === undefined
         ? {}
         : { preparationJobId: persisted.preparationJobId }),
+      ...(parts.length > 1 && persisted.sourceIds !== undefined
+        ? { sourceIds: persisted.sourceIds }
+        : {}),
+      ...(parts.length > 1 && persisted.preparationJobIds !== undefined
+        ? { preparationJobIds: persisted.preparationJobIds }
+        : {}),
     }
   } catch (error) {
     const failureCategory = classifyResearchImportFailure(error)

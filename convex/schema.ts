@@ -36,6 +36,23 @@ const writingActivityItem = v.object({
   revealed: v.boolean(),
 })
 
+/** Bounded, user-visible research lifecycle event with no model internals. */
+const researchActivityEvent = v.object({
+  stage: v.union(
+    v.literal("queued"),
+    v.literal("running"),
+    v.literal("searching"),
+    v.literal("synthesizing"),
+    v.literal("completed"),
+    v.literal("failed")
+  ),
+  label: v.optional(v.string()),
+  query: v.optional(v.string()),
+  tool: v.optional(v.literal("web_search")),
+  occurredAt: v.number(),
+  elapsedMs: v.number(),
+})
+
 /** Convex schema for projects, uploaded sources, generated cards, and attempts. */
 export default defineSchema({
   projects: defineTable({
@@ -54,6 +71,8 @@ export default defineSchema({
     ),
     extractedText: v.string(),
     originalUrl: v.optional(v.string()),
+    /** Deterministic import identity used to make retries idempotent. */
+    importFingerprint: v.optional(v.string()),
     status: v.union(
       v.literal("processing"),
       v.literal("ready"),
@@ -64,7 +83,8 @@ export default defineSchema({
     createdAt: v.number(),
   })
     .index("by_project", ["projectId"])
-    .index("by_project_status", ["projectId", "status"]),
+    .index("by_project_status", ["projectId", "status"])
+    .index("by_project_fingerprint", ["projectId", "importFingerprint"]),
 
   cards: defineTable({
     projectId: v.id("projects"),
@@ -309,6 +329,8 @@ export default defineSchema({
         reason: v.string(),
       })
     ),
+    /** Optional bounded activity timeline for active and completed research. */
+    activity: v.optional(v.array(researchActivityEvent)),
     workerId: v.optional(v.string()),
     leaseToken: v.optional(v.string()),
     leaseExpiresAt: v.optional(v.number()),
@@ -333,6 +355,11 @@ export default defineSchema({
     ),
     sourceId: v.optional(v.id("sources")),
     preparationJobId: v.optional(v.id("preparationJobs")),
+    /** Durable multi-part import checkpoint; absent on legacy single-part rows. */
+    partCount: v.optional(v.number()),
+    completedPartCount: v.optional(v.number()),
+    partSourceIds: v.optional(v.array(v.id("sources"))),
+    partPreparationJobIds: v.optional(v.array(v.id("preparationJobs"))),
     workerId: v.optional(v.string()),
     leaseToken: v.optional(v.string()),
     leaseExpiresAt: v.optional(v.number()),

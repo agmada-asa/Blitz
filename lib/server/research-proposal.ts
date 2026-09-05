@@ -15,6 +15,22 @@ export const MAX_RESEARCH_TOPICS = 12
 export const MAX_RESEARCH_SOURCES = 20
 /** Maximum number of planned generated notes in one proposal. */
 export const MAX_RESEARCH_GENERATED_NOTES = 12
+/** Maximum persisted observable activity records per proposal. */
+export const MAX_RESEARCH_ACTIVITY_EVENTS = 32
+
+/** Safe lifecycle stages surfaced to the research interface. */
+export type ResearchActivityStage =
+  "queued" | "running" | "searching" | "synthesizing" | "completed" | "failed"
+
+/** Bounded, user-visible research activity with no model internals. */
+export interface ResearchActivityEvent {
+  readonly stage: ResearchActivityStage
+  readonly label?: string
+  readonly query?: string
+  readonly tool?: "web_search"
+  readonly occurredAt: number
+  readonly elapsedMs: number
+}
 
 /** One source suggestion, always unverified until a later approved import step. */
 export interface ResearchProposalSource {

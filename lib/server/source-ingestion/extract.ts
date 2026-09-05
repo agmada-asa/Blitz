@@ -6,8 +6,8 @@ import { SourceIngestionError } from "./errors.ts"
 
 /** Maximum downloaded bytes accepted by the research extraction boundary. */
 export const MAX_DOWNLOADED_SOURCE_BYTES = 5_000_000
-/** Maximum extracted characters retained for one approved source. */
-export const MAX_DOWNLOADED_TEXT_LENGTH = 120_000
+/** Maximum extracted text accepted before the importer splits it into parts. */
+export const MAX_DOWNLOADED_TEXT_LENGTH = 2_000_000
 /** Maximum PDF pages inspected by one extraction request. */
 export const MAX_PDF_PAGES = 500
 /** Maximum uncompressed slide XML retained while reading one PPTX archive. */

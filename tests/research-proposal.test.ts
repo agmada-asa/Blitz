@@ -80,6 +80,7 @@ test("proposal parser rejects wrappers and prompt forbids importing", () => {
 test("research worker validates and completes one leased proposal", async () => {
   const completed: unknown[] = []
   const failed: unknown[] = []
+  const activity: Array<{ stage: string; query?: string }> = []
   const queue: ResearchProposalQueue = {
     claimNext: async () => ({
       proposalId: "proposal-1",
@@ -94,6 +95,9 @@ test("research worker validates and completes one leased proposal", async () => 
     fail: async (value) => {
       failed.push(value)
     },
+    recordActivity: async ({ event }) => {
+      activity.push(event)
+    },
   }
   const workspace = await mkdtemp(join(tmpdir(), "blitz-research-worker-test-"))
   try {
@@ -106,7 +110,14 @@ test("research worker validates and completes one leased proposal", async () => 
           type: "activity",
           notification: {
             method: "item/completed",
-            params: { item: { type: "webSearch" } },
+            params: {
+              item: {
+                type: "webSearch",
+                action: { query: "synthesis ".repeat(100) },
+                results: "private tool output",
+                reasoning: "private reasoning",
+              },
+            },
           },
         })
         return { text: JSON.stringify(validProposal()) }
@@ -115,6 +126,18 @@ test("research worker validates and completes one leased proposal", async () => 
     assert.equal(result.status, "ready")
     assert.equal(completed.length, 1)
     assert.equal(failed.length, 0)
+    assert.deepEqual(
+      activity.map((event) => event.stage),
+      ["running", "searching", "synthesizing", "completed"]
+    )
+    assert.equal(
+      activity.find((event) => event.stage === "searching")?.query?.length,
+      500
+    )
+    assert.doesNotMatch(
+      JSON.stringify(activity),
+      /private tool output|private reasoning/
+    )
   } finally {
     await rm(workspace, { recursive: true, force: true })
   }

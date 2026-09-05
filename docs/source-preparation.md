@@ -77,8 +77,8 @@ Each generation uses a private temporary directory and an ephemeral Codex
 thread with hosted web search disabled. Research planning retains its separate live-search configuration. The worker removes that directory after the turn. It never changes the
 repository through model tools. Interrupting the worker preserves committed
 chunks, and a failed job can be retried from its saved ordinal. The current
-source snapshot limit is 120,000 characters per file; larger source storage is
-separate work even though normalization itself accepts larger text.
+source snapshot limit is 120,000 characters per part. Larger uploads are split
+before queueing, as described in `docs/source-splitting.md`.
 
 Generation asks multiple-answer questions to include at least one incorrect
 option, so a learner must distinguish the complete answer set. If a model

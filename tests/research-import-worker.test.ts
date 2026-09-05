@@ -8,6 +8,82 @@ import {
   type ResearchImportQueue,
 } from "../lib/server/research-import-worker.ts"
 import { SourceIngestionError } from "../lib/server/source-ingestion/errors.ts"
+import {
+  buildResearchImportCheckpoint,
+  researchImportPartMatchesSource,
+  validateResearchImportPartSequence,
+} from "../convex/research-import-checkpoint.ts"
+
+/** Verifies the durable multipart transition keeps the lease until the final part. */
+test("multipart checkpoint retains lease before final part and clears it at completion", () => {
+  const first = buildResearchImportCheckpoint({
+    existingSourceIds: [],
+    existingPreparationJobIds: [],
+    sourceId: "source-1",
+    preparationJobId: "job-1",
+    totalParts: 2,
+  })
+  assert.deepEqual(first, {
+    status: "running",
+    sourceIds: ["source-1"],
+    preparationJobIds: ["job-1"],
+    clearLease: false,
+  })
+  const second = buildResearchImportCheckpoint({
+    existingSourceIds: first.sourceIds,
+    existingPreparationJobIds: first.preparationJobIds,
+    sourceId: "source-2",
+    preparationJobId: "job-2",
+    totalParts: 2,
+  })
+  assert.equal(second.status, "imported")
+  assert.equal(second.clearLease, true)
+})
+
+/** Verifies retries remain idempotent while changed fetched content is rejected. */
+test("multipart replay matches all immutable source fields", () => {
+  const source = {
+    filename: "guide.txt",
+    kind: "text" as const,
+    extractedText: "stable body",
+    originalUrl: "https://example.com/guide.txt",
+  }
+  assert.equal(
+    researchImportPartMatchesSource({
+      existingSource: source,
+      ...source,
+    }),
+    true
+  )
+  assert.equal(
+    researchImportPartMatchesSource({
+      existingSource: source,
+      ...source,
+      extractedText: "changed body",
+    }),
+    false
+  )
+})
+
+/** Verifies gaps and mismatched checkpoint counts fail before a database write. */
+test("multipart checkpoint rejects gaps and mismatched arrays", () => {
+  assert.throws(() =>
+    validateResearchImportPartSequence({
+      existingPartCount: 0,
+      partNumber: 2,
+      totalParts: 2,
+    })
+  )
+  assert.throws(() =>
+    buildResearchImportCheckpoint({
+      existingSourceIds: ["source-1"],
+      existingPreparationJobIds: [],
+      sourceId: "source-2",
+      preparationJobId: "job-2",
+      totalParts: 2,
+    })
+  )
+})
 
 /** Maps known source failures to actionable categories without retaining details. */
 test("classifies refused, missing, oversized, OCR, and timeout failures", () => {
@@ -120,4 +196,51 @@ test("research import worker turns fetch failures into deliberate retries", asyn
     failureCategory: "download-failed",
   })
   assert.deepEqual(failures, [{ failureCategory: "download-failed" }])
+})
+
+/** Splits a large approved source into durable bounded completion checkpoints. */
+test("research import worker completes oversized sources as attributed parts", async () => {
+  const completed: Array<Record<string, unknown>> = []
+  const queue: ResearchImportQueue = {
+    claimNextImport: async () => ({
+      importId: "import-large",
+      projectId: "project-1",
+      sourceIndex: 0,
+      source: {
+        url: "https://example.com/manual.html",
+        title: "Manual",
+        reason: "Covers the requested topic.",
+        verification: "suggested-unverified",
+      },
+      leaseToken: "lease-large",
+    }),
+    completeImport: async (value) => {
+      completed.push(value as unknown as Record<string, unknown>)
+      return {
+        sourceId: `source-${value.partNumber}`,
+        preparationJobId: `job-${value.partNumber}`,
+      }
+    },
+    failImport: async () => undefined,
+  }
+  const result = await runResearchImportStep({
+    queue,
+    workerId: "worker-1",
+    fetchSource: async () => ({
+      filename: "manual.html",
+      kind: "markdown",
+      extractedText: `${"A".repeat(119_000)}\n${"B".repeat(119_000)}`,
+      originalUrl: "https://example.com/manual.html",
+    }),
+  })
+  assert.equal(result.status, "imported")
+  assert.equal(completed.length, 2)
+  assert.deepEqual(
+    completed.map((part) => [part.partNumber, part.totalParts]),
+    [
+      [1, 2],
+      [2, 2],
+    ]
+  )
+  assert.match(String(completed[0]?.filename), /Part 1 of 2/)
 })

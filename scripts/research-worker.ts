@@ -72,6 +72,12 @@ async function main(): Promise<void> {
         leaseToken: args.leaseToken,
         error: args.error,
       }),
+    recordActivity: (args) =>
+      client.mutation(api.research.recordActivity, {
+        proposalId: args.proposalId as Id<"researchProposals">,
+        leaseToken: args.leaseToken,
+        event: args.event,
+      }),
     claimNextImport: async (args): Promise<ResearchImportClaim | null> => {
       const claim = await client.mutation(api.research.claimNextImport, args)
       return claim
@@ -89,6 +95,8 @@ async function main(): Promise<void> {
         kind: args.kind,
         extractedText: args.extractedText,
         originalUrl: args.originalUrl,
+        ...(args.partNumber === undefined ? {} : { partNumber: args.partNumber }),
+        ...(args.totalParts === undefined ? {} : { totalParts: args.totalParts }),
       }),
     failImport: (args) =>
       client.mutation(api.research.failImport, {
