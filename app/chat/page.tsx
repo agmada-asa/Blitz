@@ -1,17 +1,18 @@
 "use client"
 
-/** Reopens a persisted card conversation from background activity or a notice. */
+/** Opens general workspace chat or a persisted card conversation from a deep link. */
 
 import Link from "next/link"
 import { use } from "react"
 import { useQuery } from "convex/react"
 import { useRouter } from "next/navigation"
 import { FeedChatDialog } from "@/components/feed/feed-chat-dialog"
+import { ChatWorkspace } from "@/components/chat/chat-workspace"
 import { Button } from "@/components/ui/button"
 import { api } from "@/convex/_generated/api"
 import type { Id } from "@/convex/_generated/dataModel"
 
-/** Loads the referenced attachment independently of the current feed ordering. */
+/** Routes card deep links to their dialog and otherwise renders general workspace chat. */
 export default function ChatPage({
   searchParams,
 }: {
@@ -28,14 +29,12 @@ export default function ChatPage({
         }
       : "skip"
   )
+  if (!projectId || !itemId) return <ChatWorkspace />
+
   return (
     <main className="mx-auto max-w-4xl px-5 py-8 sm:px-8 sm:py-12">
       <h1 className="text-3xl font-medium">Chat</h1>
-      {!projectId || !itemId ? (
-        <p className="mt-4 text-sm text-muted-foreground">
-          Open a conversation from a card or Activity.
-        </p>
-      ) : !card ? (
+      {!card ? (
         <p className="mt-4 text-sm text-muted-foreground" role="status">
           Loading chat…
         </p>
@@ -49,7 +48,7 @@ export default function ChatPage({
         />
       )}
       <Button asChild variant="outline" className="mt-6">
-        <Link href="/activity">Back to activity</Link>
+        <Link href="/chat">Open workspace chat</Link>
       </Button>
     </main>
   )

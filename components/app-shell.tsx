@@ -5,6 +5,7 @@
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 import {
+  BubbleChatIcon,
   Folder01Icon,
   Home01Icon,
   Clock01Icon,
@@ -49,6 +50,12 @@ export function AppShell({ children }: AppShellProps) {
       active:
         pathname === "/library" ||
         (pathname.startsWith("/projects/") && !isStudyRoute),
+    },
+    {
+      href: "/chat",
+      label: "Chat",
+      icon: BubbleChatIcon,
+      active: pathname === "/chat",
     },
     {
       href: "/activity",
@@ -143,7 +150,7 @@ export function AppShell({ children }: AppShellProps) {
       </div>
       <nav
         aria-label="Primary navigation"
-        className="fixed inset-x-0 bottom-0 z-40 grid h-[calc(76px+env(safe-area-inset-bottom))] grid-cols-3 border-t border-border/70 bg-background/90 px-2 pb-[env(safe-area-inset-bottom)] backdrop-blur-xl md:hidden"
+        className="fixed inset-x-0 bottom-0 z-40 grid h-[calc(76px+env(safe-area-inset-bottom))] grid-cols-4 border-t border-border/70 bg-background/90 px-2 pb-[env(safe-area-inset-bottom)] backdrop-blur-xl md:hidden"
       >
         {links.map((link) => (
           <NavItem key={link.label} {...link} mobile />

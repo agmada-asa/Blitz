@@ -11,6 +11,7 @@
 import type * as activity from "../activity.js";
 import type * as attempts from "../attempts.js";
 import type * as cards from "../cards.js";
+import type * as chatContext from "../chatContext.js";
 import type * as conversations from "../conversations.js";
 import type * as learning from "../learning.js";
 import type * as preparation from "../preparation.js";
@@ -31,6 +32,7 @@ declare const fullApi: ApiFromModules<{
   activity: typeof activity;
   attempts: typeof attempts;
   cards: typeof cards;
+  chatContext: typeof chatContext;
   conversations: typeof conversations;
   learning: typeof learning;
   preparation: typeof preparation;
