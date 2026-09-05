@@ -52,3 +52,8 @@ measured iframe viewport. Study returned immediate server feedback. A ten-questi
 test with two answers returned one correct, one incorrect, and eight unanswered;
 no feedback appeared before Finish. Two-question cursor pages returned the same
 ordered question IDs as the full deck, without duplicates or answer keys.
+
+
+After scoring, correct options are green and selected incorrect options are red,
+with check/cancel icons and equivalent accessible labels. Test mode reveals
+these states only in the finished result view. Missing feedback stays neutral.

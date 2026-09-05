@@ -11,7 +11,7 @@ import type {
   LearningAnswer,
 } from "@/lib/learning/client-contracts"
 import { Button } from "@/components/ui/button"
-import { CheckIcon } from "@/components/ui/icon"
+import { CancelIcon, CheckIcon } from "@/components/ui/icon"
 import { cn } from "@/lib/utils"
 
 /** Props required to render one card in the home feed. */
@@ -168,6 +168,12 @@ export function FeedCardView({ card, onAsk, onSkip, onAnswer }: FeedCardProps) {
                         selectChoice(option.id)
                       }
                     }}
+                    aria-label={optionAriaLabel(
+                      option.text,
+                      isSelected,
+                      feedback !== null,
+                      optionIsCorrect(option.id)
+                    )}
                     className={optionClass(option.id, isSelected)}
                   >
                     <span
@@ -187,6 +193,8 @@ export function FeedCardView({ card, onAsk, onSkip, onAnswer }: FeedCardProps) {
                     >
                       {feedback && optionIsCorrect(option.id) ? (
                         <CheckIcon aria-hidden="true" className="size-4" />
+                      ) : feedback && isSelected ? (
+                        <CancelIcon aria-hidden="true" className="size-4" />
                       ) : card.type === "true-false" ? (
                         option.text.slice(0, 1)
                       ) : (
@@ -260,4 +268,17 @@ export function FeedCardView({ card, onAsk, onSkip, onAnswer }: FeedCardProps) {
       </div>
     </article>
   )
+}
+
+/** Gives screen readers the same correctness state shown by option colors. */
+function optionAriaLabel(
+  text: string,
+  selected: boolean,
+  feedbackShown: boolean,
+  correct: boolean
+): string {
+  if (!feedbackShown) return text
+  if (correct) return `${text}, correct answer`
+  if (selected) return `${text}, your answer was incorrect`
+  return text
 }

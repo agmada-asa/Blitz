@@ -13,6 +13,8 @@ import Link from "next/link"
 import { useEffect, useMemo, useState } from "react"
 
 import { Button } from "@/components/ui/button"
+import { CancelIcon, CheckIcon } from "@/components/ui/icon"
+import { cn } from "@/lib/utils"
 import {
   getSessionProgress,
   makeAnswerSubmission,
@@ -253,6 +255,7 @@ export function StudySession({ projectId, mode, topicId }: StudySessionProps) {
       <TestResults
         questions={questions}
         results={testResults}
+        answers={testAnswers}
         progress={progress}
         projectId={projectId}
       />
@@ -333,6 +336,12 @@ export function StudySession({ projectId, mode, topicId }: StudySessionProps) {
                 }
                 aria-pressed={selected}
                 aria-checked={selected}
+                aria-label={sessionOptionLabel(
+                  option.text,
+                  selected,
+                  practiceResult,
+                  correct
+                )}
                 onClick={() =>
                   question.type === "multiple-answer"
                     ? toggleMultipleOption(option.id)
@@ -343,16 +352,17 @@ export function StudySession({ projectId, mode, topicId }: StudySessionProps) {
                       )
                 }
                 variant="ghost"
-                className={`flex h-auto min-h-14 w-full items-center justify-start gap-4 whitespace-normal rounded-2xl border border-white/10 bg-white/[0.045] px-4 text-left text-sm text-white/80 transition-[background-color,border-color,transform] duration-200 hover:border-white/22 hover:bg-white/[0.075] focus-visible:ring-2 focus-visible:ring-[#ff8065] focus-visible:outline-none active:scale-[0.99] disabled:cursor-default disabled:opacity-100 sm:px-5 sm:text-base ${
-                  practiceResult && correct
-                    ? "border-emerald-400/65 bg-emerald-400/10 text-emerald-100"
-                    : practiceResult && selected
-                      ? "border-red-300/60 bg-red-300/10 text-red-100"
-                      : selected
-                        ? "border-[#ff8065]/65 bg-[#ff8065]/10 text-white"
-                        : ""
-                }`}
+                className={sessionOptionClass(
+                  practiceResult,
+                  selected,
+                  correct
+                )}
               >
+                {practiceResult?.feedback && correct ? (
+                  <CheckIcon aria-hidden="true" className="size-4 shrink-0" />
+                ) : practiceResult?.feedback && selected ? (
+                  <CancelIcon aria-hidden="true" className="size-4 shrink-0" />
+                ) : null}
                 {option.text}
               </Button>
             )
@@ -402,10 +412,7 @@ export function StudySession({ projectId, mode, topicId }: StudySessionProps) {
                 Check answer
               </Button>
             ) : practiceResult ? (
-              <Button
-                onClick={advance}
-                disabled={submitting}
-              >
+              <Button onClick={advance} disabled={submitting}>
                 {isLast ? "Finish" : "Next"}
               </Button>
             ) : null}
@@ -484,11 +491,13 @@ function AnswerFeedback({ result }: { result: SessionAnswerResult }) {
 function TestResults({
   questions,
   results,
+  answers,
   progress,
   projectId,
 }: {
   questions: readonly SessionQuestion[]
   results: Readonly<Record<string, SessionAnswerResult | undefined>>
+  answers: Readonly<Record<string, SessionAnswer | undefined>>
   progress: { total: number; answered: number; unanswered: number }
   projectId: string
 }) {
@@ -536,6 +545,66 @@ function TestResults({
                         : "Could not score this answer"
                     : "Unanswered"}
                 </p>
+                {result ? (
+                  <div
+                    className="mt-4 space-y-2"
+                    role={
+                      question.type === "multiple-answer"
+                        ? "group"
+                        : "radiogroup"
+                    }
+                    aria-label="Answer options"
+                  >
+                    {sessionOptions(question).map((option) => {
+                      const selected = isOptionSelected(
+                        question,
+                        answers[question.itemId],
+                        option.id
+                      )
+                      const correct = optionIsCorrect(
+                        question,
+                        result,
+                        option.id
+                      )
+                      return (
+                        <div
+                          key={option.id}
+                          role={
+                            question.type === "multiple-answer"
+                              ? "checkbox"
+                              : "radio"
+                          }
+                          aria-checked={selected}
+                          aria-disabled="true"
+                          aria-label={sessionOptionLabel(
+                            option.text,
+                            selected,
+                            result,
+                            correct
+                          )}
+                          className={sessionOptionClass(
+                            result,
+                            selected,
+                            correct
+                          )}
+                        >
+                          {result.feedback && correct ? (
+                            <CheckIcon
+                              aria-hidden="true"
+                              className="size-4 shrink-0"
+                            />
+                          ) : result.feedback && selected ? (
+                            <CancelIcon
+                              aria-hidden="true"
+                              className="size-4 shrink-0"
+                            />
+                          ) : null}
+                          <span>{option.text}</span>
+                        </div>
+                      )
+                    })}
+                  </div>
+                ) : null}
                 {result?.feedback?.body ? (
                   <p className="mt-2 text-sm leading-relaxed text-white/52">
                     {result.feedback.body}
@@ -586,6 +655,41 @@ function optionIsCorrect(
   if (question.type === "single-choice")
     return result.feedback.correctOptionId === optionId
   return result.feedback.correctOptionIds?.includes(optionId) ?? false
+}
+
+/** Applies neutral, selected, and post-score option states consistently. */
+function sessionOptionClass(
+  result: SessionAnswerResult | undefined,
+  selected: boolean,
+  correct: boolean
+): string {
+  const showFeedback = Boolean(result?.feedback)
+  return cn(
+    "flex h-auto min-h-14 w-full items-center justify-start gap-3 rounded-2xl border border-white/10 bg-white/[0.045] px-4 py-3 text-left text-sm whitespace-normal text-white/80 disabled:cursor-default disabled:opacity-100",
+    selected &&
+      !showFeedback &&
+      "border-[#ff8065]/65 bg-[#ff8065]/10 text-white",
+    showFeedback &&
+      correct &&
+      "border-emerald-400/65 bg-emerald-400/10 text-emerald-100",
+    showFeedback &&
+      selected &&
+      !correct &&
+      "border-red-300/60 bg-red-300/10 text-red-100"
+  )
+}
+
+/** Gives assistive technology the same answer state shown by the color and icon. */
+function sessionOptionLabel(
+  text: string,
+  selected: boolean,
+  result: SessionAnswerResult | undefined,
+  correct: boolean
+): string {
+  if (!result?.feedback) return text
+  if (correct) return `${text}, correct answer`
+  if (selected) return `${text}, your answer was incorrect`
+  return text
 }
 
 /** Posts one answer through the route shared by browser and native clients. */
