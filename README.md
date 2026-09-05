@@ -31,6 +31,8 @@ Create a project in Library and add files, pasted notes, or a public link. Prepa
 
 Open a project or topic for a focused feed, Study with immediate feedback, or a Test with results at the end. Topics can be renamed or excluded from the mixed feed.
 
+Choose `Study` then `Written answers` for a separate writing activity. Save a draft or compare your response with the prepared reference. Written activities resume where you left off and do not award an automatic score.
+
 Questions use single choice, multiple answers, or true/false. Answers receive server-scored feedback. Reading and skipping never count as knowing a concept. `Ask in chat` attaches a card and its source section to your own question, and follow-ups reuse the conversation.
 
 Imports accept text PDFs, Markdown, plain text, and PowerPoint `.pptx` files. Public links can return those formats or HTML. Source URLs and page/slide markers are retained. Scanned PDFs need OCR elsewhere, and each extracted source is currently limited to 120,000 characters.
@@ -56,4 +58,4 @@ npm run build
 
 Run native checks from `mobile/`. The [product brief](PRODUCT_BRIEF.md) records the intended experience; the [working protocol](WORKING_PROTOCOL.md) records the overnight review and delivery boundaries. Implementation details are in [source preparation](docs/source-preparation.md), [learning API](docs/learning-api.md), and [card chat](docs/card-chat.md).
 
-This version is a personal local app without account authentication. It is not configured for public hosting. Android offline storage and the local agent are separate from any future cloud sync service. Written-answer activities, creating proposed notes, richer diagrams, moving topics, and a full native library are still outside this version. The product brief records the wider direction, not a completed feature checklist.
+This version is a personal local app without account authentication. It is not configured for public hosting. Android offline storage and the local agent are separate from any future cloud sync service. Creating proposed notes, richer diagrams, moving topics, and a full native library are still outside this version. Written activities use the browser, including from Android's Library action. The product brief records the wider direction, not a completed feature checklist.
