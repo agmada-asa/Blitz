@@ -47,6 +47,14 @@ time, incorrect-answer count, age of the last answer, and stable producer
 order. New items use producer order and creation time. Input order resolves
 remaining ties, so repeated calls with the same input are deterministic.
 
+Candidates may provide `format: "explanation"` or `format: "question"`. When
+both formats are available, the selector uses a soft cadence of no more than
+two explanations before preferring a question. It keeps the existing due/new
+and concept-diversity preferences, and falls back to whichever format exists.
+The cadence applies inside each bounded candidate batch; it does not promise a
+global ratio when later batches lack one of the formats. Callers that omit
+`format` keep the original selection behavior.
+
 The selector prefers a different concept after the previous item and avoids
 recent concepts when another candidate is available. If every remaining item
 belongs to the same concept, it still returns those items so an otherwise

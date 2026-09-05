@@ -145,6 +145,8 @@ export interface NewFeedItem {
   /** Concept introduced or explained by the item. */
   readonly conceptId: string
   readonly kind: "new"
+  /** Optional presentation format used for explanation/question interleaving. */
+  readonly format?: FeedItemFormat
   /** Creation time used to keep new material in a stable order. */
   readonly createdAt: number
   /** Optional producer order for deterministic deck ordering. */
@@ -162,6 +164,8 @@ export interface ReviewFeedItem {
   /** Concept introduced or explained by the item. */
   readonly conceptId: string
   readonly kind: "review"
+  /** Optional presentation format used for explanation/question interleaving. */
+  readonly format?: FeedItemFormat
   /** Creation time used as a stable tie breaker. */
   readonly createdAt: number
   /** Optional producer order for deterministic deck ordering. */
@@ -172,6 +176,9 @@ export interface ReviewFeedItem {
 
 /** Candidate item accepted by the feed selector. */
 export type FeedItem = NewFeedItem | ReviewFeedItem
+
+/** Presentation format used to keep explanations and questions interleaved. */
+export type FeedItemFormat = "explanation" | "question"
 
 /** Inputs for selecting a bounded, filtered home-feed batch. */
 export interface FeedSelectionOptions {
@@ -437,20 +444,30 @@ function compareDue(
 function takeWithConceptPreference(
   queue: Array<{ item: FeedItem; index: number }>,
   previousConceptId: string | undefined,
-  recentConceptIds: ReadonlySet<string>
+  recentConceptIds: ReadonlySet<string>,
+  preferredFormat?: FeedItemFormat
 ): { item: FeedItem; index: number } | undefined {
-  if (!queue.length) return undefined
+  const available = preferredFormat
+    ? queue.filter((entry) => entry.item.format === preferredFormat)
+    : queue
+  if (!available.length) return undefined
   const fresh = queue.findIndex(
     (entry) =>
+      (!preferredFormat || entry.item.format === preferredFormat) &&
       entry.item.conceptId !== previousConceptId &&
       !recentConceptIds.has(entry.item.conceptId)
   )
   if (fresh >= 0) return queue.splice(fresh, 1)[0]
   const different = queue.findIndex(
-    (entry) => entry.item.conceptId !== previousConceptId
+    (entry) =>
+      (!preferredFormat || entry.item.format === preferredFormat) &&
+      entry.item.conceptId !== previousConceptId
   )
   if (different >= 0) return queue.splice(different, 1)[0]
-  return queue.shift()
+  const sameFormat = queue.findIndex(
+    (entry) => !preferredFormat || entry.item.format === preferredFormat
+  )
+  return sameFormat >= 0 ? queue.splice(sameFormat, 1)[0] : undefined
 }
 
 /** Selects a bounded mixed feed after applying project and topic filters. */
@@ -500,15 +517,27 @@ export function selectFeedItems(options: FeedSelectionOptions): FeedItem[] {
   const result: FeedItem[] = []
   let previousConceptId = options.previousConceptId
   let preferDue = due.length > 0
+  let consecutiveExplanations = 0
   while (result.length < options.limit && (due.length || fresh.length)) {
     const primary = preferDue ? due : fresh
     const secondary = preferDue ? fresh : due
-    let picked = takeWithConceptPreference(primary, previousConceptId, recent)
+    const questionAvailable =
+      primary.some((entry) => entry.item.format === "question") ||
+      secondary.some((entry) => entry.item.format === "question")
+    const preferredFormat: FeedItemFormat | undefined =
+      consecutiveExplanations >= 2 && questionAvailable ? "question" : undefined
+    let picked = takeWithConceptPreference(
+      primary,
+      previousConceptId,
+      recent,
+      preferredFormat
+    )
     if (picked && picked.item.conceptId === previousConceptId) {
       const alternate = takeWithConceptPreference(
         secondary,
         previousConceptId,
-        recent
+        recent,
+        preferredFormat
       )
       if (alternate && alternate.item.conceptId !== previousConceptId) {
         primary.unshift(picked)
@@ -520,11 +549,20 @@ export function selectFeedItems(options: FeedSelectionOptions): FeedItem[] {
       }
     }
     if (!picked)
+      picked = takeWithConceptPreference(
+        secondary,
+        previousConceptId,
+        recent,
+        preferredFormat
+      )
+    if (!picked && preferredFormat)
       picked = takeWithConceptPreference(secondary, previousConceptId, recent)
     if (!picked) break
     result.push(picked.item)
     previousConceptId = picked.item.conceptId
     recent.add(previousConceptId)
+    consecutiveExplanations =
+      picked.item.format === "explanation" ? consecutiveExplanations + 1 : 0
     preferDue = due.length > 0 && (fresh.length === 0 || !preferDue)
   }
   return result

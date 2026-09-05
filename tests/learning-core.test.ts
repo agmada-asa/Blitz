@@ -56,6 +56,19 @@ function item(
   }
 }
 
+/** Adds a presentation format to a feed fixture for interleaving tests. */
+function formattedItem(
+  id: string,
+  conceptId: string,
+  format: "explanation" | "question",
+  order: number
+): FeedItem {
+  return {
+    ...item(id, conceptId, "new", "project-a", "topic-a", order),
+    format,
+  }
+}
+
 /** Replaces review metadata on a review fixture without widening its kind. */
 function withReviewState(
   candidate: FeedItem,
@@ -214,5 +227,82 @@ test("feed selection keeps same-concept candidates when diversity is impossible"
   assert.deepEqual(
     selected.map((entry) => entry.id),
     ["r1", "n2", "r3"]
+  )
+})
+
+test("feed selection interleaves grouped explanations before questions", () => {
+  const candidates: FeedItem[] = [
+    formattedItem("e1", "c1", "explanation", 1),
+    formattedItem("e2", "c2", "explanation", 2),
+    formattedItem("e3", "c3", "explanation", 3),
+    formattedItem("q1", "c4", "question", 4),
+    formattedItem("q2", "c5", "question", 5),
+    formattedItem("q3", "c6", "question", 6),
+  ]
+  const selected = selectFeedItems({ items: candidates, now: NOW, limit: 6 })
+  assert.deepEqual(
+    selected.map((entry) => entry.id),
+    ["e1", "e2", "q1", "e3", "q2", "q3"]
+  )
+  assert.equal(new Set(selected.map((entry) => entry.id)).size, 6)
+})
+
+test("feed format preference falls back when every candidate has one format", () => {
+  const candidates: FeedItem[] = [
+    formattedItem("e1", "c1", "explanation", 1),
+    formattedItem("e2", "c2", "explanation", 2),
+    formattedItem("e3", "c3", "explanation", 3),
+  ]
+  assert.deepEqual(
+    selectFeedItems({ items: candidates, now: NOW, limit: 3 }).map(
+      (entry) => entry.id
+    ),
+    ["e1", "e2", "e3"]
+  )
+})
+
+test("formatted feed keeps due same-concept items and excludes not-due reviews", () => {
+  const dueExplanation = {
+    ...item("r1", "c1", "review", "project-a", "topic-a", 1),
+    format: "explanation" as const,
+  }
+  const sameConceptExplanation = {
+    ...item("r2", "same", "review", "project-a", "topic-a", 2),
+    format: "explanation" as const,
+  }
+  const sameConceptQuestion = {
+    ...item("r3", "same", "review", "project-a", "topic-a", 3),
+    format: "question" as const,
+  }
+  const dueQuestion = {
+    ...item("r4", "c4", "review", "project-a", "topic-a", 4),
+    format: "question" as const,
+  }
+  const notDue = withReviewState(
+    {
+      ...item("r5", "c5", "review", "project-a", "topic-a", 5),
+      format: "question" as const,
+    },
+    reviewState("c5", NOW + 1)
+  )
+  const selected = selectFeedItems({
+    items: [
+      dueExplanation,
+      sameConceptExplanation,
+      sameConceptQuestion,
+      dueQuestion,
+      notDue,
+    ],
+    now: NOW,
+    limit: 4,
+  })
+  assert.deepEqual(
+    selected.map((entry) => entry.id),
+    ["r1", "r2", "r4", "r3"]
+  )
+  assert.equal(new Set(selected.map((entry) => entry.id)).size, 4)
+  assert.equal(
+    selected.some((entry) => entry.id === "r5"),
+    false
   )
 })

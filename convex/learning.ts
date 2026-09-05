@@ -629,6 +629,7 @@ export const listLearningFeedCandidates = query({
         projectId: item.projectId,
         topicId: concept.topicId ? String(concept.topicId) : undefined,
         conceptId: String(item.conceptId),
+        format: item.type === "explain" ? "explanation" : "question",
         itemType: item.type,
         title: item.title,
         body: item.type === "explain" ? item.body : undefined,
@@ -843,6 +844,7 @@ export const getLearningFeed = query({
               conceptId: String(item.conceptId),
               createdAt: item.createdAt,
               order: item.order,
+              format: item.type === "explain" ? "explanation" : "question",
               ...(concept.topicId ? { topicId: String(concept.topicId) } : {}),
               kind: "review",
               reviewState: {
@@ -862,6 +864,7 @@ export const getLearningFeed = query({
               conceptId: String(item.conceptId),
               createdAt: item.createdAt,
               order: item.order,
+              format: item.type === "explain" ? "explanation" : "question",
               ...(concept.topicId ? { topicId: String(concept.topicId) } : {}),
               kind: "new",
             }
