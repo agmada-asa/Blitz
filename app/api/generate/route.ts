@@ -3,6 +3,10 @@
 import { generateStudySet } from "@/lib/server/codex"
 import { loadSavedAiModelSettings } from "@/lib/server/ai-model-settings"
 import {
+  resolveAiModel,
+  resolveAiReasoningEffort,
+} from "@/lib/ai-model-settings"
+import {
   MAX_FILENAME_LENGTH,
   MAX_SOURCE_TEXT_LENGTH,
 } from "@/lib/server/generate-schema"
@@ -64,8 +68,16 @@ export async function POST(request: Request) {
       await generateStudySet(
         filename,
         text,
-        settings?.cardGenerationModel,
-        settings?.cardGenerationEffort
+        resolveAiModel(
+          settings,
+          "cardGenerationModel",
+          process.env.BLITZ_CODEX_MODEL
+        ),
+        resolveAiReasoningEffort(
+          settings,
+          "cardGenerationEffort",
+          process.env.BLITZ_CODEX_EFFORT
+        )
       )
     )
   } catch {
