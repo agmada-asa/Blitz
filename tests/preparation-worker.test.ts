@@ -5,10 +5,35 @@ import test from "node:test"
 import { normalizeSourceDocument } from "../lib/server/source-ingestion/normalize.ts"
 import { segmentSourceDocument } from "../lib/server/source-ingestion/segment.ts"
 import {
+  classifyPreparationFailure,
   runPreparationStep,
+  type PreparationFailureCategory,
   type PreparationClaim,
   type PreparationQueue,
 } from "../lib/server/preparation-worker.ts"
+import { LearningGenerationError } from "../lib/server/learning-generation.ts"
+import { SourceIngestionError } from "../lib/server/source-ingestion/errors.ts"
+
+test("classifies bounded preparation failures by phase", () => {
+  assert.equal(
+    classifyPreparationFailure(
+      new LearningGenerationError("invalid-output", "raw output omitted"),
+      "generation"
+    ),
+    "invalid-output" satisfies PreparationFailureCategory
+  )
+  assert.equal(
+    classifyPreparationFailure(
+      new SourceIngestionError("input-too-large", "raw details omitted"),
+      "source"
+    ),
+    "source-invalid"
+  )
+  assert.equal(
+    classifyPreparationFailure(new Error("commit failed"), "commit"),
+    "save-failed"
+  )
+})
 
 /** Creates a multi-chunk source with a saved checkpoint after its first chunk. */
 function claimFixture(): PreparationClaim {

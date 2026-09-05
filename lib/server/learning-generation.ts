@@ -141,7 +141,7 @@ function buildRepairPrompt(
   const boundedMessage = validationMessage.slice(0, MAX_REPAIR_MESSAGE_LENGTH)
   return `${originalPrompt}
 
-The previous JSON response failed validation. Return a corrected JSON object only. Do not change the source chunk ID or add fields. Validation feedback:
+The previous JSON response failed validation. Return a corrected JSON object only, without a markdown fence or explanation. Do not change the source chunk ID or add fields. The object must contain summary, concepts, and items. Keep concepts and items together, use only the supported item shapes, make every item reference an existing concept and exactly the current source chunk ID, and use SKIPPED: only when both arrays are empty. Validation feedback:
 ${boundedMessage}`
 }
 
@@ -186,9 +186,11 @@ function parseAndValidateResponse(
       `Generated learning batch exceeds the ${MAX_GENERATED_OUTPUT_BYTES}-byte output limit`
     )
   }
+  const fenced = raw.trim().match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i)
+  const json = fenced?.[1] ?? raw
   let value: unknown
   try {
-    value = JSON.parse(raw)
+    value = JSON.parse(json)
   } catch {
     throw new LearningGenerationError(
       "invalid-output",

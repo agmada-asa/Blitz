@@ -48,10 +48,13 @@ claimed the expired lease.
 Already-committed checkpoints can be read back with a previous token. They do
 not write anything; new commits always require the current live lease.
 
-`failJob` records a bounded safe error and clears the lease. `retry` puts a
-failed or expired job back in the queue without discarding completed chunk
-checkpoints. There is no multi-user authorization layer in this first personal
-deployment, and the queue does not expose agent execution or network access.
+`failJob` records a bounded safe error and clears the lease. The local worker
+classifies failures as invalid model output, unreadable source, interruption,
+timeout, transport, or save failure, then stores fixed recovery copy rather
+than model or source details. `retry` puts a failed or expired job back in the
+queue without discarding completed chunk checkpoints. There is no multi-user
+authorization layer in this first personal deployment, and the queue does not
+expose agent execution or network access.
 The local worker owns source splitting and generation timeouts; the queue only
 stores snapshots, validates batches, and persists bounded results.
 
@@ -81,5 +84,7 @@ Generation asks multiple-answer questions to include at least one incorrect
 option, so a learner must distinguish the complete answer set. If a model
 response fails the strict bounded validator, the generation boundary makes one
 repair call containing the original source prompt and a short validation
-message. It never retries transport errors or cancellation, never persists an
-invalid batch, and never makes more than that one repair attempt.
+message. It accepts one strict JSON markdown fence around an otherwise valid
+response, but rejects prose wrappers. It never retries transport errors or
+cancellation, never persists an invalid batch, and never makes more than that
+one repair attempt.

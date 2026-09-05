@@ -189,6 +189,14 @@ test("rejects wrappers instead of extracting nested JSON", async () => {
   )
 })
 
+test("accepts one strict JSON markdown fence from the model", async () => {
+  const batch = await generateLearningForChunk(
+    chunk,
+    async () => `\`\`\`json\n${validOutput()}\n\`\`\``
+  )
+  assert.equal(batch.items.length, 4)
+})
+
 test("repairs one invalid model response with the original prompt and bounded feedback", async () => {
   let calls = 0
   const invalid = JSON.parse(validOutput()) as {
