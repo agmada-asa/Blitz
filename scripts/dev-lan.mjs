@@ -1,14 +1,15 @@
-/** Starts Next.js and local Convex together for testing Blitz on a Mac and phone. */
+/** Starts the local web, database, and learning workers with a shared LAN address. */
 
 import { spawn } from "node:child_process"
 import { networkInterfaces } from "node:os"
+import { isIP } from "node:net"
 
 const port = process.env.BLITZ_PORT ?? "3001"
-const lanAddress = findLanAddress()
+const lanAddress = process.env.BLITZ_LAN_ADDRESS?.trim() || findLanAddress()
 const children = new Set()
 let stopping = false
 
-if (!lanAddress) {
+if (!lanAddress || isIP(lanAddress) !== 4) {
   console.error(
     "Blitz could not find a local network address. Connect to Wi-Fi and try again."
   )
@@ -18,6 +19,7 @@ if (!lanAddress) {
 const sharedEnvironment = {
   ...process.env,
   BLITZ_LAN_ADDRESS: lanAddress,
+  BLITZ_CONVEX_URL: process.env.BLITZ_CONVEX_URL ?? "http://127.0.0.1:3210",
   NEXT_PUBLIC_CONVEX_URL: `http://${lanAddress}:3210`,
   NEXT_PUBLIC_CONVEX_SITE_URL: `http://${lanAddress}:3211`,
 }
@@ -31,6 +33,22 @@ start("npx", ["convex", "dev", "--tail-logs", "disable"], process.env)
 start(
   "npm",
   ["run", "dev", "--", "--hostname", "0.0.0.0", "--port", port],
+  sharedEnvironment
+)
+
+start(
+  process.execPath,
+  ["--experimental-strip-types", "scripts/preparation-worker.ts"],
+  sharedEnvironment
+)
+start(
+  process.execPath,
+  ["--experimental-strip-types", "scripts/chat-worker.ts"],
+  sharedEnvironment
+)
+start(
+  process.execPath,
+  ["--experimental-strip-types", "scripts/research-worker.ts"],
   sharedEnvironment
 )
 
@@ -48,8 +66,17 @@ function findLanAddress() {
 
 /** Starts a child service and shuts down the full stack if that service exits. */
 function start(command, args, environment) {
-  const child = spawn(command, args, { env: environment, stdio: "inherit" })
+  // A process group keeps npm/npx grandchildren owned by this launcher on macOS.
+  const child = spawn(command, args, {
+    env: environment,
+    stdio: "inherit",
+    detached: process.platform !== "win32",
+  })
   children.add(child)
+  child.on("error", () => {
+    console.error(`Could not start ${command}. Shutting Blitz down.`)
+    stop("SIGTERM", 1)
+  })
   child.on("exit", (code, signal) => {
     children.delete(child)
     if (!stopping) {
@@ -61,10 +88,18 @@ function start(command, args, environment) {
   })
 }
 
-/** Sends a termination signal to each child and exits once they have begun stopping. */
+/** Stops only this launcher's service groups and lets their cleanup finish before exit. */
 function stop(signal, exitCode = 0) {
   if (stopping) return
   stopping = true
-  for (const child of children) child.kill(signal)
-  setTimeout(() => process.exit(exitCode), 500).unref()
+  for (const child of children) {
+    try {
+      if (process.platform !== "win32" && child.pid)
+        process.kill(-child.pid, signal)
+      else child.kill(signal)
+    } catch {
+      // An already-exited child needs no further shutdown work.
+    }
+  }
+  process.exitCode = exitCode
 }
