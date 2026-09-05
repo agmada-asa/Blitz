@@ -15,8 +15,8 @@ import {
   type LearningGenerationBatch,
 } from "../lib/learning/generation"
 
-/** Maximum source snapshot accepted by one preparation job. */
-export const MAX_PREPARATION_SOURCE_LENGTH = 120_000
+/** Maximum UTF-8 bytes in a source snapshot, bounded below Convex document limits. */
+export const MAX_PREPARATION_SOURCE_LENGTH = 500_000
 /** Lease duration for one local worker claim. */
 export const PREPARATION_LEASE_MS = 5 * 60 * 1000
 /** Maximum chunks accepted for one source. */
@@ -54,7 +54,10 @@ async function requireSource(
   const source = await ctx.db.get(sourceId)
   if (!source || source.projectId !== projectId)
     throw new Error("Source does not belong to project")
-  if (source.extractedText.length > MAX_PREPARATION_SOURCE_LENGTH)
+  if (
+    new TextEncoder().encode(source.extractedText).byteLength >
+    MAX_PREPARATION_SOURCE_LENGTH
+  )
     throw new Error("Source is too large for preparation")
   return source
 }

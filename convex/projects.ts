@@ -120,6 +120,38 @@ export const deleteProject = mutation({
         .withIndex("by_project_concept", (q) => q.eq("projectId", projectId))
         .take(2001)
     )
+    // Local bytes remain on disk for recovery; metadata must not outlive its
+    // project or appear in retrieval and worker queues after deletion.
+    add(
+      await ctx.db
+        .query("sourceChunks")
+        .withIndex("by_project", (q) => q.eq("projectId", projectId))
+        .take(2001)
+    )
+    add(
+      await ctx.db
+        .query("sourceOutlines")
+        .withIndex("by_project_source", (q) => q.eq("projectId", projectId))
+        .take(2001)
+    )
+    add(
+      await ctx.db
+        .query("ingestionJobs")
+        .withIndex("by_project_createdAt", (q) => q.eq("projectId", projectId))
+        .take(2001)
+    )
+    add(
+      await ctx.db
+        .query("artifacts")
+        .withIndex("by_project_updatedAt", (q) => q.eq("projectId", projectId))
+        .take(2001)
+    )
+    add(
+      await ctx.db
+        .query("agentTasks")
+        .withIndex("by_project_updatedAt", (q) => q.eq("projectId", projectId))
+        .take(2001)
+    )
     const jobs = await ctx.db
       .query("preparationJobs")
       .withIndex("by_project_source", (q) => q.eq("projectId", projectId))

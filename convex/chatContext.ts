@@ -2,18 +2,20 @@
 
 import { query } from "./_generated/server"
 import { v } from "convex/values"
+import { retrieveProjectContext } from "./sourceRetrieval"
 
 /** Maximum projects that one workspace chat turn may attach. */
 const MAX_PROJECTS = 3
-/** Maximum ready sources included from one attached project. */
-const MAX_SOURCES_PER_PROJECT = 8
 /** Maximum source characters returned across all attached projects. */
 const MAX_CONTEXT_CHARACTERS = 48_000
 
 /** Loads real project titles and bounded ready-source text for one chat turn. */
 export const getProjects = query({
-  args: { projectIds: v.array(v.id("projects")) },
-  handler: async (ctx, { projectIds }) => {
+  args: {
+    projectIds: v.array(v.id("projects")),
+    question: v.optional(v.string()),
+  },
+  handler: async (ctx, { projectIds, question }) => {
     if (projectIds.length > MAX_PROJECTS)
       throw new Error(`Attach at most ${MAX_PROJECTS} projects`)
     if (new Set(projectIds).size !== projectIds.length)
@@ -24,25 +26,35 @@ export const getProjects = query({
     for (const projectId of projectIds) {
       const project = await ctx.db.get(projectId)
       if (!project) throw new Error("An attached project was not found")
-      const sources = await ctx.db
-        .query("sources")
-        .withIndex("by_project_status", (source) =>
-          source.eq("projectId", projectId).eq("status", "ready")
-        )
-        .order("desc")
-        .take(MAX_SOURCES_PER_PROJECT)
-      const boundedSources = []
-      for (const source of sources) {
-        if (remaining <= 0) break
-        const extractedText = source.extractedText.slice(0, remaining)
+      // Search the indexed library instead of attaching source prefixes. Old
+      // projects still load; their text becomes searchable after legacy export.
+      const retrieved =
+        question?.trim() && remaining > 0
+          ? await retrieveProjectContext(
+              ctx,
+              projectId,
+              question.slice(0, 500),
+              {
+                maxChars: Math.min(16_000, remaining),
+                neighborRadius: 1,
+              }
+            )
+          : { results: [] }
+      const boundedSources = retrieved.results.map(({ text, citation }) => {
+        const labels = citation.references.map((reference) => reference.label)
+        const extractedText = text.slice(0, remaining)
         remaining -= extractedText.length
-        boundedSources.push({
-          filename: source.filename,
-          kind: source.kind,
+        return {
+          filename: citation.sourceFilename,
+          kind: "text" as const,
           extractedText,
-          ...(source.originalUrl ? { originalUrl: source.originalUrl } : {}),
-        })
-      }
+          citation: [
+            citation.sourceFilename,
+            ...new Set(labels),
+            `chunk ${citation.ordinal + 1}`,
+          ].join(", "),
+        }
+      })
       projects.push({
         id: project._id,
         title: project.title,

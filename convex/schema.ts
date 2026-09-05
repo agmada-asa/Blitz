@@ -58,6 +58,10 @@ export default defineSchema({
   projects: defineTable({
     title: v.string(),
     createdAt: v.number(),
+    /** Optional stable key for the project-local desktop workspace. */
+    workspaceKey: v.optional(v.string()),
+    /** Optional relative workspace directory retained for desktop clients. */
+    workspaceRelativePath: v.optional(v.string()),
   }).index("by_createdAt", ["createdAt"]),
 
   sources: defineTable({
@@ -81,10 +85,21 @@ export default defineSchema({
     summary: v.optional(v.string()),
     error: v.optional(v.string()),
     createdAt: v.number(),
+    /** Project-local file key; never an absolute path. */
+    relativeKey: v.optional(v.string()),
+    /** MIME type reported by the upload adapter. */
+    mimeType: v.optional(v.string()),
+    /** Original file size in bytes, when available. */
+    sizeBytes: v.optional(v.number()),
+    /** Content hash used for duplicate detection and retry idempotency. */
+    contentHash: v.optional(v.string()),
+    /** True when original bytes are retained but no deterministic parser exists. */
+    unsupported: v.optional(v.boolean()),
   })
     .index("by_project", ["projectId"])
     .index("by_project_status", ["projectId", "status"])
-    .index("by_project_fingerprint", ["projectId", "importFingerprint"]),
+    .index("by_project_fingerprint", ["projectId", "importFingerprint"])
+    .index("by_project_contentHash", ["projectId", "contentHash"]),
 
   cards: defineTable({
     projectId: v.id("projects"),
@@ -254,6 +269,106 @@ export default defineSchema({
   })
     .index("by_job_ordinal", ["jobId", "ordinal"])
     .index("by_job_chunkId", ["jobId", "chunkId"]),
+
+  /** Durable ingestion lifecycle for original files and derived chunks. */
+  ingestionJobs: defineTable({
+    projectId: v.id("projects"),
+    sourceId: v.id("sources"),
+    status: v.union(
+      v.literal("queued"),
+      v.literal("running"),
+      v.literal("completed"),
+      v.literal("failed")
+    ),
+    sourceHash: v.optional(v.string()),
+    /** Prevents concurrent request and recovery workers from indexing one upload. */
+    leaseToken: v.optional(v.string()),
+    leaseExpiresAt: v.optional(v.number()),
+    error: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_project_createdAt", ["projectId", "createdAt"])
+    .index("by_source", ["sourceId"])
+    .index("by_status_createdAt", ["status", "createdAt"]),
+
+  /** Bounded searchable source section with deterministic attribution. */
+  sourceChunks: defineTable({
+    projectId: v.id("projects"),
+    sourceId: v.id("sources"),
+    ingestionJobId: v.optional(v.id("ingestionJobs")),
+    ordinal: v.number(),
+    text: v.string(),
+    textHash: v.string(),
+    startOffset: v.number(),
+    endOffset: v.number(),
+    sectionTitle: v.optional(v.string()),
+    references: v.array(
+      v.object({
+        kind: v.optional(
+          v.union(v.literal("page"), v.literal("slide"), v.literal("time"))
+        ),
+        label: v.string(),
+        value: v.string(),
+        startOffset: v.number(),
+        endOffset: v.number(),
+      })
+    ),
+    createdAt: v.number(),
+  })
+    .index("by_project_source_ordinal", ["projectId", "sourceId", "ordinal"])
+    .index("by_source_ordinal", ["sourceId", "ordinal"])
+    .index("by_project", ["projectId"])
+    .index("by_textHash", ["textHash"])
+    .searchIndex("search_text", {
+      searchField: "text",
+      filterFields: ["projectId", "sourceId"],
+    }),
+
+  /** Optional bounded outline entries used to orient retrieval. */
+  sourceOutlines: defineTable({
+    projectId: v.id("projects"),
+    sourceId: v.id("sources"),
+    ordinal: v.number(),
+    title: v.string(),
+    startChunkOrdinal: v.number(),
+    endChunkOrdinal: v.number(),
+    createdAt: v.number(),
+  })
+    .index("by_source_ordinal", ["sourceId", "ordinal"])
+    .index("by_project_source", ["projectId", "sourceId"]),
+
+  /** Files created by local agents, tracked without storing their contents. */
+  artifacts: defineTable({
+    projectId: v.id("projects"),
+    relativeKey: v.string(),
+    kind: v.union(v.literal("file"), v.literal("directory")),
+    mimeType: v.optional(v.string()),
+    sizeBytes: v.optional(v.number()),
+    contentHash: v.optional(v.string()),
+    status: v.union(v.literal("active"), v.literal("deleted")),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_project_updatedAt", ["projectId", "updatedAt"])
+    .index("by_project_key", ["projectId", "relativeKey"]),
+
+  /** Bounded lifecycle metadata for a project-local agent task. */
+  agentTasks: defineTable({
+    projectId: v.id("projects"),
+    status: v.union(
+      v.literal("queued"),
+      v.literal("running"),
+      v.literal("completed"),
+      v.literal("failed")
+    ),
+    title: v.string(),
+    request: v.string(),
+    artifactIds: v.optional(v.array(v.id("artifacts"))),
+    error: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index("by_project_updatedAt", ["projectId", "updatedAt"]),
 
   /** One global record for the model and reasoning level used by each AI task in this personal deployment. */
   aiModelSettings: defineTable({

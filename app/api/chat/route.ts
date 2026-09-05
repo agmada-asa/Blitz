@@ -26,7 +26,7 @@ export const maxDuration = 75
 
 const getProjectContext = makeFunctionReference<
   "query",
-  { projectIds: Id<"projects">[] },
+  { projectIds: Id<"projects">[]; question?: string },
   WorkspaceChatProjectContext[]
 >("chatContext:getProjects")
 
@@ -166,6 +166,7 @@ export async function POST(request: Request): Promise<Response> {
         const projects = input.projectIds.length
           ? await client.query(getProjectContext, {
               projectIds: input.projectIds,
+              question: input.message,
             })
           : []
         const persistedAttachments: PersistedAttachment[] = [
