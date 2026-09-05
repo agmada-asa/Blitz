@@ -425,8 +425,8 @@ export function Feed({ initialFilter }: { initialFilter?: FeedFilter }) {
     data?.continueCursor !== null && data?.continueCursor !== undefined
 
   return (
-    <main className="relative h-svh overflow-hidden bg-[#080808] text-white selection:bg-[#ff8065] selection:text-[#1b0d0a]">
-      <div className="pointer-events-none absolute inset-x-0 top-0 z-20 flex items-center justify-between gap-3 px-4 pt-4 sm:px-8 sm:pt-6">
+    <main className="feed-backdrop relative isolate h-svh overflow-hidden bg-[#080808] text-white selection:bg-[#ff8065] selection:text-[#1b0d0a]">
+      <div className="pointer-events-none absolute inset-x-0 top-0 z-20 flex items-center justify-between gap-3 px-4 pt-[max(1rem,env(safe-area-inset-top))] sm:px-8 sm:pt-6">
         <div className="pointer-events-auto flex items-center gap-2">
           <Button
             asChild

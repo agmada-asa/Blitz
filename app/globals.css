@@ -99,7 +99,95 @@
   }
 }
 
+/* Ambient color stays behind the feed; only transforms animate to avoid repainting gradients. */
+.feed-backdrop::before,
+.feed-backdrop::after {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  pointer-events: none;
+  width: min(110vw, 1000px);
+  height: min(110vh, 1000px);
+  border-radius: 50%;
+}
+
+.feed-backdrop::before {
+  top: -45%;
+  right: -30%;
+  background: radial-gradient(
+    ellipse,
+    #ff806530 0%,
+    #ff806510 35%,
+    transparent 68%
+  );
+  animation: feed-warm-drift 28s ease-in-out infinite alternate;
+}
+
+.feed-backdrop::after {
+  bottom: -50%;
+  left: -30%;
+  background: radial-gradient(
+    ellipse,
+    #3b82f629 0%,
+    #3b82f60a 38%,
+    transparent 68%
+  );
+  animation: feed-cool-drift 32s ease-in-out infinite alternate;
+}
+
+@keyframes feed-warm-drift {
+  from {
+    transform: translate(-5%, 0) scale(1);
+  }
+  to {
+    transform: translate(-28%, 22%) scale(1.15);
+  }
+}
+
+@keyframes feed-cool-drift {
+  from {
+    transform: translate(0, 0) scale(1.1);
+  }
+  to {
+    transform: translate(24%, -22%) scale(0.95);
+  }
+}
+
+/* Scroll-linked motion follows each card's viewport crossing; unsupported browsers keep static content. */
+@supports (animation-timeline: view()) {
+  @media (prefers-reduced-motion: no-preference) {
+    .feed-card {
+      view-timeline: --feed-card block;
+    }
+    .feed-card-content {
+      animation: feed-card-arrive linear both;
+      animation-timeline: --feed-card;
+      animation-range: entry 0% exit 100%;
+    }
+  }
+}
+
+@keyframes feed-card-arrive {
+  0% {
+    opacity: 0.55;
+    transform: translateY(28px) scale(0.98);
+  }
+  35%,
+  65% {
+    opacity: 1;
+    transform: none;
+  }
+  100% {
+    opacity: 0.55;
+    transform: translateY(-28px) scale(0.98);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
+  .feed-backdrop::before,
+  .feed-backdrop::after {
+    animation: none;
+  }
   *,
   *::before,
   *::after {
