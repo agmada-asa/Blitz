@@ -30,6 +30,7 @@ export type ProjectFileSource = {
   mimeType?: string
   sizeBytes?: number
   originalUrl?: string
+  unsupported?: boolean
 }
 
 /** Durable ingestion state associated with an uploaded source. */
@@ -49,6 +50,7 @@ export type ProjectArtifact = {
   mimeType?: string
   sizeBytes?: number
   status: "active" | "deleted"
+  unsupported?: boolean
   updatedAt?: number
 }
 
@@ -98,6 +100,8 @@ function formatSize(sizeBytes?: number): string | undefined {
 /** Returns an accessible label and badge style for each source lifecycle state. */
 function sourceStatus(source: ProjectFileSource, ingestion: ProjectFileIngestion[]) {
   const job = ingestion.find((item) => item.sourceId === String(source._id))
+  if (source.unsupported)
+    return { label: "Unsupported file", variant: "outline" as const }
   if (job?.status === "failed" || source.status === "failed")
     return { label: "Needs attention", variant: "destructive" as const }
   if (job?.status === "running" || job?.status === "queued" || source.status === "processing")
@@ -165,6 +169,9 @@ export function ProjectFiles({
               const citationCount = citations.filter(
                 (citation) => citation.sourceId === String(source._id)
               ).length
+              const sourceCitations = citations.filter(
+                (citation) => citation.sourceId === String(source._id)
+              )
               const progress =
                 job?.totalChunks && job.totalChunks > 0
                   ? Math.min(100, (job.nextChunkOrdinal ?? 0) / job.totalChunks * 100)
@@ -196,6 +203,17 @@ export function ProjectFiles({
                       </div>
                       <Progress value={progress} aria-label={`Ingestion ${Math.round(progress)} percent complete`} />
                     </div>
+                  ) : null}
+                  {sourceCitations.length ? (
+                    <div className="mt-3 rounded-md bg-muted/60 px-3 py-2 text-xs text-muted-foreground">
+                      <span className="font-medium text-foreground">Retrieval citations:</span>{" "}
+                      {sourceCitations.map((citation) => citation.detail ? `${citation.label} (${citation.detail})` : citation.label).join(" · ")}
+                    </div>
+                  ) : null}
+                  {source.unsupported ? (
+                    <p className="mt-3 rounded-md bg-muted/60 px-3 py-2 text-sm text-muted-foreground">
+                      This file is available for agent inspection but cannot be indexed for retrieval yet.
+                    </p>
                   ) : null}
                   {state.label === "Needs attention" ? (
                     <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
@@ -270,7 +288,7 @@ export function ProjectFiles({
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <p className="break-words text-sm font-medium">{task.title}</p>
-                      <Badge variant={task.status === "failed" ? "destructive" : task.status === "completed" ? "secondary" : "outline"}>
+                    <Badge variant={task.status === "failed" ? "destructive" : task.status === "completed" ? "secondary" : "outline"}>
                         {task.status}
                       </Badge>
                     </div>
