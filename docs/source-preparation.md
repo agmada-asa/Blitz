@@ -11,7 +11,10 @@ copy the approved proposal's bounded (3,000-character) `learningScope` into the 
 the worker uses that scope as a filter, so chunks outside the approved scope
 produce an explicit `SKIPPED:` batch instead of unrelated concepts. Generated
 questions are written as standalone prompts and do not refer to the source or
-chunk as context.
+chunk as context. Each claim also includes a bounded, title-ordered list of
+existing project topics. The prompt asks generation to reuse a listed title
+when it fits and limit new topics to new subjects. Preparation never renames
+or merges existing topics.
 
 The worker flow is:
 

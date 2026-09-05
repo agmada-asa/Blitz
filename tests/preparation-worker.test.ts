@@ -16,6 +16,7 @@ function claimFixture(): PreparationClaim {
     jobId: "job-1",
     nextChunk: 1,
     learningScope: "Waveform timing",
+    existingTopicTitles: ["Audio fundamentals", "Waveform basics"],
     source: {
       _id: "source-1",
       filename: "notes.txt",
@@ -52,6 +53,7 @@ test("a resumed worker commits only the next persisted checkpoint", async () => 
     async (prompt) => {
       assert.ok(prompt.includes(chunks[1].id))
       assert.ok(prompt.includes("Waveform timing"))
+      assert.ok(prompt.includes("Waveform basics"))
       return JSON.stringify({
         summary: "Waveform repetition.",
         concepts: [

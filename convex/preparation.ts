@@ -23,6 +23,12 @@ export const PREPARATION_LEASE_MS = 5 * 60 * 1000
 export const MAX_PREPARATION_CHUNKS = 1_000
 /** Maximum jobs inspected in one non-paginated claim query. */
 const CLAIM_SCAN_LIMIT = 50
+/** Maximum topic titles included in a worker claim. */
+const MAX_WORKER_TOPIC_TITLES = 50
+/** Maximum raw topic-title context included in a worker claim. */
+const MAX_WORKER_TOPIC_CONTEXT_LENGTH = 4_000
+/** Topic title limit enforced by generation and topic editing boundaries. */
+const MAX_WORKER_TOPIC_TITLE_LENGTH = 140
 /** Safe source error shown when a completed job produced no learning items. */
 const NO_STUDY_CONTENT_ERROR =
   "No study content was generated. Add clearer notes or another source."
@@ -62,6 +68,28 @@ function sourceForWorker(job: Doc<"preparationJobs">) {
     kind: job.sourceKind,
     extractedText: job.sourceTextSnapshot,
   }
+}
+
+/** Reads a bounded, deterministic list of existing project topics for reuse. */
+async function existingTopicTitlesForWorker(
+  ctx: ReadContext,
+  projectId: Id<"projects">
+): Promise<string[]> {
+  const topics = await ctx.db
+    .query("topics")
+    .withIndex("by_project_title", (q) => q.eq("projectId", projectId))
+    .order("asc")
+    .take(MAX_WORKER_TOPIC_TITLES)
+  const titles: string[] = []
+  let contextLength = 0
+  for (const topic of topics) {
+    const title = topic.title.trim()
+    if (!title || title.length > MAX_WORKER_TOPIC_TITLE_LENGTH) continue
+    if (contextLength + title.length > MAX_WORKER_TOPIC_CONTEXT_LENGTH) break
+    titles.push(title)
+    contextLength += title.length
+  }
+  return titles
 }
 
 /** Returns the current queue progress in a stable worker-facing shape. */
@@ -192,6 +220,10 @@ export const claimNext = mutation({
         ...(activeOwned.learningScope
           ? { learningScope: activeOwned.learningScope }
           : {}),
+        existingTopicTitles: await existingTopicTitlesForWorker(
+          ctx,
+          activeOwned.projectId
+        ),
         source: sourceForWorker(activeOwned),
       }
     }
@@ -230,6 +262,10 @@ export const claimNext = mutation({
       ...(candidate.learningScope
         ? { learningScope: candidate.learningScope }
         : {}),
+      existingTopicTitles: await existingTopicTitlesForWorker(
+        ctx,
+        candidate.projectId
+      ),
       source: sourceForWorker({
         ...candidate,
         status: "leased",

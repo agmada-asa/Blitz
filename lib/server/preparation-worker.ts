@@ -15,6 +15,8 @@ export interface PreparationClaim {
   nextChunk: number
   /** Approved research scope; omitted for generic source preparation. */
   learningScope?: string
+  /** Bounded existing project topic titles offered for exact-title reuse. */
+  existingTopicTitles: string[]
   source: {
     _id: string
     filename: string
@@ -87,6 +89,7 @@ export async function runPreparationStep(
     const batch = await generateLearningForChunk(chunk, generate, {
       signal: options.signal,
       learningScope: claim.learningScope,
+      existingTopicTitles: claim.existingTopicTitles,
     })
     options.signal?.throwIfAborted()
     await queue.commitChunk({
