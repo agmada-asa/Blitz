@@ -6,6 +6,7 @@ import { useMutation, usePaginatedQuery, useQuery } from "convex/react"
 import Link from "next/link"
 import { use, useState } from "react"
 
+import { ProjectActions } from "@/components/projects/project-actions"
 import { ResearchPanel } from "@/components/projects/research-panel"
 import { TopicList } from "@/components/projects/topic-list"
 import { SourceUploader } from "@/components/projects/source-uploader"
@@ -65,18 +66,19 @@ export default function ProjectPage({
     <main className="mx-auto w-full max-w-5xl px-5 py-8 pb-28 font-sans sm:px-8 sm:py-12">
       <Link
         href="/library"
-        className="mb-10 inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground"
+        className="mb-6 inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground"
       >
         <ArrowLeftIcon size={16} /> All projects
       </Link>
 
-      <div className="mb-10 flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <h1 className="font-heading text-3xl font-medium tracking-tight sm:text-4xl">
+      <div className="mb-8 flex flex-wrap items-start justify-between gap-5">
+        <div className="min-w-0 flex-1 basis-64">
+          <h1 className="font-heading text-3xl font-medium tracking-tight break-words sm:text-4xl">
             {project?.title || "Loading…"}
           </h1>
         </div>
-        <div className="flex flex-wrap gap-2">
+        <ProjectActions project={project} returnToLibrary />
+        <div className="flex w-full flex-wrap gap-2 [&_a]:min-h-11 [&_button]:min-h-11">
           <ResearchPanel key={projectId} projectId={projectId} />
           {hasLearningItems ? (
             <>
@@ -108,7 +110,10 @@ export default function ProjectPage({
                   Test
                 </Link>
               </Button>
-              <Button asChild className="rounded-full">
+              <Button
+                asChild
+                className="rounded-full bg-brand text-brand-foreground hover:bg-brand/85"
+              >
                 <Link href={`/?projectId=${encodeURIComponent(projectId)}`}>
                   <BookOpenIcon size={18} /> Open feed
                 </Link>
@@ -248,8 +253,8 @@ function SourceRow({
   }
 
   return (
-    <div className="flex items-center justify-between gap-3 rounded-xl bg-card p-4 ring-1 ring-foreground/10">
-      <div className="flex min-w-0 items-center gap-3">
+    <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-card p-4 ring-1 ring-foreground/10">
+      <div className="flex min-w-0 flex-1 basis-48 items-center gap-3">
         <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-muted">
           <FileIcon size={21} />
         </div>
@@ -277,7 +282,7 @@ function SourceRow({
           ) : null}
         </div>
       </div>
-      <div className="flex shrink-0 items-center gap-2">
+      <div className="flex shrink-0 flex-wrap items-center gap-2 [&_button]:min-h-11">
         {preparationFailed || (!job && source.status === "ready") ? (
           <Button
             variant="outline"

@@ -79,7 +79,7 @@ export function AppShell({ children }: AppShellProps) {
             collapsed ? "justify-center" : "gap-3 px-3"
           )}
         >
-          <span className="flex size-8 items-center justify-center rounded-xl bg-primary text-primary-foreground">
+          <span className="flex size-8 items-center justify-center rounded-xl bg-brand text-brand-foreground">
             <ZapIcon aria-hidden="true" size={18} strokeWidth={2.4} />
           </span>
           {!collapsed ? (
@@ -122,9 +122,19 @@ export function AppShell({ children }: AppShellProps) {
         </div>
       </aside>
 
+      <header className="flex items-center justify-between border-b px-5 pt-[env(safe-area-inset-top)] md:hidden">
+        <Link
+          href="/"
+          className="flex h-16 items-center gap-2 text-lg font-semibold focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          <ZapIcon aria-hidden="true" className="size-5 text-brand" />
+          Blitz
+        </Link>
+        <ThemeToggle className="size-11" />
+      </header>
       <div
         className={cn(
-          isStudyRoute ? "pb-0" : "pb-24",
+          isStudyRoute ? "pb-0" : "pb-[calc(88px+env(safe-area-inset-bottom))]",
           "transition-[margin] duration-200 md:pb-0",
           collapsed ? "md:ml-[112px]" : "md:ml-[336px]"
         )}
@@ -133,7 +143,7 @@ export function AppShell({ children }: AppShellProps) {
       </div>
       <nav
         aria-label="Primary navigation"
-        className="fixed inset-x-0 bottom-0 z-40 grid h-[76px] grid-cols-3 border-t border-border/70 bg-background/90 px-2 pb-[env(safe-area-inset-bottom)] backdrop-blur-xl md:hidden"
+        className="fixed inset-x-0 bottom-0 z-40 grid h-[calc(76px+env(safe-area-inset-bottom))] grid-cols-3 border-t border-border/70 bg-background/90 px-2 pb-[env(safe-area-inset-bottom)] backdrop-blur-xl md:hidden"
       >
         {links.map((link) => (
           <NavItem key={link.label} {...link} mobile />
@@ -156,7 +166,7 @@ function NavItem({
     "group flex h-14 items-center rounded-[18px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none",
     collapsed || mobile ? "justify-center" : "gap-4 px-5",
     mobile && "my-2 flex-col gap-1 text-[11px]",
-    active && "bg-muted text-foreground"
+    active && "bg-brand/10 text-brand"
   )
   const content = (
     <>

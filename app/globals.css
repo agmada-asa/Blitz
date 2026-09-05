@@ -16,6 +16,8 @@
   --color-card-foreground: var(--card-foreground);
   --color-popover: var(--popover);
   --color-popover-foreground: var(--popover-foreground);
+  --color-brand: var(--brand);
+  --color-brand-foreground: var(--brand-foreground);
   --color-primary: var(--primary);
   --color-primary-foreground: var(--primary-foreground);
   --color-secondary: var(--secondary);
@@ -35,6 +37,8 @@
 }
 
 :root {
+  --brand: #aa3822;
+  --brand-foreground: #ffffff;
   --background: #fafafa;
   --foreground: #111111;
   --card: #ffffff;
@@ -57,6 +61,8 @@
 }
 
 .dark {
+  --brand: #ff8065;
+  --brand-foreground: #1b0d0a;
   --background: #101010;
   --foreground: #f7f7f7;
   --card: #191919;

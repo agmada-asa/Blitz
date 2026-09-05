@@ -1,7 +1,8 @@
-/** Provides project reads and project creation for the library interface. */
+/** Owns project metadata and atomic removal of project-owned study data. */
 
 import { mutation, query } from "./_generated/server"
-import { v } from "convex/values"
+import { ConvexError, v } from "convex/values"
+import type { Id, TableNames } from "./_generated/dataModel"
 
 /** Lists project metadata newest first without scanning related collections. */
 export const listProjects = query({
@@ -31,5 +32,136 @@ export const createProject = mutation({
     if (!title) throw new Error("Project title is required")
     if (title.length > 200) throw new Error("Project title is too long")
     return ctx.db.insert("projects", { title, createdAt: Date.now() })
+  },
+})
+
+/** Renames an existing project without changing its sources or study history. */
+export const renameProject = mutation({
+  args: { projectId: v.id("projects"), title: v.string() },
+  handler: async (ctx, args) => {
+    const title = args.title.trim()
+    if (!title || title.length > 200)
+      throw new ConvexError("Use a project name between 1 and 200 characters.")
+    if (!(await ctx.db.get(args.projectId)))
+      throw new ConvexError("This project no longer exists.")
+    await ctx.db.patch(args.projectId, { title })
+  },
+})
+
+/** Deletes a project and its dependent records atomically. Failed or oversized deletions leave all data intact. */
+export const deleteProject = mutation({
+  args: { projectId: v.id("projects") },
+  handler: async (ctx, { projectId }) => {
+    if (!(await ctx.db.get(projectId))) return
+    // Bound each indexed read and the total writes below Convex transaction limits.
+    const rows: { _id: Id<TableNames> }[] = []
+    /** Collects a bounded dependent group; throwing rolls back this entire mutation. */
+    const add = (group: typeof rows) => {
+      if (group.length > 2000 || rows.length + group.length > 8000) {
+        throw new ConvexError(
+          "This project is too large to delete at once. Nothing was deleted."
+        )
+      }
+      rows.push(...group)
+    }
+    add(
+      await ctx.db
+        .query("sources")
+        .withIndex("by_project", (q) => q.eq("projectId", projectId))
+        .take(2001)
+    )
+    add(
+      await ctx.db
+        .query("cards")
+        .withIndex("by_project_order", (q) => q.eq("projectId", projectId))
+        .take(2001)
+    )
+    add(
+      await ctx.db
+        .query("attempts")
+        .withIndex("by_project", (q) => q.eq("projectId", projectId))
+        .take(2001)
+    )
+    add(
+      await ctx.db
+        .query("topics")
+        .withIndex("by_project", (q) => q.eq("projectId", projectId))
+        .take(2001)
+    )
+    add(
+      await ctx.db
+        .query("concepts")
+        .withIndex("by_project", (q) => q.eq("projectId", projectId))
+        .take(2001)
+    )
+    add(
+      await ctx.db
+        .query("learningItems")
+        .withIndex("by_project", (q) => q.eq("projectId", projectId))
+        .take(2001)
+    )
+    add(
+      await ctx.db
+        .query("writingActivities")
+        .withIndex("by_project_createdAt", (q) => q.eq("projectId", projectId))
+        .take(2001)
+    )
+    add(
+      await ctx.db
+        .query("studyEvents")
+        .withIndex("by_project_clientEventId", (q) =>
+          q.eq("projectId", projectId)
+        )
+        .take(2001)
+    )
+    add(
+      await ctx.db
+        .query("conceptReviews")
+        .withIndex("by_project_concept", (q) => q.eq("projectId", projectId))
+        .take(2001)
+    )
+    const jobs = await ctx.db
+      .query("preparationJobs")
+      .withIndex("by_project_source", (q) => q.eq("projectId", projectId))
+      .take(2001)
+    add(jobs)
+    for (const job of jobs)
+      add(
+        await ctx.db
+          .query("preparationChunks")
+          .withIndex("by_job_ordinal", (q) => q.eq("jobId", job._id))
+          .take(2001)
+      )
+    const conversations = await ctx.db
+      .query("conversations")
+      .withIndex("by_project_item", (q) => q.eq("projectId", projectId))
+      .take(2001)
+    add(conversations)
+    for (const conversation of conversations)
+      add(
+        await ctx.db
+          .query("conversationMessages")
+          .withIndex("by_conversation_createdAt", (q) =>
+            q.eq("conversationId", conversation._id)
+          )
+          .take(2001)
+      )
+    const proposals = await ctx.db
+      .query("researchProposals")
+      .withIndex("by_project_createdAt", (q) => q.eq("projectId", projectId))
+      .take(2001)
+    add(proposals)
+    for (const proposal of proposals)
+      add(
+        await ctx.db
+          .query("researchProposalImports")
+          .withIndex("by_proposal_sourceIndex", (q) =>
+            q.eq("proposalId", proposal._id)
+          )
+          .take(2001)
+      )
+    // Removing job and lease records in this transaction prevents late worker commits.
+    for (const row of rows) await ctx.db.delete(row._id)
+    await ctx.db.delete(projectId)
   },
 })

@@ -1,10 +1,17 @@
 "use client"
 
-/** Renders the compact dark project library and owns project creation. */
+/** Owns searchable project browsing, sort controls, and project creation. */
 
 import Link from "next/link"
 import { useEffect, useState } from "react"
-import { AddIcon, ArrowUpRightIcon } from "@/components/ui/icon"
+import { AddIcon } from "@/components/ui/icon"
+import { ProjectActions } from "@/components/projects/project-actions"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -20,16 +27,30 @@ import { Skeleton } from "@/components/ui/skeleton"
 type Project = {
   _id: string
   title: string
+  createdAt?: number
 }
 
 /** Props required to render the project library and create a project. */
 type ProjectGridProps = {
   projects?: Project[]
-  onCreate?: (title: string) => Promise<void>
+  onCreate: (title: string) => Promise<void>
 }
 
 /** Displays project summaries and creates a project through the supplied mutation. */
 export function ProjectGrid({ projects, onCreate }: ProjectGridProps) {
+  const [search, setSearch] = useState("")
+  const [sort, setSort] = useState<"newest" | "name">("newest")
+  const filtered = projects
+    ?.filter((project) =>
+      project.title
+        .toLocaleLowerCase()
+        .includes(search.trim().toLocaleLowerCase())
+    )
+    .toSorted((a, b) =>
+      sort === "name"
+        ? a.title.localeCompare(b.title)
+        : (b.createdAt ?? 0) - (a.createdAt ?? 0)
+    )
   const [open, setOpen] = useState(false)
   const [title, setTitle] = useState("")
   const [creating, setCreating] = useState(false)
@@ -48,6 +69,7 @@ export function ProjectGrid({ projects, onCreate }: ProjectGridProps) {
 
   /** Closes the dialog and removes its navigation hash when necessary. */
   const changeOpen = (nextOpen: boolean) => {
+    if (creating) return
     setOpen(nextOpen)
     if (!nextOpen) setError("")
     if (!nextOpen && window.location.hash === "#new-project") {
@@ -66,9 +88,15 @@ export function ProjectGrid({ projects, onCreate }: ProjectGridProps) {
     setCreating(true)
     setError("")
     try {
-      if (onCreate) await onCreate(value)
+      await onCreate(value)
       setTitle("")
-      changeOpen(false)
+      setOpen(false)
+      if (window.location.hash === "#new-project")
+        window.history.replaceState(
+          null,
+          "",
+          window.location.pathname + window.location.search
+        )
     } catch {
       setError("Could not create that project. Try again.")
     } finally {
@@ -77,72 +105,116 @@ export function ProjectGrid({ projects, onCreate }: ProjectGridProps) {
   }
 
   return (
-    <section className="-mx-5 -my-10 min-h-svh bg-[#080808] px-5 py-8 text-white sm:-mx-8 sm:-my-16 sm:px-8 sm:py-12">
-      <div className="mx-auto w-full max-w-5xl">
-        <div className="mb-8 flex items-center justify-between gap-4">
-          <h1 className="font-sans text-3xl font-medium tracking-[-0.04em]">
-            Projects
-          </h1>
+    <section>
+      <div className="mb-6 flex items-center justify-between gap-4">
+        <div className="min-w-0">
+          <h1 className="text-3xl font-medium tracking-[-0.04em]">Projects</h1>
+        </div>
+        <Button
+          onClick={() => setOpen(true)}
+          className="h-11 gap-2 rounded-full bg-brand px-4 text-brand-foreground hover:bg-brand/85"
+        >
+          <AddIcon aria-hidden="true" size={17} />
+          <span>New project</span>
+        </Button>
+      </div>
+      {projects && projects.length > 0 && (
+        <div className="mb-5 flex flex-wrap items-center gap-3">
+          <Input
+            aria-label="Search projects"
+            placeholder="Search projects…"
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            className="h-11 min-w-0 flex-1 basis-40 rounded-xl bg-card"
+          />
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" className="h-11 rounded-xl">
+                {sort === "newest" ? "Newest first" : "Name A–Z"}
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onSelect={() => setSort("newest")}>
+                Newest first
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => setSort("name")}>
+                Name A–Z
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+      )}
+      {projects === undefined ? (
+        <ProjectGridLoading />
+      ) : projects.length === 0 ? (
+        <div className="rounded-2xl border border-dashed p-8 py-14 text-center">
+          <h2 className="text-xl font-medium">No projects yet</h2>
           <Button
-            size="sm"
             onClick={() => setOpen(true)}
-            className="h-10 gap-2 rounded-[20px] bg-[#ff8065] px-4 text-sm font-medium text-[#1b0d0a] hover:bg-[#ff9b86] focus-visible:ring-[#ff8065]/50"
+            className="mt-6 h-11 rounded-full px-5"
           >
-            <AddIcon aria-hidden="true" size={17} />
-            New project
+            Create project
           </Button>
         </div>
-
-        {projects === undefined ? (
-          <ProjectGridLoading />
-        ) : projects.length === 0 ? (
-          <div className="rounded-[20px] border border-white/10 bg-white/[0.035] px-5 py-10">
-            <h2 className="font-sans text-lg font-medium tracking-[-0.02em]">
-              No projects yet
-            </h2>
-            <Button
-              onClick={() => setOpen(true)}
-              className="mt-5 h-10 rounded-[20px] bg-white px-4 text-sm font-medium text-[#111] hover:bg-white/85"
-            >
-              Create project
-            </Button>
-          </div>
-        ) : (
-          <div className="overflow-hidden rounded-[20px] border border-white/10 bg-[#151515]">
-            <ul aria-label="Projects">
-              {projects.map((project) => (
-                <li
-                  key={project._id}
-                  className="border-b border-white/10 last:border-0"
+      ) : filtered?.length === 0 ? (
+        <div className="py-16 text-center">
+          <h2 className="text-lg font-medium">No matching projects</h2>
+          <Button
+            variant="outline"
+            className="mt-5 h-11"
+            onClick={() => setSearch("")}
+          >
+            Clear search
+          </Button>
+        </div>
+      ) : (
+        <>
+          <p role="status" className="sr-only">
+            {filtered?.length} {filtered?.length === 1 ? "project" : "projects"}
+          </p>
+          <ul
+            aria-label="Projects"
+            className="overflow-hidden rounded-2xl border bg-card"
+          >
+            {filtered?.map((project) => (
+              <li
+                key={project._id}
+                className="flex items-center gap-2 border-b pr-3 last:border-0 hover:bg-muted/50"
+              >
+                <Link
+                  href={`/projects/${project._id}`}
+                  className="min-w-0 flex-1 px-5 py-5 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
                 >
-                  <Link
-                    href={`/projects/${project._id}`}
-                    className="group flex min-h-20 items-center justify-between gap-4 px-5 py-4 transition-colors hover:bg-white/[0.045] focus-visible:bg-white/[0.06] focus-visible:ring-2 focus-visible:ring-[#ff8065] focus-visible:outline-none sm:px-6"
-                  >
-                    <span className="min-w-0">
-                      <span className="block truncate text-base font-medium tracking-[-0.015em] text-white">
-                        {project.title}
-                      </span>
-                    </span>
-                    <ArrowUpRightIcon
-                      aria-hidden="true"
-                      className="size-5 shrink-0 text-white/35 transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5"
-                    />
-                  </Link>
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
-      </div>
+                  <h2 className="text-base font-medium tracking-tight break-words">
+                    {project.title}
+                  </h2>
+                  {project.createdAt && (
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Created{" "}
+                      {new Date(project.createdAt).toLocaleDateString("en-GB", {
+                        day: "numeric",
+                        month: "short",
+                        year: "numeric",
+                        timeZone: "UTC",
+                      })}
+                    </p>
+                  )}
+                </Link>
+                <ProjectActions project={project} />
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
 
       <Dialog open={open} onOpenChange={changeOpen}>
         <DialogContent
+          showCloseButton={!creating}
           aria-describedby={undefined}
-          className="border-white/10 bg-[#151515] text-white"
+          className="border-border bg-popover text-popover-foreground"
         >
           <DialogHeader>
-            <DialogTitle className="font-sans text-white">
+            <DialogTitle className="font-sans text-foreground">
               New project
             </DialogTitle>
           </DialogHeader>
@@ -151,6 +223,7 @@ export function ProjectGrid({ projects, onCreate }: ProjectGridProps) {
           </label>
           <Input
             id="project-title"
+            disabled={creating}
             autoFocus
             maxLength={200}
             value={title}
@@ -159,25 +232,26 @@ export function ProjectGrid({ projects, onCreate }: ProjectGridProps) {
               if (event.key === "Enter") void create()
             }}
             placeholder="e.g. Cognitive science"
-            className="border-white/10 bg-white/[0.045] text-white placeholder:text-white/30 focus-visible:border-[#ff8065] focus-visible:ring-[#ff8065]/30"
+            className="h-11"
           />
           {error ? (
-            <p aria-live="polite" className="text-sm text-red-200">
+            <p aria-live="polite" className="text-sm text-destructive">
               {error}
             </p>
           ) : null}
           <DialogFooter>
             <Button
               variant="outline"
+              disabled={creating}
               onClick={() => changeOpen(false)}
-              className="border-white/15 bg-transparent text-white/75 hover:bg-white/[0.07] hover:text-white"
+              className="h-11"
             >
               Cancel
             </Button>
             <Button
               disabled={!title.trim() || creating}
               onClick={() => void create()}
-              className="bg-[#ff8065] text-[#1b0d0a] hover:bg-[#ff9b86] focus-visible:ring-[#ff8065]/50"
+              className="h-11 bg-brand text-brand-foreground hover:bg-brand/85"
             >
               {creating ? "Creating…" : "Create project"}
             </Button>
@@ -195,18 +269,18 @@ function ProjectGridLoading() {
       <span className="sr-only">Loading projects</span>
       <div
         aria-hidden="true"
-        className="overflow-hidden rounded-[20px] border border-white/10 bg-[#151515]"
+        className="overflow-hidden rounded-[20px] border border-border bg-card"
       >
         {Array.from({ length: 4 }, (_, index) => (
           <div
             key={index}
-            className="flex min-h-20 items-center justify-between border-b border-white/10 px-5 py-4 last:border-0 sm:px-6"
+            className="flex min-h-20 items-center justify-between border-b border-border px-5 py-4 last:border-0 sm:px-6"
           >
             <div className="space-y-2">
-              <Skeleton className="h-5 w-44 bg-white/10" />
-              <Skeleton className="h-4 w-24 bg-white/[0.07]" />
+              <Skeleton className="h-5 w-44 bg-muted" />
+              <Skeleton className="h-4 w-24 bg-muted" />
             </div>
-            <Skeleton className="size-5 rounded-full bg-white/[0.07]" />
+            <Skeleton className="size-5 rounded-full bg-muted" />
           </div>
         ))}
       </div>
