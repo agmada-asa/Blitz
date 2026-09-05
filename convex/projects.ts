@@ -124,6 +124,12 @@ export const deleteProject = mutation({
     // project or appear in retrieval and worker queues after deletion.
     add(
       await ctx.db
+        .query("chatDocuments")
+        .withIndex("by_project", (q) => q.eq("projectId", projectId))
+        .take(2001)
+    )
+    add(
+      await ctx.db
         .query("sourceChunks")
         .withIndex("by_project", (q) => q.eq("projectId", projectId))
         .take(2001)
@@ -152,6 +158,25 @@ export const deleteProject = mutation({
         .withIndex("by_project_updatedAt", (q) => q.eq("projectId", projectId))
         .take(2001)
     )
+    const workspaceChats = await ctx.db
+      .query("workspaceChats")
+      .withIndex("by_project_updatedAt", (q) => q.eq("projectId", projectId))
+      .take(2001)
+    add(workspaceChats)
+    for (const chat of workspaceChats) {
+      add(
+        await ctx.db
+          .query("workspaceChatMessages")
+          .withIndex("by_chat_createdAt", (q) => q.eq("chatId", chat._id))
+          .take(2001)
+      )
+      add(
+        await ctx.db
+          .query("workspaceChatAttachments")
+          .withIndex("by_chat_createdAt", (q) => q.eq("chatId", chat._id))
+          .take(2001)
+      )
+    }
     const jobs = await ctx.db
       .query("preparationJobs")
       .withIndex("by_project_source", (q) => q.eq("projectId", projectId))

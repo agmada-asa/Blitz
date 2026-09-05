@@ -1,6 +1,6 @@
 "use client"
 
-/** Connects a project route to its sources, generation controls, and study action. */
+/** Connects a project route to its source-grounded learning workspace. */
 
 import { useMutation, usePaginatedQuery, useQuery } from "convex/react"
 import Link from "next/link"
@@ -8,18 +8,11 @@ import { use, useEffect, useState } from "react"
 
 import { ProjectActions } from "@/components/projects/project-actions"
 import { ProjectFiles } from "@/components/projects/project-files"
+import { ProjectLearningWorkspace } from "@/components/projects/project-learning-workspace"
 import { ResearchPanel } from "@/components/projects/research-panel"
-import { TopicList } from "@/components/projects/topic-list"
 import { SourceUploader } from "@/components/projects/source-uploader"
 import { Button } from "@/components/ui/button"
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
 import { Skeleton } from "@/components/ui/skeleton"
-import { ArrowLeftIcon, BookOpenIcon } from "@/components/ui/icon"
 import { api } from "@/convex/_generated/api"
 import type { Id } from "@/convex/_generated/dataModel"
 import type {} from "@/lib/client/desktop"
@@ -53,33 +46,19 @@ export default function ProjectPage({
   const createAndEnqueue = useMutation(api.sources.createAndEnqueue)
   const updateSource = useMutation(api.sources.updateSource)
   const enqueue = useMutation(api.preparation.enqueue)
-  const hasLearningItems = useQuery(api.learning.hasLearningItems, {
-    projectId: convexProjectId,
-  })
-  const [agentCapability, setAgentCapability] = useState<{
-    available: boolean
-    error?: string
-  }>()
+  const [agentWorkspaceDirectory, setAgentWorkspaceDirectory] = useState("")
   useEffect(() => {
     let active = true
     fetch(`/api/projects/${encodeURIComponent(projectId)}/agent`)
       .then(
         async (response) =>
-          (await response.json()) as { available?: boolean; error?: string }
+          (await response.json()) as { workspaceDirectory?: string }
       )
       .then((result) => {
-        if (active)
-          setAgentCapability({
-            available: result.available === true,
-            error: result.error,
-          })
+        if (active) setAgentWorkspaceDirectory(result.workspaceDirectory ?? "")
       })
       .catch(() => {
-        if (active)
-          setAgentCapability({
-            available: false,
-            error: "The local agent is unavailable on this desktop.",
-          })
+        if (active) setAgentWorkspaceDirectory("")
       })
     return () => {
       active = false
@@ -91,32 +70,17 @@ export default function ProjectPage({
   const artifacts = useQuery(api.projectAgents.listArtifacts, {
     projectId: convexProjectId,
   })
-  const agentTasks = useQuery(api.projectAgents.listTasks, {
-    projectId: convexProjectId,
-  })
   const citations = useQuery(api.projectAgents.listCitations, {
     projectId: convexProjectId,
   })
 
-  /** Starts a local project task through the desktop agent bridge. */
-  const startAgent = async (input: { title: string; request: string }) => {
-    const response = await fetch(
-      `/api/projects/${encodeURIComponent(projectId)}/agent`,
-      {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(input),
-      }
-    )
-    const payload = (await response.json()) as { error?: string }
-    if (!response.ok)
-      throw new Error(payload.error || "Agent task could not start.")
-  }
-
   /** Opens a generated file through the bounded local artifact endpoint. */
   const openArtifact = (artifact: { relativeKey: string }) => {
     if (window.blitzDesktop) {
-      void window.blitzDesktop.openFile(projectId, artifact.relativeKey)
+      const absolutePath = agentWorkspaceDirectory
+        ? `${agentWorkspaceDirectory.replace(/[\\/]$/, "")}/${artifact.relativeKey}`
+        : artifact.relativeKey
+      void window.blitzDesktop.openFile(projectId, absolutePath)
       return
     }
     window.open(
@@ -144,8 +108,12 @@ export default function ProjectPage({
 
   /** Reveals a generated artifact in Finder when the Electron bridge is present. */
   const revealArtifact = (artifact: { relativeKey: string }) => {
-    if (window.blitzDesktop)
-      void window.blitzDesktop.revealFile(projectId, artifact.relativeKey)
+    if (window.blitzDesktop) {
+      const absolutePath = agentWorkspaceDirectory
+        ? `${agentWorkspaceDirectory.replace(/[\\/]$/, "")}/${artifact.relativeKey}`
+        : artifact.relativeKey
+      void window.blitzDesktop.revealFile(projectId, absolutePath)
+    }
   }
 
   /** Promotes a text artifact through the explicit source approval route. */
@@ -169,153 +137,117 @@ export default function ProjectPage({
   if (project === null) return <ProjectNotFoundState />
 
   return (
-    <main className="mx-auto w-full max-w-5xl px-5 py-8 pb-28 font-sans sm:px-8 sm:py-12">
-      <Link
-        href="/library"
-        className="mb-6 inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground"
-      >
-        <ArrowLeftIcon size={16} /> All projects
-      </Link>
-
-      <div className="mb-8 flex flex-wrap items-start justify-between gap-5">
-        <div className="min-w-0 flex-1 basis-64">
-          <h1 className="font-heading text-3xl font-medium tracking-tight break-words sm:text-4xl">
-            {project?.title || "Loading…"}
-          </h1>
-        </div>
-        <ProjectActions project={project} returnToLibrary />
-        <div className="flex w-full flex-wrap gap-2 [&_a]:min-h-11 [&_button]:min-h-11">
-          <ResearchPanel
-            key={projectId}
-            projectId={projectId}
-            initialRequestId={research}
+    <ProjectLearningWorkspace
+      projectId={convexProjectId}
+      projectTitle={project.title}
+      sources={sources.map((source) => ({
+        id: String(source._id),
+        filename: source.filename,
+        status: source.status,
+      }))}
+      onOpenSource={(sourceId) => {
+        const source = sources.find(
+          (candidate) => String(candidate._id) === sourceId
+        )
+        if (source) openSource(source)
+      }}
+      headerActions={
+        <>
+          <Button
+            asChild
+            variant="outline"
+            className="hidden min-h-10 rounded-full sm:inline-flex"
+          >
+            <Link href={`/chat?projectId=${encodeURIComponent(projectId)}`}>
+              Chat
+            </Link>
+          </Button>
+          <div className="hidden sm:block">
+            <ResearchPanel
+              key={projectId}
+              projectId={projectId}
+              initialRequestId={research}
+            />
+          </div>
+          <ProjectActions project={project} returnToLibrary />
+        </>
+      }
+      sourceManager={
+        <div className="pb-4">
+          <SourceUploader
+            projectId={convexProjectId}
+            createSource={createSource}
+            createAndEnqueue={createAndEnqueue}
+            updateSource={updateSource}
+            enqueue={enqueue}
           />
-          {hasLearningItems ? (
-            <>
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button variant="outline" className="rounded-full">
-                    Study
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  <DropdownMenuItem asChild>
-                    <Link
-                      href={`/projects/${encodeURIComponent(projectId)}/practice`}
-                    >
-                      Quick questions
-                    </Link>
-                  </DropdownMenuItem>
-                  <DropdownMenuItem asChild>
-                    <Link
-                      href={`/projects/${encodeURIComponent(projectId)}/write`}
-                    >
-                      Written answers
-                    </Link>
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-              <Button asChild variant="outline" className="rounded-full">
-                <Link href={`/projects/${encodeURIComponent(projectId)}/test`}>
-                  Test
-                </Link>
-              </Button>
-              <Button
-                asChild
-                className="rounded-full bg-brand text-brand-foreground hover:bg-brand/85"
-              >
-                <Link href={`/?projectId=${encodeURIComponent(projectId)}`}>
-                  <BookOpenIcon size={18} /> Open feed
-                </Link>
-              </Button>
-            </>
+
+          {sourceStatus === "LoadingFirstPage" ? (
+            <p className="mt-8 text-sm text-muted-foreground" role="status">
+              Loading files…
+            </p>
+          ) : (
+            <ProjectFiles
+              projectId={convexProjectId}
+              sources={sources}
+              ingestion={ingestion?.map((job) => ({
+                sourceId: String(job.sourceId),
+                status: job.status,
+                error: job.error,
+              }))}
+              artifacts={artifacts?.map((artifact) => ({
+                id: String(artifact._id),
+                relativeKey: artifact.relativeKey,
+                kind: artifact.kind,
+                mimeType: artifact.mimeType,
+                sizeBytes: artifact.sizeBytes,
+                status: artifact.status,
+                updatedAt: artifact.updatedAt,
+              }))}
+              citations={citations?.map((citation) => ({
+                sourceId: String(citation.sourceId),
+                label: citation.label,
+                detail:
+                  "detail" in citation && typeof citation.detail === "string"
+                    ? citation.detail
+                    : undefined,
+              }))}
+              actions={{
+                onOpenArtifact: openArtifact,
+                onAddArtifactToSources: addArtifactToSources,
+                onRetryIngestion: async (sourceId) => {
+                  const response = await fetch("/api/sources/retry", {
+                    method: "POST",
+                    headers: { "content-type": "application/json" },
+                    body: JSON.stringify({ projectId, sourceId }),
+                  })
+                  if (!response.ok) {
+                    const payload = (await response.json()) as {
+                      error?: string
+                    }
+                    throw new Error(payload.error || "Source retry failed.")
+                  }
+                },
+                onOpenSource: openSource,
+                onRevealArtifact: revealArtifact,
+              }}
+            />
+          )}
+          {sourceStatus === "CanLoadMore" || sourceStatus === "LoadingMore" ? (
+            <Button
+              variant="outline"
+              className="mt-4"
+              disabled={sourceStatus === "LoadingMore"}
+              onClick={() => loadMoreSources(20)}
+            >
+              {sourceStatus === "LoadingMore"
+                ? "Loading files…"
+                : "Load more files"}
+            </Button>
           ) : null}
         </div>
-      </div>
-
-      <TopicList projectId={convexProjectId} />
-
-      <div className="mt-10">
-        <SourceUploader
-          projectId={convexProjectId}
-          createSource={createSource}
-          createAndEnqueue={createAndEnqueue}
-          updateSource={updateSource}
-          enqueue={enqueue}
-        />
-      </div>
-
-      {sourceStatus === "LoadingFirstPage" ? (
-        <p role="status">Loading files…</p>
-      ) : (
-        <ProjectFiles
-          projectId={convexProjectId}
-          sources={sources}
-          ingestion={ingestion?.map((job) => ({
-            sourceId: String(job.sourceId),
-            status: job.status,
-            error: job.error,
-          }))}
-          artifacts={artifacts?.map((artifact) => ({
-            id: String(artifact._id),
-            relativeKey: artifact.relativeKey,
-            kind: artifact.kind,
-            mimeType: artifact.mimeType,
-            sizeBytes: artifact.sizeBytes,
-            status: artifact.status,
-            updatedAt: artifact.updatedAt,
-          }))}
-          agentTasks={agentTasks?.map((task) => ({
-            id: String(task._id),
-            title: task.title,
-            status: task.status,
-            request: task.request,
-            error: task.error,
-            artifactIds: task.artifactIds?.map(String),
-          }))}
-          citations={citations?.map((citation) => ({
-            sourceId: String(citation.sourceId),
-            label: citation.label,
-            detail:
-              "detail" in citation && typeof citation.detail === "string"
-                ? citation.detail
-                : undefined,
-          }))}
-          agentAvailable={agentCapability?.available === true}
-          agentUnavailableReason={agentCapability?.error}
-          actions={{
-            onStartAgent: startAgent,
-            onOpenArtifact: openArtifact,
-            onAddArtifactToSources: addArtifactToSources,
-            onRetryIngestion: async (sourceId) => {
-              const response = await fetch("/api/sources/retry", {
-                method: "POST",
-                headers: { "content-type": "application/json" },
-                body: JSON.stringify({ projectId, sourceId }),
-              })
-              if (!response.ok) {
-                const payload = (await response.json()) as { error?: string }
-                throw new Error(payload.error || "Source retry failed.")
-              }
-            },
-            onOpenSource: openSource,
-            onRevealArtifact: revealArtifact,
-          }}
-        />
-      )}
-      {sourceStatus === "CanLoadMore" || sourceStatus === "LoadingMore" ? (
-        <Button
-          variant="outline"
-          className="mt-4"
-          disabled={sourceStatus === "LoadingMore"}
-          onClick={() => loadMoreSources(20)}
-        >
-          {sourceStatus === "LoadingMore"
-            ? "Loading files…"
-            : "Load more files"}
-        </Button>
-      ) : null}
-    </main>
+      }
+    />
   )
 }
 

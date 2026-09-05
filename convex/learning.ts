@@ -45,6 +45,145 @@ export const hasLearningItems = query({
   },
 })
 
+/** Maximum records read while composing one project learning path. */
+const PROJECT_PATH_LIMIT = 500
+
+/** Returns a source-grounded project path without exposing stored answer keys. */
+export const getProjectPath = query({
+  args: { projectId: v.id("projects") },
+  handler: async (ctx, args) => {
+    await requireProject(ctx, args.projectId)
+    const [topics, concepts, items, sources, reviews] = await Promise.all([
+      ctx.db
+        .query("topics")
+        .withIndex("by_project", (q) => q.eq("projectId", args.projectId))
+        .order("asc")
+        .take(PROJECT_PATH_LIMIT),
+      ctx.db
+        .query("concepts")
+        .withIndex("by_project", (q) => q.eq("projectId", args.projectId))
+        .order("asc")
+        .take(PROJECT_PATH_LIMIT),
+      ctx.db
+        .query("learningItems")
+        .withIndex("by_project_order", (q) => q.eq("projectId", args.projectId))
+        .order("asc")
+        .take(PROJECT_PATH_LIMIT),
+      ctx.db
+        .query("sources")
+        .withIndex("by_project", (q) => q.eq("projectId", args.projectId))
+        .order("asc")
+        .take(PROJECT_PATH_LIMIT),
+      ctx.db
+        .query("conceptReviews")
+        .withIndex("by_project_dueAt", (q) => q.eq("projectId", args.projectId))
+        .take(PROJECT_PATH_LIMIT),
+    ])
+    const sourceLabels = new Map(
+      sources.map((source) => [String(source._id), source.filename])
+    )
+    const reviewsByConcept = new Map(
+      reviews.map((review) => [String(review.conceptId), review])
+    )
+    const itemsByConcept = new Map<string, typeof items>()
+    for (const item of items) {
+      const conceptId = String(item.conceptId)
+      const current = itemsByConcept.get(conceptId) ?? []
+      current.push(item)
+      itemsByConcept.set(conceptId, current)
+    }
+
+    /** Converts one concept to its safe card sequence and derived mastery state. */
+    function conceptForPath(concept: (typeof concepts)[number]) {
+      const conceptItems = itemsByConcept.get(String(concept._id)) ?? []
+      const review = reviewsByConcept.get(String(concept._id))
+      const status =
+        (review?.consecutiveCorrect ?? 0) >= 2
+          ? ("mastered" as const)
+          : (review?.attemptCount ?? 0) > 0
+            ? ("practicing" as const)
+            : ("new" as const)
+      const hasNewMaterial = Boolean(
+        review && conceptItems.some((item) => item.createdAt > review.updatedAt)
+      )
+      return {
+        id: String(concept._id),
+        title: concept.title,
+        status,
+        hasNewMaterial,
+        sourceLabels: concept.sourceIds
+          .map((sourceId) => sourceLabels.get(String(sourceId)))
+          .filter((label): label is string => Boolean(label)),
+        items: conceptItems.map((item) => ({
+          id: String(item._id),
+          conceptId: String(item.conceptId),
+          type: item.type,
+          title: item.title,
+          ...(item.type === "explain" ? { body: item.body } : {}),
+          ...(item.type !== "explain" ? { question: item.question ?? "" } : {}),
+          ...(item.options ? { options: item.options } : {}),
+          sourceLabels: item.sourceIds
+            .map((sourceId) => sourceLabels.get(String(sourceId)))
+            .filter((label): label is string => Boolean(label)),
+        })),
+      }
+    }
+
+    const conceptsByTopic = new Map<string, typeof concepts>()
+    for (const concept of concepts) {
+      const topicId = concept.topicId ? String(concept.topicId) : "unassigned"
+      const current = conceptsByTopic.get(topicId) ?? []
+      current.push(concept)
+      conceptsByTopic.set(topicId, current)
+    }
+    const orderedTopics: Array<{ id: string; title: string }> = topics.map(
+      (topic) => ({ id: String(topic._id), title: topic.title })
+    )
+    if (conceptsByTopic.has("unassigned")) {
+      orderedTopics.push({ id: "unassigned", title: "Other material" })
+    }
+    const sections = orderedTopics
+      .map((topic) => {
+        const sectionConcepts = (conceptsByTopic.get(topic.id) ?? []).map(
+          conceptForPath
+        )
+        return {
+          id: topic.id,
+          title: topic.title,
+          hasNewMaterial: sectionConcepts.some(
+            (concept) => concept.hasNewMaterial
+          ),
+          masteredConcepts: sectionConcepts.filter(
+            (concept) => concept.status === "mastered"
+          ).length,
+          concepts: sectionConcepts,
+        }
+      })
+      .filter((section) => section.concepts.length > 0)
+    const allConcepts = sections.flatMap((section) => section.concepts)
+    return {
+      sections,
+      stats: {
+        sectionCount: sections.length,
+        conceptCount: allConcepts.length,
+        masteredConceptCount: allConcepts.filter(
+          (concept) => concept.status === "mastered"
+        ).length,
+        questionCount: allConcepts.reduce(
+          (total, concept) =>
+            total +
+            concept.items.filter((item) => item.type !== "explain").length,
+          0
+        ),
+      },
+      isTruncated:
+        topics.length === PROJECT_PATH_LIMIT ||
+        concepts.length === PROJECT_PATH_LIMIT ||
+        items.length === PROJECT_PATH_LIMIT,
+    }
+  },
+})
+
 /** Choice option payload accepted by learning-item insertion. */
 const option = v.object({ id: v.string(), text: v.string() })
 
@@ -666,7 +805,7 @@ export const listLearningFeedCandidates = query({
   },
 })
 
-/** Returns a bounded mixed due/new feed with source filenames and filters. */
+/** Returns a bounded question-only due/new feed with source filenames and filters. */
 export const getLearningFeed = query({
   args: {
     projectId: v.optional(v.id("projects")),
@@ -788,10 +927,9 @@ export const getLearningFeed = query({
         projectId: string
         conceptId: string
         topicId?: string
-        type: "explain" | "single-choice" | "multiple-answer" | "true-false"
+        type: "single-choice" | "multiple-answer" | "true-false"
         title: string
-        body?: string
-        question?: string
+        question: string
         options?: { id: string; text: string }[]
         sourceLabel: string
         sourceIds: string[]
@@ -804,6 +942,8 @@ export const getLearningFeed = query({
       const scanCount = scanCountByProject.get(projectIndex) ?? 0
       if (scanCount === 0 || itemDone[projectIndex]) continue
       const itemAnchor = itemAnchors[projectIndex]
+      // Home is reserved for retrieval practice. Explanation items remain in
+      // project walkthroughs, where their place in the path is visible.
       const page = await ctx.db
         .query("learningItems")
         .withIndex("by_project", (q) =>
@@ -811,6 +951,7 @@ export const getLearningFeed = query({
             ? q.eq("projectId", project._id)
             : q.eq("projectId", project._id).gt("_creationTime", itemAnchor)
         )
+        .filter((q) => q.neq(q.field("type"), "explain"))
         .order("asc")
         .take(scanCount + 1)
       const itemPage = page.slice(0, scanCount)
@@ -819,6 +960,7 @@ export const getLearningFeed = query({
       nextItemAnchors[projectIndex] = itemPage.at(-1)?._creationTime ?? null
       nextItemDone[projectIndex] = page.length <= scanCount
       for (const item of itemPage) {
+        if (item.type === "explain") continue
         const concept = await ctx.db.get(item.conceptId)
         if (!concept) continue
         if (requestedTopic && concept.topicId !== requestedTopic._id) continue
@@ -844,7 +986,7 @@ export const getLearningFeed = query({
               conceptId: String(item.conceptId),
               createdAt: item.createdAt,
               order: item.order,
-              format: item.type === "explain" ? "explanation" : "question",
+              format: "question",
               ...(concept.topicId ? { topicId: String(concept.topicId) } : {}),
               kind: "review",
               reviewState: {
@@ -864,7 +1006,7 @@ export const getLearningFeed = query({
               conceptId: String(item.conceptId),
               createdAt: item.createdAt,
               order: item.order,
-              format: item.type === "explain" ? "explanation" : "question",
+              format: "question",
               ...(concept.topicId ? { topicId: String(concept.topicId) } : {}),
               kind: "new",
             }
@@ -881,8 +1023,7 @@ export const getLearningFeed = query({
           ...(concept.topicId ? { topicId: String(concept.topicId) } : {}),
           type: item.type,
           title: item.title,
-          ...(item.type === "explain" ? { body: item.body } : {}),
-          ...(item.type !== "explain" ? { question: item.question ?? "" } : {}),
+          question: item.question ?? "",
           ...(item.options ? { options: item.options } : {}),
           sourceLabel: source.filename,
           sourceIds: item.sourceIds.map(String),

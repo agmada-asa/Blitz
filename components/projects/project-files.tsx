@@ -3,7 +3,6 @@
 /** Renders a project's local file inventory, ingestion lifecycle, citations, and agent output. */
 
 import { useState } from "react"
-import type { FormEvent } from "react"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -14,9 +13,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
-import { Input } from "@/components/ui/input"
 import { Progress } from "@/components/ui/progress"
-import { Textarea } from "@/components/ui/textarea"
 import {
   ArrowUpRightIcon,
   CheckCircleIcon,
@@ -24,7 +21,6 @@ import {
   FolderIcon,
   LoadingIcon,
   RotateLeftIcon,
-  SparklesIcon,
 } from "@/components/ui/icon"
 import type { Id } from "@/convex/_generated/dataModel"
 
@@ -63,16 +59,6 @@ export type ProjectArtifact = {
   updatedAt?: number
 }
 
-/** User-visible lifecycle record for a local agent task. */
-export type ProjectAgentTask = {
-  id: string
-  title: string
-  status: "queued" | "running" | "completed" | "failed"
-  request?: string
-  error?: string
-  artifactIds?: string[]
-}
-
 /** Citation metadata shown beside a retrieval result or prepared source. */
 export type ProjectFileCitation = {
   sourceId: string
@@ -82,10 +68,6 @@ export type ProjectFileCitation = {
 
 /** Actions supplied by the desktop bridge or route integration for local artifacts. */
 export type ProjectFilesActions = {
-  onStartAgent?: (input: {
-    title: string
-    request: string
-  }) => void | Promise<void>
   onOpenArtifact?: (artifact: ProjectArtifact) => void
   onRevealArtifact?: (artifact: ProjectArtifact) => void
   onOpenSource?: (source: ProjectFileSource) => void
@@ -99,10 +81,7 @@ export type ProjectFilesProps = {
   sources: ProjectFileSource[]
   ingestion?: ProjectFileIngestion[]
   artifacts?: ProjectArtifact[]
-  agentTasks?: ProjectAgentTask[]
   citations?: ProjectFileCitation[]
-  agentAvailable?: boolean
-  agentUnavailableReason?: string
   actions?: ProjectFilesActions
 }
 
@@ -141,24 +120,13 @@ export function ProjectFiles({
   sources,
   ingestion = [],
   artifacts = [],
-  agentTasks = [],
   citations = [],
-  agentAvailable = false,
-  agentUnavailableReason = "The local agent is unavailable on this desktop.",
   actions = {},
 }: ProjectFilesProps) {
   const [busyArtifactId, setBusyArtifactId] = useState<string>()
-  const [agentTitle, setAgentTitle] = useState("")
-  const [agentRequest, setAgentRequest] = useState("")
-  const [agentBusy, setAgentBusy] = useState(false)
-  const [agentError, setAgentError] = useState("")
   const activeArtifacts = artifacts.filter(
     (artifact) => artifact.status === "active"
   )
-  const activeTasks = agentTasks.filter(
-    (task) => task.status === "queued" || task.status === "running"
-  )
-
   /** Adds one generated artifact to the source queue while keeping the action recoverable. */
   async function addArtifact(artifact: ProjectArtifact) {
     if (!actions.onAddArtifactToSources) return
@@ -167,25 +135,6 @@ export function ProjectFiles({
       await actions.onAddArtifactToSources(artifact)
     } finally {
       setBusyArtifactId(undefined)
-    }
-  }
-
-  /** Starts a bounded local agent task and preserves validation errors in the form. */
-  async function startAgent(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    if (!actions.onStartAgent || agentBusy) return
-    setAgentBusy(true)
-    setAgentError("")
-    try {
-      await actions.onStartAgent({ title: agentTitle, request: agentRequest })
-      setAgentTitle("")
-      setAgentRequest("")
-    } catch (error) {
-      setAgentError(
-        error instanceof Error ? error.message : "Agent task could not start."
-      )
-    } finally {
-      setAgentBusy(false)
     }
   }
 
@@ -203,17 +152,6 @@ export function ProjectFiles({
             Original sources and generated files.
           </p>
         </div>
-        {activeTasks.length ? (
-          <Badge variant="outline" className="h-7 gap-1.5">
-            <LoadingIcon
-              className="animate-spin"
-              size={14}
-              aria-hidden="true"
-            />
-            {activeTasks.length} agent{" "}
-            {activeTasks.length === 1 ? "task" : "tasks"} active
-          </Badge>
-        ) : null}
       </div>
 
       <Card>
@@ -422,131 +360,7 @@ export function ProjectFiles({
             )}
           </CardContent>
         </Card>
-
-        {agentAvailable || agentTasks.length ? (
-          <Card>
-            <CardHeader>
-              <CardTitle>Agent progress</CardTitle>
-              <CardDescription>
-                Recent work in this project workspace.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              {agentTasks.length ? (
-                agentTasks.slice(0, 5).map((task) => (
-                  <div key={task.id} className="flex items-start gap-3">
-                    <SparklesIcon
-                      className="mt-0.5 shrink-0 text-muted-foreground"
-                      size={17}
-                      aria-hidden="true"
-                    />
-                    <div className="min-w-0 flex-1">
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <p className="text-sm font-medium break-words">
-                          {task.title}
-                        </p>
-                        <Badge
-                          variant={
-                            task.status === "failed"
-                              ? "destructive"
-                              : task.status === "completed"
-                                ? "secondary"
-                                : "outline"
-                          }
-                        >
-                          {task.status}
-                        </Badge>
-                      </div>
-                      {task.error ? (
-                        <p className="mt-1 text-xs text-destructive">
-                          {task.error}
-                        </p>
-                      ) : null}
-                    </div>
-                  </div>
-                ))
-              ) : (
-                <p className="rounded-lg border border-dashed p-5 text-sm text-muted-foreground">
-                  No agent tasks have been started for this project.
-                </p>
-              )}
-            </CardContent>
-          </Card>
-        ) : null}
       </div>
-
-      {agentAvailable && actions.onStartAgent ? (
-        <Card>
-          <CardHeader>
-            <CardTitle>Start an agent task</CardTitle>
-            <CardDescription>
-              Ask the local agent to create or update work in this project.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <form className="space-y-3" onSubmit={startAgent}>
-              <label
-                className="block text-sm font-medium"
-                htmlFor="agent-task-title"
-              >
-                Task name
-              </label>
-              <Input
-                id="agent-task-title"
-                value={agentTitle}
-                onChange={(event) => setAgentTitle(event.target.value)}
-                placeholder="Create a study guide"
-                required
-                maxLength={200}
-              />
-              <label
-                className="block text-sm font-medium"
-                htmlFor="agent-task-request"
-              >
-                What should it do?
-              </label>
-              <Textarea
-                id="agent-task-request"
-                value={agentRequest}
-                onChange={(event) => setAgentRequest(event.target.value)}
-                placeholder="Use the sources to draft a concise study guide…"
-                required
-                minLength={20}
-                maxLength={20000}
-              />
-              {agentError ? (
-                <p role="alert" className="text-sm text-destructive">
-                  {agentError}
-                </p>
-              ) : null}
-              <Button
-                type="submit"
-                disabled={
-                  agentBusy ||
-                  !agentTitle.trim() ||
-                  agentRequest.trim().length < 20
-                }
-              >
-                {agentBusy ? (
-                  <LoadingIcon className="animate-spin" size={16} />
-                ) : (
-                  <SparklesIcon size={16} />
-                )}
-                {agentBusy ? "Starting…" : "Start agent task"}
-              </Button>
-            </form>
-          </CardContent>
-        </Card>
-      ) : null}
-      {!agentAvailable ? (
-        <Card>
-          <CardHeader>
-            <CardTitle>Agent progress</CardTitle>
-            <CardDescription>{agentUnavailableReason}</CardDescription>
-          </CardHeader>
-          <CardContent></CardContent>
-        </Card>
-      ) : null}
     </section>
   )
 }

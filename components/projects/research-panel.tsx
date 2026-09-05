@@ -860,7 +860,7 @@ export function ResearchPanel({
         <DialogContent
           aria-describedby={undefined}
           showCloseButton={false}
-          className="flex max-h-[min(88svh,720px)] flex-col overflow-hidden border-white/10 bg-[#151515] text-white sm:max-w-xl"
+          className="dark flex max-h-[min(88svh,720px)] flex-col overflow-hidden border-white/10 bg-[#151515] text-white selection:bg-brand selection:text-brand-foreground sm:max-w-xl"
         >
           <DialogHeader>
             <DialogTitle className="font-sans text-white">
@@ -886,7 +886,7 @@ export function ResearchPanel({
                 maxLength={2_000}
                 rows={4}
                 placeholder="e.g. Learn the basics of sound design"
-                className="resize-none border-white/10 bg-white/[0.045] text-white placeholder:text-white/30 focus-visible:border-[#ff8065] focus-visible:ring-[#ff8065]/30"
+                className="resize-none border-white/10 bg-white/[0.045] text-white placeholder:text-white/30 focus-visible:border-brand focus-visible:ring-brand/30"
               />
             </div>
 
@@ -899,7 +899,7 @@ export function ResearchPanel({
                   requestPending ||
                   applyState.status === "pending"
                 }
-                className="h-11 bg-[#ff8065] text-[#1b0d0a] hover:bg-[#ff9b86] focus-visible:ring-[#ff8065]/50"
+                className="h-11 bg-brand text-brand-foreground hover:bg-brand/85 focus-visible:ring-brand/50"
               >
                 {requestPending ? "Preparing…" : "Propose sources"}
               </Button>
@@ -978,14 +978,14 @@ export function ResearchPanel({
                             disabled={locked || applyState.status === "pending"}
                             onCheckedChange={() => toggleSource(sourceIndex)}
                             aria-label={`Select ${source.title}`}
-                            className="mt-1 border-white/35 data-[state=checked]:border-[#ff8065] data-[state=checked]:bg-[#ff8065] data-[state=checked]:text-[#1b0d0a]"
+                            className="mt-1 border-white/35 data-[state=checked]:border-brand data-[state=checked]:bg-brand data-[state=checked]:text-brand-foreground"
                           />
                           <span className="min-w-0 flex-1 space-y-1">
                             <a
                               href={source.url}
                               target="_blank"
                               rel="noreferrer"
-                              className="block text-sm text-[#ffb19e] underline-offset-2 hover:underline"
+                              className="block text-sm text-brand underline-offset-2 hover:underline"
                             >
                               {source.title}
                             </a>
@@ -1087,7 +1087,7 @@ export function ResearchPanel({
                 type="button"
                 onClick={() => void importSelected()}
                 disabled={!canApply}
-                className="h-11 bg-[#ff8065] text-[#1b0d0a] hover:bg-[#ff9b86] focus-visible:ring-[#ff8065]/50"
+                className="h-11 bg-brand text-brand-foreground hover:bg-brand/85 focus-visible:ring-brand/50"
               >
                 {applyState.status === "pending"
                   ? "Starting…"

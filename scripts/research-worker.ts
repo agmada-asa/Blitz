@@ -100,8 +100,12 @@ async function main(): Promise<void> {
         kind: args.kind,
         extractedText: args.extractedText,
         originalUrl: args.originalUrl,
-        ...(args.partNumber === undefined ? {} : { partNumber: args.partNumber }),
-        ...(args.totalParts === undefined ? {} : { totalParts: args.totalParts }),
+        ...(args.partNumber === undefined
+          ? {}
+          : { partNumber: args.partNumber }),
+        ...(args.totalParts === undefined
+          ? {}
+          : { totalParts: args.totalParts }),
       }),
     failImport: (args) =>
       client.mutation(api.research.failImport, {

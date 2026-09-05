@@ -154,6 +154,9 @@ test("delete removes every owned table and nested jobs, messages, and imports on
     db.seed("conversationMessages", { conversationId })
     const proposalId = db.seed("researchProposals", { projectId: id })
     db.seed("researchProposalImports", { proposalId })
+    const workspaceChatId = db.seed("workspaceChats", { projectId: id })
+    db.seed("workspaceChatMessages", { chatId: workspaceChatId })
+    db.seed("workspaceChatAttachments", { chatId: workspaceChatId })
   }
   const expectedRemaining = db.rows.filter(
     (row) =>
@@ -163,15 +166,17 @@ test("delete removes every owned table and nested jobs, messages, and imports on
         "preparationChunks",
         "conversationMessages",
         "researchProposalImports",
+        "workspaceChatMessages",
+        "workspaceChatAttachments",
       ].includes(row.table) &&
-        Number(row._id.split(":")[1]) > 16)
+        Number(row._id.split(":")[1]) > 19)
   )
   await remove({ db }, { projectId })
   assert.deepEqual(db.rows, expectedRemaining)
   assert.equal(db.deleted.at(-1), projectId)
-  assert.equal(db.deleted.length, 16)
+  assert.equal(db.deleted.length, 19)
   await remove({ db }, { projectId })
-  assert.equal(db.deleted.length, 16)
+  assert.equal(db.deleted.length, 19)
 })
 
 test("oversized deletion refuses before any writes", async () => {
