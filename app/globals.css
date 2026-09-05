@@ -1,6 +1,10 @@
 /* Owns global Tailwind imports, semantic design tokens, and base page styles. */
 
-@import "tailwindcss";
+@import "tailwindcss" source(none);
+/* Scan interface code only. Desktop caches and user sources are not CSS input. */
+@source "./";
+@source "../components";
+@source "../hooks";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 
