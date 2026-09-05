@@ -25,6 +25,17 @@ const learningOption = v.object({
   text: v.string(),
 })
 
+/** Immutable prompt snapshot and learner-owned answer state for written practice. */
+const writingActivityItem = v.object({
+  itemId: v.id("learningItems"),
+  title: v.string(),
+  prompt: v.string(),
+  sourceLabels: v.array(v.string()),
+  reference: v.string(),
+  answer: v.optional(v.string()),
+  revealed: v.boolean(),
+})
+
 /** Convex schema for projects, uploaded sources, generated cards, and attempts. */
 export default defineSchema({
   projects: defineTable({
@@ -124,6 +135,19 @@ export default defineSchema({
     .index("by_project_order", ["projectId", "order"])
     .index("by_project_concept_order", ["projectId", "conceptId", "order"])
     .index("by_concept_order", ["conceptId", "order"]),
+
+  writingActivities: defineTable({
+    projectId: v.id("projects"),
+    topicId: v.optional(v.id("topics")),
+    requestId: v.string(),
+    status: v.union(v.literal("active"), v.literal("completed")),
+    items: v.array(writingActivityItem),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_project_requestId", ["projectId", "requestId"])
+    .index("by_project_topic_createdAt", ["projectId", "topicId", "createdAt"])
+    .index("by_project_createdAt", ["projectId", "createdAt"]),
 
   studyEvents: defineTable({
     clientEventId: v.string(),

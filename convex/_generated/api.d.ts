@@ -18,6 +18,7 @@ import type * as research from "../research.js";
 import type * as sources from "../sources.js";
 import type * as study from "../study.js";
 import type * as topics from "../topics.js";
+import type * as writing from "../writing.js";
 
 import type {
   ApiFromModules,
@@ -36,6 +37,7 @@ declare const fullApi: ApiFromModules<{
   sources: typeof sources;
   study: typeof study;
   topics: typeof topics;
+  writing: typeof writing;
 }>;
 
 /**
