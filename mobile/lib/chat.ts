@@ -1,5 +1,7 @@
-/** Owns the native adapter for the persisted card-chat polling endpoints. */
+/** Owns the native adapter for the persisted card-chat endpoints and live reply stream. */
 
+import { fetch as streamingFetch } from "expo/fetch"
+import { watchChatStream } from "../../lib/chat-stream"
 import { randomUUID } from "expo-crypto"
 
 import { MobileApiError } from "./api"
@@ -50,12 +52,20 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 /** Validates one message without trusting server-provided display fields. */
 function parseMessage(value: unknown): MobileChatMessage {
-  if (!isRecord(value)) throw new MobileApiError("Server returned an invalid chat message")
+  if (!isRecord(value))
+    throw new MobileApiError("Server returned an invalid chat message")
   const status = requiredString(value.status, "chat message status")
-  if (!(["queued", "running", "completed", "failed"] as string[]).includes(status)) {
-    throw new MobileApiError("Server returned an unsupported chat message status")
+  if (
+    !(["queued", "running", "completed", "failed"] as string[]).includes(status)
+  ) {
+    throw new MobileApiError(
+      "Server returned an unsupported chat message status"
+    )
   }
-  if (typeof value.createdAt !== "number" || typeof value.updatedAt !== "number") {
+  if (
+    typeof value.createdAt !== "number" ||
+    typeof value.updatedAt !== "number"
+  ) {
     throw new MobileApiError("Server returned invalid chat message timestamps")
   }
   return {
@@ -76,12 +86,16 @@ function parseChatResponse(value: unknown): MobileChatResponse {
     throw new MobileApiError("Server returned an invalid chat response")
   }
   const status = value.status
-  if (!(["idle", "queued", "running", "failed"] as unknown[]).includes(status)) {
+  if (
+    !(["idle", "queued", "running", "failed"] as unknown[]).includes(status)
+  ) {
     throw new MobileApiError("Server returned an unsupported chat status")
   }
   return {
-    conversationId: typeof value.conversationId === "string" ? value.conversationId : null,
-    codexThreadId: typeof value.codexThreadId === "string" ? value.codexThreadId : null,
+    conversationId:
+      typeof value.conversationId === "string" ? value.conversationId : null,
+    codexThreadId:
+      typeof value.codexThreadId === "string" ? value.codexThreadId : null,
     status: status as MobileChatStatus,
     lastError: typeof value.lastError === "string" ? value.lastError : null,
     messages: value.messages.map(parseMessage),
@@ -95,7 +109,8 @@ async function readJson(response: Response): Promise<unknown> {
     let message = `Server request failed (${response.status})`
     try {
       const parsed = JSON.parse(body) as unknown
-      if (isRecord(parsed) && typeof parsed.error === "string") message = parsed.error
+      if (isRecord(parsed) && typeof parsed.error === "string")
+        message = parsed.error
     } catch {
       // Keep the status message when the server did not return JSON.
     }
@@ -112,7 +127,9 @@ async function readJson(response: Response): Promise<unknown> {
 function normalizeBaseUrl(baseUrl: string): string {
   const normalized = baseUrl.trim().replace(/\/+$/, "")
   if (!/^https?:\/\//i.test(normalized)) {
-    throw new MobileApiError("Enter a server URL beginning with http:// or https://")
+    throw new MobileApiError(
+      "Enter a server URL beginning with http:// or https://"
+    )
   }
   return normalized
 }
@@ -173,7 +190,11 @@ export async function retryChatMessage(
 }
 
 /** Sends one bounded JSON request to a chat endpoint. */
-async function postChat(baseUrl: string, path: string, body: unknown): Promise<unknown> {
+async function postChat(
+  baseUrl: string,
+  path: string,
+  body: unknown
+): Promise<unknown> {
   try {
     const response = await fetch(`${normalizeBaseUrl(baseUrl)}${path}`, {
       method: "POST",
@@ -185,4 +206,24 @@ async function postChat(baseUrl: string, path: string, body: unknown): Promise<u
     if (error instanceof MobileApiError) throw error
     throw new MobileApiError("Could not reach the learning server")
   }
+}
+
+/** Streams validated conversation snapshots until the native sheet closes. */
+export function watchChat(
+  baseUrl: string,
+  card: { projectId: string; id: string },
+  signal: AbortSignal,
+  onSnapshot: (value: MobileChatResponse) => void,
+  onError: (message: string) => void
+): Promise<void> {
+  const url = new URL(`${normalizeBaseUrl(baseUrl)}/api/learning/chat`)
+  url.searchParams.set("projectId", card.projectId)
+  url.searchParams.set("itemId", card.id)
+  url.searchParams.set("stream", "1")
+  return watchChatStream(url.toString(), {
+    signal,
+    fetcher: streamingFetch as typeof fetch,
+    onSnapshot: (value) => onSnapshot(parseChatResponse(value)),
+    onError,
+  })
 }

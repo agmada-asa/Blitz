@@ -1,9 +1,11 @@
 "use client"
 
-/** Renders the attached-card chat dialog and polls the local conversation queue. */
+/** Renders the attached-card chat dialog and streams persisted replies. */
 
-import { useCallback, useEffect, useState, type FormEvent } from "react"
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react"
 
+import { Markdown } from "@/components/ui/markdown"
+import { watchChatStream } from "@/lib/chat-stream"
 import type { FeedCard } from "@/lib/learning/client-contracts"
 import { Button } from "@/components/ui/button"
 import {
@@ -110,6 +112,13 @@ export function FeedChatDialog({
   const cardKey = card ? `${card.projectId}:${card.id}` : ""
   const state = states[cardKey] ?? EMPTY_CHAT_STATE
   const notify = useBackgroundNotice()
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const followReply = useRef(true)
+
+  useEffect(() => {
+    const view = scrollRef.current
+    if (view && followReply.current) view.scrollTop = view.scrollHeight
+  }, [state.messages])
 
   /** Acknowledges persisted replies that continue after the drawer closes. */
   function changeOpen(nextOpen: boolean) {
@@ -149,61 +158,33 @@ export function FeedChatDialog({
     [cardKey]
   )
 
-  /** Polls the selected card's conversation without replacing its draft text. */
-  const loadConversation = useCallback(
-    async (signal: AbortSignal, showLoading: boolean) => {
-      if (!card) return
-      if (showLoading) updateState({ loading: true, requestError: "" })
-      try {
-        const params = new URLSearchParams({
-          projectId: card.projectId,
-          itemId: card.id,
-        })
-        const response = await fetch(
-          `/api/learning/chat?${params.toString()}`,
-          {
-            signal,
-          }
-        )
-        if (!response.ok) {
-          throw new Error(await readChatError(response, "Could not load chat."))
-        }
-        const next = (await response.json()) as ChatResponse
-        updateState((current) => ({
-          ...current,
+  /** Subscribes while open and restores persisted history after reconnection. */
+  useEffect(() => {
+    if (!open || !card) return
+    const controller = new AbortController()
+    followReply.current = true
+    updateState({ loading: true, requestError: "" })
+    const params = new URLSearchParams({
+      projectId: card.projectId,
+      itemId: card.id,
+      stream: "1",
+    })
+    void watchChatStream(`/api/learning/chat?${params}`, {
+      signal: controller.signal,
+      onSnapshot: (value) => {
+        const next = value as ChatResponse
+        updateState({
           messages: next.messages,
           status: next.status,
           lastError: next.lastError ?? "",
           requestError: "",
           loading: false,
-        }))
-      } catch (reason) {
-        if (reason instanceof DOMException && reason.name === "AbortError")
-          return
-        updateState((current) => ({
-          ...current,
-          loading: false,
-          requestError:
-            reason instanceof Error ? reason.message : "Could not load chat.",
-        }))
-      }
-    },
-    [card, updateState]
-  )
-
-  /** Starts immediate conversation loading and quiet polling while the dialog is open. */
-  useEffect(() => {
-    if (!open || !card) return
-    const controller = new AbortController()
-    void loadConversation(controller.signal, true)
-    const interval = window.setInterval(() => {
-      void loadConversation(controller.signal, false)
-    }, 3_000)
-    return () => {
-      controller.abort()
-      window.clearInterval(interval)
-    }
-  }, [card, loadConversation, open])
+        })
+      },
+      onError: (requestError) => updateState({ requestError, loading: false }),
+    })
+    return () => controller.abort()
+  }, [card, open, updateState])
 
   /** Queues one learner question and merges the server message into the view. */
   const enqueueQuestion = useCallback(
@@ -234,7 +215,10 @@ export function FeedChatDialog({
           )
           const messages = [...current.messages]
           if (existingIndex === -1) messages.push(result.message)
-          else messages[existingIndex] = result.message
+          else if (
+            messages[existingIndex].updatedAt <= result.message.updatedAt
+          )
+            messages[existingIndex] = result.message
           return {
             ...current,
             messages,
@@ -307,6 +291,7 @@ export function FeedChatDialog({
                 ...currentMessage,
                 status: "queued",
                 error: undefined,
+                reply: undefined,
                 updatedAt: Date.now(),
               }
             : currentMessage
@@ -332,10 +317,10 @@ export function FeedChatDialog({
       <DialogContent
         aria-describedby={undefined}
         showCloseButton={false}
-        className="!top-auto !right-0 !bottom-0 !left-0 !h-auto !max-w-none !translate-x-0 !translate-y-0 !gap-0 !rounded-t-[28px] !rounded-b-none border-white/10 bg-[#151515] p-0 text-white shadow-2xl shadow-black/45 sm:!top-0 sm:!bottom-auto sm:!left-auto sm:!h-full sm:!max-w-md sm:!rounded-t-none sm:!rounded-l-[28px]"
+        className="!top-auto !right-0 !bottom-0 !left-0 !h-[88dvh] !max-h-[100dvh] !max-w-none !translate-x-0 !translate-y-0 !gap-0 !overflow-hidden !rounded-t-[28px] !rounded-b-none border-white/10 bg-[#151515] p-0 text-white shadow-2xl shadow-black/45 sm:!top-0 sm:!bottom-auto sm:!left-auto sm:!h-full sm:!max-w-md sm:!rounded-t-none sm:!rounded-l-[28px]"
       >
-        <div className="flex max-h-[88svh] flex-col sm:h-full sm:max-h-none">
-          <DialogHeader className="border-b border-white/10 px-5 pt-5 pb-5 sm:px-7 sm:pt-7">
+        <div className="flex h-full min-h-0 flex-col">
+          <DialogHeader className="shrink-0 border-b border-white/10 px-5 pt-5 pb-5 sm:px-7 sm:pt-7">
             <div className="flex items-start justify-between gap-5">
               <DialogTitle className="font-sans text-xl tracking-[-0.03em] text-white">
                 Ask about this card
@@ -355,7 +340,7 @@ export function FeedChatDialog({
           </DialogHeader>
 
           {card ? (
-            <div className="mx-5 mt-5 rounded-2xl border border-white/10 bg-white/[0.045] p-4 sm:mx-7 sm:mt-7">
+            <div className="mx-5 mt-5 shrink-0 rounded-2xl border border-white/10 bg-white/[0.045] p-4 sm:mx-7 sm:mt-7">
               <p className="line-clamp-3 text-sm leading-relaxed text-white/80">
                 {card.title}
               </p>
@@ -365,7 +350,15 @@ export function FeedChatDialog({
             </div>
           ) : null}
 
-          <div className="flex-1 overflow-y-auto px-5 pt-5 sm:px-7">
+          <div
+            ref={scrollRef}
+            onScroll={(event) => {
+              const view = event.currentTarget
+              followReply.current =
+                view.scrollHeight - view.scrollTop - view.clientHeight < 80
+            }}
+            className="min-h-0 min-w-0 flex-1 overflow-y-auto px-5 pt-5 sm:px-7"
+          >
             {state.loading && !state.messages.length ? (
               <p className="text-sm text-white/45" role="status">
                 Loading chat…
@@ -377,9 +370,9 @@ export function FeedChatDialog({
                   <div className="rounded-2xl bg-white/[0.045] px-4 py-3 text-sm leading-relaxed text-white/80">
                     {message.question}
                   </div>
-                  {message.status === "completed" && message.reply ? (
+                  {message.reply ? (
                     <div className="rounded-2xl border border-white/10 px-4 py-3 text-sm leading-relaxed text-white/68">
-                      {message.reply}
+                      <Markdown text={message.reply} />
                     </div>
                   ) : null}
                   {message.status === "queued" ? (
@@ -389,8 +382,7 @@ export function FeedChatDialog({
                   ) : null}
                   {message.status === "running" ? (
                     <p className="text-xs text-white/60">
-                      Preparing reply ·{" "}
-                      <ElapsedTime since={message.updatedAt} />
+                      {message.reply ? "Replying…" : "Preparing reply…"}
                     </p>
                   ) : null}
                   {message.status === "failed" ? (
@@ -424,7 +416,7 @@ export function FeedChatDialog({
 
           <form
             onSubmit={submitQuestion}
-            className="flex flex-col gap-3 px-5 pt-5 pb-[max(1.25rem,env(safe-area-inset-bottom))] sm:mt-auto sm:px-7 sm:pb-7"
+            className="flex shrink-0 flex-col gap-3 px-5 pt-5 pb-[max(1.25rem,env(safe-area-inset-bottom))] sm:mt-auto sm:px-7 sm:pb-7"
           >
             <label
               htmlFor="feed-chat-question"
@@ -437,9 +429,9 @@ export function FeedChatDialog({
               value={state.draftQuestion}
               onChange={(event) => changeQuestion(event.target.value)}
               placeholder="Ask a follow-up"
-              rows={4}
+              rows={2}
               disabled={state.sending}
-              className="min-h-28 resize-none rounded-2xl border-white/12 bg-white/[0.045] text-white placeholder:text-white/30 focus-visible:border-[#ff8065] focus-visible:ring-[#ff8065]/30"
+              className="min-h-20 resize-none rounded-2xl border-white/12 bg-white/[0.045] text-white placeholder:text-white/30 focus-visible:border-[#ff8065] focus-visible:ring-[#ff8065]/30"
             />
             {state.requestError ? (
               <p className="text-xs leading-relaxed text-red-300" role="alert">

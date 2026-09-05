@@ -139,7 +139,7 @@ The native chat sheet uses `GET /api/learning/chat?projectId=…&itemId=…` for
 the conversation, `POST /api/learning/chat` with `projectId`, `itemId`,
 `clientMessageId`, and `question` to queue a learner message, and
 `POST /api/learning/chat/retry` with `projectId`, `itemId`, and `messageId` to
-retry a failed message. It polls every three seconds while open. A failed
+retry a failed message. It subscribes with `stream=1` while open, renders partial replies as Markdown, and reconnects to saved history after network loss. A failed
 network send leaves the learner's text and stable client message ID in the
 sheet so retrying cannot create a duplicate question.
 

@@ -197,3 +197,26 @@
     transition-duration: 0.01ms !important;
   }
 }
+
+/* Chat Markdown keeps generated structure readable inside narrow reply panels. */
+.chat-markdown { overflow-wrap: anywhere; min-width: 0; line-height: 1.65; }
+.chat-markdown > * + * { margin-top: .85em; }
+.chat-markdown h2, .chat-markdown h3, .chat-markdown h4, .chat-markdown h5, .chat-markdown h6 { font-weight: 650; line-height: 1.35; color: inherit; }
+.chat-markdown h2 { font-size: 1.25em; }
+.chat-markdown h3 { font-size: 1.12em; }
+.chat-markdown strong { font-weight: 650; }
+.chat-markdown a { color: #ff8065; text-decoration: underline; text-underline-offset: 3px; }
+.chat-markdown a:focus-visible, .chat-markdown pre:focus-visible, .markdown-table:focus-visible { outline: 2px solid #ff8065; outline-offset: 3px; }
+.chat-markdown ul, .chat-markdown ol { padding-left: 1.5em; }
+.chat-markdown ul { list-style: disc; }
+.chat-markdown ol { list-style: decimal; }
+.chat-markdown li + li { margin-top: .35em; }
+.chat-markdown li > * + * { margin-top: .35em; }
+.chat-markdown code { font-family: ui-monospace, monospace; font-size: .9em; background: #ffffff0d; border-radius: 4px; padding: .12em .3em; }
+.chat-markdown pre { overflow-x: auto; max-width: 100%; padding: 12px; border-radius: 8px; background: #00000040; white-space: pre; overflow-wrap: normal; }
+.chat-markdown pre code { padding: 0; background: transparent; }
+.chat-markdown blockquote { border-left: 2px solid #ff8065; padding-left: 12px; }
+.chat-markdown hr { border-color: #ffffff26; }
+.markdown-table { overflow-x: auto; max-width: 100%; }
+.chat-markdown table { border-collapse: collapse; font-size: .9em; }
+.chat-markdown th, .chat-markdown td { padding: 8px 12px; border: 1px solid #ffffff26; text-align: left; min-width: 110px; }
