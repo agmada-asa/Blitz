@@ -1,69 +1,57 @@
 # Blitz
 
-Blitz turns personal study material into a short vertical learning feed. This first prototype runs on a Mac, uses Codex CLI for generation, and stores projects and progress in a local Convex deployment.
+Blitz turns source material into a scrolling learning feed for Android and the web. A local Mac worker prepares explanations and questions through Codex App Server using your existing Codex sign-in.
 
-## Run on Mac and phone
+## Run locally
 
-Requirements:
-
-- Node.js 20 or newer
-- Codex CLI installed and signed in
-- Mac and phone connected to the same Wi-Fi network
-
-Install dependencies once:
+Use Node.js 22.13 or newer, with Codex CLI installed and signed in. Development has been verified with Node.js 24 on macOS.
 
 ```bash
-npm install
-```
-
-Start the web app and Convex together:
-
-```bash
+npm ci
 npm run dev:lan
 ```
 
-The command prints two addresses. Open the `localhost` address on the Mac or the `192.168...` address on a phone. Keep the terminal running while using Blitz.
+The launcher starts Next.js, local Convex, the preparation, card chat, and research workers. Open the printed LAN address on a phone connected to the same Wi-Fi. Keep the process running while using the web app. Set `BLITZ_PORT` to change the web port from `3001`.
 
-If port `3001` is occupied, choose another one:
+For separate terminals:
 
 ```bash
-BLITZ_PORT=3010 npm run dev:lan
+npx convex dev
+npm run dev
+npm run worker
+npm run worker:chat
+npm run worker:research
 ```
 
-## Current loop
+The workers load `.env.local`. `BLITZ_CONVEX_URL` can point them at a loopback address while `NEXT_PUBLIC_CONVEX_URL` points browser clients at the LAN address. No cloud deployment or API key is required for this local setup.
 
-1. Create a project.
-2. Paste notes or upload a PDF, Markdown, or text file.
-3. Wait for Codex CLI to create a summary and 10 learning cards.
-4. Open the study feed.
-5. Reveal answers, complete quizzes, and mark cards as `Again` or `Got it`.
+## Learn
 
-Projects, sources, cards, and attempts persist in the local Convex database under `.convex/`.
+Create a project in Library and add files, pasted notes, or a public link. Preparation runs in the background and can resume from a saved section. The home feed mixes projects; Filter narrows it to a project or topic.
 
-## Supported source material
+Open a project or topic for a focused feed, Study with immediate feedback, or a Test with results at the end. Topics can be renamed or excluded from the mixed feed.
 
-- Text PDFs with page references
-- Markdown files
-- Plain text files
-- Pasted text
+Questions use single choice, multiple answers, or true/false. Answers receive server-scored feedback. Reading and skipping never count as knowing a concept. `Ask in chat` attaches a card and its source section to your own question, and follow-ups reuse the conversation.
 
-Scanned PDFs are not supported because this version has no OCR. Generation accepts up to 120,000 extracted characters per source.
+Imports accept text PDFs, Markdown, plain text, and PowerPoint `.pptx` files. Public links can return those formats or HTML. Source URLs and page/slide markers are retained. Scanned PDFs need OCR elsewhere, and each extracted source is currently limited to 120,000 characters.
 
-## Useful checks
+Use `Find sources` within a project to ask Codex for a proposed learning scope and references discovered through web search. Review the links before selecting which to import. Imported sources join the same preparation queue. Proposed note outlines are previews only.
+
+## Android
+
+The React Native app lives in `mobile/` with its own dependencies and checks. It connects to the same printed LAN address. Prepared cards are cached, and offline answers wait for server feedback after sync. New source generation and chat replies need the Mac worker online.
+
+See [Android setup](docs/mobile.md) for development and the bundled debug APK build. Browser imports remain available through the native Library action.
+
+## Checks and implementation
 
 ```bash
+npm test
 npm run typecheck
 npm run lint
 npm run build
 ```
 
-## Prototype limits
+Run native checks from `mobile/`. The [product brief](PRODUCT_BRIEF.md) records the intended experience; the [working protocol](WORKING_PROTOCOL.md) records the overnight review and delivery boundaries. Implementation details are in [source preparation](docs/source-preparation.md), [learning API](docs/learning-api.md), and [card chat](docs/card-chat.md).
 
-- Single user with no authentication
-- Local network use only
-- No offline sync
-- No RAG chat or vector search yet
-- No editable notes or card regeneration
-- No Electron or React Native client yet
-
-The Next.js generation route starts a sandboxed, read-only, ephemeral `codex exec` process. Uploaded source text is passed through standard input and never interpolated into a shell command. Do not expose this development server to the public internet.
+This version is a personal local app without account authentication. It is not configured for public hosting. Android offline storage and the local agent are separate from any future cloud sync service. Written-answer activities, creating proposed notes, richer diagrams, moving topics, and a full native library are still outside this version. The product brief records the wider direction, not a completed feature checklist.
