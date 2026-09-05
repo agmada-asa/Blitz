@@ -255,12 +255,15 @@ export default defineSchema({
     .index("by_job_ordinal", ["jobId", "ordinal"])
     .index("by_job_chunkId", ["jobId", "chunkId"]),
 
-  /** One global record for the model used by each AI task in this personal deployment. */
+  /** One global record for the model and reasoning level used by each AI task in this personal deployment. */
   aiModelSettings: defineTable({
     scope: v.literal("global"),
     researchModel: v.string(),
     replyModel: v.string(),
     cardGenerationModel: v.string(),
+    researchEffort: v.optional(v.string()),
+    replyEffort: v.optional(v.string()),
+    cardGenerationEffort: v.optional(v.string()),
     updatedAt: v.number(),
   }).index("by_scope", ["scope"]),
 

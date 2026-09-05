@@ -6,7 +6,7 @@ Proposal planning happens on the local Mac through the Codex app-server worker. 
 
 The queue has bounded leases, idempotent request IDs, safe failure text, and an explicit retry endpoint at `/api/research/proposals/retry`. Search is enabled only for the planner process through `-c web_search="live"`; the user's global Codex configuration is unchanged. The worker uses the stable external Blitz workspace and read-only sandbox with approval requests declined, and defaults to `gpt-5.6-luna`. `scripts/research-worker.ts` can be run with `--once` for one poll; it never exposes Codex credentials.
 
-The saved Research model from `/settings` takes precedence for new planning turns. See `docs/ai-model-settings.md` for fallback behavior and the scope of all three choices.
+The saved Research model and reasoning level from `/settings` take precedence for new planning turns. See `docs/ai-model-settings.md` for fallback behavior and the scope of all three choices.
 
 ## Applying approved sources
 

@@ -15,7 +15,10 @@ import {
 } from "../lib/server/preparation-worker.ts"
 import { runCodexTextTurn } from "../lib/server/card-chat.ts"
 import { loadSavedAiModelSettings } from "../lib/server/ai-model-settings.ts"
-import { resolveAiModel } from "../lib/ai-model-settings.ts"
+import {
+  resolveAiModel,
+  resolveAiReasoningEffort,
+} from "../lib/ai-model-settings.ts"
 
 /** Loads local configuration without overwriting variables supplied by the launcher. */
 function loadLocalEnvironment(): void {
@@ -90,6 +93,11 @@ async function main(): Promise<void> {
                   settings,
                   "cardGenerationModel",
                   process.env.BLITZ_CODEX_MODEL
+                ),
+                effort: resolveAiReasoningEffort(
+                  settings,
+                  "cardGenerationEffort",
+                  process.env.BLITZ_CODEX_EFFORT
                 ),
               })
               return turn.text

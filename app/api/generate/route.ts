@@ -61,7 +61,12 @@ export async function POST(request: Request) {
     }
     const settings = await loadSavedAiModelSettings(settingsClient())
     return Response.json(
-      await generateStudySet(filename, text, settings?.cardGenerationModel)
+      await generateStudySet(
+        filename,
+        text,
+        settings?.cardGenerationModel,
+        settings?.cardGenerationEffort
+      )
     )
   } catch {
     return Response.json(

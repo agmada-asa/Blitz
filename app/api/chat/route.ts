@@ -6,7 +6,10 @@ import { mkdir } from "node:fs/promises"
 import { homedir } from "node:os"
 import { isAbsolute, join } from "node:path"
 import type { Id } from "@/convex/_generated/dataModel"
-import { resolveAiModel } from "@/lib/ai-model-settings"
+import {
+  resolveAiModel,
+  resolveAiReasoningEffort,
+} from "@/lib/ai-model-settings"
 import { runCodexTextTurn } from "@/lib/server/card-chat"
 import { createChatProgress } from "@/lib/server/chat-progress"
 import { loadSavedAiModelSettings } from "@/lib/server/ai-model-settings"
@@ -203,9 +206,11 @@ export async function POST(request: Request): Promise<Response> {
               "replyModel",
               process.env.BLITZ_CODEX_MODEL
             ),
-            ...(process.env.BLITZ_CODEX_EFFORT
-              ? { effort: process.env.BLITZ_CODEX_EFFORT }
-              : {}),
+            effort: resolveAiReasoningEffort(
+              modelSettings,
+              "replyEffort",
+              process.env.BLITZ_CODEX_EFFORT
+            ),
             signal: request.signal,
           },
           {

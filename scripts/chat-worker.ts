@@ -14,7 +14,10 @@ import {
   type ChatWorkerQueue,
 } from "../lib/server/chat-worker.ts"
 import { loadSavedAiModelSettings } from "../lib/server/ai-model-settings.ts"
-import { resolveAiModel } from "../lib/ai-model-settings.ts"
+import {
+  resolveAiModel,
+  resolveAiReasoningEffort,
+} from "../lib/ai-model-settings.ts"
 
 /** Loads .env.local without overwriting launcher-provided configuration. */
 function loadLocalEnvironment(): void {
@@ -83,17 +86,22 @@ async function main(): Promise<void> {
     console.log("Blitz chat worker is ready.")
     while (!controller.signal.aborted) {
       try {
+        const settings = await loadSavedAiModelSettings(client)
         const result = await runChatWorkerStep({
           queue,
           workerId,
           workspaceDirectory: defaultChatWorkspaceDirectory(),
           signal: controller.signal,
           model: resolveAiModel(
-            await loadSavedAiModelSettings(client),
+            settings,
             "replyModel",
             process.env.BLITZ_CODEX_MODEL
           ),
-          effort: process.env.BLITZ_CODEX_EFFORT,
+          effort: resolveAiReasoningEffort(
+            settings,
+            "replyEffort",
+            process.env.BLITZ_CODEX_EFFORT
+          ),
           onEvent: (event) => {
             if (event.type === "activity")
               console.log("Codex activity received.")

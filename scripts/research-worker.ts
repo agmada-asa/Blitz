@@ -19,7 +19,10 @@ import {
   type ResearchImportFailureCategory,
 } from "../lib/server/research-import-worker.ts"
 import { loadSavedAiModelSettings } from "../lib/server/ai-model-settings.ts"
-import { resolveAiModel } from "../lib/ai-model-settings.ts"
+import {
+  resolveAiModel,
+  resolveAiReasoningEffort,
+} from "../lib/ai-model-settings.ts"
 
 /** Loads .env.local without overwriting launcher-provided configuration. */
 function loadLocalEnvironment(): void {
@@ -116,6 +119,10 @@ async function main(): Promise<void> {
           workerId,
           signal: controller.signal,
         })
+        const settings =
+          importResult.status === "idle"
+            ? await loadSavedAiModelSettings(client)
+            : null
         const result =
           importResult.status === "idle"
             ? await runResearchProposalStep({
@@ -124,11 +131,15 @@ async function main(): Promise<void> {
                 workspaceDirectory: defaultChatWorkspaceDirectory(),
                 signal: controller.signal,
                 model: resolveAiModel(
-                  await loadSavedAiModelSettings(client),
+                  settings,
                   "researchModel",
                   process.env.BLITZ_CODEX_MODEL
                 ),
-                effort: process.env.BLITZ_CODEX_EFFORT,
+                effort: resolveAiReasoningEffort(
+                  settings,
+                  "researchEffort",
+                  process.env.BLITZ_CODEX_EFFORT
+                ),
               })
             : null
         if (importResult.status === "imported")

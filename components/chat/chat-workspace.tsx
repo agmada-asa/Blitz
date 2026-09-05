@@ -20,6 +20,7 @@ import {
   ChatHistory,
   type ChatHistoryItem,
 } from "@/components/chat/chat-history"
+import { ReplyModelPicker } from "@/components/chat/reply-model-picker"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -150,6 +151,7 @@ export function ChatWorkspace({ initialChatId }: ChatWorkspaceProps) {
   const [attachments, setAttachments] = useState<DraftAttachment[]>([])
   const [draft, setDraft] = useState("")
   const [sending, setSending] = useState(false)
+  const [savingReplySettings, setSavingReplySettings] = useState(false)
   const [error, setError] = useState("")
   const [historyOpen, setHistoryOpen] = useState(false)
   const [projectDialogOpen, setProjectDialogOpen] = useState(false)
@@ -162,7 +164,8 @@ export function ChatWorkspace({ initialChatId }: ChatWorkspaceProps) {
   const selectedProject = attachments.find(
     (attachment) => attachment.kind === "project" && attachment.projectId
   )
-  const isRunning = sending || activeChat?.status === "running"
+  const isRunning =
+    sending || activeChat?.status === "running" || savingReplySettings
   const canAttach = attachments.length < MAX_ATTACHMENTS
   const canAttachProject =
     canAttach &&
@@ -594,6 +597,10 @@ export function ChatWorkspace({ initialChatId }: ChatWorkspaceProps) {
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
+              <ReplyModelPicker
+                disabled={isRunning}
+                onSaveStateChange={setSavingReplySettings}
+              />
               <Button
                 type="button"
                 size="icon"

@@ -1,8 +1,8 @@
 "use client"
 
-/** Owns the editable, persisted model choices for each AI task in Blitz. */
+/** Owns the editable, persisted model and reasoning choices for each AI task in Blitz. */
 
-import { useState } from "react"
+import { useState, type FormEvent } from "react"
 import { useMutation, useQuery } from "convex/react"
 
 import { Button } from "@/components/ui/button"
@@ -14,34 +14,50 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
-import { Input } from "@/components/ui/input"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
 import { api } from "@/convex/_generated/api"
 import {
-  DEFAULT_AI_MODELS,
+  DEFAULT_AI_MODEL_SETTINGS,
+  DEFAULT_AI_REASONING_EFFORTS,
+  getCodexModelPickerOptions,
+  getSupportedAiReasoningEfforts,
   validateAiModelSettings,
   type AiModelField,
   type AiModelSettings,
+  type AiReasoningEffort,
+  type AiReasoningField,
 } from "@/lib/ai-model-settings"
 
-/** One user-facing model setting and the AI operation it controls. */
+/** One user-facing AI setting and the task it controls. */
 const MODEL_FIELDS: Array<{
-  field: AiModelField
+  modelField: AiModelField
+  effortField: AiReasoningField
   label: string
   description: string
 }> = [
   {
-    field: "researchModel",
+    modelField: "researchModel",
+    effortField: "researchEffort",
     label: "Research",
     description: "Plans research and looks for sources to learn from.",
   },
   {
-    field: "cardGenerationModel",
+    modelField: "cardGenerationModel",
+    effortField: "cardGenerationEffort",
     label: "Card generation",
-    description: "Turns uploaded and approved source material into study cards.",
+    description:
+      "Turns uploaded and approved source material into study cards.",
   },
   {
-    field: "replyModel",
+    modelField: "replyModel",
+    effortField: "replyEffort",
     label: "Replies",
     description: "Answers questions you ask about an individual study card.",
   },
@@ -50,6 +66,13 @@ const MODEL_FIELDS: Array<{
 /** Copy and intent for the save result announced to assistive technology. */
 type SaveFeedback = { tone: "error" | "success"; message: string } | null
 
+/** Formats a machine-readable effort value for a compact picker label. */
+function reasoningLabel(effort: AiReasoningEffort): string {
+  return effort === "xhigh"
+    ? "Extra high"
+    : `${effort.slice(0, 1).toUpperCase()}${effort.slice(1)}`
+}
+
 /** Renders saved model fields and submits a complete update as one configuration. */
 export function ModelSettingsForm() {
   const savedSettings = useQuery(api.settings.get)
@@ -57,8 +80,8 @@ export function ModelSettingsForm() {
 
   return (
     <ModelSettingsEditor
-      key={JSON.stringify(savedSettings ?? DEFAULT_AI_MODELS)}
-      initialSettings={{ ...(savedSettings ?? DEFAULT_AI_MODELS) }}
+      key={JSON.stringify(savedSettings ?? DEFAULT_AI_MODEL_SETTINGS)}
+      initialSettings={{ ...(savedSettings ?? DEFAULT_AI_MODEL_SETTINGS) }}
     />
   )
 }
@@ -75,15 +98,39 @@ function ModelSettingsEditor({
   const [isSaving, setIsSaving] = useState(false)
   const [feedback, setFeedback] = useState<SaveFeedback>(null)
 
-  /** Updates one task's local model choice and makes the pending change visible. */
-  const updateDraft = (field: AiModelField, value: string): void => {
-    setDraft((current) => ({ ...current, [field]: value }))
+  /** Marks a local change as pending and clears older save feedback. */
+  const markDirty = (): void => {
     setIsDirty(true)
     setFeedback(null)
   }
 
+  /** Updates one task's model and resets its reasoning only when the new model requires it. */
+  const updateModel = (
+    modelField: AiModelField,
+    effortField: AiReasoningField,
+    model: string
+  ): void => {
+    setDraft((current) => {
+      const supportedEfforts = getSupportedAiReasoningEfforts(model)
+      const effort = supportedEfforts.includes(current[effortField])
+        ? current[effortField]
+        : DEFAULT_AI_REASONING_EFFORTS[effortField]
+      return { ...current, [modelField]: model, [effortField]: effort }
+    })
+    markDirty()
+  }
+
+  /** Updates one task's local reasoning choice and makes the pending change visible. */
+  const updateReasoning = (
+    field: AiReasoningField,
+    effort: AiReasoningEffort
+  ): void => {
+    setDraft((current) => ({ ...current, [field]: effort }))
+    markDirty()
+  }
+
   /** Validates the complete form, then persists all choices in one Convex mutation. */
-  const save = async (event: React.FormEvent<HTMLFormElement>): Promise<void> => {
+  const save = async (event: FormEvent<HTMLFormElement>): Promise<void> => {
     event.preventDefault()
     if (isSaving) return
     let settings: AiModelSettings
@@ -95,7 +142,7 @@ function ModelSettingsEditor({
         message:
           error instanceof Error
             ? error.message
-            : "Enter a valid model for every task.",
+            : "Choose a valid model and reasoning level for every task.",
       })
       return
     }
@@ -105,11 +152,11 @@ function ModelSettingsEditor({
       const saved = await saveSettings(settings)
       setDraft(saved)
       setIsDirty(false)
-      setFeedback({ tone: "success", message: "Model settings saved." })
+      setFeedback({ tone: "success", message: "AI settings saved." })
     } catch {
       setFeedback({
         tone: "error",
-        message: "Could not save model settings. Try again.",
+        message: "Could not save AI settings. Try again.",
       })
     } finally {
       setIsSaving(false)
@@ -120,46 +167,102 @@ function ModelSettingsEditor({
     <form onSubmit={save}>
       <Card className="gap-0 py-0">
         <CardHeader className="border-b py-5">
-          <CardTitle>Model choices</CardTitle>
+          <CardTitle>Model and reasoning choices</CardTitle>
           <CardDescription>
-            Use model IDs available in the Codex account running your local
-            workers.
+            Pick a model and the amount of reasoning it should use for each
+            task.
           </CardDescription>
         </CardHeader>
         <CardContent className="divide-y px-0">
-          {MODEL_FIELDS.map(({ field, label, description }) => {
-            const inputId = `ai-model-${field}`
-            const descriptionId = `${inputId}-description`
-            return (
-              <div
-                key={field}
-                className="grid gap-3 px-4 py-5 sm:grid-cols-[minmax(0,1fr)_minmax(13rem,18rem)] sm:items-center sm:gap-6"
-              >
-                <div>
-                  <label htmlFor={inputId} className="text-sm font-medium">
-                    {label}
-                  </label>
-                  <p
-                    id={descriptionId}
-                    className="mt-1 text-sm leading-5 text-muted-foreground"
-                  >
-                    {description}
-                  </p>
+          {MODEL_FIELDS.map(
+            ({ modelField, effortField, label, description }) => {
+              const inputId = `ai-model-${modelField}`
+              const descriptionId = `${inputId}-description`
+              const modelId = `${inputId}-picker`
+              const effortId = `${inputId}-reasoning`
+              const selectedModel = draft[modelField]
+              const selectedEffort = draft[effortField]
+              return (
+                <div
+                  key={modelField}
+                  className="grid gap-4 px-4 py-5 sm:grid-cols-[minmax(0,1fr)_minmax(20rem,24rem)] sm:items-center sm:gap-6"
+                >
+                  <div>
+                    <h3 className="text-sm font-medium">{label}</h3>
+                    <p
+                      id={descriptionId}
+                      className="mt-1 text-sm leading-5 text-muted-foreground"
+                    >
+                      {description}
+                    </p>
+                  </div>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <div className="space-y-1.5">
+                      <label htmlFor={modelId} className="text-xs font-medium">
+                        Model
+                      </label>
+                      <Select
+                        value={selectedModel}
+                        onValueChange={(value) =>
+                          updateModel(modelField, effortField, value)
+                        }
+                        disabled={isSaving}
+                      >
+                        <SelectTrigger
+                          id={modelId}
+                          aria-describedby={descriptionId}
+                          className="h-11"
+                        >
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {getCodexModelPickerOptions(selectedModel).map(
+                            (option) => (
+                              <SelectItem key={option.id} value={option.id}>
+                                {option.label}
+                              </SelectItem>
+                            )
+                          )}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1.5">
+                      <label htmlFor={effortId} className="text-xs font-medium">
+                        Reasoning
+                      </label>
+                      <Select
+                        value={selectedEffort}
+                        onValueChange={(value) =>
+                          updateReasoning(
+                            effortField,
+                            value as AiReasoningEffort
+                          )
+                        }
+                        disabled={isSaving}
+                      >
+                        <SelectTrigger
+                          id={effortId}
+                          aria-describedby={descriptionId}
+                          className="h-11"
+                        >
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {getSupportedAiReasoningEfforts(selectedModel).map(
+                            (effort) => (
+                              <SelectItem key={effort} value={effort}>
+                                {reasoningLabel(effort)}
+                              </SelectItem>
+                            )
+                          )}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
                 </div>
-                <Input
-                  id={inputId}
-                  value={draft[field]}
-                  onChange={(event) => updateDraft(field, event.target.value)}
-                  aria-describedby={descriptionId}
-                  autoCapitalize="none"
-                  autoCorrect="off"
-                  spellCheck={false}
-                  maxLength={120}
-                  className="h-11 font-mono text-sm"
-                />
-              </div>
-            )
-          })}
+              )
+            }
+          )}
         </CardContent>
         <CardFooter className="flex-col items-start justify-between gap-3 sm:flex-row sm:items-center">
           <p
@@ -180,7 +283,7 @@ function ModelSettingsEditor({
             disabled={isSaving || !isDirty}
             className="h-10 rounded-xl bg-brand px-4 text-brand-foreground hover:bg-brand/85"
           >
-            {isSaving ? "Saving models" : "Save models"}
+            {isSaving ? "Saving AI settings" : "Save AI settings"}
           </Button>
         </CardFooter>
       </Card>
@@ -197,10 +300,13 @@ function ModelSettingsLoading() {
         <Skeleton className="mt-2 h-4 w-full max-w-sm" />
       </CardHeader>
       <CardContent className="space-y-5 px-4 py-5">
-        {MODEL_FIELDS.map(({ field }) => (
-          <div key={field} className="space-y-3">
-            <Skeleton className="h-4 w-28" />
-            <Skeleton className="h-11 w-full" />
+        {MODEL_FIELDS.map(({ modelField }) => (
+          <div key={modelField} className="space-y-3">
+            <Skeleton className="h-4 w-32" />
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Skeleton className="h-11 w-full" />
+              <Skeleton className="h-11 w-full" />
+            </div>
           </div>
         ))}
       </CardContent>

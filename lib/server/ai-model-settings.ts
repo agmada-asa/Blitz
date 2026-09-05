@@ -1,4 +1,4 @@
-/** Loads validated AI model settings for local workers and server-side generation routes. */
+/** Loads validated AI model and reasoning settings for workers and generation routes. */
 
 import { ConvexHttpClient } from "convex/browser"
 

@@ -103,7 +103,8 @@ function runCodex(
   prompt: string,
   schemaPath: string,
   workingDirectory: string,
-  model?: string
+  model?: string,
+  effort?: string
 ): Promise<string> {
   return new Promise((resolve, reject) => {
     const child = spawn(
@@ -119,6 +120,9 @@ function runCodex(
         "--output-schema",
         schemaPath,
         ...(model === undefined ? [] : ["--model", model]),
+        ...(effort === undefined
+          ? []
+          : ["--config", `model_reasoning_effort=${JSON.stringify(effort)}`]),
         "-",
       ],
       {
@@ -162,11 +166,12 @@ function runCodex(
   })
 }
 
-/** Generates a study set with an optional model override in a temporary directory, then removes it. */
+/** Generates a study set with optional model and reasoning overrides, then removes its temporary directory. */
 export async function generateStudySet(
   filename: string,
   text: string,
-  model?: string
+  model?: string,
+  effort?: string
 ): Promise<Generation> {
   const directory = await mkdtemp(join(tmpdir(), "blitz-codex-"))
   const schemaPath = join(directory, "schema.json")
@@ -179,7 +184,8 @@ export async function generateStudySet(
         buildGenerationPrompt(filename, text),
         schemaPath,
         directory,
-        model
+        model,
+        effort
       )
     )
   } finally {
