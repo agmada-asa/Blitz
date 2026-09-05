@@ -6,6 +6,8 @@ import type { NextConfig } from "next"
 const nextConfig: NextConfig = {
   // Desktop development uses its own trace and lock directory beside the LAN app.
   distDir: process.env.BLITZ_NEXT_DIST_DIR || ".next",
+  // PDF.js loads its worker relative to the installed package at runtime.
+  serverExternalPackages: ["pdfjs-dist"],
   // Keep the development badge from covering the full-screen feed controls.
   devIndicators: false,
   allowedDevOrigins: [
