@@ -17,6 +17,7 @@ import type * as learning from "../learning.js";
 import type * as preparation from "../preparation.js";
 import type * as projects from "../projects.js";
 import type * as research from "../research.js";
+import type * as settings from "../settings.js";
 import type * as sources from "../sources.js";
 import type * as study from "../study.js";
 import type * as topics from "../topics.js";
@@ -38,6 +39,7 @@ declare const fullApi: ApiFromModules<{
   preparation: typeof preparation;
   projects: typeof projects;
   research: typeof research;
+  settings: typeof settings;
   sources: typeof sources;
   study: typeof study;
   topics: typeof topics;

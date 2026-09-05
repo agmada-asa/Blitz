@@ -4,7 +4,11 @@
 
 import Link from "next/link"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { FilterHorizontalIcon, Folder01Icon } from "@hugeicons/core-free-icons"
+import {
+  FilterHorizontalIcon,
+  Folder01Icon,
+  Settings02Icon,
+} from "@hugeicons/core-free-icons"
 import { HugeiconsIcon } from "@hugeicons/react"
 
 import { FeedCardView } from "@/components/feed/feed-card"
@@ -449,6 +453,20 @@ export function Feed({ initialFilter }: { initialFilter?: FeedFilter }) {
           >
             <Link href="/activity">Activity</Link>
           </Button>
+          <Button
+            asChild
+            variant="ghost"
+            className="size-11 rounded-full px-0 text-sm text-white/65 hover:bg-white/10 hover:text-white sm:w-auto sm:px-3"
+          >
+            <Link href="/settings" aria-label="Settings">
+              <HugeiconsIcon
+                icon={Settings02Icon}
+                aria-hidden="true"
+                className="size-4"
+              />
+              <span className="sr-only sm:not-sr-only">Settings</span>
+            </Link>
+          </Button>
         </div>
 
         <Dialog
@@ -462,14 +480,15 @@ export function Feed({ initialFilter }: { initialFilter?: FeedFilter }) {
             <Button
               type="button"
               variant="ghost"
-              className="pointer-events-auto h-10 rounded-[20px] bg-white/[0.045] px-3.5 text-sm text-white/65 ring-1 ring-white/10 hover:bg-white/[0.09] hover:text-white"
+              aria-label="Filter"
+              className="pointer-events-auto size-10 rounded-[20px] bg-white/[0.045] px-0 text-sm text-white/65 ring-1 ring-white/10 hover:bg-white/[0.09] hover:text-white sm:w-auto sm:px-3.5"
             >
               <HugeiconsIcon
                 icon={FilterHorizontalIcon}
                 aria-hidden="true"
                 className="size-4"
               />
-              Filter
+              <span className="sr-only sm:not-sr-only">Filter</span>
             </Button>
           </DialogTrigger>
           <DialogContent

@@ -18,6 +18,8 @@ import {
   type ResearchImportQueue,
   type ResearchImportFailureCategory,
 } from "../lib/server/research-import-worker.ts"
+import { loadSavedAiModelSettings } from "../lib/server/ai-model-settings.ts"
+import { resolveAiModel } from "../lib/ai-model-settings.ts"
 
 /** Loads .env.local without overwriting launcher-provided configuration. */
 function loadLocalEnvironment(): void {
@@ -121,7 +123,11 @@ async function main(): Promise<void> {
                 workerId,
                 workspaceDirectory: defaultChatWorkspaceDirectory(),
                 signal: controller.signal,
-                model: process.env.BLITZ_CODEX_MODEL ?? "gpt-5.6-luna",
+                model: resolveAiModel(
+                  await loadSavedAiModelSettings(client),
+                  "researchModel",
+                  process.env.BLITZ_CODEX_MODEL
+                ),
                 effort: process.env.BLITZ_CODEX_EFFORT,
               })
             : null

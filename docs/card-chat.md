@@ -53,6 +53,8 @@ For HTTP clients, `POST /api/learning/chat/retry` takes `projectId`, `itemId`, a
 
 The worker uses `BLITZ_CODEX_WORKSPACE` or `~/.local/share/blitz/codex-workspace`, an explicitly created directory outside the repository. `BLITZ_CODEX_MODEL` defaults to `gpt-5.6-luna`; sandbox is read-only and approval requests remain declined until an approval UI is wired. The queue allows later questions to wait behind an active turn and recovers expired leases, so the web request can succeed while the Mac worker is offline.
 
+The saved Replies model from `/settings` takes precedence for new card-reply turns. See `docs/ai-model-settings.md` for fallback behavior.
+
 The launcher can use `defaultChatWorkspaceDirectory`, `ensureChatWorkspaceDirectory`, `runChatWorkerStep`, and `runChatWorker` from `lib/server/chat-worker.ts`. Activity events stay inside the worker; the HTTP stream exposes persisted conversation snapshots.
 
 Start the local chat process with `npm run worker:chat` beside `npm run worker` and the development servers. Both workers load `.env.local` and prefer `BLITZ_CONVEX_URL` for a loopback connection.

@@ -13,6 +13,8 @@ import {
   type ChatWorkContext,
   type ChatWorkerQueue,
 } from "../lib/server/chat-worker.ts"
+import { loadSavedAiModelSettings } from "../lib/server/ai-model-settings.ts"
+import { resolveAiModel } from "../lib/ai-model-settings.ts"
 
 /** Loads .env.local without overwriting launcher-provided configuration. */
 function loadLocalEnvironment(): void {
@@ -86,7 +88,11 @@ async function main(): Promise<void> {
           workerId,
           workspaceDirectory: defaultChatWorkspaceDirectory(),
           signal: controller.signal,
-          model: process.env.BLITZ_CODEX_MODEL ?? "gpt-5.6-luna",
+          model: resolveAiModel(
+            await loadSavedAiModelSettings(client),
+            "replyModel",
+            process.env.BLITZ_CODEX_MODEL
+          ),
           effort: process.env.BLITZ_CODEX_EFFORT,
           onEvent: (event) => {
             if (event.type === "activity")

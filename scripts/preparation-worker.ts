@@ -14,6 +14,8 @@ import {
   type PreparationQueue,
 } from "../lib/server/preparation-worker.ts"
 import { runCodexTextTurn } from "../lib/server/card-chat.ts"
+import { loadSavedAiModelSettings } from "../lib/server/ai-model-settings.ts"
+import { resolveAiModel } from "../lib/ai-model-settings.ts"
 
 /** Loads local configuration without overwriting variables supplied by the launcher. */
 function loadLocalEnvironment(): void {
@@ -75,6 +77,7 @@ async function main(): Promise<void> {
               join(tmpdir(), "blitz-learning-")
             )
             try {
+              const settings = await loadSavedAiModelSettings(client)
               const turn = await runCodexTextTurn({
                 workspaceDirectory,
                 prompt,
@@ -83,7 +86,11 @@ async function main(): Promise<void> {
                 ephemeral: true,
                 // Preparation must stay grounded in the uploaded source section.
                 webSearchMode: "disabled",
-                model: process.env.BLITZ_CODEX_MODEL ?? "gpt-5.6-luna",
+                model: resolveAiModel(
+                  settings,
+                  "cardGenerationModel",
+                  process.env.BLITZ_CODEX_MODEL
+                ),
               })
               return turn.text
             } finally {
