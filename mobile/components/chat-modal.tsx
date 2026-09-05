@@ -228,7 +228,7 @@ export function ChatModal({
       visible={visible}
     >
       <KeyboardAvoidingView
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
         style={styles.backdrop}
       >
         <View style={styles.sheet}>
