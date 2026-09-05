@@ -5,6 +5,10 @@ worker processes each bounded source chunk. The project topic list presents
 those generated topics in a flat, compact list. It does not add a manual
 hierarchy or reorder topics.
 
+The list shows the first six topics by default. `Show all topics` reveals the
+rest, and `Show fewer` returns to the shorter list. Each row keeps the topic
+link and options menu within comfortable touch targets.
+
 Each topic links to three existing flows:
 
 - The topic title opens the home feed scoped to that project and topic.

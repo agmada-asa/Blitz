@@ -50,6 +50,7 @@ export function TopicList({ projectId }: TopicListProps) {
     null
   )
   const [error, setError] = useState("")
+  const [showAllTopics, setShowAllTopics] = useState(false)
 
   /** Starts editing one topic without changing its persisted title. */
   function startEditing(topic: NonNullable<typeof topics>[number]): void {
@@ -111,6 +112,10 @@ export function TopicList({ projectId }: TopicListProps) {
 
   if (!topics.length) return null
 
+  const visibleTopics = showAllTopics ? topics : topics.slice(0, 6)
+  const hasMoreTopics = topics.length > 6
+  const projectPath = encodeURIComponent(String(projectId))
+
   return (
     <section aria-labelledby="topics-heading" className="mt-10 font-sans">
       <h2 id="topics-heading" className="font-heading text-2xl">
@@ -121,22 +126,24 @@ export function TopicList({ projectId }: TopicListProps) {
           {error}
         </p>
       ) : null}
-      <ul className="mt-4 space-y-2">
-        {topics.map((topic) => {
+      <ul
+        id="project-topic-list"
+        className="mt-4 overflow-hidden rounded-xl bg-card ring-1 ring-foreground/10"
+      >
+        {visibleTopics.map((topic) => {
           const editing = editingTopicId === topic._id
           const pending = pendingTopicId === topic._id
-          const projectPath = encodeURIComponent(String(projectId))
           const topicPath = encodeURIComponent(String(topic._id))
           const feedHref = `/?projectId=${projectPath}&topicId=${topicPath}`
           return (
             <li
               key={topic._id}
-              className="rounded-xl bg-card p-4 ring-1 ring-foreground/10"
+              className="border-b border-border/60 px-3 last:border-b-0 sm:px-4"
             >
-              <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex min-h-11 flex-wrap items-center justify-between gap-2">
                 {editing ? (
                   <form
-                    className="flex min-w-0 flex-1 gap-2"
+                    className="flex min-w-0 flex-1 flex-wrap gap-2 py-1"
                     onSubmit={(event) => {
                       event.preventDefault()
                       void saveRename(topic._id)
@@ -151,13 +158,13 @@ export function TopicList({ projectId }: TopicListProps) {
                         if (event.key === "Escape") cancelEditing()
                       }}
                       autoFocus
-                      className="h-8 min-w-0 rounded-lg"
+                      className="h-11 min-w-[min(100%,14rem)] flex-1 rounded-lg"
                     />
                     <Button
                       type="submit"
                       size="sm"
                       disabled={pending || !draftTitle.trim()}
-                      className="rounded-lg"
+                      className="min-h-11 rounded-lg"
                     >
                       {pending ? "Saving…" : "Save"}
                     </Button>
@@ -167,22 +174,23 @@ export function TopicList({ projectId }: TopicListProps) {
                       variant="ghost"
                       disabled={pending}
                       onClick={cancelEditing}
+                      className="min-h-11"
                     >
                       Cancel
                     </Button>
                   </form>
                 ) : (
-                  <div className="min-w-0">
+                  <div className="flex min-w-0 flex-1 items-center gap-2">
                     <Link
                       href={feedHref}
-                      className="block py-2 font-medium break-words hover:underline"
+                      className="flex min-h-11 min-w-0 flex-1 items-center py-2 font-medium break-words hover:underline"
                     >
                       {topic.title}
                     </Link>
                     {topic.excludedFromFeed ? (
-                      <p className="text-xs text-muted-foreground">
-                        Excluded from home feed
-                      </p>
+                      <span className="shrink-0 text-xs text-muted-foreground">
+                        Excluded
+                      </span>
                     ) : null}
                   </div>
                 )}
@@ -195,7 +203,7 @@ export function TopicList({ projectId }: TopicListProps) {
                           type="button"
                           variant="ghost"
                           size="icon-sm"
-                          className="size-11"
+                          className="size-11 shrink-0"
                           disabled={pending}
                           aria-label={`Options for ${topic.title}`}
                         >
@@ -240,6 +248,18 @@ export function TopicList({ projectId }: TopicListProps) {
           )
         })}
       </ul>
+      {hasMoreTopics ? (
+        <Button
+          type="button"
+          variant="ghost"
+          aria-expanded={showAllTopics}
+          aria-controls="project-topic-list"
+          onClick={() => setShowAllTopics((current) => !current)}
+          className="mt-2 min-h-11 px-3 text-muted-foreground hover:text-foreground"
+        >
+          {showAllTopics ? "Show fewer" : "Show all topics"}
+        </Button>
+      ) : null}
     </section>
   )
 }
