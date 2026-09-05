@@ -4,8 +4,11 @@ The Android client lives in `mobile/` as an independent Expo project. It uses
 Expo SDK 57, React Native 0.86, and React 19.2. The mobile lockfile is kept
 separate from the browser app's root lockfile so native tooling can evolve
 without changing browser dependencies. The current native surface is the
-full-screen prepared learning feed; wider native library and import flows remain
-outside this bounded integration.
+full-screen prepared learning feed and native project library. The feed now
+uses an icon-only bottom navigation: Home returns to the feed, Library opens
+native projects, and Chat, Activity, and Settings open the matching browser
+routes against the same server. Source imports and detailed source management
+open the selected project's browser page.
 
 The app identity is configured as `Blitz` with the local Android application
 ID `com.blitz.study`. This is a development identity only; no signing keys,
@@ -58,7 +61,10 @@ app; no private machine address is embedded in the bundle. The feed uses
 vertical full-screen paging, explanation cards, single-choice,
 multiple-answer, and true/false questions, project/topic filters, and an
 `Ask in chat` sheet backed by the server's persisted chat queue. Source imports
-remain in the web library; the native `Library` control opens that route.
+remain in the web library. The native `Library` control opens searchable projects,
+including those with no prepared cards. Select a project to open its native feed;
+its actions include create, rename, confirmed deletion, and `Manage sources in
+browser`. The project API uses the same configured local server as the feed.
 
 ## Build a debug APK without a device
 
@@ -136,7 +142,7 @@ The native chat sheet uses `GET /api/learning/chat?projectId=…&itemId=…` for
 the conversation, `POST /api/learning/chat` with `projectId`, `itemId`,
 `clientMessageId`, and `question` to queue a learner message, and
 `POST /api/learning/chat/retry` with `projectId`, `itemId`, and `messageId` to
-retry a failed message. It polls every three seconds while open. A failed
+retry a failed message. It subscribes with `stream=1` while open, renders partial replies as Markdown, and reconnects to saved history after network loss. A failed
 network send leaves the learner's text and stable client message ID in the
 sheet so retrying cannot create a duplicate question.
 
@@ -247,3 +253,32 @@ The verified APK embeds 1,248,988 bytes of Hermes JavaScript and contains no
 `[feed-swipe]` diagnostic marker. The LAN download matches its SHA-256:
 `4aab37b9f2a47469b85ce39005518a9b5596a90e344c3f03d9aef457b8ca4432`.
 No answer or chat submissions were made during the swipe checks.
+
+## Native library and feed polish
+
+The native library uses `GET /api/projects` for metadata and `POST /api/projects`
+for explicit create, rename, and delete operations. The route validates names and
+IDs and reuses the browser's Convex mutations. Browser-origin requests must come
+from this server; native requests have no Origin header. Management requires a
+connection and does not queue mutations offline. A timeout asks the learner to
+refresh before retrying, since a server may have completed the operation.
+
+Deleting a project removes its cached cards, filter metadata, and pending events
+from this device after server confirmation. Other projects and their queued
+answers stay intact. The server's existing atomic deletion limit still applies;
+oversized deletions leave all records intact and report an error.
+
+The feed has native coral and blue radial backgrounds and scroll-driven card
+opacity/translation. React Native's existing renderer and Animated native driver
+handle this without another package. Background motion stops while the app is
+inactive or a sheet is open. Device reduced motion disables both background and
+card animation. Existing single-card paging and nested content scrolling remain.
+
+For this update, native TypeScript, all 8 native tests, Expo Doctor's 21 checks,
+Metro Android export, root checks, and the bundled debug APK build passed.
+Project HTTP checks covered invalid input, cross-origin rejection, creation,
+rename, metadata reads, and deletion using a disposable project. The LAN download
+was verified against the generated APK's SHA-256. The APK installed successfully
+on a temporary API 36 emulator. Its display was not accessible through the
+available UI tools, so this update has no native visual verification. Physical-phone
+installation, layout, and gesture feel still need the user's check.

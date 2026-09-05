@@ -10,12 +10,18 @@ PPTX extraction reads only bounded `ppt/slides/slideN.xml` entries with the
 installed ZIP runtime, caps each slide XML entry at 1 MB and all slide XML at
 20 MB, and returns readable slides with `[Slide N]` markers. Empty slide-only
 decks fail as unreadable. PDF extraction
-uses the installed `pdfjs-dist` runtime, reads at most 500 pages, disables range
-and stream fetching, disables evaluation when supported by the runtime, and
-keeps `[Page N]` markers in page order. Scanned or image-only PDFs fail with an
-OCR message; this boundary does not perform OCR.
+uses the installed `pdfjs-dist` runtime and reads at most 500 pages. Research
+downloads use bounded in-memory bytes. Project-local PDFs use file-backed range
+reads so a large original does not need an equally large server heap allocation.
+PDF parsing disables evaluation when supported and keeps `[Page N]` markers in
+page order. Scanned or image-only PDFs fail with an OCR message; this boundary
+does not perform OCR.
 
-Downloaded bytes are capped at 5 MB and extracted text at 120,000 characters.
+Research downloads are capped at 5 MB. Original project uploads are capped at
+1 GiB, which meets the visible 1 GB limit. Extracted text is capped at 2,000,000
+characters by the parser and 500 KB at the current Convex persistence boundary.
+Local PPTX parsing keeps a separate 20 MB compressed-file limit because its ZIP
+parser operates in memory.
 Empty downloads and empty documents return structured ingestion errors with
 actionable messages. HTML extraction selects the first `main` or `article`
 region when present, removes scripts and styles, decodes common entities, and

@@ -238,6 +238,7 @@ export const claimNext = mutation({
         workerId,
         leaseToken,
         leaseExpiresAt: expiresAt,
+        reply: undefined,
         error: undefined,
         updatedAt: now,
       })
@@ -323,6 +324,36 @@ export const getWorkContext = query({
       },
       question: message.question,
     }
+  },
+})
+
+/** Publishes cumulative assistant text only for the current, unexpired worker lease. */
+export const progress = mutation({
+  args: {
+    messageId: v.id("conversationMessages"),
+    leaseToken: v.string(),
+    reply: v.string(),
+  },
+  handler: async (ctx, args) => {
+    if (args.reply.length > MAX_CHAT_REPLY_LENGTH)
+      throw new Error("Reply is too long")
+    const message = await ctx.db.get(args.messageId)
+    if (
+      !message ||
+      message.status !== "running" ||
+      message.leaseToken !== args.leaseToken ||
+      (message.leaseExpiresAt ?? 0) <= Date.now()
+    )
+      throw new Error("Chat lease is missing or expired")
+    const conversation = await ctx.db.get(message.conversationId)
+    if (!conversation || conversation.activeMessageId !== message._id)
+      throw new Error("Chat conversation is no longer active")
+    // A delayed duplicate snapshot must never shorten an answer already displayed.
+    if (args.reply.length < (message.reply?.length ?? 0)) return
+    await ctx.db.patch(message._id, {
+      reply: args.reply,
+      updatedAt: Date.now(),
+    })
   },
 })
 
@@ -435,6 +466,7 @@ export const retry = mutation({
       throw new Error("Conversation already has an active turn")
     await ctx.db.patch(message._id, {
       status: "queued",
+      reply: undefined,
       error: undefined,
       updatedAt: Date.now(),
     })

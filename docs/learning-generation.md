@@ -12,12 +12,15 @@ expects exactly one plain JSON object from the callback. It does not unwrap
 Markdown fences, scan event output, or search nested wrapper fields.
 
 The returned batch contains a summary, up to 8 uniquely keyed concepts, and up
-to 16 learning items. For factual chunks, both arrays must be populated and
-every concept must be used by at least one item. A title-only or otherwise
-non-factual chunk may return an explicit skipped batch with empty arrays and a
-summary beginning `SKIPPED:`. Supported item types are `explain`,
-`single-choice`, `multiple-answer`, and `true-false`. Recall and written-answer
-items are excluded from this default generation path.
+to 16 learning items. The prompt prefers 1 to 4 concepts so each concept can
+receive one 120 to 220 word explanation followed by at least one question.
+This pairing lets the project workspace present generated material as a paced
+walkthrough. For factual chunks, both arrays must be populated and every
+concept must be used by at least one item. A title-only or otherwise non-factual
+chunk may return an explicit skipped batch with empty arrays and a summary
+beginning `SKIPPED:`. Supported item types are `explain`, `single-choice`,
+`multiple-answer`, and `true-false`. Recall and written-answer items are
+excluded from this default generation path.
 
 Each generated item has `sourceChunkIds: [chunk.id]`. A different or fabricated
 chunk ID is rejected, as are unknown concept keys, duplicate option IDs,

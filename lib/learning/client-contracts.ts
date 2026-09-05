@@ -46,9 +46,9 @@ export type FeedProject = { id: string; title: string }
 /** Topic filter option returned alongside feed cards. */
 export type FeedTopic = { id: string; projectId: string; title: string }
 
-/** Bounded feed response shared by browser and native clients. */
+/** Bounded question-only home feed shared by browser and native clients. */
 export type FeedResponse = {
-  cards: FeedCard[]
+  cards: QuestionFeedCard[]
   projects: FeedProject[]
   topics: FeedTopic[]
   isDone?: boolean

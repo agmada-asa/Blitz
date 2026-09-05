@@ -1,18 +1,25 @@
-/** Verifies bounded extraction for the approved research download formats. */
+/** Verifies bounded extraction for remote downloads and file-backed local sources. */
 
 import assert from "node:assert/strict"
+import { mkdtemp, rm, writeFile } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import test from "node:test"
 import { strToU8, zipSync } from "fflate"
 
 import {
   extractDownloadedSource,
+  extractStoredSource,
   MAX_DOWNLOADED_SOURCE_BYTES,
 } from "../lib/server/source-ingestion/extract.ts"
 import { SourceIngestionError } from "../lib/server/source-ingestion/errors.ts"
 import { splitSourceText } from "../lib/source-splitting.ts"
 
 /** Builds deterministic PDF pages with selectable text kept inside each page's bounds. */
-function makePdf(pageTexts: readonly string[]): Uint8Array {
+function makePdf(
+  pageTexts: readonly string[],
+  leadingCommentBytes = 0
+): Uint8Array {
   const pageReferences = pageTexts
     .map((_, index) => `${3 + index} 0 R`)
     .join(" ")
@@ -32,7 +39,7 @@ function makePdf(pageTexts: readonly string[]): Uint8Array {
     ...contentObjects,
     "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
   ]
-  let pdf = "%PDF-1.4\n"
+  let pdf = `%PDF-1.4\n${leadingCommentBytes ? `%${"x".repeat(leadingCommentBytes)}\n` : ""}`
   const offsets = [0]
   for (const [index, body] of objects.entries()) {
     offsets.push(Buffer.byteLength(pdf, "binary"))
@@ -63,6 +70,28 @@ test("extracts PDF text with page markers", async () => {
   assert.equal(result.kind, "pdf")
   assert.match(result.extractedText, /\[Page 1\]\nFirst page notes/)
   assert.match(result.extractedText, /\[Page 2\]\nSecond page notes/)
+})
+
+test("extracts a stored PDF larger than the research download limit", async () => {
+  const root = await mkdtemp(join(tmpdir(), "blitz-stored-pdf-"))
+  const path = join(root, "large.pdf")
+  try {
+    const bytes = makePdf(
+      ["A local PDF can be parsed without loading the full file."],
+      MAX_DOWNLOADED_SOURCE_BYTES
+    )
+    await writeFile(path, bytes)
+    assert.ok(bytes.byteLength > MAX_DOWNLOADED_SOURCE_BYTES)
+    const result = await extractStoredSource({
+      path,
+      filename: "large.pdf",
+      contentType: "application/pdf",
+      sizeBytes: bytes.byteLength,
+    })
+    assert.match(result.extractedText, /local PDF can be parsed/)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
 })
 
 /** Covers book-sized extraction and splitting together so the old cap cannot return upstream. */

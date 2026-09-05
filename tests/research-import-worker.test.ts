@@ -12,7 +12,7 @@ import {
   buildResearchImportCheckpoint,
   researchImportPartMatchesSource,
   validateResearchImportPartSequence,
-} from "../convex/research-import-checkpoint.ts"
+} from "../lib/research-import-checkpoint.ts"
 
 /** Verifies the durable multipart transition keeps the lease until the final part. */
 test("multipart checkpoint retains lease before final part and clears it at completion", () => {

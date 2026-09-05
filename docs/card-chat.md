@@ -53,6 +53,18 @@ For HTTP clients, `POST /api/learning/chat/retry` takes `projectId`, `itemId`, a
 
 The worker uses `BLITZ_CODEX_WORKSPACE` or `~/.local/share/blitz/codex-workspace`, an explicitly created directory outside the repository. `BLITZ_CODEX_MODEL` defaults to `gpt-5.6-luna`; sandbox is read-only and approval requests remain declined until an approval UI is wired. The queue allows later questions to wait behind an active turn and recovers expired leases, so the web request can succeed while the Mac worker is offline.
 
-The launcher can use `defaultChatWorkspaceDirectory`, `ensureChatWorkspaceDirectory`, `runChatWorkerStep`, and `runChatWorker` from `lib/server/chat-worker.ts`. The current polling contract preserves activity events inside the worker for future richer notifications; it does not claim full Codex agent parity.
+The saved Replies model and reasoning level from `/settings` take precedence for new card-reply turns. See `docs/ai-model-settings.md` for fallback behavior.
+
+The launcher can use `defaultChatWorkspaceDirectory`, `ensureChatWorkspaceDirectory`, `runChatWorkerStep`, and `runChatWorker` from `lib/server/chat-worker.ts`. Activity events stay inside the worker; the HTTP stream exposes persisted conversation snapshots.
 
 Start the local chat process with `npm run worker:chat` beside `npm run worker` and the development servers. Both workers load `.env.local` and prefer `BLITZ_CONVEX_URL` for a loopback connection.
+
+## Streaming and Markdown
+
+Both apps use `GET /api/learning/chat?projectId=...&itemId=...&stream=1` to receive newline-delimited JSON snapshots from a live Convex subscription. The plain GET remains available for older clients. Blank-line heartbeats arrive every ten seconds. Connections rotate after one minute; clients reconnect and receive current history without resubmitting questions. Closing chat cancels its subscription, not the worker. A silent connection times out after thirty seconds and retries with bounded backoff.
+
+`lib/server/chat-progress.ts` coalesces assistant fragments at 250 ms intervals, keeps at most one persistence request in flight, and drains writes before completion or failure. `conversations.progress` requires the active, unexpired lease and bounds replies to 250,000 characters. Failed answers retain partial text alongside the error. Explicit retries and reclaimed leases clear that text before a fresh attempt. Completion replaces fragments with the authoritative final answer.
+
+Web and Android share the Marked parser and link validation in `lib/markdown.ts`. React renderers support headings, emphasis, nested lists, task lists, quotes, links, code, and GFM tables, including unfinished streaming fences. Raw HTML is displayed as text. Images display their alt text without remote fetching. Only explicit HTTP, HTTPS, and mailto links can open. Tables and code scroll horizontally inside the reply. New text follows the reader only while they remain near the bottom.
+
+Verification includes byte-split Unicode, reconnect and cancellation tests, coalesced writes, unfinished Markdown, safe links, and a live local HTTP stream through progress and terminal mutations. Desktop and 390 px web layouts were visually checked. Android type checks and a bundled APK build pass; native device rendering has not been visually verified for this change.

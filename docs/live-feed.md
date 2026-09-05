@@ -14,11 +14,11 @@ the feed without recording an incorrect answer. The home feed has no persistent
 navigation; `Library` is the overlay route to `/library`, which owns the
 project-grid flow.
 
-Chat attaches the selected card and sends the learner's question to
-`POST /api/learning/chat`. The dialog polls the conversation while open, keeps
-queued or running questions visible, and shows the worker's reply when one is
-available. Failed sends keep the question and offer `Retry`; repeated submits
-reuse the same client message ID so the queue stays idempotent. The interface
-does not fabricate a reply while the worker is pending or unavailable.
+`Ask in chat` opens a new workspace chat with the selected card locked as
+context. The first question is sent to `POST /api/chat` without an existing
+chat ID, so it creates a new session that appears in the Chat history. The
+saved workspace transcript keeps the card attached and available across
+reloads. Older card-conversation links and native clients continue using the
+legacy persisted card-chat flow.
 
 The feed prefetches near the last three loaded cards and follows an opaque server cursor. It keeps unique card IDs and combines filter metadata across pages. Empty eligible pages have a three-page automatic bound before `Load more` is offered. Filter changes cancel older requests, and continuation errors remain retryable without removing loaded cards.

@@ -109,35 +109,35 @@ export function FeedCardView({ card, onAsk, onSkip, onAnswer }: FeedCardProps) {
   function optionClass(optionId: string, isSelected: boolean) {
     const showFeedback = feedback !== null
     return cn(
-      "flex min-h-14 w-full items-center gap-4 rounded-2xl border border-white/10 bg-white/[0.045] px-4 text-left text-sm text-white/80 transition-[background-color,border-color,transform] duration-200 hover:border-white/22 hover:bg-white/[0.075] focus-visible:ring-2 focus-visible:ring-[#ff8065] focus-visible:outline-none active:scale-[0.99] disabled:cursor-default sm:px-5 sm:text-base",
+      "flex min-h-14 w-full items-center gap-4 rounded-2xl border border-border/80 bg-card/60 px-4 text-left text-sm text-foreground/90 transition-[background-color,border-color,transform] duration-200 hover:border-foreground/20 hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none active:scale-[0.99] disabled:cursor-default sm:px-5 sm:text-base",
       isSelected &&
         !showFeedback &&
-        "border-[#ff8065]/65 bg-[#ff8065]/10 text-white",
+        "border-brand bg-brand/10 text-foreground font-medium",
       showFeedback &&
         optionIsCorrect(optionId) &&
-        "border-emerald-400/65 bg-emerald-400/10 text-emerald-100",
+        "border-emerald-500/60 bg-emerald-500/10 text-emerald-800 dark:border-emerald-400/65 dark:bg-emerald-400/15 dark:text-emerald-100",
       showFeedback &&
         isSelected &&
         !optionIsCorrect(optionId) &&
-        "border-red-300/60 bg-red-300/10 text-red-100"
+        "border-destructive/60 bg-destructive/10 text-destructive dark:border-red-400/60 dark:bg-red-400/15 dark:text-red-100"
     )
   }
 
   return (
-    <article className="flex h-svh snap-start items-center px-4 pt-24 pb-10 sm:px-8 sm:pt-20 sm:pb-8">
-      <div className="mx-auto flex max-h-full min-h-0 w-full max-w-[680px] [scrollbar-width:none] flex-col overflow-y-auto [&::-webkit-scrollbar]:hidden">
-        <h2 className="max-w-[620px] text-[clamp(2rem,7vw,3.75rem)] leading-[0.99] font-medium tracking-[-0.045em] text-white sm:text-[clamp(2rem,5vw,2.5rem)]">
+    <article className="feed-card flex h-svh snap-start items-center px-4 pt-24 pb-10 sm:px-8 sm:pt-20 sm:pb-8">
+      <div className="feed-card-content mx-auto flex max-h-full min-h-0 w-full max-w-[680px] [scrollbar-width:none] flex-col overflow-y-auto [&::-webkit-scrollbar]:hidden">
+        <h2 className="max-w-[620px] text-[clamp(2rem,7vw,3.75rem)] leading-[0.99] font-medium tracking-[-0.045em] text-foreground sm:text-[clamp(2rem,5vw,2.5rem)]">
           {card.type === "explain" ? card.title : card.question}
         </h2>
 
         {card.type === "explain" ? (
-          <p className="mt-7 max-w-[590px] text-base leading-[1.65] text-white/62 sm:mt-5 sm:text-lg">
+          <p className="mt-7 max-w-[590px] text-base leading-[1.65] text-muted-foreground sm:mt-5 sm:text-lg">
             {card.body}
           </p>
         ) : (
           <>
             {isMultipleAnswer ? (
-              <p className="mt-5 text-sm text-white/60">
+              <p className="mt-5 text-sm text-muted-foreground">
                 Select all that apply
               </p>
             ) : null}
@@ -178,17 +178,17 @@ export function FeedCardView({ card, onAsk, onSkip, onAnswer }: FeedCardProps) {
                   >
                     <span
                       className={cn(
-                        "flex size-8 shrink-0 items-center justify-center rounded-xl border border-white/12 text-xs font-medium text-white/52",
+                        "flex size-8 shrink-0 items-center justify-center rounded-xl border border-border bg-muted/60 text-xs font-medium text-muted-foreground",
                         isSelected &&
                           !feedback &&
-                          "border-[#ff8065]/60 bg-[#ff8065]/15 text-[#ffb19e]",
+                          "border-brand/60 bg-brand/15 text-brand",
                         feedback &&
                           optionIsCorrect(option.id) &&
-                          "border-emerald-300/50 bg-emerald-300/12 text-emerald-100",
+                          "border-emerald-500/60 bg-emerald-500/20 text-emerald-700 dark:border-emerald-400/50 dark:bg-emerald-400/20 dark:text-emerald-200",
                         feedback &&
                           isSelected &&
                           !optionIsCorrect(option.id) &&
-                          "border-red-200/45 bg-red-200/10 text-red-100"
+                          "border-destructive/60 bg-destructive/20 text-destructive dark:border-red-400/50 dark:bg-red-400/20 dark:text-red-200"
                       )}
                     >
                       {feedback && optionIsCorrect(option.id) ? (
@@ -211,7 +211,7 @@ export function FeedCardView({ card, onAsk, onSkip, onAnswer }: FeedCardProps) {
                 type="button"
                 onClick={submitMultiple}
                 disabled={!selectedMany.length || pending || feedback !== null}
-                className="mt-5 h-11 rounded-[20px] bg-[#ff8065] px-5 text-sm font-medium text-[#1b0d0a] hover:bg-[#ff9b86] focus-visible:ring-[#ff8065]/50"
+                className="mt-5 h-11 rounded-full bg-brand px-5 text-sm font-medium text-brand-foreground hover:bg-brand/85 focus-visible:ring-ring"
               >
                 Check answers
               </Button>
@@ -219,7 +219,7 @@ export function FeedCardView({ card, onAsk, onSkip, onAnswer }: FeedCardProps) {
           </>
         )}
 
-        <p className="mt-7 text-xs text-white/45 sm:mt-5">
+        <p className="mt-7 text-xs text-muted-foreground sm:mt-5">
           Source · {card.sourceLabel}
         </p>
 
@@ -228,13 +228,15 @@ export function FeedCardView({ card, onAsk, onSkip, onAnswer }: FeedCardProps) {
             <p
               className={cn(
                 "text-sm font-medium",
-                feedback.isCorrect ? "text-emerald-300" : "text-red-300"
+                feedback.isCorrect
+                  ? "text-emerald-600 dark:text-emerald-400"
+                  : "text-destructive dark:text-red-400"
               )}
             >
               {feedback.isCorrect ? "Correct" : "Not quite"}
             </p>
             {feedback.feedback?.body ? (
-              <p className="text-sm leading-relaxed text-white/52">
+              <p className="text-sm leading-relaxed text-muted-foreground">
                 {feedback.feedback.body}
               </p>
             ) : null}
@@ -242,7 +244,7 @@ export function FeedCardView({ card, onAsk, onSkip, onAnswer }: FeedCardProps) {
         ) : null}
 
         {error ? (
-          <p className="mt-5 text-sm text-red-300" role="alert">
+          <p className="mt-5 text-sm text-destructive" role="alert">
             {error}
           </p>
         ) : null}
@@ -252,7 +254,7 @@ export function FeedCardView({ card, onAsk, onSkip, onAnswer }: FeedCardProps) {
             type="button"
             variant="outline"
             onClick={() => onAsk(card)}
-            className="h-11 rounded-[20px] border-white/12 bg-transparent px-5 text-sm text-white/72 hover:border-white/25 hover:bg-white/[0.07] hover:text-white"
+            className="h-11 rounded-full px-5 text-sm shadow-xs"
           >
             Ask in chat
           </Button>
@@ -260,7 +262,7 @@ export function FeedCardView({ card, onAsk, onSkip, onAnswer }: FeedCardProps) {
             type="button"
             variant="ghost"
             onClick={() => onSkip(card)}
-            className="h-11 rounded-[20px] px-4 text-sm text-white/48 hover:bg-white/[0.06] hover:text-white"
+            className="h-11 rounded-full px-4 text-sm text-muted-foreground hover:text-foreground"
           >
             {feedback ? "Next" : "Skip"}
           </Button>

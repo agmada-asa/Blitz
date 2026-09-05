@@ -1,6 +1,6 @@
-/** Renders the native card-chat sheet and polls its persisted server queue. */
+/** Renders the native card-chat sheet and streams persisted Markdown replies. */
 
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { randomUUID } from "expo-crypto"
 import { useSafeAreaInsets } from "react-native-safe-area-context"
 import {
@@ -18,11 +18,12 @@ import {
 
 import {
   enqueueChatQuestion,
-  fetchChat,
+  watchChat,
   retryChatMessage,
   type MobileChatMessage,
   type MobileChatResponse,
 } from "../lib/chat"
+import { Markdown } from "./markdown"
 import type { MobileLearningCard } from "../lib/contracts"
 
 /** Props required to attach chat to one feed card. */
@@ -76,61 +77,52 @@ export function ChatModal({
   onClose,
 }: ChatModalProps) {
   const insets = useSafeAreaInsets()
-  const [state, setState] = useState<ChatState>(EMPTY_STATE)
+  const scrollRef = useRef<ScrollView>(null)
+  const followReply = useRef(true)
+  const cardKey = `${serverUrl}:${card?.projectId}:${card?.id}`
+  const [states, setStates] = useState<Record<string, ChatState>>({})
+  const state = states[cardKey] ?? EMPTY_STATE
 
   /** Applies a partial state update without replacing the learner's draft. */
   const updateState = useCallback(
     (update: Partial<ChatState> | ((current: ChatState) => ChatState)) => {
-      setState((current) =>
-        typeof update === "function"
-          ? update(current)
-          : { ...current, ...update }
-      )
+      setStates((all) => {
+        const current = all[cardKey] ?? EMPTY_STATE
+        return {
+          ...all,
+          [cardKey]:
+            typeof update === "function"
+              ? update(current)
+              : { ...current, ...update },
+        }
+      })
     },
-    []
+    [cardKey]
   )
 
-  /** Polls the selected card conversation and leaves local input untouched. */
-  const loadConversation = useCallback(
-    async (signal: AbortSignal, showLoading: boolean) => {
-      if (!card || !serverUrl) return
-      if (showLoading) updateState({ loading: true, requestError: "" })
-      try {
-        const next = await fetchChat(serverUrl, card, signal)
-        updateState((current) => ({
-          ...current,
+  /** Subscribes only to the visible card and preserves already received text during reconnects. */
+  useEffect(() => {
+    if (!visible || !card || !serverUrl) return
+    const controller = new AbortController()
+    followReply.current = true
+    updateState({ loading: true })
+    void watchChat(
+      serverUrl,
+      card,
+      controller.signal,
+      (next) => {
+        updateState({
           messages: next.messages,
           status: next.status,
           lastError: next.lastError ?? "",
           requestError: "",
           loading: false,
-        }))
-      } catch (error) {
-        if (error instanceof Error && error.name === "AbortError") return
-        updateState((current) => ({
-          ...current,
-          loading: false,
-          requestError:
-            error instanceof Error ? error.message : "Could not load chat.",
-        }))
-      }
-    },
-    [card, serverUrl, updateState]
-  )
-
-  useEffect(() => {
-    if (!visible || !card || !serverUrl) return
-    const controller = new AbortController()
-    setState(EMPTY_STATE)
-    void loadConversation(controller.signal, true)
-    const interval = setInterval(() => {
-      void loadConversation(controller.signal, false)
-    }, 3_000)
-    return () => {
-      controller.abort()
-      clearInterval(interval)
-    }
-  }, [card, loadConversation, serverUrl, visible])
+        })
+      },
+      (requestError) => updateState({ loading: false, requestError })
+    )
+    return () => controller.abort()
+  }, [card, serverUrl, visible, updateState])
 
   /** Queues one question and clears the draft only after the server accepts it. */
   const sendQuestion = useCallback(async () => {
@@ -157,7 +149,8 @@ export function ChatModal({
         )
         const messages = [...current.messages]
         if (existingIndex === -1) messages.push(result.message)
-        else messages[existingIndex] = result.message
+        else if (messages[existingIndex].updatedAt <= result.message.updatedAt)
+          messages[existingIndex] = result.message
         return {
           ...current,
           messages,
@@ -201,6 +194,7 @@ export function ChatModal({
                   ...currentMessage,
                   status: "queued",
                   error: undefined,
+                  reply: undefined,
                   updatedAt: Date.now(),
                 }
               : currentMessage
@@ -264,6 +258,19 @@ export function ChatModal({
           </View>
 
           <ScrollView
+            ref={scrollRef}
+            onContentSizeChange={() => {
+              if (followReply.current)
+                scrollRef.current?.scrollToEnd({ animated: false })
+            }}
+            onScroll={({ nativeEvent }) => {
+              followReply.current =
+                nativeEvent.contentSize.height -
+                  nativeEvent.contentOffset.y -
+                  nativeEvent.layoutMeasurement.height <
+                80
+            }}
+            scrollEventThrottle={32}
             contentContainerStyle={styles.messages}
             keyboardShouldPersistTaps="handled"
           >
@@ -281,9 +288,9 @@ export function ChatModal({
                 <View style={styles.questionBubble}>
                   <Text style={styles.questionText}>{message.question}</Text>
                 </View>
-                {message.status === "completed" && message.reply ? (
+                {message.reply ? (
                   <View style={styles.replyBubble}>
-                    <Text style={styles.replyText}>{message.reply}</Text>
+                    <Markdown text={message.reply} />
                   </View>
                 ) : null}
                 {message.status === "queued" ? (
@@ -293,7 +300,7 @@ export function ChatModal({
                 ) : null}
                 {message.status === "running" ? (
                   <Text style={styles.muted}>
-                    Preparing reply · {formatElapsed(message.updatedAt)}
+                    {message.reply ? "Replying…" : "Preparing reply…"}
                   </Text>
                 ) : null}
                 {message.status === "failed" ? (

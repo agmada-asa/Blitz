@@ -116,6 +116,16 @@ export interface CardChatTextDeltaEvent {
   readonly delta: string
 }
 
+/** Typed lifecycle event emitted once Codex accepts a turn. */
+export interface CardChatTurnStartedEvent {
+  /** Discriminator for early persistence of the conversation identifiers. */
+  readonly type: "turn-started"
+  /** Server-issued thread identifier. */
+  readonly threadId: string
+  /** Server-issued turn identifier. */
+  readonly turnId: string
+}
+
 /** Typed activity event preserving the richer app-server notification. */
 export interface CardChatActivityEvent {
   /** Discriminator for non-text streamed activity. */
@@ -165,6 +175,7 @@ export interface CardChatErrorEvent {
 
 /** Every event emitted while a card chat is running. */
 export type CardChatEvent =
+  | CardChatTurnStartedEvent
   | CardChatTextDeltaEvent
   | CardChatActivityEvent
   | CardChatServerRequestEvent
@@ -671,6 +682,7 @@ export async function runCodexTextTurn(
       })
     )
     turnId = turn.turn.id
+    emitEvent({ type: "turn-started", threadId, turnId })
     flushTurn()
     if (!finished && turn.turn.status && turn.turn.status !== "inProgress") {
       complete(turn.turn.status, turn.turn)

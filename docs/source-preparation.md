@@ -71,7 +71,10 @@ Run `npm run worker` alongside the local Convex and web servers. It reads the
 existing `.env.local`, claims one chunk at a time, generates through the local
 Codex app-server, and commits only validated output. `npm run worker -- --once`
 processes one available chunk and exits. `BLITZ_CONVEX_URL` overrides the data
-endpoint; `BLITZ_CODEX_MODEL` overrides the default Luna model.
+endpoint. Until an AI setting is saved, `BLITZ_CODEX_MODEL` and
+`BLITZ_CODEX_EFFORT` override the default Luna model and medium reasoning.
+Saved card-generation settings take precedence; see
+`docs/ai-model-settings.md`.
 
 Each generation uses a private temporary directory and an ephemeral Codex
 thread with hosted web search disabled. Research planning retains its separate live-search configuration. The worker removes that directory after the turn. It never changes the

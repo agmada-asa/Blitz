@@ -8,6 +8,9 @@
     "android": {
       "package": "com.blitz.study",
       "versionCode": 1
-    }
+    },
+    "plugins": [
+      "expo-font"
+    ]
   }
 }

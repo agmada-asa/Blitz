@@ -13,6 +13,11 @@ import {
   type ChatWorkContext,
   type ChatWorkerQueue,
 } from "../lib/server/chat-worker.ts"
+import { loadSavedAiModelSettings } from "../lib/server/ai-model-settings.ts"
+import {
+  resolveAiModel,
+  resolveAiReasoningEffort,
+} from "../lib/ai-model-settings.ts"
 
 /** Loads .env.local without overwriting launcher-provided configuration. */
 function loadLocalEnvironment(): void {
@@ -57,6 +62,11 @@ async function main(): Promise<void> {
         messageId: args.messageId as Id<"conversationMessages">,
         leaseToken: args.leaseToken,
       }),
+    progress: (args) =>
+      client.mutation(api.conversations.progress, {
+        ...args,
+        messageId: args.messageId as Id<"conversationMessages">,
+      }),
     complete: (args) =>
       client.mutation(api.conversations.complete, {
         messageId: args.messageId as Id<"conversationMessages">,
@@ -76,13 +86,22 @@ async function main(): Promise<void> {
     console.log("Blitz chat worker is ready.")
     while (!controller.signal.aborted) {
       try {
+        const settings = await loadSavedAiModelSettings(client)
         const result = await runChatWorkerStep({
           queue,
           workerId,
           workspaceDirectory: defaultChatWorkspaceDirectory(),
           signal: controller.signal,
-          model: process.env.BLITZ_CODEX_MODEL ?? "gpt-5.6-luna",
-          effort: process.env.BLITZ_CODEX_EFFORT,
+          model: resolveAiModel(
+            settings,
+            "replyModel",
+            process.env.BLITZ_CODEX_MODEL
+          ),
+          effort: resolveAiReasoningEffort(
+            settings,
+            "replyEffort",
+            process.env.BLITZ_CODEX_EFFORT
+          ),
           onEvent: (event) => {
             if (event.type === "activity")
               console.log("Codex activity received.")

@@ -1,13 +1,33 @@
 /** Accepts bounded source text and returns one schema-validated generated study set. */
 
 import { generateStudySet } from "@/lib/server/codex"
+import { loadSavedAiModelSettings } from "@/lib/server/ai-model-settings"
+import {
+  resolveAiModel,
+  resolveAiReasoningEffort,
+} from "@/lib/ai-model-settings"
 import {
   MAX_FILENAME_LENGTH,
   MAX_SOURCE_TEXT_LENGTH,
 } from "@/lib/server/generate-schema"
+import { ConvexHttpClient } from "convex/browser"
 
 /** Uses Node.js because generation launches the local Codex process. */
 export const runtime = "nodejs"
+
+/** Opens the local Convex deployment when model settings are available to this route. */
+function settingsClient(): ConvexHttpClient | null {
+  const endpoint =
+    process.env.BLITZ_CONVEX_URL ??
+    process.env.NEXT_PUBLIC_CONVEX_URL ??
+    process.env.CONVEX_URL
+  if (!endpoint) return null
+  try {
+    return new ConvexHttpClient(endpoint)
+  } catch {
+    return null
+  }
+}
 
 /** Handles generation requests and maps invalid input or generator failures to JSON errors. */
 export async function POST(request: Request) {
@@ -43,7 +63,23 @@ export async function POST(request: Request) {
         { status: 400 }
       )
     }
-    return Response.json(await generateStudySet(filename, text))
+    const settings = await loadSavedAiModelSettings(settingsClient())
+    return Response.json(
+      await generateStudySet(
+        filename,
+        text,
+        resolveAiModel(
+          settings,
+          "cardGenerationModel",
+          process.env.BLITZ_CODEX_MODEL
+        ),
+        resolveAiReasoningEffort(
+          settings,
+          "cardGenerationEffort",
+          process.env.BLITZ_CODEX_EFFORT
+        )
+      )
+    )
   } catch {
     return Response.json(
       { error: "Unable to generate study cards right now" },

@@ -70,6 +70,7 @@ function queueDouble(context: ChatWorkContext): {
     queue: {
       claimNext: async () => claim,
       getWorkContext: async () => context,
+      progress: async () => undefined,
       complete: async (value) => {
         completed.push(value)
       },
@@ -136,6 +137,53 @@ test("chat worker records a turn failure for deliberate retry", async () => {
     assert.equal(
       (fixture.failures[0] as { error: string }).error,
       "Card chat could not complete. Retry to try again."
+    )
+  } finally {
+    await rm(workspace, { recursive: true, force: true })
+  }
+})
+
+/** Confirms transport fragments reach persistence before the authoritative terminal answer. */
+test("worker persists streamed text before completion", async () => {
+  const fixture = queueDouble(sourceContext())
+  const writes: string[] = []
+  fixture.queue.progress = async ({ reply }) => {
+    writes.push(reply)
+  }
+  const workspace = await mkdtemp(join(tmpdir(), "blitz-chat-worker-test-"))
+  try {
+    const result = await runChatWorkerStep({
+      queue: fixture.queue,
+      workerId: "worker-1",
+      workspaceDirectory: workspace,
+      runTurn: async (_, { onEvent }) => {
+        onEvent({
+          type: "text-delta",
+          threadId: "thread-old",
+          turnId: "turn-1",
+          delta: "Partial",
+        })
+        await new Promise((resolve) => setTimeout(resolve, 300))
+        assert.deepEqual(writes, ["Partial"])
+        assert.equal(fixture.completed.length, 0)
+        onEvent({
+          type: "text-delta",
+          threadId: "thread-old",
+          turnId: "turn-1",
+          delta: " answer",
+        })
+        return {
+          threadId: "thread-old",
+          turnId: "turn-1",
+          text: "Authoritative answer",
+        }
+      },
+    })
+    assert.equal(result.status, "completed")
+    assert.deepEqual(writes, ["Partial", "Partial answer"])
+    assert.equal(
+      (fixture.completed[0] as { reply: string }).reply,
+      "Authoritative answer"
     )
   } finally {
     await rm(workspace, { recursive: true, force: true })

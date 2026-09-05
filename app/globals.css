@@ -1,6 +1,10 @@
 /* Owns global Tailwind imports, semantic design tokens, and base page styles. */
 
-@import "tailwindcss";
+@import "tailwindcss" source(none);
+/* Scan interface code only. Desktop caches and user sources are not CSS input. */
+@source "./";
+@source "../components";
+@source "../hooks";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 
@@ -16,6 +20,8 @@
   --color-card-foreground: var(--card-foreground);
   --color-popover: var(--popover);
   --color-popover-foreground: var(--popover-foreground);
+  --color-brand: var(--brand);
+  --color-brand-foreground: var(--brand-foreground);
   --color-primary: var(--primary);
   --color-primary-foreground: var(--primary-foreground);
   --color-secondary: var(--secondary);
@@ -35,6 +41,8 @@
 }
 
 :root {
+  --brand: #aa3822;
+  --brand-foreground: #ffffff;
   --background: #fafafa;
   --foreground: #111111;
   --card: #ffffff;
@@ -57,6 +65,8 @@
 }
 
 .dark {
+  --brand: #ff8065;
+  --brand-foreground: #1b0d0a;
   --background: #101010;
   --foreground: #f7f7f7;
   --card: #191919;
@@ -77,6 +87,133 @@
   --ring: #60a5fa;
 }
 
+/* Accent choices update the existing brand, primary, and focus tokens. */
+:root[data-accent="red"] {
+  --brand: #dc2626;
+  --brand-foreground: #ffffff;
+  --primary: #b91c1c;
+  --primary-foreground: #ffffff;
+  --ring: #ef4444;
+}
+
+.dark[data-accent="red"],
+[data-accent="red"] .dark,
+[data-accent="red"].dark {
+  --brand: #f87171;
+  --brand-foreground: #450a0a;
+  --primary: #f87171;
+  --primary-foreground: #450a0a;
+  --ring: #fca5a5;
+}
+
+:root[data-accent="orange"] {
+  --brand: #aa3822;
+  --brand-foreground: #ffffff;
+  --primary: #aa3822;
+  --primary-foreground: #ffffff;
+  --ring: #f97316;
+}
+
+.dark[data-accent="orange"],
+[data-accent="orange"] .dark,
+[data-accent="orange"].dark {
+  --brand: #ff8065;
+  --brand-foreground: #1b0d0a;
+  --primary: #ff8065;
+  --primary-foreground: #1b0d0a;
+  --ring: #fdba74;
+}
+
+:root[data-accent="yellow"] {
+  --brand: #a16207;
+  --brand-foreground: #ffffff;
+  --primary: #a16207;
+  --primary-foreground: #ffffff;
+  --ring: #ca8a04;
+}
+
+.dark[data-accent="yellow"],
+[data-accent="yellow"] .dark,
+[data-accent="yellow"].dark {
+  --brand: #facc15;
+  --brand-foreground: #422006;
+  --primary: #facc15;
+  --primary-foreground: #422006;
+  --ring: #fde047;
+}
+
+:root[data-accent="green"] {
+  --brand: #15803d;
+  --brand-foreground: #ffffff;
+  --primary: #15803d;
+  --primary-foreground: #ffffff;
+  --ring: #22c55e;
+}
+
+.dark[data-accent="green"],
+[data-accent="green"] .dark,
+[data-accent="green"].dark {
+  --brand: #4ade80;
+  --brand-foreground: #052e16;
+  --primary: #4ade80;
+  --primary-foreground: #052e16;
+  --ring: #86efac;
+}
+
+:root[data-accent="blue"] {
+  --brand: #2563eb;
+  --brand-foreground: #ffffff;
+  --primary: #2563eb;
+  --primary-foreground: #ffffff;
+  --ring: #3b82f6;
+}
+
+.dark[data-accent="blue"],
+[data-accent="blue"] .dark,
+[data-accent="blue"].dark {
+  --brand: #60a5fa;
+  --brand-foreground: #0b1b36;
+  --primary: #60a5fa;
+  --primary-foreground: #0b1b36;
+  --ring: #93c5fd;
+}
+
+:root[data-accent="indigo"] {
+  --brand: #4f46e5;
+  --brand-foreground: #ffffff;
+  --primary: #4f46e5;
+  --primary-foreground: #ffffff;
+  --ring: #6366f1;
+}
+
+.dark[data-accent="indigo"],
+[data-accent="indigo"] .dark,
+[data-accent="indigo"].dark {
+  --brand: #818cf8;
+  --brand-foreground: #1e1b4b;
+  --primary: #818cf8;
+  --primary-foreground: #1e1b4b;
+  --ring: #a5b4fc;
+}
+
+:root[data-accent="violet"] {
+  --brand: #7c3aed;
+  --brand-foreground: #ffffff;
+  --primary: #7c3aed;
+  --primary-foreground: #ffffff;
+  --ring: #8b5cf6;
+}
+
+.dark[data-accent="violet"],
+[data-accent="violet"] .dark,
+[data-accent="violet"].dark {
+  --brand: #a78bfa;
+  --brand-foreground: #2e1065;
+  --primary: #a78bfa;
+  --primary-foreground: #2e1065;
+  --ring: #c4b5fd;
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;
@@ -93,7 +230,113 @@
   }
 }
 
+/* Ambient color stays behind the feed; only transforms animate to avoid repainting gradients. */
+.feed-backdrop::before,
+.feed-backdrop::after {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  pointer-events: none;
+  width: min(110vw, 1000px);
+  height: min(110vh, 1000px);
+  border-radius: 50%;
+}
+
+.feed-backdrop::before {
+  top: -45%;
+  right: -30%;
+  background: radial-gradient(
+    ellipse,
+    color-mix(in srgb, var(--brand) 12%, transparent) 0%,
+    color-mix(in srgb, var(--brand) 4%, transparent) 35%,
+    transparent 68%
+  );
+  animation: feed-warm-drift 28s ease-in-out infinite alternate;
+}
+
+.dark .feed-backdrop::before {
+  background: radial-gradient(
+    ellipse,
+    color-mix(in srgb, var(--brand) 20%, transparent) 0%,
+    color-mix(in srgb, var(--brand) 6%, transparent) 35%,
+    transparent 68%
+  );
+}
+
+.feed-backdrop::after {
+  bottom: -50%;
+  left: -30%;
+  background: radial-gradient(
+    ellipse,
+    color-mix(in srgb, var(--ring) 10%, transparent) 0%,
+    color-mix(in srgb, var(--ring) 3%, transparent) 38%,
+    transparent 68%
+  );
+  animation: feed-cool-drift 32s ease-in-out infinite alternate;
+}
+
+.dark .feed-backdrop::after {
+  background: radial-gradient(
+    ellipse,
+    color-mix(in srgb, var(--ring) 16%, transparent) 0%,
+    color-mix(in srgb, var(--ring) 4%, transparent) 38%,
+    transparent 68%
+  );
+}
+
+@keyframes feed-warm-drift {
+  from {
+    transform: translate(-5%, 0) scale(1);
+  }
+  to {
+    transform: translate(-28%, 22%) scale(1.15);
+  }
+}
+
+@keyframes feed-cool-drift {
+  from {
+    transform: translate(0, 0) scale(1.1);
+  }
+  to {
+    transform: translate(24%, -22%) scale(0.95);
+  }
+}
+
+/* Scroll-linked motion follows each card's viewport crossing; unsupported browsers keep static content. */
+@supports (animation-timeline: view()) {
+  @media (prefers-reduced-motion: no-preference) {
+    .feed-card {
+      view-timeline: --feed-card block;
+    }
+    .feed-card-content {
+      animation: feed-card-arrive linear both;
+      animation-timeline: --feed-card;
+      animation-range: entry 0% exit 100%;
+    }
+  }
+}
+
+@keyframes feed-card-arrive {
+  0% {
+    opacity: 0.55;
+    transform: translateY(28px) scale(0.98);
+  }
+  35%,
+  65% {
+    opacity: 1;
+    transform: none;
+  }
+  100% {
+    opacity: 0.55;
+    transform: translateY(-28px) scale(0.98);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
+  .feed-backdrop::before,
+  .feed-backdrop::after {
+    animation: none;
+  }
   *,
   *::before,
   *::after {
@@ -103,3 +346,26 @@
     transition-duration: 0.01ms !important;
   }
 }
+
+/* Chat Markdown keeps generated structure readable inside narrow reply panels. */
+.chat-markdown { overflow-wrap: anywhere; min-width: 0; line-height: 1.65; }
+.chat-markdown > * + * { margin-top: .85em; }
+.chat-markdown h2, .chat-markdown h3, .chat-markdown h4, .chat-markdown h5, .chat-markdown h6 { font-weight: 650; line-height: 1.35; color: inherit; }
+.chat-markdown h2 { font-size: 1.25em; }
+.chat-markdown h3 { font-size: 1.12em; }
+.chat-markdown strong { font-weight: 650; }
+.chat-markdown a { color: var(--brand); text-decoration: underline; text-underline-offset: 3px; }
+.chat-markdown a:focus-visible, .chat-markdown pre:focus-visible, .markdown-table:focus-visible { outline: 2px solid var(--ring); outline-offset: 3px; }
+.chat-markdown ul, .chat-markdown ol { padding-left: 1.5em; }
+.chat-markdown ul { list-style: disc; }
+.chat-markdown ol { list-style: decimal; }
+.chat-markdown li + li { margin-top: .35em; }
+.chat-markdown li > * + * { margin-top: .35em; }
+.chat-markdown code { font-family: ui-monospace, monospace; font-size: .9em; background: #ffffff0d; border-radius: 4px; padding: .12em .3em; }
+.chat-markdown pre { overflow-x: auto; max-width: 100%; padding: 12px; border-radius: 8px; background: #00000040; white-space: pre; overflow-wrap: normal; }
+.chat-markdown pre code { padding: 0; background: transparent; }
+.chat-markdown blockquote { border-left: 2px solid var(--brand); padding-left: 12px; }
+.chat-markdown hr { border-color: #ffffff26; }
+.markdown-table { overflow-x: auto; max-width: 100%; }
+.chat-markdown table { border-collapse: collapse; font-size: .9em; }
+.chat-markdown th, .chat-markdown td { padding: 8px 12px; border: 1px solid #ffffff26; text-align: left; min-width: 110px; }

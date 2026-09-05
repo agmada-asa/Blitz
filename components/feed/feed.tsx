@@ -3,12 +3,12 @@
 /** Owns the real home feed, its server-backed answer flow, and compact filters. */
 
 import Link from "next/link"
+import { useRouter } from "next/navigation"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { FilterHorizontalIcon, Folder01Icon } from "@hugeicons/core-free-icons"
+import { FilterHorizontalIcon } from "@hugeicons/core-free-icons"
 import { HugeiconsIcon } from "@hugeicons/react"
 
 import { FeedCardView } from "@/components/feed/feed-card"
-import { FeedChatDialog } from "@/components/feed/feed-chat-dialog"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -18,6 +18,13 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
 import type {
   AnswerRequest,
@@ -29,6 +36,9 @@ import type {
 
 const FEED_LIMIT = 20
 const MAX_EMPTY_PAGE_HOPS = 3
+
+/** Sentinel value representing an unfiltered project or topic selection in shadcn pickers. */
+const ALL_FILTER_VALUE = "all"
 
 /** A selected project or topic filter, with empty values meaning all. */
 type FeedFilter = {
@@ -101,6 +111,7 @@ async function requestFeedPage(
 
 /** Renders the full-screen real learning feed at the home route. */
 export function Feed({ initialFilter }: { initialFilter?: FeedFilter }) {
+  const router = useRouter()
   const answerRequests = useRef(new Map<string, AnswerRequest>())
   const answeredCards = useRef(new Set<string>())
   const prefetchedAtCount = useRef<number | null>(null)
@@ -114,7 +125,6 @@ export function Feed({ initialFilter }: { initialFilter?: FeedFilter }) {
   )
   const [draftFilter, setDraftFilter] = useState<FeedFilter>(filter)
   const [filterOpen, setFilterOpen] = useState(false)
-  const [chatCard, setChatCard] = useState<FeedCard | null>(null)
   const [activeIndex, setActiveIndex] = useState(0)
   const [loading, setLoading] = useState(true)
   const [loadingMore, setLoadingMore] = useState(false)
@@ -124,6 +134,18 @@ export function Feed({ initialFilter }: { initialFilter?: FeedFilter }) {
   const requestGeneration = useRef(0)
   const feedRequest = useRef<AbortController | null>(null)
 
+  /** Opens a fresh workspace chat with the selected card queued as context. */
+  const openCardChat = useCallback(
+    (card: FeedCard): void => {
+      const params = new URLSearchParams({
+        cardProjectId: card.projectId,
+        cardId: card.id,
+      })
+      router.push(`/chat?${params.toString()}`)
+    },
+    [router]
+  )
+
   const topics = useMemo(
     () =>
       (data?.topics ?? []).filter(
@@ -132,6 +154,19 @@ export function Feed({ initialFilter }: { initialFilter?: FeedFilter }) {
       ),
     [data?.topics, draftFilter.projectId]
   )
+
+  const selectedProjectId =
+    draftFilter.projectId &&
+    (!data ||
+      data.projects.some((project) => project.id === draftFilter.projectId))
+      ? draftFilter.projectId
+      : ALL_FILTER_VALUE
+
+  const selectedTopicId =
+    draftFilter.topicId &&
+    topics.some((topic) => topic.id === draftFilter.topicId)
+      ? draftFilter.topicId
+      : ALL_FILTER_VALUE
 
   /** Loads the first bounded set of pages, skipping empty eligible pages. */
   useEffect(() => {
@@ -221,7 +256,7 @@ export function Feed({ initialFilter }: { initialFilter?: FeedFilter }) {
   /** Maps arrow and page keys to feed movement without capturing form input. */
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
-      if (chatCard || filterOpen) return
+      if (filterOpen) return
       const target = event.target
       if (
         target instanceof HTMLElement &&
@@ -240,7 +275,7 @@ export function Feed({ initialFilter }: { initialFilter?: FeedFilter }) {
     }
     window.addEventListener("keydown", handleKeyDown)
     return () => window.removeEventListener("keydown", handleKeyDown)
-  }, [activeIndex, chatCard, filterOpen, scrollToCard])
+  }, [activeIndex, filterOpen, scrollToCard])
 
   /** Sends one answer request for server scoring and post-answer feedback. */
   const answerCard = useCallback(
@@ -416,7 +451,15 @@ export function Feed({ initialFilter }: { initialFilter?: FeedFilter }) {
     setLoadingMore(false)
     setError("")
     setLoadMoreError("")
-    setFilter(draftFilter)
+    const validTopicId =
+      draftFilter.topicId &&
+      topics.some((topic) => topic.id === draftFilter.topicId)
+        ? draftFilter.topicId
+        : ""
+    setFilter({
+      projectId: draftFilter.projectId,
+      topicId: validTopicId,
+    })
     setFilterOpen(false)
   }
 
@@ -425,32 +468,8 @@ export function Feed({ initialFilter }: { initialFilter?: FeedFilter }) {
     data?.continueCursor !== null && data?.continueCursor !== undefined
 
   return (
-    <main className="relative h-svh overflow-hidden bg-[#080808] text-white selection:bg-[#ff8065] selection:text-[#1b0d0a]">
-      <div className="pointer-events-none absolute inset-x-0 top-0 z-20 flex items-center justify-between gap-3 px-4 pt-4 sm:px-8 sm:pt-6">
-        <div className="pointer-events-auto flex items-center gap-2">
-          <Button
-            asChild
-            variant="ghost"
-            className="h-11 rounded-full bg-white/10 px-4 text-sm text-white/90 ring-1 ring-white/15 hover:bg-white/15 hover:text-white"
-          >
-            <Link href="/library">
-              <HugeiconsIcon
-                icon={Folder01Icon}
-                aria-hidden="true"
-                className="size-4"
-              />
-              Library
-            </Link>
-          </Button>
-          <Button
-            asChild
-            variant="ghost"
-            className="h-11 rounded-full px-3 text-sm text-white/65 hover:bg-white/10 hover:text-white"
-          >
-            <Link href="/activity">Activity</Link>
-          </Button>
-        </div>
-
+    <main className="feed-backdrop relative isolate h-[calc(100svh-68px-env(safe-area-inset-bottom))] overflow-hidden bg-background text-foreground selection:bg-brand selection:text-brand-foreground md:h-svh">
+      <div className="pointer-events-none absolute inset-x-0 top-0 z-20 flex items-center justify-end gap-3 px-4 pt-[max(1rem,env(safe-area-inset-top))] sm:px-8 sm:pt-6">
         <Dialog
           open={filterOpen}
           onOpenChange={(open) => {
@@ -461,88 +480,99 @@ export function Feed({ initialFilter }: { initialFilter?: FeedFilter }) {
           <DialogTrigger asChild>
             <Button
               type="button"
-              variant="ghost"
-              className="pointer-events-auto h-10 rounded-[20px] bg-white/[0.045] px-3.5 text-sm text-white/65 ring-1 ring-white/10 hover:bg-white/[0.09] hover:text-white"
+              variant="outline"
+              aria-label="Filter"
+              className="pointer-events-auto h-10 rounded-full border-border/80 bg-background/80 px-0 text-sm text-muted-foreground backdrop-blur-md hover:bg-muted hover:text-foreground sm:w-auto sm:px-3.5"
             >
               <HugeiconsIcon
                 icon={FilterHorizontalIcon}
                 aria-hidden="true"
                 className="size-4"
               />
-              Filter
+              <span className="sr-only sm:not-sr-only">Filter</span>
             </Button>
           </DialogTrigger>
           <DialogContent
             aria-describedby={undefined}
-            className="border-white/10 bg-[#151515] text-white sm:max-w-sm"
+            className="sm:max-w-sm"
             showCloseButton
           >
             <DialogHeader>
-              <DialogTitle className="font-sans text-white">
+              <DialogTitle>
                 Filter feed
               </DialogTitle>
             </DialogHeader>
             <div className="space-y-4">
-              <label
-                className="block space-y-2 text-sm text-white/72"
-                htmlFor="feed-project-filter"
-              >
-                <span>Project</span>
-                <select
-                  id="feed-project-filter"
-                  value={draftFilter.projectId}
-                  onChange={(event) =>
+              <div className="space-y-2">
+                <label
+                  className="block text-sm font-medium text-foreground"
+                  htmlFor="feed-project-filter"
+                >
+                  Project
+                </label>
+                <Select
+                  value={selectedProjectId}
+                  onValueChange={(value) =>
                     setDraftFilter({
-                      projectId: event.target.value,
+                      projectId: value === ALL_FILTER_VALUE ? "" : value,
                       topicId: "",
                     })
                   }
-                  className="h-11 w-full rounded-xl border border-white/12 bg-white/[0.045] px-3 text-white focus-visible:border-[#ff8065] focus-visible:ring-2 focus-visible:ring-[#ff8065]/40 focus-visible:outline-none"
                 >
-                  <option value="" className="bg-[#151515]">
-                    All projects
-                  </option>
-                  {(data?.projects ?? []).map((project) => (
-                    <option
-                      key={project.id}
-                      value={project.id}
-                      className="bg-[#151515]"
-                    >
-                      {project.title}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label
-                className="block space-y-2 text-sm text-white/72"
-                htmlFor="feed-topic-filter"
-              >
-                <span>Topic</span>
-                <select
-                  id="feed-topic-filter"
-                  value={draftFilter.topicId}
-                  onChange={(event) =>
+                  <SelectTrigger
+                    id="feed-project-filter"
+                    className="h-11 rounded-xl px-3"
+                    aria-label="Filter by project"
+                  >
+                    <SelectValue placeholder="All projects" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={ALL_FILTER_VALUE}>
+                      All projects
+                    </SelectItem>
+                    {(data?.projects ?? []).map((project) => (
+                      <SelectItem key={project.id} value={project.id}>
+                        {project.title}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <label
+                  className="block text-sm font-medium text-foreground"
+                  htmlFor="feed-topic-filter"
+                >
+                  Topic
+                </label>
+                <Select
+                  value={selectedTopicId}
+                  onValueChange={(value) =>
                     setDraftFilter((current) => ({
                       ...current,
-                      topicId: event.target.value,
+                      topicId: value === ALL_FILTER_VALUE ? "" : value,
                     }))
                   }
-                  className="h-11 w-full rounded-xl border border-white/12 bg-white/[0.045] px-3 text-white focus-visible:border-[#ff8065] focus-visible:ring-2 focus-visible:ring-[#ff8065]/40 focus-visible:outline-none"
                 >
-                  <option value="" className="bg-[#151515]">
-                    All topics
-                  </option>
-                  {topics.map((topic) => (
-                    <option
-                      key={topic.id}
-                      value={topic.id}
-                      className="bg-[#151515]"
-                    >
-                      {topic.title}
-                    </option>
-                  ))}
-                </select>
-              </label>
+                  <SelectTrigger
+                    id="feed-topic-filter"
+                    className="h-11 rounded-xl px-3"
+                    aria-label="Filter by topic"
+                  >
+                    <SelectValue placeholder="All topics" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={ALL_FILTER_VALUE}>
+                      All topics
+                    </SelectItem>
+                    {topics.map((topic) => (
+                      <SelectItem key={topic.id} value={topic.id}>
+                        {topic.title}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
             <DialogFooter>
               <Button
@@ -552,7 +582,11 @@ export function Feed({ initialFilter }: { initialFilter?: FeedFilter }) {
               >
                 Cancel
               </Button>
-              <Button type="button" onClick={applyFilters}>
+              <Button
+                type="button"
+                onClick={applyFilters}
+                className="bg-brand text-brand-foreground hover:bg-brand/85"
+              >
                 Apply filters
               </Button>
             </DialogFooter>
@@ -588,13 +622,13 @@ export function Feed({ initialFilter }: { initialFilter?: FeedFilter }) {
           ref={feedRef}
           tabIndex={0}
           aria-label="Learning feed"
-          className="h-full snap-y snap-mandatory [scrollbar-width:none] overflow-y-auto overscroll-y-contain scroll-smooth focus-visible:ring-2 focus-visible:ring-[#ff8065]/50 focus-visible:outline-none focus-visible:ring-inset [&::-webkit-scrollbar]:hidden"
+          className="h-full snap-y snap-mandatory [scrollbar-width:none] overflow-y-auto overscroll-y-contain scroll-smooth outline-none focus:outline-none focus-visible:outline-none [&::-webkit-scrollbar]:hidden"
         >
           {data?.cards.map((card, index) => (
             <FeedCardView
               key={card.id}
               card={card}
-              onAsk={setChatCard}
+              onAsk={openCardChat}
               onSkip={(nextCard) => skipCard(nextCard, index)}
               onAnswer={answerCard}
             />
@@ -610,14 +644,6 @@ export function Feed({ initialFilter }: { initialFilter?: FeedFilter }) {
           )}
         </div>
       )}
-
-      <FeedChatDialog
-        card={chatCard}
-        open={chatCard !== null}
-        onOpenChange={(open) => {
-          if (!open) setChatCard(null)
-        }}
-      />
     </main>
   )
 }
@@ -631,10 +657,10 @@ function FeedLoadingState() {
       aria-label="Loading feed"
     >
       <div className="mx-auto w-full max-w-[680px] space-y-6">
-        <Skeleton className="h-3 w-40 bg-white/10" />
-        <Skeleton className="h-24 w-4/5 bg-white/10" />
-        <Skeleton className="h-5 w-full max-w-xl bg-white/10" />
-        <Skeleton className="h-5 w-2/3 bg-white/10" />
+        <Skeleton className="h-3 w-40" />
+        <Skeleton className="h-24 w-4/5" />
+        <Skeleton className="h-5 w-full max-w-xl" />
+        <Skeleton className="h-5 w-2/3" />
       </div>
     </div>
   )
@@ -651,14 +677,14 @@ function FeedErrorState({
   return (
     <section className="flex h-full items-center justify-center px-5 text-center">
       <div className="max-w-sm">
-        <h1 className="text-3xl font-medium tracking-[-0.04em] text-white">
+        <h1 className="text-3xl font-medium tracking-[-0.04em] text-foreground">
           Feed unavailable
         </h1>
-        <p className="mt-3 text-sm leading-relaxed text-white/55">{message}</p>
+        <p className="mt-3 text-sm leading-relaxed text-muted-foreground">{message}</p>
         <Button
           type="button"
           onClick={onRetry}
-          className="mt-6 h-11 rounded-[20px] bg-[#ff8065] px-5 text-sm font-medium text-[#1b0d0a] hover:bg-[#ff9b86]"
+          className="mt-6 h-11 rounded-full bg-brand px-5 text-sm font-medium text-brand-foreground hover:bg-brand/85"
         >
           Try again
         </Button>
@@ -682,11 +708,11 @@ function FeedEmptyState({
   return (
     <section className="flex h-full items-center justify-center px-5 text-center">
       <div className="max-w-sm">
-        <h1 className="text-3xl font-medium tracking-[-0.04em] text-white">
+        <h1 className="text-3xl font-medium tracking-[-0.04em] text-foreground">
           {hasMore ? "No cards here yet" : "Nothing to study yet"}
         </h1>
         {error ? (
-          <p className="mt-3 text-sm leading-relaxed text-red-300" role="alert">
+          <p className="mt-3 text-sm leading-relaxed text-destructive" role="alert">
             {error}
           </p>
         ) : null}
@@ -695,14 +721,14 @@ function FeedEmptyState({
             type="button"
             onClick={onLoadMore}
             disabled={loadingMore}
-            className="mt-6 h-11 rounded-[20px] bg-[#ff8065] px-5 text-sm font-medium text-[#1b0d0a] hover:bg-[#ff9b86]"
+            className="mt-6 h-11 rounded-full bg-brand px-5 text-sm font-medium text-brand-foreground hover:bg-brand/85"
           >
             {loadingMore ? "Loading…" : "Load more"}
           </Button>
         ) : (
           <Button
             asChild
-            className="mt-6 h-11 rounded-[20px] bg-[#ff8065] px-5 text-sm font-medium text-[#1b0d0a] hover:bg-[#ff9b86]"
+            className="mt-6 h-11 rounded-full bg-brand px-5 text-sm font-medium text-brand-foreground hover:bg-brand/85"
           >
             <Link href="/library">Add something to learn</Link>
           </Button>
@@ -726,7 +752,7 @@ function FeedLoadMoreState({
     <section className="flex h-svh snap-start items-center justify-center px-5 text-center">
       <div className="max-w-sm">
         {error ? (
-          <p className="mb-4 text-sm leading-relaxed text-red-300" role="alert">
+          <p className="mb-4 text-sm leading-relaxed text-destructive" role="alert">
             {error}
           </p>
         ) : null}
@@ -734,7 +760,7 @@ function FeedLoadMoreState({
           type="button"
           onClick={onLoadMore}
           disabled={loading}
-          className="h-11 rounded-[20px] bg-[#ff8065] px-5 text-sm font-medium text-[#1b0d0a] hover:bg-[#ff9b86]"
+          className="h-11 rounded-full bg-brand px-5 text-sm font-medium text-brand-foreground hover:bg-brand/85"
         >
           {loading ? "Loading…" : "Load more"}
         </Button>
@@ -747,7 +773,7 @@ function FeedLoadMoreState({
 function FeedEndState() {
   return (
     <section className="flex h-svh snap-start items-center justify-center px-5 text-center">
-      <p className="text-sm text-white/50">You’re caught up</p>
+      <p className="text-sm text-muted-foreground">You’re caught up</p>
     </section>
   )
 }

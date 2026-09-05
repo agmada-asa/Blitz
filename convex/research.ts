@@ -7,7 +7,7 @@ import {
   buildResearchImportCheckpoint,
   researchImportPartMatchesSource,
   validateResearchImportPartSequence,
-} from "./research-import-checkpoint"
+} from "../lib/research-import-checkpoint"
 
 /** Maximum request text retained for one proposal. */
 export const MAX_RESEARCH_REQUEST_LENGTH = 2_000

@@ -9,6 +9,7 @@ import {
   BookOpen01Icon,
   BulbIcon,
   Cancel01Icon,
+  Chat01Icon,
   CheckmarkCircle02Icon,
   CheckIcon as CheckmarkIcon,
   ClipboardIcon,
@@ -21,7 +22,10 @@ import {
   Link02Icon,
   Loading03Icon,
   Moon02Icon,
+  PlusIcon as PlusGlyph,
   RotateLeft01Icon,
+  SendIcon as SendGlyph,
+  ShieldCheckIcon as ShieldCheckGlyph,
   Sun03Icon,
   ZapIcon as ZapGlyph,
 } from "@hugeicons/core-free-icons"
@@ -51,6 +55,8 @@ export const BookOpenIcon = makeIcon(BookOpen01Icon)
 export const BulbLineIcon = makeIcon(BulbIcon)
 /** Cancel and close glyph. */
 export const CancelIcon = makeIcon(Cancel01Icon)
+/** Chat conversation glyph. */
+export const ChatIcon = makeIcon(Chat01Icon)
 /** Completed item glyph. */
 export const CheckCircleIcon = makeIcon(CheckmarkCircle02Icon)
 /** Confirmation glyph. */
@@ -75,11 +81,17 @@ export const LinkIcon = makeIcon(Link02Icon)
 export const LoadingIcon = makeIcon(Loading03Icon)
 /** Dark theme glyph. */
 export const MoonIcon = makeIcon(Moon02Icon)
+/** Context attachment and plus glyph. */
+export const PlusIcon = makeIcon(PlusGlyph)
 /** Retry glyph. */
 export const RotateLeftIcon = makeIcon(RotateLeft01Icon)
+/** Send message action glyph. */
+export const SendIcon = makeIcon(SendGlyph)
 /** Generation glyph. */
 export const SparklesIcon = makeIcon(AiSparklesIcon)
 /** Light theme glyph. */
 export const SunIcon = makeIcon(Sun03Icon)
+/** Verification and safety shield glyph. */
+export const ShieldCheckIcon = makeIcon(ShieldCheckGlyph)
 /** Blitz brand and energy glyph. */
 export const ZapIcon = makeIcon(ZapGlyph)

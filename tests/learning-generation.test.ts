@@ -91,6 +91,9 @@ test("generates every supported item format from one chunk", async () => {
   )
   assert.ok(prompt.includes(chunk.text))
   assert.ok(prompt.includes("untrusted study material"))
+  assert.ok(prompt.includes("paced walkthrough"))
+  assert.ok(prompt.includes("120-220 words"))
+  assert.ok(prompt.includes("followed by at least one question item"))
   assert.ok(batch.items.every((item) => item.sourceChunkIds[0] === chunk.id))
 })
 

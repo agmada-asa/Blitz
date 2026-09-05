@@ -246,3 +246,22 @@ export function removePendingEvent(
   )
   return operation
 }
+
+/** Removes only events for a project the learner explicitly deleted, preserving the server-scoped queue order. */
+export function removeProjectEvents(
+  projectId: string,
+  serverUrl: string
+): Promise<void> {
+  const operation = eventMutation.then(async () => {
+    const events = await loadPendingEvents(serverUrl)
+    await savePendingEvents(
+      events.filter((event) => event.projectId !== projectId),
+      serverUrl
+    )
+  })
+  eventMutation = operation.then(
+    () => undefined,
+    () => undefined
+  )
+  return operation
+}

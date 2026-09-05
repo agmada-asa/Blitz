@@ -114,7 +114,7 @@ function ImportPreparationStatus({
       <span className="text-red-200">
         Needs retry
         <Link
-          href="/activity"
+          href="/notifications"
           className="ml-2 underline underline-offset-2 hover:text-white"
         >
           View preparation
@@ -308,13 +308,19 @@ function ActivityDetails({ activity }: { activity: ResearchActivity[] }) {
 /** Props for the project-scoped research proposal entry. */
 export type ResearchPanelProps = {
   projectId: string
+  initialRequestId?: string
 }
 
 /** Renders the collapsed research entry and its approval dialog. */
-export function ResearchPanel({ projectId }: ResearchPanelProps) {
-  const [open, setOpen] = useState(false)
+export function ResearchPanel({
+  projectId,
+  initialRequestId,
+}: ResearchPanelProps) {
+  const [open, setOpen] = useState(Boolean(initialRequestId))
   const [requestText, setRequestText] = useState("")
-  const [requestId, setRequestId] = useState<string>()
+  const [requestId, setRequestId] = useState<string | undefined>(
+    initialRequestId
+  )
   const [proposal, setProposal] = useState<ProposalSnapshot>()
   const [imports, setImports] = useState<ResearchImport[]>([])
   const [selectedSources, setSelectedSources] = useState<Set<number>>(new Set())
@@ -413,24 +419,27 @@ export function ResearchPanel({ projectId }: ResearchPanelProps) {
     return () => window.clearInterval(interval)
   }, [hasActiveImports, proposal?.requestId, proposal?.status])
 
-  /** Loads recent project proposals so the latest request survives reloads. */
+  /** Loads a deep-linked proposal or the latest project proposal after reload. */
   useEffect(() => {
     const controller = new AbortController()
     const generation = recentGeneration.current + 1
     recentGeneration.current = generation
     async function loadRecent() {
       try {
-        const response = await fetch(
-          `/api/research/proposals?projectId=${encodeURIComponent(projectId)}&limit=5`,
-          { signal: controller.signal }
-        )
+        const query = new URLSearchParams({ projectId })
+        if (initialRequestId) query.set("requestId", initialRequestId)
+        else query.set("limit", "5")
+        const response = await fetch(`/api/research/proposals?${query}`, {
+          signal: controller.signal,
+        })
         if (!response.ok)
           throw new Error(
             await readResearchError(response, "Could not load research.")
           )
-        const snapshots = (await response.json()) as ProposalSnapshot[]
+        const result = (await response.json()) as
+          ProposalSnapshot | ProposalSnapshot[] | null
         if (recentGeneration.current !== generation) return
-        const latest = Array.isArray(snapshots) ? snapshots[0] : undefined
+        const latest = Array.isArray(result) ? result[0] : (result ?? undefined)
         if (latest) {
           setRequestId(latest.requestId)
           setRequestText(latest.request)
@@ -448,7 +457,7 @@ export function ResearchPanel({ projectId }: ResearchPanelProps) {
     }
     void loadRecent()
     return () => controller.abort()
-  }, [projectId, showProposal])
+  }, [initialRequestId, projectId, showProposal])
 
   /** Polls the active proposal until its server-owned state changes. */
   useEffect(() => {
@@ -851,7 +860,7 @@ export function ResearchPanel({ projectId }: ResearchPanelProps) {
         <DialogContent
           aria-describedby={undefined}
           showCloseButton={false}
-          className="flex max-h-[min(88svh,720px)] flex-col overflow-hidden border-white/10 bg-[#151515] text-white sm:max-w-xl"
+          className="dark flex max-h-[min(88svh,720px)] flex-col overflow-hidden border-white/10 bg-[#151515] text-white selection:bg-brand selection:text-brand-foreground sm:max-w-xl"
         >
           <DialogHeader>
             <DialogTitle className="font-sans text-white">
@@ -877,7 +886,7 @@ export function ResearchPanel({ projectId }: ResearchPanelProps) {
                 maxLength={2_000}
                 rows={4}
                 placeholder="e.g. Learn the basics of sound design"
-                className="resize-none border-white/10 bg-white/[0.045] text-white placeholder:text-white/30 focus-visible:border-[#ff8065] focus-visible:ring-[#ff8065]/30"
+                className="resize-none border-white/10 bg-white/[0.045] text-white placeholder:text-white/30 focus-visible:border-brand focus-visible:ring-brand/30"
               />
             </div>
 
@@ -890,7 +899,7 @@ export function ResearchPanel({ projectId }: ResearchPanelProps) {
                   requestPending ||
                   applyState.status === "pending"
                 }
-                className="h-11 bg-[#ff8065] text-[#1b0d0a] hover:bg-[#ff9b86] focus-visible:ring-[#ff8065]/50"
+                className="h-11 bg-brand text-brand-foreground hover:bg-brand/85 focus-visible:ring-brand/50"
               >
                 {requestPending ? "Preparing…" : "Propose sources"}
               </Button>
@@ -969,14 +978,14 @@ export function ResearchPanel({ projectId }: ResearchPanelProps) {
                             disabled={locked || applyState.status === "pending"}
                             onCheckedChange={() => toggleSource(sourceIndex)}
                             aria-label={`Select ${source.title}`}
-                            className="mt-1 border-white/35 data-[state=checked]:border-[#ff8065] data-[state=checked]:bg-[#ff8065] data-[state=checked]:text-[#1b0d0a]"
+                            className="mt-1 border-white/35 data-[state=checked]:border-brand data-[state=checked]:bg-brand data-[state=checked]:text-brand-foreground"
                           />
                           <span className="min-w-0 flex-1 space-y-1">
                             <a
                               href={source.url}
                               target="_blank"
                               rel="noreferrer"
-                              className="block text-sm text-[#ffb19e] underline-offset-2 hover:underline"
+                              className="block text-sm text-brand underline-offset-2 hover:underline"
                             >
                               {source.title}
                             </a>
@@ -1078,7 +1087,7 @@ export function ResearchPanel({ projectId }: ResearchPanelProps) {
                 type="button"
                 onClick={() => void importSelected()}
                 disabled={!canApply}
-                className="h-11 bg-[#ff8065] text-[#1b0d0a] hover:bg-[#ff9b86] focus-visible:ring-[#ff8065]/50"
+                className="h-11 bg-brand text-brand-foreground hover:bg-brand/85 focus-visible:ring-brand/50"
               >
                 {applyState.status === "pending"
                   ? "Starting…"

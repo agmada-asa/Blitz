@@ -13,6 +13,10 @@
 
 # next.js
 /.next/
+/.next-*/
+
+# local user data when the default Documents folder is also this checkout
+/Projects/
 /out/
 
 # production

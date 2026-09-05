@@ -4,6 +4,7 @@
  */
 
 import { useEffect, useState } from "react"
+import { useSafeAreaInsets } from "react-native-safe-area-context"
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native"
 
 import type {
@@ -29,6 +30,7 @@ export function LearningCard({
   onAsk,
   onSkip,
 }: LearningCardProps) {
+  const insets = useSafeAreaInsets()
   const [selected, setSelected] = useState<string[]>([])
   const [submitted, setSubmitted] = useState(false)
   const [answerError, setAnswerError] = useState("")
@@ -128,7 +130,12 @@ export function LearningCard({
   }
 
   return (
-    <View style={styles.card}>
+    <View
+      style={[
+        styles.card,
+        { paddingTop: 88 + insets.top, paddingBottom: 96 + insets.bottom },
+      ]}
+    >
       <ScrollView
         contentContainerStyle={styles.content}
         nestedScrollEnabled={contentHeight > viewportHeight + 1}
@@ -287,7 +294,7 @@ function Feedback({ feedback }: { readonly feedback: MobileAnswerFeedback }) {
 const styles = StyleSheet.create({
   card: {
     flex: 1,
-    backgroundColor: "#090909",
+    backgroundColor: "transparent",
     justifyContent: "center",
     paddingHorizontal: 24,
     paddingVertical: 76,

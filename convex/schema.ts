@@ -2,6 +2,7 @@
 
 import { defineSchema, defineTable } from "convex/server"
 import { v } from "convex/values"
+import { citationFields } from "./citationFields"
 
 /** Validator shared by the cards table's supported learning formats. */
 const cardType = v.union(
@@ -56,8 +57,17 @@ const researchActivityEvent = v.object({
 /** Convex schema for projects, uploaded sources, generated cards, and attempts. */
 export default defineSchema({
   projects: defineTable({
+    /** Transitional metadata retained for legacy standalone agent tasks. */
+    agentAutonomy: v.optional(
+      v.union(v.literal("approval"), v.literal("project"), v.literal("full"))
+    ),
+    agentInstructions: v.optional(v.string()),
     title: v.string(),
     createdAt: v.number(),
+    /** Optional stable key for the project-local desktop workspace. */
+    workspaceKey: v.optional(v.string()),
+    /** Optional relative workspace directory retained for desktop clients. */
+    workspaceRelativePath: v.optional(v.string()),
   }).index("by_createdAt", ["createdAt"]),
 
   sources: defineTable({
@@ -81,10 +91,21 @@ export default defineSchema({
     summary: v.optional(v.string()),
     error: v.optional(v.string()),
     createdAt: v.number(),
+    /** Project-local file key; never an absolute path. */
+    relativeKey: v.optional(v.string()),
+    /** MIME type reported by the upload adapter. */
+    mimeType: v.optional(v.string()),
+    /** Original file size in bytes, when available. */
+    sizeBytes: v.optional(v.number()),
+    /** Content hash used for duplicate detection and retry idempotency. */
+    contentHash: v.optional(v.string()),
+    /** True when original bytes are retained but no deterministic parser exists. */
+    unsupported: v.optional(v.boolean()),
   })
     .index("by_project", ["projectId"])
     .index("by_project_status", ["projectId", "status"])
-    .index("by_project_fingerprint", ["projectId", "importFingerprint"]),
+    .index("by_project_fingerprint", ["projectId", "importFingerprint"])
+    .index("by_project_contentHash", ["projectId", "contentHash"]),
 
   cards: defineTable({
     projectId: v.id("projects"),
@@ -254,6 +275,225 @@ export default defineSchema({
   })
     .index("by_job_ordinal", ["jobId", "ordinal"])
     .index("by_job_chunkId", ["jobId", "chunkId"]),
+
+  /** Durable ingestion lifecycle for original files and derived chunks. */
+  ingestionJobs: defineTable({
+    projectId: v.id("projects"),
+    sourceId: v.id("sources"),
+    status: v.union(
+      v.literal("queued"),
+      v.literal("running"),
+      v.literal("completed"),
+      v.literal("failed")
+    ),
+    sourceHash: v.optional(v.string()),
+    /** Prevents concurrent request and recovery workers from indexing one upload. */
+    leaseToken: v.optional(v.string()),
+    leaseExpiresAt: v.optional(v.number()),
+    error: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_project_createdAt", ["projectId", "createdAt"])
+    .index("by_source", ["sourceId"])
+    .index("by_status_createdAt", ["status", "createdAt"]),
+
+  /** Bounded searchable source section with deterministic attribution. */
+  sourceChunks: defineTable({
+    projectId: v.id("projects"),
+    sourceId: v.id("sources"),
+    ingestionJobId: v.optional(v.id("ingestionJobs")),
+    ordinal: v.number(),
+    text: v.string(),
+    textHash: v.string(),
+    startOffset: v.number(),
+    endOffset: v.number(),
+    sectionTitle: v.optional(v.string()),
+    references: v.array(
+      v.object({
+        kind: v.optional(
+          v.union(v.literal("page"), v.literal("slide"), v.literal("time"))
+        ),
+        label: v.string(),
+        value: v.string(),
+        startOffset: v.number(),
+        endOffset: v.number(),
+      })
+    ),
+    createdAt: v.number(),
+  })
+    .index("by_project_source_ordinal", ["projectId", "sourceId", "ordinal"])
+    .index("by_source_ordinal", ["sourceId", "ordinal"])
+    .index("by_project", ["projectId"])
+    .index("by_textHash", ["textHash"])
+    .searchIndex("search_text", {
+      searchField: "text",
+      filterFields: ["projectId", "sourceId"],
+    }),
+
+  /** Optional bounded outline entries used to orient retrieval. */
+  sourceOutlines: defineTable({
+    projectId: v.id("projects"),
+    sourceId: v.id("sources"),
+    ordinal: v.number(),
+    title: v.string(),
+    startChunkOrdinal: v.number(),
+    endChunkOrdinal: v.number(),
+    createdAt: v.number(),
+  })
+    .index("by_source_ordinal", ["sourceId", "ordinal"])
+    .index("by_project_source", ["projectId", "sourceId"]),
+
+  /** Files created by local agents, tracked without storing their contents. */
+  artifacts: defineTable({
+    projectId: v.id("projects"),
+    relativeKey: v.string(),
+    kind: v.union(v.literal("file"), v.literal("directory")),
+    mimeType: v.optional(v.string()),
+    sizeBytes: v.optional(v.number()),
+    contentHash: v.optional(v.string()),
+    status: v.union(v.literal("active"), v.literal("deleted")),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_project_updatedAt", ["projectId", "updatedAt"])
+    .index("by_project_key", ["projectId", "relativeKey"]),
+
+  /** Bounded lifecycle metadata for a project-local agent task. */
+  agentTasks: defineTable({
+    /** Legacy task snapshots; new agent turns belong to workspace chats. */
+    autonomy: v.optional(
+      v.union(v.literal("approval"), v.literal("project"), v.literal("full"))
+    ),
+    additionalInstructions: v.optional(v.string()),
+    cancelRequested: v.optional(v.boolean()),
+    expiresAt: v.optional(v.number()),
+    response: v.optional(v.string()),
+    threadId: v.optional(v.string()),
+    turnId: v.optional(v.string()),
+
+    projectId: v.id("projects"),
+    status: v.union(
+      v.literal("queued"),
+      v.literal("running"),
+      v.literal("completed"),
+      v.literal("failed")
+    ),
+    title: v.string(),
+    request: v.string(),
+    artifactIds: v.optional(v.array(v.id("artifacts"))),
+    error: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index("by_project_updatedAt", ["projectId", "updatedAt"]),
+
+  /** One global record for the model and reasoning level used by each AI task in this personal deployment. */
+  aiModelSettings: defineTable({
+    scope: v.literal("global"),
+    researchModel: v.string(),
+    replyModel: v.string(),
+    cardGenerationModel: v.string(),
+    researchEffort: v.optional(v.string()),
+    replyEffort: v.optional(v.string()),
+    cardGenerationEffort: v.optional(v.string()),
+    updatedAt: v.number(),
+  }).index("by_scope", ["scope"]),
+
+  /** General Codex threads opened from the top-level Chat tab. */
+  workspaceChats: defineTable({
+    /** Owning project. Optional only for chats created before project ownership. */
+    projectId: v.optional(v.id("projects")),
+    title: v.string(),
+    /** Optional chat agent policy; legacy chats use approval with no extra instructions. */
+    agentAutonomy: v.optional(
+      v.union(v.literal("approval"), v.literal("project"), v.literal("full"))
+    ),
+    agentInstructions: v.optional(v.string()),
+    workingProjectId: v.optional(v.id("projects")),
+    /** Manual history state. Optional keeps chats created before this feature readable. */
+    isUnread: v.optional(v.boolean()),
+    isPinned: v.optional(v.boolean()),
+    branchedFromChatId: v.optional(v.id("workspaceChats")),
+    branchedFromMessageId: v.optional(v.id("workspaceChatMessages")),
+    codexThreadId: v.optional(v.string()),
+    codexContextReady: v.optional(v.boolean()),
+    status: v.union(
+      v.literal("idle"),
+      v.literal("running"),
+      v.literal("failed")
+    ),
+    activeMessageId: v.optional(v.id("workspaceChatMessages")),
+    lastError: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_updatedAt", ["updatedAt"])
+    .index("by_project_updatedAt", ["projectId", "updatedAt"])
+    .index("by_pinned_updatedAt", ["isPinned", "updatedAt"]),
+
+  /** User and assistant messages retained for a general Codex thread. */
+  workspaceChatMessages: defineTable({
+    /** Immutable passages allowed as links in this reply, retained across branches. */
+    citations: v.optional(v.array(citationFields)),
+    chatId: v.id("workspaceChats"),
+    clientMessageId: v.string(),
+    role: v.union(v.literal("user"), v.literal("assistant")),
+    content: v.string(),
+    status: v.union(
+      v.literal("running"),
+      v.literal("completed"),
+      v.literal("failed")
+    ),
+    codexTurnId: v.optional(v.string()),
+    /** Pending or decided file operation approval attached to this assistant turn. */
+    agentApproval: v.optional(
+      v.object({
+        id: v.string(),
+        method: v.string(),
+        details: v.string(),
+        status: v.union(
+          v.literal("pending"),
+          v.literal("approved"),
+          v.literal("denied")
+        ),
+        expiresAt: v.number(),
+      })
+    ),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_chat_createdAt", ["chatId", "createdAt"])
+    .index("by_clientMessageId", ["clientMessageId"]),
+
+  /** Context items introduced by one message in a general Codex thread. */
+  workspaceChatAttachments: defineTable({
+    documentId: v.optional(v.id("chatDocuments")),
+    chatId: v.id("workspaceChats"),
+    clientMessageId: v.string(),
+    kind: v.union(
+      v.literal("card"),
+      v.literal("project"),
+      v.literal("file"),
+      v.literal("link")
+    ),
+    label: v.string(),
+    projectId: v.optional(v.id("projects")),
+    itemId: v.optional(v.id("learningItems")),
+    text: v.optional(v.string()),
+    url: v.optional(v.string()),
+    createdAt: v.number(),
+  }).index("by_chat_createdAt", ["chatId", "createdAt"]),
+
+  /** Ad hoc chat uploads retain originals without entering study generation. */
+  chatDocuments: defineTable({
+    projectId: v.id("projects"),
+    filename: v.string(),
+    relativeKey: v.string(),
+    mimeType: v.string(),
+    text: v.string(),
+    sizeBytes: v.number(),
+    createdAt: v.number(),
+  }).index("by_project", ["projectId"]),
 
   conversations: defineTable({
     projectId: v.id("projects"),

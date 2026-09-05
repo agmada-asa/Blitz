@@ -18,6 +18,11 @@ import {
   type ResearchImportQueue,
   type ResearchImportFailureCategory,
 } from "../lib/server/research-import-worker.ts"
+import { loadSavedAiModelSettings } from "../lib/server/ai-model-settings.ts"
+import {
+  resolveAiModel,
+  resolveAiReasoningEffort,
+} from "../lib/ai-model-settings.ts"
 
 /** Loads .env.local without overwriting launcher-provided configuration. */
 function loadLocalEnvironment(): void {
@@ -95,8 +100,12 @@ async function main(): Promise<void> {
         kind: args.kind,
         extractedText: args.extractedText,
         originalUrl: args.originalUrl,
-        ...(args.partNumber === undefined ? {} : { partNumber: args.partNumber }),
-        ...(args.totalParts === undefined ? {} : { totalParts: args.totalParts }),
+        ...(args.partNumber === undefined
+          ? {}
+          : { partNumber: args.partNumber }),
+        ...(args.totalParts === undefined
+          ? {}
+          : { totalParts: args.totalParts }),
       }),
     failImport: (args) =>
       client.mutation(api.research.failImport, {
@@ -114,6 +123,10 @@ async function main(): Promise<void> {
           workerId,
           signal: controller.signal,
         })
+        const settings =
+          importResult.status === "idle"
+            ? await loadSavedAiModelSettings(client)
+            : null
         const result =
           importResult.status === "idle"
             ? await runResearchProposalStep({
@@ -121,8 +134,16 @@ async function main(): Promise<void> {
                 workerId,
                 workspaceDirectory: defaultChatWorkspaceDirectory(),
                 signal: controller.signal,
-                model: process.env.BLITZ_CODEX_MODEL ?? "gpt-5.6-luna",
-                effort: process.env.BLITZ_CODEX_EFFORT,
+                model: resolveAiModel(
+                  settings,
+                  "researchModel",
+                  process.env.BLITZ_CODEX_MODEL
+                ),
+                effort: resolveAiReasoningEffort(
+                  settings,
+                  "researchEffort",
+                  process.env.BLITZ_CODEX_EFFORT
+                ),
               })
             : null
         if (importResult.status === "imported")

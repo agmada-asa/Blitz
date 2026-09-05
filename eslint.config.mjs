@@ -12,6 +12,8 @@ const eslintConfig = defineConfig([
   globalIgnores([
     // Default ignores of eslint-config-next:
     ".next/**",
+    ".next-*/**",
+    "Projects/**",
     "out/**",
     "build/**",
     "next-env.d.ts",
@@ -19,6 +21,11 @@ const eslintConfig = defineConfig([
     // The native package owns its React Native checks and generated Android files.
     "mobile/**",
   ]),
+  // Electron's sandbox preload only supports CommonJS in this host version.
+  {
+    files: ["electron/preload.cjs"],
+    rules: { "@typescript-eslint/no-require-imports": "off" },
+  },
 ])
 
 export default eslintConfig
