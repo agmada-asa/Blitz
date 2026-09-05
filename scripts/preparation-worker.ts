@@ -81,6 +81,8 @@ async function main(): Promise<void> {
                 signal,
                 timeoutMs: 120_000,
                 ephemeral: true,
+                // Preparation must stay grounded in the uploaded source section.
+                webSearchMode: "disabled",
                 model: process.env.BLITZ_CODEX_MODEL ?? "gpt-5.6-luna",
               })
               return turn.text

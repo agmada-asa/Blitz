@@ -68,7 +68,7 @@ processes one available chunk and exits. `BLITZ_CONVEX_URL` overrides the data
 endpoint; `BLITZ_CODEX_MODEL` overrides the default Luna model.
 
 Each generation uses a private temporary directory and an ephemeral Codex
-thread. The worker removes that directory after the turn. It never changes the
+thread with hosted web search disabled. Research planning retains its separate live-search configuration. The worker removes that directory after the turn. It never changes the
 repository through model tools. Interrupting the worker preserves committed
 chunks, and a failed job can be retried from its saved ordinal. The current
 source snapshot limit is 120,000 characters per file; larger source storage is
