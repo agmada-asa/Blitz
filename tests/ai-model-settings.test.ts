@@ -4,9 +4,11 @@ import assert from "node:assert/strict"
 import test from "node:test"
 
 import {
+  CODEX_MODEL_OPTIONS,
   DEFAULT_AI_MODEL_SETTINGS,
   DEFAULT_AI_MODELS,
   getSupportedAiReasoningEfforts,
+  groupCodexModelOptions,
   resolveAiModel,
   resolveAiReasoningEffort,
   validateAiModelSettings,
@@ -116,4 +118,51 @@ test("uses saved reasoning and retains the legacy fallback before settings exist
     resolveAiReasoningEffort(null, "replyEffort"),
     DEFAULT_AI_MODEL_SETTINGS.replyEffort
   )
+})
+
+/** Confirms model picker choices partition into distinct major and minor generations. */
+test("groups models by major and minor generation with dividers", () => {
+  const groups = groupCodexModelOptions(CODEX_MODEL_OPTIONS)
+
+  assert.deepEqual(
+    groups.map((group) => group.generation),
+    ["GPT-6", "GPT-5.6", "GPT-5.5", "GPT-5.4", "GPT-5.3"]
+  )
+
+  const gpt6Group = groups.find((g) => g.generation === "GPT-6")
+  assert.deepEqual(
+    gpt6Group?.options.map((opt) => opt.id),
+    ["gpt-6-astra"]
+  )
+
+  const gpt56Group = groups.find((g) => g.generation === "GPT-5.6")
+  assert.deepEqual(
+    gpt56Group?.options.map((opt) => opt.id),
+    ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"]
+  )
+
+  const gpt55Group = groups.find((g) => g.generation === "GPT-5.5")
+  assert.deepEqual(
+    gpt55Group?.options.map((opt) => opt.id),
+    ["gpt-5.5"]
+  )
+
+  const gpt54Group = groups.find((g) => g.generation === "GPT-5.4")
+  assert.deepEqual(
+    gpt54Group?.options.map((opt) => opt.id),
+    ["gpt-5.4-mini"]
+  )
+
+  const gpt53Group = groups.find((g) => g.generation === "GPT-5.3")
+  assert.deepEqual(
+    gpt53Group?.options.map((opt) => opt.id),
+    ["gpt-5.3-codex-spark"]
+  )
+
+  // Unrecognized labels fall into an "OTHER" group.
+  const customGroups = groupCodexModelOptions([
+    { id: "custom-worker", label: "Custom Worker", reasoningEfforts: ["low"] },
+  ])
+  assert.equal(customGroups[0]?.generation, "OTHER")
+  assert.equal(customGroups[0]?.options[0]?.id, "custom-worker")
 })

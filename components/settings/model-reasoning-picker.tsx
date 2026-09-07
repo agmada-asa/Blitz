@@ -20,8 +20,8 @@ import { CheckIcon } from "@/components/ui/icon"
 import {
   getCodexModelPickerOptions,
   getSupportedAiReasoningEfforts,
+  groupCodexModelOptions,
   type AiReasoningEffort,
-  type CodexModelOption,
 } from "@/lib/ai-model-settings"
 import { cn } from "@/lib/utils"
 
@@ -52,24 +52,6 @@ function reasoningLabel(effort: AiReasoningEffort): string {
     : `${effort.slice(0, 1).toUpperCase()}${effort.slice(1)}`
 }
 
-/** Groups model choices so divider lines appear between GPT generations. */
-function groupModelOptions(
-  options: readonly CodexModelOption[]
-): Array<{ generation: string; options: CodexModelOption[] }> {
-  const grouped = new Map<string, CodexModelOption[]>()
-  for (const option of options) {
-    const generation =
-      option.label.match(/^GPT-\d+/i)?.[0]?.toUpperCase() ?? "OTHER"
-    const group = grouped.get(generation)
-    if (group) group.push(option)
-    else grouped.set(generation, [option])
-  }
-  return Array.from(grouped, ([generation, groupedOptions]) => ({
-    generation,
-    options: groupedOptions,
-  }))
-}
-
 /** Renders one controlled picker and reports model-reasoning choices to its owner. */
 export function ModelReasoningPicker({
   model,
@@ -84,7 +66,7 @@ export function ModelReasoningPicker({
   const modelOptions = getCodexModelPickerOptions(model)
   const selectedModel = modelOptions.find((option) => option.id === model)
   const selectedModelLabel = selectedModel?.label ?? model
-  const groups = groupModelOptions(modelOptions)
+  const groups = groupCodexModelOptions(modelOptions)
   const selectedReasoningLabel = reasoningLabel(reasoning)
   const accessibleLabel = `${labelPrefix} ${selectedModelLabel}, ${selectedReasoningLabel} reasoning`
 
@@ -128,15 +110,15 @@ export function ModelReasoningPicker({
                     {getSupportedAiReasoningEfforts(option.id).map((effort) => {
                       const isSelected =
                         option.id === model && effort === reasoning
-                        return (
-                          <DropdownMenuItem
-                            key={effort}
-                            onSelect={() => {
-                              if (option.id !== model || effort !== reasoning)
-                                onChange(option.id, effort)
-                            }}
-                            className="justify-between text-xs"
-                          >
+                      return (
+                        <DropdownMenuItem
+                          key={effort}
+                          onSelect={() => {
+                            if (option.id !== model || effort !== reasoning)
+                              onChange(option.id, effort)
+                          }}
+                          className="justify-between text-xs"
+                        >
                           <span>{reasoningLabel(effort)}</span>
                           {isSelected ? (
                             <CheckIcon

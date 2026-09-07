@@ -40,6 +40,14 @@ export type CodexModelOption = {
   readonly reasoningEfforts: readonly AiReasoningEffort[]
 }
 
+/** One generation grouping of Codex models separated by menu dividers. */
+export type CodexModelGroup = {
+  /** The generation identifier, such as "GPT-6", "GPT-5.6", or "OTHER". */
+  readonly generation: string
+  /** Models belonging to this generation. */
+  readonly options: readonly CodexModelOption[]
+}
+
 /** Model choices exposed by Blitz's local Codex setup. */
 export const CODEX_MODEL_OPTIONS = [
   {
@@ -162,6 +170,37 @@ export function getSupportedAiReasoningEfforts(
   model: string
 ): readonly AiReasoningEffort[] {
   return MODEL_OPTION_BY_ID.get(model)?.reasoningEfforts ?? AI_REASONING_EFFORTS
+}
+
+/**
+ * Groups model choices so menu dividers appear between distinct model generations.
+ *
+ * Distinguishes major and minor GPT release generations (e.g. GPT-6, GPT-5.6, GPT-5.5,
+ * GPT-5.4, GPT-5.3) while grouping variant models of the same generation (such as
+ * Sol, Terra, and Luna) together. Unrecognized labels fall into an "OTHER" group.
+ *
+ * @param options - The list of model options to partition into generations.
+ * @returns An array of generation groups in the order their models first appeared.
+ */
+export function groupCodexModelOptions(
+  options: readonly CodexModelOption[]
+): readonly CodexModelGroup[] {
+  const grouped = new Map<string, CodexModelOption[]>()
+  for (const option of options) {
+    // Matches major and minor model generations such as GPT-6, GPT-5.6, GPT-5.5, GPT-5.4, or GPT-5.3.
+    const generation =
+      option.label.match(/^GPT-\d+(?:\.\d+)?/i)?.[0]?.toUpperCase() ?? "OTHER"
+    const group = grouped.get(generation)
+    if (group) {
+      group.push(option)
+    } else {
+      grouped.set(generation, [option])
+    }
+  }
+  return Array.from(grouped, ([generation, groupedOptions]) => ({
+    generation,
+    options: groupedOptions,
+  }))
 }
 
 /** Validates and normalizes one user-supplied Codex model ID. */
