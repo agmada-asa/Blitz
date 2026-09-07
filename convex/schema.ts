@@ -162,6 +162,8 @@ export default defineSchema({
     type: learningItemType,
     title: v.string(),
     body: v.string(),
+    /** Optional longer explanation for the walkthrough card's back face. */
+    deepExplanation: v.optional(v.string()),
     question: v.optional(v.string()),
     options: v.optional(v.array(learningOption)),
     correctOptionId: v.optional(v.string()),

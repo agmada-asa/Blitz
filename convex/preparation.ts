@@ -389,6 +389,9 @@ export const commitChunk = mutation({
         type: item.type,
         title: item.title,
         body: item.body,
+        ...(item.deepExplanation
+          ? { deepExplanation: item.deepExplanation }
+          : {}),
         ...(item.question ? { question: item.question } : {}),
         ...(item.options ? { options: item.options } : {}),
         ...(item.correctOptionId

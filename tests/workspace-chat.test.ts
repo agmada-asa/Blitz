@@ -198,6 +198,8 @@ test("buildWorkspaceChatPrompt gives an attached card its source context", () =>
     projectId: "project-1" as Id<"projects">,
     title: "Cell membrane",
     body: "The membrane controls what enters and leaves the cell.",
+    deepExplanation:
+      "Selective permeability lets the membrane regulate movement between the cell and its surroundings.",
     question: "What does the membrane control?",
     options: ["Cell traffic", "Gravity"],
     sourceLabel: "cells.md",
@@ -211,6 +213,7 @@ test("buildWorkspaceChatPrompt gives an attached card its source context", () =>
 
   assert.match(prompt, /CARD: Cell membrane/)
   assert.match(prompt, /CARD SOURCE CONTEXT:/)
+  assert.match(prompt, /Detailed explanation: Selective permeability/)
   assert.match(prompt, /selectively permeable/)
   assert.match(prompt, /primary context/)
 })

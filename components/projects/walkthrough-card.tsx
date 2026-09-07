@@ -6,7 +6,12 @@ import Link from "next/link"
 import { useState } from "react"
 
 import { Button } from "@/components/ui/button"
-import { CheckIcon, HelpIcon, SparklesIcon } from "@/components/ui/icon"
+import {
+  CheckIcon,
+  HelpIcon,
+  RotateLeftIcon,
+  SparklesIcon,
+} from "@/components/ui/icon"
 import { Markdown } from "@/components/ui/markdown"
 import type {
   AnswerRequest,
@@ -23,6 +28,8 @@ export type WalkthroughItem = {
   type: "explain" | "single-choice" | "multiple-answer" | "true-false"
   title: string
   body?: string
+  /** Source-grounded longer lesson shown on an explanation card's back face. */
+  deepExplanation?: string
   question?: string
   options?: FeedOption[]
   sourceLabels: string[]
@@ -98,6 +105,11 @@ function answerForOption(
   return item.type === "true-false" ? optionId === "true" : optionId
 }
 
+/** Builds the focused first prompt for a card-backed, source-grounded deep dive. */
+function buildDeepDivePrompt(conceptTitle: string, itemTitle: string): string {
+  return `Give me a deeper explanation of "${itemTitle}" within "${conceptTitle}". Use the attached card and source material. Explain the underlying idea, why it matters, how it works, one concrete example, and any common misconception the source supports. Connect it to other relevant topics in this project when that connection is useful, and distinguish source-backed claims from reasonable inferences. Keep the answer focused and cite the source material.`
+}
+
 /** Renders one explanation or inline check inside the walkthrough stage. */
 export function WalkthroughCard({
   item,
@@ -112,6 +124,7 @@ export function WalkthroughCard({
   const [feedback, setFeedback] = useState<AnswerResponse | null>(null)
   const [pending, setPending] = useState(false)
   const [error, setError] = useState("")
+  const [flipped, setFlipped] = useState(false)
   const isExplanation = item.type === "explain"
   const isMultipleAnswer = item.type === "multiple-answer"
 
@@ -182,9 +195,16 @@ export function WalkthroughCard({
 
   const sources = item.sourceLabels.join(" · ") || "Project sources"
   const chatHref = `/chat?cardProjectId=${encodeURIComponent(projectId)}&cardId=${encodeURIComponent(item.id)}`
+  const deepDivePrompt = buildDeepDivePrompt(conceptTitle, item.title)
+  const deepDiveHref = `${chatHref}&prompt=${encodeURIComponent(deepDivePrompt)}`
+  const detailedExplanation =
+    item.deepExplanation?.trim() ||
+    item.body?.trim() ||
+    "A longer explanation is not available for this card yet."
 
-  return (
-    <article className="w-full max-w-[760px] rounded-[28px] border border-border/70 bg-card px-5 py-6 shadow-sm sm:px-8 sm:py-8 lg:px-10 lg:py-10">
+  /** Renders the quick-reading face and keeps the existing answer interaction intact. */
+  const frontFace = (
+    <div className="flex min-h-full flex-col">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <span className="inline-flex items-center gap-2 text-xs font-medium tracking-wide text-brand uppercase">
           {isExplanation ? (
@@ -314,7 +334,17 @@ export function WalkthroughCard({
         >
           Source · {sources}
         </p>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          {isExplanation ? (
+            <Button
+              type="button"
+              variant="outline"
+              className="min-h-11 rounded-full px-4"
+              onClick={() => setFlipped(true)}
+            >
+              <RotateLeftIcon aria-hidden="true" /> See more detail
+            </Button>
+          ) : null}
           <Button
             asChild
             variant="ghost"
@@ -333,6 +363,107 @@ export function WalkthroughCard({
           ) : null}
         </div>
       </div>
+    </div>
+  )
+
+  const backFace = (
+    <div className="flex min-h-full flex-col">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <span className="inline-flex items-center gap-2 text-xs font-medium tracking-wide text-brand uppercase">
+          <SparklesIcon size={15} aria-hidden="true" /> In-depth explanation
+        </span>
+        <span className="text-xs text-muted-foreground">
+          {position + 1} of {total}
+        </span>
+      </div>
+
+      <p className="mt-6 text-sm font-medium text-muted-foreground">
+        {conceptTitle}
+      </p>
+      <h2 className="mt-2 max-w-2xl font-heading text-[clamp(2rem,5vw,3.35rem)] leading-[1.02] font-medium tracking-[-0.04em]">
+        {item.title}
+      </h2>
+
+      <div className="mt-7 max-w-[68ch] text-base leading-7 text-foreground/[0.82] sm:text-lg sm:leading-8 [&_.chat-markdown]:space-y-4 [&_.chat-markdown_p]:leading-[inherit]">
+        <Markdown text={detailedExplanation} />
+      </div>
+
+      <p className="mt-6 max-w-[68ch] text-sm leading-6 text-muted-foreground">
+        Want to connect this idea to the rest of your material?
+      </p>
+
+      <div className="mt-8 flex flex-wrap items-center justify-between gap-3 border-t border-border/60 pt-5">
+        <p
+          className="max-w-md truncate text-xs text-muted-foreground"
+          title={sources}
+        >
+          Source · {sources}
+        </p>
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <Button
+            asChild
+            className="min-h-11 rounded-full bg-brand px-5 text-brand-foreground hover:bg-brand/85"
+          >
+            <Link href={deepDiveHref}>Delve Deeper</Link>
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            className="min-h-11 rounded-full px-4"
+            onClick={() => setFlipped(false)}
+          >
+            <RotateLeftIcon aria-hidden="true" /> Show front
+          </Button>
+          {onNext ? (
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={onNext}
+              className="min-h-11 rounded-full px-4"
+            >
+              Next card
+            </Button>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  )
+
+  return (
+    <article className="w-full max-w-[760px] rounded-[28px] border border-border/70 bg-card px-5 py-6 shadow-sm sm:px-8 sm:py-8 lg:px-10 lg:py-10">
+      {isExplanation ? (
+        <div className="[perspective:1400px]">
+          <div
+            className={cn(
+              "grid transition-transform duration-500 [transform-style:preserve-3d] motion-reduce:transition-none",
+              flipped && "[transform:rotateY(180deg)]"
+            )}
+          >
+            <div
+              aria-hidden={flipped}
+              inert={flipped ? true : undefined}
+              className={cn(
+                "col-start-1 row-start-1 [backface-visibility:hidden]",
+                flipped && "pointer-events-none"
+              )}
+            >
+              {frontFace}
+            </div>
+            <div
+              aria-hidden={!flipped}
+              inert={!flipped ? true : undefined}
+              className={cn(
+                "col-start-1 row-start-1 [transform:rotateY(180deg)] [backface-visibility:hidden]",
+                !flipped && "pointer-events-none"
+              )}
+            >
+              {backFace}
+            </div>
+          </div>
+        </div>
+      ) : (
+        frontFace
+      )}
     </article>
   )
 }

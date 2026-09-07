@@ -14,6 +14,7 @@ export const LEARNING_GENERATION_LIMITS = {
   title: 180,
   topicTitle: 140,
   body: 4_000,
+  deepExplanation: 8_000,
   question: 500,
   option: 300,
   key: 64,
@@ -42,6 +43,8 @@ export type GeneratedLearningItem = {
   type: GeneratedLearningItemType
   title: string
   body: string
+  /** Longer source-grounded lesson required for generated explain items. */
+  deepExplanation?: string
   question?: string
   options?: LearningOption[]
   correctOptionId?: string
@@ -89,6 +92,7 @@ const explainItemSchema = z
   .object({
     ...commonItemSchema,
     type: z.literal("explain"),
+    deepExplanation: boundedString(LEARNING_GENERATION_LIMITS.deepExplanation),
   })
   .strict()
 

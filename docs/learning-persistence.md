@@ -45,8 +45,11 @@ project. The query scans no more than the requested result limit, capped at
 The cursor always points after exactly the scanned rows, so no matching
 items are skipped between pages. `isDone` reflects database exhaustion.
 
-Feed candidates include an explanation body for `explain` items. Question
-item bodies remain answer feedback, so a question's explanation is not shown
-before the learner answers. After a valid answer, `recordAnswerEvent` returns
-the server-scored outcome, portable review state, and feedback containing the
-stored explanation and correct answer fields. Retries return the same shape.
+Feed candidates include an explanation body for `explain` items. Project
+walkthrough cards also receive the optional source-grounded `deepExplanation`
+stored on explain items; the card keeps the concise body on its front and
+reveals the longer lesson on its back. Question item bodies remain answer
+feedback, so a question's explanation is not shown before the learner answers.
+After a valid answer, `recordAnswerEvent` returns the server-scored outcome,
+portable review state, and feedback containing the stored explanation and
+correct answer fields. Retries return the same shape.

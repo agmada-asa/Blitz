@@ -60,6 +60,8 @@ export interface WorkspaceChatCardContext {
   title: string
   /** Card explanation or body. */
   body: string
+  /** Optional longer explanation shown on the card's back face. */
+  deepExplanation?: string
   /** Optional question shown by a question card. */
   question?: string
   /** Optional answer choices shown by a question card. */
@@ -377,6 +379,9 @@ export function buildWorkspaceChatPrompt(
           card.question ? `Question: ${card.question}` : "",
           card.options?.length ? `Options: ${card.options.join(" | ")}` : "",
           `Explanation: ${card.body}`,
+          card.deepExplanation
+            ? `Detailed explanation: ${card.deepExplanation}`
+            : "",
         ]
           .filter(Boolean)
           .join("\n"),

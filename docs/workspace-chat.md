@@ -9,11 +9,13 @@ PowerPoint files.
 uses the existing protected source-fetch route for public links. It sends only
 new attachments with each message. A card opened from the learning feed is a
 locked pending attachment. Its first question always starts a new workspace
-chat, even if another chat is currently selected. The card's project becomes
-the owning and writable project automatically. The empty-chat heading and the
-composer's project control both show that project. Context chips sit above the
-message field. Once an attachment enters the Codex thread, its chip stays
-visible because removing it cannot remove content from the thread history.
+chat, even if another chat is currently selected. Card actions may provide an
+unsent, focused prompt in the composer; the learner reviews or edits it before
+sending. The card's project becomes the owning and writable project
+automatically. The empty-chat heading and the composer's project control both
+show that project. Context chips sit above the message field. Once an
+attachment enters the Codex thread, its chip stays visible because removing it
+cannot remove content from the thread history.
 `New chat` opens a project picker before clearing the active conversation. A
 learner can choose an existing project or create one in the picker. Project and
 card entry points use their known project. The selected project owns the saved

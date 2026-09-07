@@ -13,17 +13,18 @@ Markdown fences, scan event output, or search nested wrapper fields.
 
 The returned batch contains a summary, up to 8 uniquely keyed concepts, and up
 to 16 learning items. The prompt prefers 1 to 4 concepts so each concept can
-receive one 120 to 220 word explanation followed by at least one question.
-This pairing lets the project workspace present generated material as a paced
-walkthrough. For factual chunks, both arrays must be populated and every
-concept must be used by at least one item. A title-only or otherwise non-factual
-chunk may return an explicit skipped batch with empty arrays and a summary
-beginning `SKIPPED:`. Supported item types are `explain`, `single-choice`,
-`multiple-answer`, and `true-false`. Recall and written-answer items are
-excluded from this default generation path. Question items instruct the model
-to craft plausible, domain-appropriate distractors and parallel option phrasing
-that reflect realistic misconceptions or distinctions rather than senseless or
-obviously fake filler answers.
+receive one concise explanation followed by at least one question. Explain
+items also carry a self-contained 180 to 320 word `deepExplanation` for the
+back of the walkthrough card. This pairing lets the project workspace present
+generated material as a paced walkthrough with optional depth. For factual
+chunks, both arrays must be populated and every concept must be used by at least
+one item. A title-only or otherwise non-factual chunk may return an explicit
+skipped batch with empty arrays and a summary beginning `SKIPPED:`. Supported
+item types are `explain`, `single-choice`, `multiple-answer`, and `true-false`.
+Recall and written-answer items are excluded from this default generation path.
+Question items instruct the model to craft plausible, domain-appropriate
+distractors and parallel option phrasing that reflect realistic misconceptions
+or distinctions rather than senseless or obviously fake filler answers.
 
 Each generated item has `sourceChunkIds: [chunk.id]`. A different or fabricated
 chunk ID is rejected, as are unknown concept keys, duplicate option IDs,

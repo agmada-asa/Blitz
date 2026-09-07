@@ -113,6 +113,8 @@ type ChatApproval = {
 type ChatWorkspaceProps = {
   initialChatId?: Id<"workspaceChats">
   initialCard?: ChatCard
+  /** Optional unsent prompt used when a card starts a focused chat. */
+  initialPrompt?: string
   initialProject?: ChatAgentProject
 }
 
@@ -253,6 +255,7 @@ async function readChatEvents(
 export function ChatWorkspace({
   initialChatId,
   initialCard,
+  initialPrompt,
   initialProject,
 }: ChatWorkspaceProps) {
   const projects = useQuery(api.projects.listProjects)
@@ -288,7 +291,7 @@ export function ChatWorkspace({
           ]
         : []
   )
-  const [draft, setDraft] = useState("")
+  const [draft, setDraft] = useState(() => initialPrompt?.slice(0, 4_000) ?? "")
   const [sending, setSending] = useState(false)
   const [savingReplySettings, setSavingReplySettings] = useState(false)
   const [messageActionId, setMessageActionId] = useState<string>()

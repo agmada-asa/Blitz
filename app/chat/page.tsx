@@ -28,10 +28,12 @@ export default function ChatPage({
     itemId?: string
     cardProjectId?: string
     cardId?: string
+    prompt?: string
     chatId?: string
   }>
 }) {
-  const { projectId, itemId, cardProjectId, cardId, chatId } = use(searchParams)
+  const { projectId, itemId, cardProjectId, cardId, prompt, chatId } =
+    use(searchParams)
   const router = useRouter()
   const card = useQuery(
     api.conversations.getAttachment,
@@ -76,6 +78,7 @@ export default function ChatPage({
       <ChatWorkspace
         key={`${newCard.projectId}:${newCard.id}`}
         initialCard={newCard}
+        initialPrompt={prompt}
       />
     )
   }
