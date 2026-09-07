@@ -94,6 +94,9 @@ test("generates every supported item format from one chunk", async () => {
   assert.ok(prompt.includes("paced walkthrough"))
   assert.ok(prompt.includes("120-220 words"))
   assert.ok(prompt.includes("followed by at least one question item"))
+  assert.ok(prompt.includes("plausible distractors"))
+  assert.ok(prompt.includes("Never generate senseless, comical, absurd"))
+  assert.ok(prompt.includes("plausible, domain-appropriate distractor"))
   assert.ok(batch.items.every((item) => item.sourceChunkIds[0] === chunk.id))
 })
 

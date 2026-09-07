@@ -20,7 +20,10 @@ concept must be used by at least one item. A title-only or otherwise non-factual
 chunk may return an explicit skipped batch with empty arrays and a summary
 beginning `SKIPPED:`. Supported item types are `explain`, `single-choice`,
 `multiple-answer`, and `true-false`. Recall and written-answer items are
-excluded from this default generation path.
+excluded from this default generation path. Question items instruct the model
+to craft plausible, domain-appropriate distractors and parallel option phrasing
+that reflect realistic misconceptions or distinctions rather than senseless or
+obviously fake filler answers.
 
 Each generated item has `sourceChunkIds: [chunk.id]`. A different or fabricated
 chunk ID is rejected, as are unknown concept keys, duplicate option IDs,
