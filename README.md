@@ -1,10 +1,10 @@
 # Blitz
 
-Blitz turns source material into a scrolling learning feed for Android and the web. A local Mac worker prepares explanations and questions through Codex App Server using your existing Codex sign-in.
+Blitz turns source material into a scrolling learning feed for Android and the web. Local Mac workers prepare explanations, questions, and replies through the provider selected in Blitz settings.
 
 ## Run locally
 
-Use Node.js 22.13 or newer, with Codex CLI installed and signed in. Development has been verified with Node.js 24 on macOS.
+Use Node.js 22.13 or newer, with at least one supported local provider installed and signed in. Codex is the default provider; Claude Code, OpenCode, and Antigravity can be selected independently for supported tasks. Development has been verified with Node.js 24 on macOS.
 
 ```bash
 npm ci
@@ -38,7 +38,7 @@ Questions use single choice, multiple answers, or true/false. Answers receive se
 
 Imports accept text PDFs, Markdown, plain text, and PowerPoint `.pptx` files. Public links can return those formats or HTML. Source URLs and page/slide markers are retained. Scanned PDFs need OCR elsewhere, and each extracted source is currently limited to 120,000 characters.
 
-Use `Find sources` within a project to ask Codex for a proposed learning scope and references discovered through web search. Review the links before selecting which to import. Imported sources join the same preparation queue. Proposed note outlines are previews only.
+Use `Find sources` within a project to ask Blitz for a proposed learning scope and references discovered through web search. Review the links before selecting which to import. Imported sources join the same preparation queue. Proposed note outlines are previews only.
 
 ## Android
 

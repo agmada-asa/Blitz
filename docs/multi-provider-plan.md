@@ -1,6 +1,8 @@
 # Multi-provider assistant plan
 
-Status: planning only. The current default remains Codex until the provider boundary and each adapter have been verified on the local Mac.
+Status: implementation in progress. The current default remains Codex while the provider boundary and adapters are verified with contract tests and available local runtimes.
+
+The first vertical slice is now present: task-specific provider settings, provider-neutral queue and session fields, Codex-compatible routing for chat and generation, Claude Code stream parsing, and ACP routing for OpenCode and the configured Antigravity runtime. Provider availability and capability checks still gate research and writable-agent behavior.
 
 ## Direction
 
@@ -62,8 +64,14 @@ interface ProviderAdapter {
   readonly providerInstanceId: string
   readonly capabilities: ProviderCapabilities
   startSession(options: ProviderSessionOptions): Promise<ProviderSession>
-  resumeSession(sessionId: string, options: ProviderSessionOptions): Promise<ProviderSession>
-  sendTurn(sessionId: string, request: ProviderTurnRequest): Promise<ProviderTurn>
+  resumeSession(
+    sessionId: string,
+    options: ProviderSessionOptions
+  ): Promise<ProviderSession>
+  sendTurn(
+    sessionId: string,
+    request: ProviderTurnRequest
+  ): Promise<ProviderTurn>
   interruptTurn(sessionId: string, turnId: string): Promise<void>
   respondToRequest(requestId: string, response: unknown): Promise<void>
   readThread(sessionId: string): Promise<ProviderThread>
@@ -102,6 +110,8 @@ The settings work should cover:
 4. Move all environment fallbacks behind one resolver. Keep `BLITZ_CODEX_MODEL`, `BLITZ_CODEX_EFFORT`, and `BLITZ_CODEX_WORKSPACE` as Codex compatibility fallbacks while introducing provider-specific local configuration.
 5. Rework the settings picker to choose provider first, then model, then only the controls that provider supports. Show unavailable providers with a useful setup action or explanation.
 6. Add a provider-aware reply picker to general chat. A provider change applies to a new chat or an explicit new session, not to a saved conversation that already has a session reference.
+
+Research currently remains limited to providers that advertise the reviewed web-search capability. The alternate adapters are selectable for replies and card generation, while their research option stays hidden until live search is implemented and verified for that runtime.
 
 Local executable paths, auth state, workspace roots, and command flags should stay in local configuration. Convex should store the safe selection, not machine-specific credentials or paths.
 
@@ -186,7 +196,7 @@ For Claude Code and OpenCode, verify the executable, authentication model, non-i
 
 ## Acceptance checks
 
-- Each enabled provider can be selected independently for research, replies, and card generation.
+- Each enabled provider can be selected for the tasks it advertises; research stays restricted to providers with a reviewed web-search capability.
 - A chat records its provider and never resumes through a different provider by accident.
 - Streaming, pause, continue, retry, branching, citations, and approvals retain their current behavior where the selected provider supports them.
 - Card generation produces the same validated learning contract across providers, or fails with a clear recoverable reason.
