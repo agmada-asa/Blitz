@@ -67,6 +67,10 @@ export default function ProjectPage({
   const ingestion = useQuery(api.projectAgents.listIngestion, {
     projectId: convexProjectId,
   })
+  const preparation = useQuery(api.preparation.listJobsForProject, {
+    projectId: convexProjectId,
+    sourceIds: sources.map((source) => source._id),
+  })
   const artifacts = useQuery(api.projectAgents.listArtifacts, {
     projectId: convexProjectId,
   })
@@ -194,6 +198,16 @@ export default function ProjectPage({
                 sourceId: String(job.sourceId),
                 status: job.status,
                 error: job.error,
+              }))}
+              preparation={preparation?.map((job) => ({
+                jobId: String(job.jobId),
+                sourceId: String(job.sourceId),
+                status: job.status,
+                error: job.error ?? undefined,
+                nextChunkOrdinal: job.nextChunkOrdinal,
+                totalChunks: job.totalChunks ?? undefined,
+                generatedItemCount: job.generatedItemCount ?? undefined,
+                leaseExpired: job.leaseExpired,
               }))}
               artifacts={artifacts?.map((artifact) => ({
                 id: String(artifact._id),

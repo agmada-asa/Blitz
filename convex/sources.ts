@@ -314,7 +314,12 @@ export const createOriginalSource = mutation({
       createdAt: Date.now(),
       updatedAt: Date.now(),
     })
-    return { sourceId, ingestionJobId, duplicate: false }
+    return {
+      sourceId,
+      ingestionJobId,
+      ingestionStatus: "queued" as const,
+      duplicate: false,
+    }
   },
 })
 
@@ -364,11 +369,20 @@ export const getOriginalSource = query({
   handler: async (ctx, args) => {
     const source = await ctx.db.get(args.sourceId)
     if (!source || source.projectId !== args.projectId) return null
+    const ingestionJob = await ctx.db
+      .query("ingestionJobs")
+      .withIndex("by_source", (q) => q.eq("sourceId", source._id))
+      .first()
     return {
       relativeKey: source.relativeKey,
       filename: source.filename,
       mimeType: source.mimeType,
       contentHash: source.contentHash,
+      status: source.status,
+      hasExtractedText: Boolean(source.extractedText.trim()),
+      ingestionJobId: ingestionJob?._id,
+      ingestionStatus: ingestionJob?.status,
+      ingestionLeaseExpiresAt: ingestionJob?.leaseExpiresAt,
     }
   },
 })

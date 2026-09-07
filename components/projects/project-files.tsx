@@ -43,8 +43,18 @@ export type ProjectFileIngestion = {
   sourceId: string
   status: "queued" | "running" | "completed" | "failed"
   error?: string
+}
+
+/** Durable study-preparation state associated with an uploaded source. */
+export type ProjectFilePreparation = {
+  jobId: string
+  sourceId: string
+  status: "queued" | "leased" | "failed" | "completed"
+  error?: string | null
   nextChunkOrdinal?: number
   totalChunks?: number
+  generatedItemCount?: number
+  leaseExpired?: boolean
 }
 
 /** Agent-created file metadata; file contents remain in the local project workspace. */
@@ -80,6 +90,7 @@ export type ProjectFilesProps = {
   projectId: Id<"projects"> | string
   sources: ProjectFileSource[]
   ingestion?: ProjectFileIngestion[]
+  preparation?: ProjectFilePreparation[]
   artifacts?: ProjectArtifact[]
   citations?: ProjectFileCitation[]
   actions?: ProjectFilesActions
@@ -96,34 +107,85 @@ function formatSize(sizeBytes?: number): string | undefined {
 /** Returns an accessible label and badge style for each source lifecycle state. */
 function sourceStatus(
   source: ProjectFileSource,
-  ingestion: ProjectFileIngestion[]
+  ingestion: ProjectFileIngestion[],
+  preparation: ProjectFilePreparation[]
 ) {
-  const job = ingestion.find((item) => item.sourceId === String(source._id))
+  const ingestionJob = ingestion.find(
+    (item) => item.sourceId === String(source._id)
+  )
+  const preparationJob = preparation.find(
+    (item) => item.sourceId === String(source._id)
+  )
   if (source.unsupported)
     return { label: "Unsupported file", variant: "outline" as const }
-  if (job?.status === "failed" || source.status === "failed")
-    return { label: "Needs attention", variant: "destructive" as const }
   if (
-    job?.status === "running" ||
-    job?.status === "queued" ||
-    source.status === "processing"
+    ingestionJob?.status === "failed" ||
+    preparationJob?.status === "failed" ||
+    preparationJob?.leaseExpired ||
+    source.status === "failed"
   )
+    return { label: "Needs attention", variant: "destructive" as const }
+  if (ingestionJob?.status === "running" || ingestionJob?.status === "queued")
     return {
-      label: job?.status === "queued" ? "Queued" : "Ingesting",
+      label: ingestionJob.status === "queued" ? "Queued" : "Ingesting",
       variant: "outline" as const,
     }
+  if (
+    preparationJob?.status === "queued" ||
+    preparationJob?.status === "leased"
+  )
+    return {
+      label: preparationJob.status === "queued" ? "Queued" : "Preparing",
+      variant: "outline" as const,
+    }
+  if (source.status === "processing")
+    return { label: "Preparing", variant: "outline" as const }
   return { label: "Ready", variant: "secondary" as const }
+}
+
+/** Returns the most useful recoverable error for a source row. */
+function sourceError(
+  source: ProjectFileSource,
+  ingestionJob: ProjectFileIngestion | undefined,
+  preparationJob: ProjectFilePreparation | undefined
+): string | undefined {
+  if (ingestionJob?.error) return ingestionJob.error
+  if (preparationJob?.error) return preparationJob.error
+  if (preparationJob?.leaseExpired)
+    return "Preparation stopped before it finished. Retry to resume."
+  return source.error
+}
+
+/** Returns preparation progress as a percentage when a chunk count is known. */
+function preparationProgress(
+  preparationJob: ProjectFilePreparation | undefined
+): number | undefined {
+  if (
+    preparationJob?.totalChunks === undefined ||
+    preparationJob.totalChunks <= 0
+  )
+    return undefined
+  return Math.min(
+    100,
+    ((preparationJob.nextChunkOrdinal ?? 0) / preparationJob.totalChunks) * 100
+  )
 }
 
 /** Renders source and artifact states in one responsive project workspace panel. */
 export function ProjectFiles({
   sources,
   ingestion = [],
+  preparation = [],
   artifacts = [],
   citations = [],
   actions = {},
 }: ProjectFilesProps) {
   const [busyArtifactId, setBusyArtifactId] = useState<string>()
+  const [retryingSourceId, setRetryingSourceId] = useState<string>()
+  const [retryError, setRetryError] = useState<{
+    sourceId: string
+    message: string
+  }>()
   const activeArtifacts = artifacts.filter(
     (artifact) => artifact.status === "active"
   )
@@ -135,6 +197,26 @@ export function ProjectFiles({
       await actions.onAddArtifactToSources(artifact)
     } finally {
       setBusyArtifactId(undefined)
+    }
+  }
+
+  /** Retries one source and keeps request failures visible beside that source. */
+  async function retrySource(sourceId: string): Promise<void> {
+    if (!actions.onRetryIngestion) return
+    setRetryingSourceId(sourceId)
+    setRetryError(undefined)
+    try {
+      await actions.onRetryIngestion(sourceId)
+    } catch (error) {
+      setRetryError({
+        sourceId,
+        message:
+          error instanceof Error && error.message.trim()
+            ? error.message
+            : "The source could not be retried.",
+      })
+    } finally {
+      setRetryingSourceId(undefined)
     }
   }
 
@@ -164,23 +246,20 @@ export function ProjectFiles({
         <CardContent className="space-y-2">
           {sources.length ? (
             sources.map((source) => {
-              const job = ingestion.find(
+              const ingestionJob = ingestion.find(
                 (item) => item.sourceId === String(source._id)
               )
-              const state = sourceStatus(source, ingestion)
+              const preparationJob = preparation.find(
+                (item) => item.sourceId === String(source._id)
+              )
+              const state = sourceStatus(source, ingestion, preparation)
               const citationCount = citations.filter(
                 (citation) => citation.sourceId === String(source._id)
               ).length
               const sourceCitations = citations.filter(
                 (citation) => citation.sourceId === String(source._id)
               )
-              const progress =
-                job?.totalChunks && job.totalChunks > 0
-                  ? Math.min(
-                      100,
-                      ((job.nextChunkOrdinal ?? 0) / job.totalChunks) * 100
-                    )
-                  : undefined
+              const progress = preparationProgress(preparationJob)
               return (
                 <div
                   key={String(source._id)}
@@ -226,12 +305,12 @@ export function ProjectFiles({
                   {progress !== undefined ? (
                     <div className="mt-3 space-y-1.5">
                       <div className="flex justify-between text-xs text-muted-foreground">
-                        <span>Preparing retrieval sections</span>
+                        <span>Preparing study material</span>
                         <span>{Math.round(progress)}%</span>
                       </div>
                       <Progress
                         value={progress}
-                        aria-label={`Ingestion ${Math.round(progress)} percent complete`}
+                        aria-label={`Preparation ${Math.round(progress)} percent complete`}
                       />
                     </div>
                   ) : null}
@@ -258,19 +337,32 @@ export function ProjectFiles({
                   {state.label === "Needs attention" ? (
                     <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
                       <span>
-                        {job?.error ||
-                          source.error ||
+                        {sourceError(source, ingestionJob, preparationJob) ||
                           "This file could not be prepared for retrieval."}
                       </span>
+                      {retryError?.sourceId === String(source._id) ? (
+                        <span className="basis-full text-xs">
+                          {retryError.message}
+                        </span>
+                      ) : null}
                       {actions.onRetryIngestion ? (
                         <Button
                           variant="outline"
                           size="sm"
-                          onClick={() =>
-                            void actions.onRetryIngestion?.(String(source._id))
-                          }
+                          disabled={retryingSourceId === String(source._id)}
+                          onClick={() => void retrySource(String(source._id))}
                         >
-                          <RotateLeftIcon size={14} /> Retry
+                          {retryingSourceId === String(source._id) ? (
+                            <LoadingIcon
+                              className="animate-spin motion-reduce:animate-none"
+                              size={14}
+                            />
+                          ) : (
+                            <RotateLeftIcon size={14} />
+                          )}
+                          {retryingSourceId === String(source._id)
+                            ? "Retrying…"
+                            : "Retry"}
                         </Button>
                       ) : null}
                     </div>
