@@ -26,6 +26,22 @@ The code already has useful boundaries, but they are named around one implementa
 - `scripts/preparation-worker.ts`, `scripts/chat-worker.ts`, and `scripts/research-worker.ts` resolve settings before they call the Codex runner. Those workers are the main places that should move to one provider resolver.
 - `lib/server/codex.ts` is the older one-shot card-generation path. It should either use the same adapter contract or be retired after its callers are confirmed.
 
+## Reference implementation: T3 Code
+
+T3 Code is a useful reference for the shape of this boundary. As checked on September 7, 2026, Antigravity is already present in the stable `v0.0.39` source, so it is not limited to a nightly build. The current README lists Google Antigravity as a supported provider, and the release includes its driver, ACP adapter, authentication, managed installation, and structured text-generation implementation. Nightly releases exist as a separate channel, but they are not required to get the Antigravity code. See the [T3 Code README](https://github.com/pingdotgg/t3code/blob/main/README.md), [stable release](https://github.com/pingdotgg/t3code/releases/tag/v0.0.39), and [built-in driver registry](https://github.com/pingdotgg/t3code/blob/v0.0.39/apps/server/src/provider/builtInDrivers.ts).
+
+The architecture is relevant to Blitz:
+
+- T3 separates a driver kind from a provider instance. The driver identifies the integration; the instance identifies one account, profile, or configuration. This supports multiple instances of the same provider without global mutable state. See [`ProviderDriver.ts`](https://github.com/pingdotgg/t3code/blob/v0.0.39/apps/server/src/provider/ProviderDriver.ts) and the [provider internals guide](https://github.com/pingdotgg/t3code/blob/main/docs/internals/providers.md).
+- A `ProviderService` resolves instances, routes session-scoped work, and exposes one event stream to the rest of the app. The adapter owns provider protocol details. Blitz should follow this pattern with one server-side facade instead of letting routes and workers select adapters directly. See [`ProviderService.ts`](https://github.com/pingdotgg/t3code/blob/v0.0.39/apps/server/src/provider/Services/ProviderService.ts).
+- Interactive provider sessions and structured text generation are separate contracts. The interactive adapter handles turns, approvals, interruption, session recovery, and normalized events. The text-generation service handles short-lived, schema-constrained operations. Blitz should use the same split for chat, research, and card generation. See [`ProviderAdapter.ts`](https://github.com/pingdotgg/t3code/blob/v0.0.39/apps/server/src/provider/Services/ProviderAdapter.ts) and [`TextGeneration.ts`](https://github.com/pingdotgg/t3code/blob/v0.0.39/apps/server/src/textGeneration/TextGeneration.ts).
+- Session contracts include provider instance identity, resume cursors, capability checks, model selection, and explicit rollback or continuation support. Blitz should treat these as capability decisions, not assumptions shared by every provider. See the [provider contracts](https://github.com/pingdotgg/t3code/blob/v0.0.39/packages/contracts/src/provider.ts).
+- Model discovery is manifest-driven with bundled and cached fallbacks. That is a useful later step for replacing the current hardcoded model lists without making provider startup depend on a remote catalog. See [`ModelManifest.ts`](https://github.com/pingdotgg/t3code/blob/v0.0.39/apps/server/src/provider/ModelManifest.ts).
+
+T3's Antigravity implementation is a managed ACP runtime, not a thin wrapper around an `antigravity` CLI. Each provider instance owns a Google profile while installed executable releases are shared. T3 manages executable versions with immutable release directories, an active pointer, and process leases, so an update does not invalidate a running session. Blitz should model the provider as `antigravity` plus a local instance/profile and runtime mode. It should not make a CLI path part of the product contract. See [`AntigravityDriver.ts`](https://github.com/pingdotgg/t3code/blob/v0.0.39/apps/server/src/provider/Drivers/AntigravityDriver.ts), [`AntigravityInstallation.ts`](https://github.com/pingdotgg/t3code/blob/v0.0.39/apps/server/src/provider/AntigravityInstallation.ts), and the [Antigravity provider guide](https://github.com/pingdotgg/t3code/blob/main/docs/user/providers-antigravity.md).
+
+The Antigravity text-generation path is especially relevant to card generation. T3 uses a short-lived helper in a temporary workspace, disables MCP and tools, rejects file, terminal, and user-input requests, bounds the response, extracts and validates the JSON object against a schema, and cleans up its session files. It also refuses this mode when the selected profile has hooks or MCP configuration that could run before tool denial. Blitz should expose structured card generation only when equivalent isolation and schema validation are confirmed. See [`AntigravityTextGeneration.ts`](https://github.com/pingdotgg/t3code/blob/v0.0.39/apps/server/src/textGeneration/AntigravityTextGeneration.ts).
+
 ## Provider-neutral runtime contract
 
 Add a small server-only provider layer under `lib/server/providers/`.
@@ -42,18 +58,24 @@ The common adapter should cover only behavior Blitz needs:
 
 ```ts
 interface ProviderAdapter {
+  readonly provider: AiProviderId
+  readonly providerInstanceId: string
+  readonly capabilities: ProviderCapabilities
   startSession(options: ProviderSessionOptions): Promise<ProviderSession>
   resumeSession(sessionId: string, options: ProviderSessionOptions): Promise<ProviderSession>
-  startTurn(sessionId: string, request: ProviderTurnRequest): Promise<ProviderTurn>
+  sendTurn(sessionId: string, request: ProviderTurnRequest): Promise<ProviderTurn>
   interruptTurn(sessionId: string, turnId: string): Promise<void>
+  respondToRequest(requestId: string, response: unknown): Promise<void>
+  readThread(sessionId: string): Promise<ProviderThread>
+  rollbackThread(sessionId: string, checkpoint: string): Promise<void>
   streamEvents(listener: (event: ProviderEvent) => void): () => void
   close(): Promise<void>
 }
 ```
 
-The exact names can change during implementation. The important boundary is that chat orchestration consumes normalized events rather than Codex notification names. A separate structured-generation method or capability should handle card batches, because a provider that can stream text is not automatically able to enforce the learning JSON schema.
+The exact names can change during implementation. The important boundary is that a `ProviderService` resolves the instance and chat orchestration consumes normalized events rather than Codex notification names. `respondToRequest`, rollback, and model switching should be capability-gated. A separate structured-generation service or capability should handle card batches, because a provider that can stream text is not automatically able to enforce the learning JSON schema.
 
-Persisted references should use provider-neutral fields such as `providerId`, `providerSessionId`, and `providerTurnId`. Keep the existing Codex fields readable during migration. Do not store provider credentials or raw environment values in Convex.
+Persisted references should use provider-neutral fields such as `providerId`, `providerInstanceId`, `providerSessionId`, `providerTurnId`, and `resumeCursor`. Keep the existing Codex fields readable during migration. Do not store provider credentials, profile paths, or raw environment values in Convex.
 
 ## Model and provider settings
 
@@ -64,12 +86,13 @@ type AiTask = "research" | "reply" | "cardGeneration"
 
 type AiTaskSelection = {
   providerId: AiProviderId
+  providerInstanceId?: string
   model: string
   controls: Record<string, string>
 }
 ```
 
-The runtime should normalize common controls without pretending they are universal. Codex `effort`, Claude Code thinking settings, OpenCode options, and Antigravity controls may not share the same values or even exist. The picker should render controls from provider capabilities and reject unsupported combinations before saving.
+The runtime should normalize common controls without pretending they are universal. Codex `effort`, Claude Code thinking settings, OpenCode options, and Antigravity controls may not share the same values or even exist. The picker should render controls from provider capabilities and reject unsupported combinations before saving. A provider instance is a safe local key for an account or profile; credentials and profile paths remain local.
 
 The settings work should cover:
 
@@ -86,6 +109,8 @@ Local executable paths, auth state, workspace roots, and command flags should st
 
 General chat, card chat, and project-agent chat should all call the same normalized turn service. The Codex adapter can keep the current app-server approval flow; other adapters can report only the capabilities they actually support.
 
+The turn service should be a `ProviderService`-style facade. It resolves the provider instance from the persisted session reference, translates the request once, and maps each adapter's protocol into the product event vocabulary. This keeps provider-specific lifecycle behavior out of route handlers, workers, and Convex mutations.
+
 The data changes should:
 
 - add `providerId` and provider-neutral session and turn references to workspace chats, workspace messages, card conversations, and card messages;
@@ -101,6 +126,8 @@ The current chat route, card-chat worker, approval bridge, and project-agent pol
 ## Card generation and research
 
 Card generation already validates output after the model call. Keep that validation as the product contract and move only the model invocation behind the provider layer.
+
+Use a separate structured-generation contract for card batches and repair attempts. It can share model selection and health checks with chat, but it should not inherit interactive tools, approvals, or session state by accident. Antigravity should initially qualify for this contract only after its managed ACP profile is proven to have no hooks or MCP configuration that can run during a supposedly tool-free request.
 
 For each preparation job:
 
@@ -148,7 +175,7 @@ Technical documentation should continue to name Codex where it describes the cur
 
 ### Phase 3: add providers one at a time
 
-For Claude Code, OpenCode, and Antigravity, verify the executable, authentication model, non-interactive invocation, streaming format, session resume, interruption, structured output, sandbox behavior, web search, and approval behavior on the target Mac before enabling the provider in the UI. A provider can be available for replies while remaining unavailable for research or card generation if its capabilities do not meet those contracts.
+For Claude Code and OpenCode, verify the executable, authentication model, non-interactive invocation, streaming format, session resume, interruption, structured output, sandbox behavior, web search, and approval behavior on the target Mac before enabling the provider in the UI. Treat Antigravity as a managed ACP provider with a per-instance profile and runtime lifecycle rather than as a CLI integration. Verify its Google sign-in flow, model refresh, session resume, interruption, tool and MCP isolation, structured output, and capability reporting before enabling it. A provider can be available for replies while remaining unavailable for research or card generation if its capabilities do not meet those contracts.
 
 ### Phase 4: remove compatibility debt
 
@@ -172,5 +199,6 @@ For Claude Code, OpenCode, and Antigravity, verify the executable, authenticatio
 
 - Whether a provider can be chosen per message in a chat, or only when creating a chat. The safer first release is chat-level binding.
 - Whether model catalogs are static curated lists, provider-reported lists, or a hybrid with a validated custom model field.
-- What Antigravity exposes for session identity, structured output, web search, and approvals. Do not promise these capabilities before a local probe confirms them.
+- Whether Blitz should manage Antigravity runtime installation and updates, or initially require a bundled or preinstalled ACP runtime. T3's managed installer is a useful reference, but it is a separate lifecycle feature from provider selection.
+- What each provider exposes for session identity, structured output, web search, and approvals. Do not promise these capabilities before a local probe confirms them.
 - Whether project-agent file editing should be enabled for providers other than Codex, or remain read-only until each provider has a reviewed sandbox and approval mapping.
