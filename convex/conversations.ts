@@ -3,6 +3,11 @@
 import { mutation, query, type QueryCtx } from "./_generated/server"
 import type { Doc, Id } from "./_generated/dataModel"
 import { v } from "convex/values"
+import {
+  DEFAULT_AI_MODEL_SETTINGS,
+  isAiProviderId,
+} from "../lib/ai-model-settings"
+import { resolveQueuedAiSelection } from "./ai-provider-settings"
 
 /** Maximum size accepted for a learner question. */
 export const MAX_CHAT_QUESTION_LENGTH = 2_000
@@ -19,6 +24,14 @@ function boundedText(value: string, label: string, maximum: number): string {
   if (!trimmed) throw new Error(`${label} is required`)
   if (trimmed.length > maximum) throw new Error(`${label} is too long`)
   return trimmed
+}
+
+/** Validates a provider stored on a conversation while preserving legacy rows. */
+function providerSelection(value: string | undefined): string | undefined {
+  if (value === undefined) return undefined
+  const provider = boundedText(value, "Provider", 80)
+  if (!isAiProviderId(provider)) throw new Error("Provider is not supported")
+  return provider
 }
 
 /** Requires that a project and learning item belong together. */
@@ -106,12 +119,16 @@ export const enqueue = mutation({
       "Question",
       MAX_CHAT_QUESTION_LENGTH
     )
+    const selection = await resolveQueuedAiSelection(ctx, "reply")
     const now = Date.now()
     let conversation = await findConversation(ctx, args.projectId, args.itemId)
     if (!conversation) {
       const conversationId = await ctx.db.insert("conversations", {
         projectId: args.projectId,
         itemId: args.itemId,
+        providerId: selection.providerId,
+        providerModel: selection.model,
+        providerEffort: selection.effort,
         status: "idle",
         createdAt: now,
         updatedAt: now,
@@ -119,6 +136,26 @@ export const enqueue = mutation({
       conversation = await ctx.db.get(conversationId)
       if (!conversation) throw new Error("Conversation could not be created")
     }
+    const storedProvider =
+      providerSelection(conversation.providerId) ??
+      (conversation.codexThreadId ? "codex" : undefined)
+    const providerId = storedProvider ?? selection.providerId
+    const providerModel =
+      conversation.providerModel ??
+      (providerId === "codex"
+        ? DEFAULT_AI_MODEL_SETTINGS.replyModel
+        : selection.model)
+    const providerEffort =
+      conversation.providerEffort ??
+      (providerId === "codex"
+        ? DEFAULT_AI_MODEL_SETTINGS.replyEffort
+        : selection.effort)
+    await ctx.db.patch(conversation._id, {
+      providerId,
+      providerModel,
+      providerEffort,
+      updatedAt: now,
+    })
     const existing = await ctx.db
       .query("conversationMessages")
       .withIndex("by_conversation_clientMessageId", (q) =>
@@ -174,6 +211,10 @@ export const get = query({
     if (!conversation)
       return {
         conversationId: null,
+        providerId: null,
+        providerModel: null,
+        providerEffort: null,
+        providerSessionId: null,
         codexThreadId: null,
         status: "idle" as const,
         lastError: null,
@@ -188,6 +229,13 @@ export const get = query({
       .collect()
     return {
       conversationId: conversation._id,
+      providerId:
+        providerSelection(conversation.providerId) ??
+        (conversation.codexThreadId ? "codex" : null),
+      providerModel: conversation.providerModel ?? null,
+      providerEffort: conversation.providerEffort ?? null,
+      providerSessionId:
+        conversation.providerSessionId ?? conversation.codexThreadId ?? null,
       codexThreadId: conversation.codexThreadId ?? null,
       status: conversation.status,
       lastError: conversation.lastError ?? null,
@@ -253,6 +301,14 @@ export const claimNext = mutation({
         conversationId: conversation._id,
         projectId: conversation.projectId,
         itemId: conversation.itemId,
+        providerId:
+          providerSelection(conversation.providerId) ??
+          (conversation.codexThreadId ? "codex" : undefined),
+        providerInstanceId: conversation.providerInstanceId ?? null,
+        providerSessionId:
+          conversation.providerSessionId ?? conversation.codexThreadId ?? null,
+        providerModel: conversation.providerModel ?? null,
+        providerEffort: conversation.providerEffort ?? null,
         codexThreadId: conversation.codexThreadId ?? null,
         leaseToken,
         question: candidate.question,
@@ -357,13 +413,17 @@ export const progress = mutation({
   },
 })
 
-/** Atomically stores the assistant text and Codex ids for a live request. */
+/** Atomically stores assistant text and provider identifiers for a live request. */
 export const complete = mutation({
   args: {
     messageId: v.id("conversationMessages"),
     leaseToken: v.string(),
-    codexThreadId: v.string(),
-    codexTurnId: v.string(),
+    providerId: v.optional(v.string()),
+    providerInstanceId: v.optional(v.string()),
+    providerSessionId: v.optional(v.string()),
+    providerTurnId: v.optional(v.string()),
+    codexThreadId: v.optional(v.string()),
+    codexTurnId: v.optional(v.string()),
     reply: v.string(),
   },
   handler: async (ctx, args) => {
@@ -379,11 +439,31 @@ export const complete = mutation({
     const conversation = await ctx.db.get(message.conversationId)
     if (!conversation || conversation.activeMessageId !== message._id)
       throw new Error("Chat conversation is no longer active")
+    const storedProvider =
+      providerSelection(conversation.providerId) ??
+      (conversation.codexThreadId ? "codex" : undefined)
+    const providerId =
+      providerSelection(args.providerId) ?? storedProvider ?? "codex"
+    if (storedProvider && providerId !== storedProvider)
+      throw new Error("A card conversation cannot change its provider")
+    const providerSessionId = boundedText(
+      args.providerSessionId ?? args.codexThreadId ?? "",
+      "Provider session id",
+      200
+    )
+    const providerTurnId = boundedText(
+      args.providerTurnId ?? args.codexTurnId ?? "",
+      "Provider turn id",
+      200
+    )
     const now = Date.now()
     await ctx.db.patch(message._id, {
       status: "completed",
       reply,
-      codexTurnId: boundedText(args.codexTurnId, "Codex turn id", 200),
+      providerTurnId,
+      ...(args.codexTurnId
+        ? { codexTurnId: boundedText(args.codexTurnId, "Codex turn id", 200) }
+        : {}),
       workerId: undefined,
       leaseToken: undefined,
       leaseExpiresAt: undefined,
@@ -391,7 +471,26 @@ export const complete = mutation({
     })
     await ctx.db.patch(conversation._id, {
       status: "idle",
-      codexThreadId: boundedText(args.codexThreadId, "Codex thread id", 200),
+      providerId,
+      ...(args.providerInstanceId
+        ? {
+            providerInstanceId: boundedText(
+              args.providerInstanceId,
+              "Provider instance",
+              200
+            ),
+          }
+        : {}),
+      providerSessionId,
+      ...(args.codexThreadId
+        ? {
+            codexThreadId: boundedText(
+              args.codexThreadId,
+              "Codex thread id",
+              200
+            ),
+          }
+        : {}),
       activeMessageId: undefined,
       lastError: undefined,
       updatedAt: now,

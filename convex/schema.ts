@@ -253,6 +253,11 @@ export default defineSchema({
     totalChunks: v.optional(v.number()),
     /** Approved research topic filter copied into the immutable job snapshot. */
     learningScope: v.optional(v.string()),
+    /** Provider selection copied into the immutable generation snapshot. */
+    providerId: v.optional(v.string()),
+    providerInstanceId: v.optional(v.string()),
+    generationModel: v.optional(v.string()),
+    generationEffort: v.optional(v.string()),
     /** Number of generated learning items committed so far; absent on legacy jobs. */
     generatedItemCount: v.optional(v.number()),
     workerId: v.optional(v.string()),
@@ -389,9 +394,12 @@ export default defineSchema({
     updatedAt: v.number(),
   }).index("by_project_updatedAt", ["projectId", "updatedAt"]),
 
-  /** One global record for the model and reasoning level used by each AI task in this personal deployment. */
+  /** One global record for the provider, model, and reasoning choices used by each AI task. */
   aiModelSettings: defineTable({
     scope: v.literal("global"),
+    researchProvider: v.optional(v.string()),
+    replyProvider: v.optional(v.string()),
+    cardGenerationProvider: v.optional(v.string()),
     researchModel: v.string(),
     replyModel: v.string(),
     cardGenerationModel: v.string(),
@@ -401,7 +409,7 @@ export default defineSchema({
     updatedAt: v.number(),
   }).index("by_scope", ["scope"]),
 
-  /** General Codex threads opened from the top-level Chat tab. */
+  /** General Blitz sessions opened from the top-level Chat tab. */
   workspaceChats: defineTable({
     /** Owning project. Optional only for chats created before project ownership. */
     projectId: v.optional(v.id("projects")),
@@ -417,6 +425,12 @@ export default defineSchema({
     isPinned: v.optional(v.boolean()),
     branchedFromChatId: v.optional(v.id("workspaceChats")),
     branchedFromMessageId: v.optional(v.id("workspaceChatMessages")),
+    /** Provider snapshot for new sessions; absent on legacy Codex chats. */
+    providerId: v.optional(v.string()),
+    providerInstanceId: v.optional(v.string()),
+    providerSessionId: v.optional(v.string()),
+    providerModel: v.optional(v.string()),
+    providerEffort: v.optional(v.string()),
     codexThreadId: v.optional(v.string()),
     codexContextReady: v.optional(v.boolean()),
     status: v.union(
@@ -433,7 +447,7 @@ export default defineSchema({
     .index("by_project_updatedAt", ["projectId", "updatedAt"])
     .index("by_pinned_updatedAt", ["isPinned", "updatedAt"]),
 
-  /** User and assistant messages retained for a general Codex thread. */
+  /** User and assistant messages retained for a general Blitz session. */
   workspaceChatMessages: defineTable({
     /** Immutable passages allowed as links in this reply, retained across branches. */
     citations: v.optional(v.array(citationFields)),
@@ -446,6 +460,7 @@ export default defineSchema({
       v.literal("completed"),
       v.literal("failed")
     ),
+    providerTurnId: v.optional(v.string()),
     codexTurnId: v.optional(v.string()),
     /** Pending or decided file operation approval attached to this assistant turn. */
     agentApproval: v.optional(
@@ -500,6 +515,12 @@ export default defineSchema({
   conversations: defineTable({
     projectId: v.id("projects"),
     itemId: v.id("learningItems"),
+    /** Provider snapshot for this card conversation; absent on legacy Codex chats. */
+    providerId: v.optional(v.string()),
+    providerInstanceId: v.optional(v.string()),
+    providerSessionId: v.optional(v.string()),
+    providerModel: v.optional(v.string()),
+    providerEffort: v.optional(v.string()),
     codexThreadId: v.optional(v.string()),
     status: v.union(
       v.literal("idle"),
@@ -525,6 +546,7 @@ export default defineSchema({
     ),
     reply: v.optional(v.string()),
     error: v.optional(v.string()),
+    providerTurnId: v.optional(v.string()),
     codexTurnId: v.optional(v.string()),
     workerId: v.optional(v.string()),
     leaseToken: v.optional(v.string()),
@@ -544,6 +566,11 @@ export default defineSchema({
     projectId: v.id("projects"),
     requestId: v.string(),
     request: v.string(),
+    /** Provider selection copied into the immutable planning snapshot. */
+    providerId: v.optional(v.string()),
+    providerInstanceId: v.optional(v.string()),
+    researchModel: v.optional(v.string()),
+    researchEffort: v.optional(v.string()),
     status: v.union(
       v.literal("queued"),
       v.literal("running"),

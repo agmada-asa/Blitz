@@ -1,4 +1,78 @@
-/** Defines task-specific Codex model and reasoning settings shared by Blitz. */
+/** Defines task-specific provider, model, and reasoning settings shared by Blitz. */
+
+/** Provider integrations Blitz can route local AI work through. */
+export const AI_PROVIDER_IDS = [
+  "codex",
+  "claude-code",
+  "opencode",
+  "antigravity",
+] as const
+
+/** Stable identifier for one local provider integration. */
+export type AiProviderId = (typeof AI_PROVIDER_IDS)[number]
+
+/** Labels and setup guidance shown when a provider is selected in settings. */
+export type AiProviderOption = {
+  readonly id: AiProviderId
+  readonly label: string
+  readonly description: string
+}
+
+/** Provider choices shown in the shared settings and chat pickers. */
+export const AI_PROVIDER_OPTIONS: readonly AiProviderOption[] = [
+  {
+    id: "codex",
+    label: "Codex",
+    description: "Blitz's built-in local assistant runtime.",
+  },
+  {
+    id: "claude-code",
+    label: "Claude Code",
+    description: "Use a local Claude Code installation.",
+  },
+  {
+    id: "opencode",
+    label: "OpenCode",
+    description: "Use a local OpenCode ACP installation.",
+  },
+  {
+    id: "antigravity",
+    label: "Antigravity",
+    description: "Use a managed or configured Antigravity ACP runtime.",
+  },
+]
+
+/** Names the task-specific provider field stored beside the legacy model fields. */
+export const AI_PROVIDER_FIELDS = [
+  "researchProvider",
+  "replyProvider",
+  "cardGenerationProvider",
+] as const
+
+/** A field that selects one provider for one kind of AI work. */
+export type AiProviderField = (typeof AI_PROVIDER_FIELDS)[number]
+
+/** Stable task names used by server-side provider routing. */
+export type AiTask = "research" | "reply" | "cardGeneration"
+
+/** Maps a task to its persisted provider field. */
+export const AI_TASK_PROVIDER_FIELDS: Readonly<
+  Record<AiTask, AiProviderField>
+> = {
+  research: "researchProvider",
+  reply: "replyProvider",
+  cardGeneration: "cardGenerationProvider",
+}
+
+/** Provider tasks that have passed the current capability review in Blitz. */
+export const AI_PROVIDER_TASKS: Readonly<
+  Record<AiProviderId, readonly AiTask[]>
+> = {
+  codex: ["research", "reply", "cardGeneration"],
+  "claude-code": ["reply", "cardGeneration"],
+  opencode: ["reply", "cardGeneration"],
+  antigravity: ["reply", "cardGeneration"],
+}
 
 /** Names the persisted model field used for each kind of AI work. */
 export const AI_MODEL_FIELDS = [
@@ -90,13 +164,59 @@ export const CODEX_MODEL_OPTIONS = [
 /** A model identifier included in Blitz's curated picker. */
 export type CodexModelId = (typeof CODEX_MODEL_OPTIONS)[number]["id"]
 
+/** One curated model choice for a non-Codex provider. */
+export type AiProviderModelOption = {
+  readonly id: string
+  readonly label: string
+  readonly reasoningEfforts: readonly AiReasoningEffort[]
+}
+
+/** Curated defaults used until a provider reports a runtime model catalog. */
+export const AI_PROVIDER_MODEL_OPTIONS: Readonly<
+  Record<Exclude<AiProviderId, "codex">, readonly AiProviderModelOption[]>
+> = {
+  "claude-code": [
+    {
+      id: "claude-sonnet",
+      label: "Claude Sonnet",
+      reasoningEfforts: ["low", "medium", "high"],
+    },
+    {
+      id: "claude-opus",
+      label: "Claude Opus",
+      reasoningEfforts: ["medium", "high", "xhigh"],
+    },
+    {
+      id: "claude-haiku",
+      label: "Claude Haiku",
+      reasoningEfforts: ["low", "medium"],
+    },
+  ],
+  opencode: [
+    {
+      id: "opencode/big-pickle",
+      label: "OpenCode Big Pickle",
+      reasoningEfforts: ["low", "medium", "high"],
+    },
+  ],
+  antigravity: [
+    {
+      id: "antigravity/default",
+      label: "Antigravity default",
+      reasoningEfforts: ["low", "medium", "high"],
+    },
+  ],
+}
+
 /** Untrusted model and reasoning strings accepted at the persistence boundary. */
 export type AiModelSettingsInput = Record<AiModelField, string> &
-  Record<AiReasoningField, string>
+  Record<AiReasoningField, string> &
+  Partial<Record<AiProviderField, string>>
 
 /** One validated model and reasoning selection for every AI task Blitz runs. */
 export type AiModelSettings = Record<AiModelField, string> &
-  Record<AiReasoningField, AiReasoningEffort>
+  Record<AiReasoningField, AiReasoningEffort> &
+  Partial<Record<AiProviderField, AiProviderId>>
 
 /** Model used by each task before a setting or legacy environment fallback exists. */
 export const DEFAULT_AI_MODELS: Readonly<Record<AiModelField, string>> = {
@@ -118,6 +238,9 @@ export const DEFAULT_AI_REASONING_EFFORTS: Readonly<
 export const DEFAULT_AI_MODEL_SETTINGS: Readonly<AiModelSettings> = {
   ...DEFAULT_AI_MODELS,
   ...DEFAULT_AI_REASONING_EFFORTS,
+  researchProvider: "codex",
+  replyProvider: "codex",
+  cardGenerationProvider: "codex",
 }
 
 /** Keeps persisted model IDs bounded before they reach the local Codex bridge. */
@@ -137,6 +260,13 @@ const AI_REASONING_FIELD_LABELS: Record<AiReasoningField, string> = {
   cardGenerationEffort: "Card generation",
 }
 
+/** Labels provider fields in validation messages without exposing schema names. */
+const AI_PROVIDER_FIELD_LABELS: Record<AiProviderField, string> = {
+  researchProvider: "Research",
+  replyProvider: "Reply",
+  cardGenerationProvider: "Card generation",
+}
+
 /** Looks up curated model capabilities without constraining previously saved custom model IDs. */
 const MODEL_OPTION_BY_ID = new Map<string, CodexModelOption>(
   CODEX_MODEL_OPTIONS.map((option) => [option.id, option])
@@ -148,6 +278,59 @@ const AI_MODEL_NAME_PATTERN = /^[A-Za-z0-9._:/@-]+$/
 /** Returns whether a model ID is included in the current picker. */
 export function isKnownCodexModel(model: string): model is CodexModelId {
   return MODEL_OPTION_BY_ID.has(model)
+}
+
+/** Returns whether an identifier belongs to the supported provider set. */
+export function isAiProviderId(
+  value: string | undefined
+): value is AiProviderId {
+  return AI_PROVIDER_IDS.includes(value as AiProviderId)
+}
+
+/** Returns the visible provider choices in their stable settings order. */
+export function getAiProviderOptions(): readonly AiProviderOption[] {
+  return AI_PROVIDER_OPTIONS
+}
+
+/** Returns providers currently reviewed for one task's capability requirements. */
+export function getAiProviderOptionsForTask(
+  task: AiTask
+): readonly AiProviderOption[] {
+  return AI_PROVIDER_OPTIONS.filter((option) =>
+    AI_PROVIDER_TASKS[option.id].includes(task)
+  )
+}
+
+/** Returns the provider's curated model choices while preserving saved custom IDs. */
+export function getAiModelPickerOptions(
+  provider: AiProviderId,
+  model: string
+): readonly AiProviderModelOption[] {
+  if (provider === "codex") return getCodexModelPickerOptions(model)
+  const options = AI_PROVIDER_MODEL_OPTIONS[provider]
+  if (options.some((option) => option.id === model)) return options
+  return [
+    {
+      id: model,
+      label: `${model} (saved model)`,
+      reasoningEfforts: AI_REASONING_EFFORTS,
+    },
+    ...options,
+  ]
+}
+
+/** Returns the curated default model for a provider when a task changes providers. */
+export function getDefaultAiModelOption(
+  provider: AiProviderId
+): AiProviderModelOption {
+  const option =
+    provider === "codex"
+      ? CODEX_MODEL_OPTIONS.find(
+          (candidate) => candidate.id === DEFAULT_AI_MODELS.replyModel
+        )
+      : AI_PROVIDER_MODEL_OPTIONS[provider][0]
+  if (!option) throw new Error(`Provider ${provider} has no model options`)
+  return option
 }
 
 /** Returns curated model choices while preserving one previously saved legacy model as selectable. */
@@ -170,6 +353,31 @@ export function getSupportedAiReasoningEfforts(
   model: string
 ): readonly AiReasoningEffort[] {
   return MODEL_OPTION_BY_ID.get(model)?.reasoningEfforts ?? AI_REASONING_EFFORTS
+}
+
+/** Returns reasoning levels supported by a selected provider and model. */
+export function getSupportedAiReasoningEffortsForProvider(
+  provider: AiProviderId,
+  model: string
+): readonly AiReasoningEffort[] {
+  return (
+    getAiModelPickerOptions(provider, model).find(
+      (option) => option.id === model
+    )?.reasoningEfforts ?? AI_REASONING_EFFORTS
+  )
+}
+
+/** Validates one persisted provider field and defaults older records to Codex. */
+export function validateAiProviderId(
+  value: string | undefined,
+  field: AiProviderField
+): AiProviderId {
+  const provider = value?.trim() || "codex"
+  if (!isAiProviderId(provider))
+    throw new Error(
+      `${AI_PROVIDER_FIELD_LABELS[field]} provider is not supported`
+    )
+  return provider
 }
 
 /**
@@ -224,16 +432,17 @@ export function validateAiModelName(
 export function validateAiReasoningEffort(
   value: string,
   model: string,
-  field: AiReasoningField
+  field: AiReasoningField,
+  provider?: AiProviderId
 ): AiReasoningEffort {
   const effort = value.trim() as AiReasoningEffort
   const label = AI_REASONING_FIELD_LABELS[field]
   if (!AI_REASONING_EFFORTS.includes(effort))
     throw new Error(`${label} reasoning level is not supported`)
-  if (
-    isKnownCodexModel(model) &&
-    !getSupportedAiReasoningEfforts(model).includes(effort)
-  ) {
+  const supportedEfforts = provider
+    ? getSupportedAiReasoningEffortsForProvider(provider, model)
+    : getSupportedAiReasoningEfforts(model)
+  if (!supportedEfforts.includes(effort)) {
     throw new Error(`${label} reasoning level is not available for ${model}`)
   }
   return effort
@@ -252,24 +461,46 @@ export function validateAiModelSettings(
     settings.cardGenerationModel,
     "cardGenerationModel"
   )
+  const researchProvider = validateAiProviderId(
+    settings.researchProvider,
+    "researchProvider"
+  )
+  const replyProvider = validateAiProviderId(
+    settings.replyProvider,
+    "replyProvider"
+  )
+  const cardGenerationProvider = validateAiProviderId(
+    settings.cardGenerationProvider,
+    "cardGenerationProvider"
+  )
+  if (!AI_PROVIDER_TASKS[researchProvider].includes("research"))
+    throw new Error(
+      "Research requires a provider with an approved web-search capability"
+    )
   return {
     researchModel,
     replyModel,
     cardGenerationModel,
+    researchProvider,
+    replyProvider,
+    cardGenerationProvider,
     researchEffort: validateAiReasoningEffort(
       settings.researchEffort,
       researchModel,
-      "researchEffort"
+      "researchEffort",
+      researchProvider
     ),
     replyEffort: validateAiReasoningEffort(
       settings.replyEffort,
       replyModel,
-      "replyEffort"
+      "replyEffort",
+      replyProvider
     ),
     cardGenerationEffort: validateAiReasoningEffort(
       settings.cardGenerationEffort,
       cardGenerationModel,
-      "cardGenerationEffort"
+      "cardGenerationEffort",
+      cardGenerationProvider
     ),
   }
 }
@@ -294,4 +525,61 @@ export function resolveAiReasoningEffort(
   if (settings) return settings[field]
   const fallback = environmentFallback?.trim()
   return fallback || DEFAULT_AI_REASONING_EFFORTS[field]
+}
+
+/** Resolves a saved provider first, then the Codex compatibility default. */
+export function resolveAiProvider(
+  settings: AiModelSettings | null | undefined,
+  field: AiProviderField,
+  environmentFallback?: string
+): AiProviderId {
+  const saved = settings?.[field]
+  if (saved && isAiProviderId(saved)) return saved
+  const fallback = environmentFallback?.trim()
+  return fallback && isAiProviderId(fallback) ? fallback : "codex"
+}
+
+/** Returns the complete provider/model/reasoning selection for one task. */
+export function resolveAiTaskSelection(
+  settings: AiModelSettings | null | undefined,
+  task: AiTask,
+  options: {
+    modelEnvironmentFallback?: string
+    effortEnvironmentFallback?: string
+    providerEnvironmentFallback?: string
+  } = {}
+): {
+  providerId: AiProviderId
+  model: string
+  effort: AiReasoningEffort
+} {
+  const modelField =
+    task === "research"
+      ? "researchModel"
+      : task === "reply"
+        ? "replyModel"
+        : "cardGenerationModel"
+  const effortField =
+    task === "research"
+      ? "researchEffort"
+      : task === "reply"
+        ? "replyEffort"
+        : "cardGenerationEffort"
+  return {
+    providerId: resolveAiProvider(
+      settings,
+      AI_TASK_PROVIDER_FIELDS[task],
+      options.providerEnvironmentFallback
+    ),
+    model: resolveAiModel(
+      settings,
+      modelField,
+      options.modelEnvironmentFallback
+    ),
+    effort: resolveAiReasoningEffort(
+      settings,
+      effortField,
+      options.effortEnvironmentFallback
+    ) as AiReasoningEffort,
+  }
 }

@@ -401,7 +401,7 @@ export async function runCodexTextTurn(
   if (!request.prompt.trim()) {
     throw new CardChatError(
       "invalid-input",
-      "Codex text turn prompt must not be empty"
+      "Blitz text turn prompt must not be empty"
     )
   }
   const timeoutMs = request.timeoutMs ?? DEFAULT_CARD_CHAT_TIMEOUT_MS
@@ -466,7 +466,7 @@ export async function runCodexTextTurn(
     if (status !== "completed") {
       const reason =
         status === "interrupted" ? "turn-interrupted" : "turn-failed"
-      cancel(new CardChatError(reason, `Codex turn ${status}`))
+      cancel(new CardChatError(reason, `Blitz turn ${status}`))
       return
     }
     const authoritativeText = completedTurn
@@ -477,7 +477,7 @@ export async function runCodexTextTurn(
         cancel(
           new CardChatError(
             "transport",
-            "Codex assistant output exceeded the configured limit"
+            "Blitz assistant output exceeded the configured limit"
           )
         )
         return
@@ -488,7 +488,7 @@ export async function runCodexTextTurn(
       cancel(
         new CardChatError(
           "turn-failed",
-          "Codex completed without assistant text"
+          "Blitz completed without assistant text"
         )
       )
       return
@@ -510,7 +510,7 @@ export async function runCodexTextTurn(
         cancel(
           new CardChatError(
             "transport",
-            "Codex assistant output exceeded the configured limit"
+            "Blitz assistant output exceeded the configured limit"
           )
         )
         return
@@ -548,7 +548,7 @@ export async function runCodexTextTurn(
             cancel(
               new CardChatError(
                 "transport",
-                "Codex assistant output exceeded the configured limit"
+                "Blitz assistant output exceeded the configured limit"
               )
             )
             return
@@ -570,7 +570,7 @@ export async function runCodexTextTurn(
               cancel(
                 new CardChatError(
                   "transport",
-                  "Codex assistant output exceeded the configured limit"
+                  "Blitz assistant output exceeded the configured limit"
                 )
               )
             }
@@ -593,7 +593,7 @@ export async function runCodexTextTurn(
             cancel(
               new CardChatError(
                 "transport",
-                "Codex emitted too many raced turn completions"
+                "Blitz emitted too many raced turn completions"
               )
             )
             return
@@ -608,7 +608,7 @@ export async function runCodexTextTurn(
       return
     }
     if (event.type === "process-closed") {
-      cancel(new CardChatError("transport", "Codex app-server process closed"))
+      cancel(new CardChatError("transport", "Blitz provider process closed"))
       return
     }
     if (event.type === "server-request") {

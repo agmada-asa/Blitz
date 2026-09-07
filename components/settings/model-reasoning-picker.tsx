@@ -18,15 +18,30 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { CheckIcon } from "@/components/ui/icon"
 import {
-  getCodexModelPickerOptions,
-  getSupportedAiReasoningEfforts,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+import {
+  AI_PROVIDER_OPTIONS,
+  getAiProviderOptionsForTask,
+  getAiModelPickerOptions,
+  getSupportedAiReasoningEffortsForProvider,
   groupCodexModelOptions,
+  type AiProviderId,
   type AiReasoningEffort,
+  type AiTask,
 } from "@/lib/ai-model-settings"
 import { cn } from "@/lib/utils"
 
 /** Props for one controlled model and reasoning selection. */
 export type ModelReasoningPickerProps = {
+  /** Provider integration currently selected for the task. */
+  provider?: AiProviderId
+  /** Task capability used to omit providers that cannot safely run this work. */
+  task?: AiTask
   /** The model ID currently selected by the owning form. */
   model: string
   /** The reasoning level currently selected by the owning form. */
@@ -35,6 +50,8 @@ export type ModelReasoningPickerProps = {
   disabled?: boolean
   /** Receives a complete model and reasoning pair after a submenu choice. */
   onChange: (model: string, reasoning: AiReasoningEffort) => void
+  /** Receives an explicit provider change before the parent updates its model. */
+  onProviderChange?: (provider: AiProviderId) => void
   /** Names the task in the generated accessible label. */
   labelPrefix?: string
   /** Additional classes for the visible trigger. */
@@ -54,24 +71,60 @@ function reasoningLabel(effort: AiReasoningEffort): string {
 
 /** Renders one controlled picker and reports model-reasoning choices to its owner. */
 export function ModelReasoningPicker({
+  provider = "codex",
+  task,
   model,
   reasoning,
   disabled = false,
   onChange,
+  onProviderChange,
   labelPrefix = "Model",
   className,
   "aria-label": ariaLabel,
   "aria-describedby": ariaDescribedBy,
 }: ModelReasoningPickerProps) {
-  const modelOptions = getCodexModelPickerOptions(model)
+  const modelOptions = getAiModelPickerOptions(provider, model)
   const selectedModel = modelOptions.find((option) => option.id === model)
   const selectedModelLabel = selectedModel?.label ?? model
   const groups = groupCodexModelOptions(modelOptions)
   const selectedReasoningLabel = reasoningLabel(reasoning)
-  const accessibleLabel = `${labelPrefix} ${selectedModelLabel}, ${selectedReasoningLabel} reasoning`
+  const selectedProviderLabel =
+    AI_PROVIDER_OPTIONS.find((option) => option.id === provider)?.label ??
+    provider
+  const providerOptions = task
+    ? getAiProviderOptionsForTask(task)
+    : AI_PROVIDER_OPTIONS
+  const accessibleLabel = `${labelPrefix} ${selectedProviderLabel}, ${selectedModelLabel}, ${selectedReasoningLabel} reasoning`
 
   return (
-    <div className="flex min-w-0 items-center">
+    <div className="flex min-w-0 items-center gap-1">
+      {onProviderChange ? (
+        <Select
+          value={provider}
+          onValueChange={(value) => {
+            if (value !== provider) onProviderChange(value as AiProviderId)
+          }}
+          disabled={disabled}
+        >
+          <SelectTrigger
+            variant="ghost"
+            className="h-8 max-w-32 min-w-24 text-xs"
+            aria-label={`${labelPrefix} provider`}
+          >
+            <SelectValue>{selectedProviderLabel}</SelectValue>
+          </SelectTrigger>
+          <SelectContent align="start" className="min-w-48">
+            {providerOptions.map((option) => (
+              <SelectItem key={option.id} value={option.id} className="text-xs">
+                <span className="font-medium">{option.label}</span>
+                <span className="ml-1 text-muted-foreground">
+                  {option.description}
+                </span>
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      ) : null}
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <Button
@@ -107,7 +160,10 @@ export function ModelReasoningPicker({
                   </DropdownMenuSubTrigger>
                   <DropdownMenuSubContent className="w-36">
                     <DropdownMenuLabel>Reasoning</DropdownMenuLabel>
-                    {getSupportedAiReasoningEfforts(option.id).map((effort) => {
+                    {getSupportedAiReasoningEffortsForProvider(
+                      provider,
+                      option.id
+                    ).map((effort) => {
                       const isSelected =
                         option.id === model && effort === reasoning
                       return (

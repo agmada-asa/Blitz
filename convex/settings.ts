@@ -1,4 +1,4 @@
-/** Stores global task-specific Codex model and reasoning choices for Blitz's local workers. */
+/** Stores global task-specific provider, model, and reasoning choices for Blitz's local workers. */
 
 import { mutation, query } from "./_generated/server"
 import { v } from "convex/values"
@@ -24,6 +24,9 @@ export const get = query({
       .unique()
     if (!settings) return null
     return validateAiModelSettings({
+      researchProvider: settings.researchProvider,
+      replyProvider: settings.replyProvider,
+      cardGenerationProvider: settings.cardGenerationProvider,
       researchModel: settings.researchModel,
       replyModel: settings.replyModel,
       cardGenerationModel: settings.cardGenerationModel,
@@ -41,6 +44,9 @@ export const get = query({
 /** Validates and saves all AI choices together so workers never observe a partial configuration. */
 export const save = mutation({
   args: {
+    researchProvider: v.optional(v.string()),
+    replyProvider: v.optional(v.string()),
+    cardGenerationProvider: v.optional(v.string()),
     researchModel: v.string(),
     replyModel: v.string(),
     cardGenerationModel: v.string(),

@@ -1,4 +1,4 @@
-/** Tests validation and fallback behavior for task-specific Codex model selections. */
+/** Tests provider-aware validation and fallback behavior for task-specific model selections. */
 
 import assert from "node:assert/strict"
 import test from "node:test"
@@ -7,8 +7,11 @@ import {
   CODEX_MODEL_OPTIONS,
   DEFAULT_AI_MODEL_SETTINGS,
   DEFAULT_AI_MODELS,
+  getDefaultAiModelOption,
+  getAiProviderOptionsForTask,
   getSupportedAiReasoningEfforts,
   groupCodexModelOptions,
+  resolveAiTaskSelection,
   resolveAiModel,
   resolveAiReasoningEffort,
   validateAiModelSettings,
@@ -73,6 +76,68 @@ test("validates complete model and reasoning settings", () => {
   )
 })
 
+/** Confirms provider fields default legacy records to Codex and retain alternate choices. */
+test("validates provider-aware task selections", () => {
+  const settings = validateAiModelSettings({
+    researchModel: "gpt-5.6-luna",
+    replyModel: "claude-sonnet",
+    cardGenerationModel: "opencode/big-pickle",
+    researchEffort: "medium",
+    replyEffort: "high",
+    cardGenerationEffort: "low",
+    replyProvider: "claude-code",
+    cardGenerationProvider: "opencode",
+  })
+  assert.equal(settings.researchProvider, "codex")
+  assert.equal(settings.replyProvider, "claude-code")
+  assert.equal(settings.cardGenerationProvider, "opencode")
+})
+
+/** Confirms switching providers starts with a model owned by the new provider. */
+test("selects a provider-owned default model", () => {
+  assert.equal(getDefaultAiModelOption("codex").id, "gpt-5.6-luna")
+  assert.equal(getDefaultAiModelOption("claude-code").id, "claude-sonnet")
+  assert.equal(getDefaultAiModelOption("opencode").id, "opencode/big-pickle")
+  assert.equal(getDefaultAiModelOption("antigravity").id, "antigravity/default")
+})
+
+/** Confirms research stays on providers whose reviewed capabilities include web search. */
+test("filters providers by task capability", () => {
+  assert.deepEqual(
+    getAiProviderOptionsForTask("research").map((option) => option.id),
+    ["codex"]
+  )
+  assert.deepEqual(
+    getAiProviderOptionsForTask("reply").map((option) => option.id),
+    ["codex", "claude-code", "opencode", "antigravity"]
+  )
+})
+
+/** Confirms task routing keeps each provider paired with its own saved model and controls. */
+test("resolves a provider selection for each task", () => {
+  const settings = validateAiModelSettings({
+    researchModel: "gpt-5.6-luna",
+    replyModel: "claude-sonnet",
+    cardGenerationModel: "antigravity/default",
+    researchEffort: "medium",
+    replyEffort: "high",
+    cardGenerationEffort: "low",
+    researchProvider: "codex",
+    replyProvider: "claude-code",
+    cardGenerationProvider: "antigravity",
+  })
+  assert.deepEqual(resolveAiTaskSelection(settings, "reply"), {
+    providerId: "claude-code",
+    model: "claude-sonnet",
+    effort: "high",
+  })
+  assert.deepEqual(resolveAiTaskSelection(settings, "cardGeneration"), {
+    providerId: "antigravity",
+    model: "antigravity/default",
+    effort: "low",
+  })
+})
+
 /** Confirms a selected model cannot be saved with a reasoning level it does not support. */
 test("rejects an unsupported model and reasoning combination", () => {
   assert.throws(
@@ -84,6 +149,24 @@ test("rejects an unsupported model and reasoning combination", () => {
         researchEffort: "ultra",
         replyEffort: "medium",
         cardGenerationEffort: "medium",
+      }),
+    /not available/
+  )
+})
+
+/** Confirms provider-specific reasoning controls are rejected before persistence. */
+test("rejects reasoning unsupported by the selected provider", () => {
+  assert.throws(
+    () =>
+      validateAiModelSettings({
+        researchModel: "gpt-5.6-luna",
+        replyModel: "claude-sonnet",
+        cardGenerationModel: "opencode/big-pickle",
+        researchEffort: "medium",
+        replyEffort: "xhigh",
+        cardGenerationEffort: "medium",
+        replyProvider: "claude-code",
+        cardGenerationProvider: "opencode",
       }),
     /not available/
   )

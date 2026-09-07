@@ -19,27 +19,38 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { api } from "@/convex/_generated/api"
 import {
   DEFAULT_AI_MODEL_SETTINGS,
+  getDefaultAiModelOption,
+  resolveAiProvider,
   validateAiModelSettings,
   type AiModelField,
   type AiModelSettings,
+  type AiProviderField,
+  type AiProviderId,
   type AiReasoningEffort,
   type AiReasoningField,
+  type AiTask,
 } from "@/lib/ai-model-settings"
 
 /** One user-facing AI setting and the task it controls. */
 const MODEL_FIELDS: Array<{
+  task: AiTask
+  providerField: AiProviderField
   modelField: AiModelField
   effortField: AiReasoningField
   label: string
   description: string
 }> = [
   {
+    task: "research",
+    providerField: "researchProvider",
     modelField: "researchModel",
     effortField: "researchEffort",
     label: "Research",
     description: "Plans research and looks for sources to learn from.",
   },
   {
+    task: "cardGeneration",
+    providerField: "cardGenerationProvider",
     modelField: "cardGenerationModel",
     effortField: "cardGenerationEffort",
     label: "Card generation",
@@ -47,6 +58,8 @@ const MODEL_FIELDS: Array<{
       "Turns uploaded and approved source material into study cards.",
   },
   {
+    task: "reply",
+    providerField: "replyProvider",
     modelField: "replyModel",
     effortField: "replyEffort",
     label: "Replies",
@@ -90,6 +103,7 @@ function ModelSettingsEditor({
 
   /** Updates one task's local model and reasoning pair without saving yet. */
   const updateSelection = (
+    providerField: AiProviderField,
     modelField: AiModelField,
     effortField: AiReasoningField,
     model: string,
@@ -97,8 +111,26 @@ function ModelSettingsEditor({
   ): void => {
     setDraft((current) => ({
       ...current,
+      [providerField]: resolveAiProvider(current, providerField),
       [modelField]: model,
       [effortField]: reasoning,
+    }))
+    markDirty()
+  }
+
+  /** Switches provider and selects its first safe model and reasoning level. */
+  const updateProvider = (
+    providerField: AiProviderField,
+    modelField: AiModelField,
+    effortField: AiReasoningField,
+    provider: AiProviderId
+  ): void => {
+    const option = getDefaultAiModelOption(provider)
+    setDraft((current) => ({
+      ...current,
+      [providerField]: provider,
+      [modelField]: option.id,
+      [effortField]: option.reasoningEfforts[0] ?? "medium",
     }))
     markDirty()
   }
@@ -149,11 +181,19 @@ function ModelSettingsEditor({
         </CardHeader>
         <CardContent className="divide-y px-0">
           {MODEL_FIELDS.map(
-            ({ modelField, effortField, label, description }) => {
+            ({
+              task,
+              providerField,
+              modelField,
+              effortField,
+              label,
+              description,
+            }) => {
               const inputId = `ai-model-${modelField}`
               const descriptionId = `${inputId}-description`
               const selectedModel = draft[modelField]
               const selectedEffort = draft[effortField]
+              const selectedProvider = resolveAiProvider(draft, providerField)
               return (
                 <div
                   key={modelField}
@@ -173,14 +213,25 @@ function ModelSettingsEditor({
                       Model and reasoning
                     </span>
                     <ModelReasoningPicker
+                      task={task}
+                      provider={selectedProvider}
                       model={selectedModel}
                       reasoning={selectedEffort}
                       disabled={isSaving}
                       labelPrefix={label}
                       aria-describedby={descriptionId}
                       className="h-11 w-full max-w-none justify-between rounded-lg border border-input bg-transparent px-3 text-sm text-foreground hover:bg-muted dark:bg-input/30"
+                      onProviderChange={(provider) =>
+                        updateProvider(
+                          providerField,
+                          modelField,
+                          effortField,
+                          provider
+                        )
+                      }
                       onChange={(model, reasoning) =>
                         updateSelection(
+                          providerField,
                           modelField,
                           effortField,
                           model,

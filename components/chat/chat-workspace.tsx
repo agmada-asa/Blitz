@@ -1,6 +1,6 @@
 "use client"
 
-/** Owns persisted Codex chat selection, streaming, and mixed-context attachments. */
+/** Owns persisted Blitz chat selection, streaming, and mixed-context attachments. */
 
 import {
   BookTextIcon,
@@ -1041,7 +1041,7 @@ export function ChatWorkspace({
                 )}
               </h2>
               <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-muted-foreground">
-                Attach a project, PDF, notes, PowerPoint, or public link. Codex
+                Attach a project, PDF, notes, PowerPoint, or public link. Blitz
                 will use that material as context for the conversation.
               </p>
             </div>

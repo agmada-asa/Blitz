@@ -1,4 +1,4 @@
-/** Drains persisted card-chat requests on the local Mac using the subscription Codex transport. */
+/** Drains persisted card-chat requests on the local Mac through the selected provider. */
 
 import { createChatProgress } from "./chat-progress.ts"
 import { mkdir } from "node:fs/promises"
@@ -8,10 +8,13 @@ import { randomUUID } from "node:crypto"
 import { normalizeSourceDocument } from "./source-ingestion/normalize.ts"
 import { segmentSourceDocument } from "./source-ingestion/segment.ts"
 import {
-  runCardChat,
+  buildCardChatPrompt,
+  type CardChatRequest,
   type CardChatEvent,
   type CardChatResult,
 } from "./card-chat.ts"
+import { runProviderTextTurn } from "./providers/run-text-turn.ts"
+import type { AiProviderId } from "../ai-model-settings.ts"
 
 /** Worker-facing queue claim returned by Convex. */
 export interface ChatClaim {
@@ -23,8 +26,18 @@ export interface ChatClaim {
   projectId: string
   /** Selected learning item. */
   itemId: string
-  /** Previously saved Codex thread, if this is a resumed conversation. */
+  /** Previously saved Codex thread, if this is a resumed legacy conversation. */
   codexThreadId: string | null
+  /** Provider snapshot for this card conversation. */
+  providerId?: AiProviderId
+  /** Provider instance snapshot for this card conversation. */
+  providerInstanceId?: string | null
+  /** Provider-owned session to resume, when the provider exposes one. */
+  providerSessionId?: string | null
+  /** Model snapshot copied when this conversation was queued. */
+  providerModel?: string | null
+  /** Reasoning snapshot copied when this conversation was queued. */
+  providerEffort?: string | null
   /** Lease token that must accompany every write for this request. */
   leaseToken: string
   /** Learner-authored question. */
@@ -72,12 +85,16 @@ export interface ChatWorkerQueue {
     leaseToken: string
     reply: string
   }): Promise<unknown>
-  /** Saves assistant output and both Codex identifiers atomically. */
+  /** Saves assistant output and provider identifiers atomically. */
   complete(args: {
     messageId: string
     leaseToken: string
-    codexThreadId: string
-    codexTurnId: string
+    providerId?: AiProviderId
+    providerInstanceId?: string
+    providerSessionId?: string
+    providerTurnId?: string
+    codexThreadId?: string
+    codexTurnId?: string
     reply: string
   }): Promise<unknown>
   /** Stores a bounded failure while keeping the original message retryable. */
@@ -106,10 +123,14 @@ export interface ChatWorkerOptions {
   signal?: AbortSignal
   model?: string
   effort?: string
+  /** Compatibility provider when a legacy claim has no provider snapshot. */
+  providerId?: AiProviderId
+  /** Compatibility provider instance when a legacy claim has no snapshot. */
+  providerInstanceId?: string
   queue: ChatWorkerQueue
-  /** Injectable runner used to test queue lifecycle without a Codex process. */
+  /** Injectable runner used to test queue lifecycle without a provider process. */
   runTurn?: (
-    request: Parameters<typeof runCardChat>[0],
+    request: CardChatRequest,
     options: { onEvent: (event: CardChatEvent) => void }
   ) => Promise<CardChatResult>
   /** Receives activity while the worker processes a request. */
@@ -142,7 +163,7 @@ function safeFailure(): string {
   return "Card chat could not complete. Retry to try again."
 }
 
-/** Runs one queue claim, source attachment, safe Codex turn, and atomic completion. */
+/** Runs one queue claim, source attachment, provider turn, and atomic completion. */
 export async function runChatWorkerStep(
   options: ChatWorkerOptions
 ): Promise<ChatWorkerStepResult> {
@@ -185,14 +206,33 @@ export async function runChatWorkerStep(
       throw new Error(
         "Card source chunk no longer matches its preparation snapshot"
       )
+    const providerId =
+      claim.providerId ??
+      (claim.codexThreadId ? "codex" : (options.providerId ?? "codex"))
+    const providerInstanceId =
+      claim.providerInstanceId ?? options.providerInstanceId
     const runTurn =
       options.runTurn ??
       ((request, turnOptions) =>
-        runCardChat(request, { onEvent: turnOptions.onEvent }))
+        runProviderTextTurn(
+          {
+            providerId,
+            ...(providerInstanceId ? { providerInstanceId } : {}),
+            workspaceDirectory: request.workspaceDirectory,
+            prompt: buildCardChatPrompt(request),
+            ...(request.threadId ? { threadId: request.threadId } : {}),
+            ...(request.model ? { model: request.model } : {}),
+            ...(request.effort ? { effort: request.effort } : {}),
+            signal: request.signal,
+            sandbox: "read-only",
+            approvalPolicy: "never",
+          },
+          { onEvent: turnOptions.onEvent }
+        ))
     const result = await runTurn(
       {
         workspaceDirectory: options.workspaceDirectory,
-        threadId: claim.codexThreadId ?? undefined,
+        threadId: claim.providerSessionId ?? claim.codexThreadId ?? undefined,
         question: claim.question,
         card: context.item,
         source: {
@@ -200,8 +240,14 @@ export async function runChatWorkerStep(
           filename: context.source.filename,
           extractedText: chunk.text,
         },
-        model: options.model ?? process.env.BLITZ_CODEX_MODEL ?? "gpt-5.6-luna",
-        ...(options.effort === undefined ? {} : { effort: options.effort }),
+        model:
+          claim.providerModel ??
+          options.model ??
+          process.env.BLITZ_CODEX_MODEL ??
+          "gpt-5.6-luna",
+        ...((claim.providerEffort ?? options.effort)
+          ? { effort: claim.providerEffort ?? options.effort }
+          : {}),
         signal: options.signal,
       },
       {
@@ -216,8 +262,13 @@ export async function runChatWorkerStep(
     await options.queue.complete({
       messageId: claim.messageId,
       leaseToken,
-      codexThreadId: result.threadId,
-      codexTurnId: result.turnId,
+      providerId,
+      ...(providerInstanceId ? { providerInstanceId } : {}),
+      providerSessionId: result.threadId,
+      providerTurnId: result.turnId,
+      ...(providerId === "codex"
+        ? { codexThreadId: result.threadId, codexTurnId: result.turnId }
+        : {}),
       reply: result.text,
     })
     return {

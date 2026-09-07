@@ -14,10 +14,8 @@ import {
   type ChatWorkerQueue,
 } from "../lib/server/chat-worker.ts"
 import { loadSavedAiModelSettings } from "../lib/server/ai-model-settings.ts"
-import {
-  resolveAiModel,
-  resolveAiReasoningEffort,
-} from "../lib/ai-model-settings.ts"
+import { resolveAiTaskSelection } from "../lib/ai-model-settings.ts"
+import { isAiProviderId } from "../lib/ai-model-settings.ts"
 
 /** Loads .env.local without overwriting launcher-provided configuration. */
 function loadLocalEnvironment(): void {
@@ -55,8 +53,15 @@ async function main(): Promise<void> {
   process.once("SIGINT", stop)
   process.once("SIGTERM", stop)
   const queue: ChatWorkerQueue = {
-    claimNext: async (args): Promise<ChatClaim | null> =>
-      client.mutation(api.conversations.claimNext, args),
+    claimNext: async (args): Promise<ChatClaim | null> => {
+      const claim = await client.mutation(api.conversations.claimNext, args)
+      if (!claim) return null
+      const { providerId, ...rest } = claim
+      return {
+        ...rest,
+        ...(isAiProviderId(providerId) ? { providerId } : {}),
+      }
+    },
     getWorkContext: async (args): Promise<ChatWorkContext> =>
       client.query(api.conversations.getWorkContext, {
         messageId: args.messageId as Id<"conversationMessages">,
@@ -71,8 +76,16 @@ async function main(): Promise<void> {
       client.mutation(api.conversations.complete, {
         messageId: args.messageId as Id<"conversationMessages">,
         leaseToken: args.leaseToken,
-        codexThreadId: args.codexThreadId,
-        codexTurnId: args.codexTurnId,
+        ...(args.providerId ? { providerId: args.providerId } : {}),
+        ...(args.providerInstanceId
+          ? { providerInstanceId: args.providerInstanceId }
+          : {}),
+        ...(args.providerSessionId
+          ? { providerSessionId: args.providerSessionId }
+          : {}),
+        ...(args.providerTurnId ? { providerTurnId: args.providerTurnId } : {}),
+        ...(args.codexThreadId ? { codexThreadId: args.codexThreadId } : {}),
+        ...(args.codexTurnId ? { codexTurnId: args.codexTurnId } : {}),
         reply: args.reply,
       }),
     fail: (args) =>
@@ -87,24 +100,22 @@ async function main(): Promise<void> {
     while (!controller.signal.aborted) {
       try {
         const settings = await loadSavedAiModelSettings(client)
+        const selection = resolveAiTaskSelection(settings, "reply", {
+          providerEnvironmentFallback: process.env.BLITZ_REPLY_PROVIDER,
+          modelEnvironmentFallback: process.env.BLITZ_CODEX_MODEL,
+          effortEnvironmentFallback: process.env.BLITZ_CODEX_EFFORT,
+        })
         const result = await runChatWorkerStep({
           queue,
           workerId,
           workspaceDirectory: defaultChatWorkspaceDirectory(),
           signal: controller.signal,
-          model: resolveAiModel(
-            settings,
-            "replyModel",
-            process.env.BLITZ_CODEX_MODEL
-          ),
-          effort: resolveAiReasoningEffort(
-            settings,
-            "replyEffort",
-            process.env.BLITZ_CODEX_EFFORT
-          ),
+          providerId: selection.providerId,
+          model: selection.model,
+          effort: selection.effort,
           onEvent: (event) => {
             if (event.type === "activity")
-              console.log("Codex activity received.")
+              console.log("Blitz activity received.")
           },
         })
         if (result.status === "completed")

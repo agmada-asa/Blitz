@@ -7,9 +7,11 @@ import {
   generateLearningForChunk,
   LearningGenerationError,
   type LearningGenerationBatch,
+  type LearningProviderSelection,
   type LearningTextGenerator,
 } from "./learning-generation.ts"
 import { SourceIngestionError } from "./source-ingestion/errors.ts"
+import { isAiProviderId, type AiProviderId } from "../ai-model-settings.ts"
 
 /** Stable preparation failure categories suitable for recovery copy. */
 export type PreparationFailureCategory =
@@ -64,6 +66,14 @@ export interface PreparationClaim {
   nextChunk: number
   /** Approved research scope; omitted for generic source preparation. */
   learningScope?: string
+  /** Provider snapshot copied when this preparation job was queued. */
+  providerId?: string
+  /** Provider instance snapshot copied when this preparation job was queued. */
+  providerInstanceId?: string
+  /** Model snapshot copied when this preparation job was queued. */
+  generationModel?: string
+  /** Reasoning snapshot copied when this preparation job was queued. */
+  generationEffort?: string
   /** Bounded existing project topic titles offered for exact-title reuse. */
   existingTopicTitles: string[]
   source: {
@@ -141,6 +151,22 @@ export async function runPreparationStep(
       signal: options.signal,
       learningScope: claim.learningScope,
       existingTopicTitles: claim.existingTopicTitles,
+      ...(isAiProviderId(claim.providerId)
+        ? {
+            providerSelection: {
+              providerId: claim.providerId as AiProviderId,
+              ...(claim.providerInstanceId
+                ? { providerInstanceId: claim.providerInstanceId }
+                : {}),
+              ...(claim.generationModel
+                ? { model: claim.generationModel }
+                : {}),
+              ...(claim.generationEffort
+                ? { effort: claim.generationEffort }
+                : {}),
+            } satisfies LearningProviderSelection,
+          }
+        : {}),
     })
     options.signal?.throwIfAborted()
     phase = "commit"
