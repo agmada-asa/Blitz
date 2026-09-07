@@ -350,7 +350,7 @@ export function WalkthroughCard({
             variant="ghost"
             className="min-h-11 rounded-full px-4"
           >
-            <Link href={chatHref}>Ask Codex</Link>
+            <Link href={chatHref}>Ask Blitz</Link>
           </Button>
           {onNext ? (
             <Button

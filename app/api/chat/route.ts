@@ -191,7 +191,7 @@ function workspaceChatFailure(
     }
   return {
     reason: error instanceof CardChatError ? error.reason : "unknown",
-    message: `Codex could not finish that reply. ${recovery}`,
+    message: `Blitz could not finish that reply. ${recovery}`,
   }
 }
 

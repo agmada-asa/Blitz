@@ -95,7 +95,7 @@ export function parseGenerationOutput(output: string): Generation {
       }
     }
   }
-  throw new Error("Codex returned an invalid study set")
+  throw new Error("Blitz returned an invalid study set")
 }
 
 /** Runs one bounded Codex process and rejects on launch, size, timeout, or exit errors. */
@@ -144,22 +144,22 @@ function runCodex(
     const timer = setTimeout(() => {
       child.kill("SIGTERM")
       setTimeout(() => child.kill("SIGKILL"), 2_000).unref()
-      finish(new Error("Codex generation timed out"))
+      finish(new Error("Blitz generation timed out"))
     }, TIMEOUT_MS)
     child.stdout.on("data", (chunk: Buffer) => {
       stdout += chunk.toString()
       if (Buffer.byteLength(stdout) > MAX_OUTPUT_BYTES) {
         child.kill("SIGTERM")
-        finish(new Error("Codex output was too large"))
+        finish(new Error("Blitz output was too large"))
       }
     })
     child.stderr.on("data", (chunk: Buffer) => {
       stderr += chunk.toString()
       if (Buffer.byteLength(stderr) > 20_000) stderr = stderr.slice(-20_000)
     })
-    child.on("error", () => finish(new Error("Codex is unavailable")))
+    child.on("error", () => finish(new Error("Blitz is unavailable")))
     child.on("close", (code) => {
-      if (code !== 0) finish(new Error("Codex generation failed"))
+      if (code !== 0) finish(new Error("Blitz generation failed"))
       else finish()
     })
     child.stdin.end(prompt)

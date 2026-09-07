@@ -154,7 +154,7 @@ export function ChatAgentControls({
               Agent controls
             </h3>
             <p className="text-[11px] text-muted-foreground">
-              Choose Codex permissions and active workspace
+              Choose what Blitz can do and where it works
             </p>
           </div>
 
