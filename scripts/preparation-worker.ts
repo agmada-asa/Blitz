@@ -117,10 +117,10 @@ async function main(): Promise<void> {
         if (once) break
         if (result.status === "idle")
           await pause(3_000, undefined, { signal: controller.signal })
-      } catch {
+      } catch (error) {
         if (controller.signal.aborted) break
         console.error(
-          "A preparation step failed. Its saved progress remains available for retry."
+          `A preparation step failed: ${safeWorkerError(error)} Saved progress remains available for retry.`
         )
         if (once) {
           process.exitCode = 1
@@ -143,3 +143,11 @@ await main().catch(() => {
   )
   process.exitCode = 1
 })
+
+/** Returns a bounded worker diagnostic without printing source text or model output. */
+function safeWorkerError(error: unknown): string {
+  const message =
+    error instanceof Error ? error.message.trim() : "Unknown error."
+  const bounded = message.replace(/\s+/g, " ").slice(0, 300)
+  return bounded ? `${bounded}.` : "Unknown error."
+}

@@ -81,11 +81,23 @@ export async function POST(request: Request): Promise<Response> {
       contentHash: stored.sha256,
       unsupported: !format.supported,
     })
-    if (record.duplicate || !record.ingestionJobId)
+    if (record.duplicate || !record.ingestionJobId) {
+      const ingestionStillRunning =
+        record.ingestionStatus === "running" &&
+        (record.ingestionLeaseExpiresAt ?? 0) > Date.now()
       return Response.json(
-        { ...stored, sourceId: record.sourceId, duplicate: true },
-        { headers: { "Cache-Control": "no-store" } }
+        {
+          ...stored,
+          sourceId: record.sourceId,
+          duplicate: true,
+          pending: ingestionStillRunning,
+        },
+        {
+          status: ingestionStillRunning ? 202 : 200,
+          headers: { "Cache-Control": "no-store" },
+        }
       )
+    }
     const leaseToken = randomUUID()
     if (
       !(await convex.mutation(api.sources.claimOriginalIngestion, {

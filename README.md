@@ -18,6 +18,7 @@ For separate terminals:
 ```bash
 npx convex dev
 npm run dev
+npm run worker:ingestion
 npm run worker
 npm run worker:chat
 npm run worker:research

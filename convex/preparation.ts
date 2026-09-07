@@ -554,10 +554,12 @@ export const listJobsForProject = query({
         )
       )
     ).filter((job): job is NonNullable<typeof job> => job !== null)
+    const now = Date.now()
     return jobs.map((job) => ({
       ...progressFor(job),
       sourceId: job.sourceId,
       error: job.lastError ?? null,
+      leaseExpired: job.status === "leased" && (job.leaseExpiresAt ?? 0) <= now,
       createdAt: job.createdAt,
       updatedAt: job.updatedAt,
     }))
