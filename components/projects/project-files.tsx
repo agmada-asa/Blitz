@@ -36,6 +36,9 @@ export type ProjectFileSource = {
   sizeBytes?: number
   originalUrl?: string
   unsupported?: boolean
+  createdAt?: number
+  extractedText?: string
+  kind?: "pdf" | "markdown" | "text" | "paste"
 }
 
 /** Durable ingestion state associated with an uploaded source. */
@@ -97,7 +100,7 @@ export type ProjectFilesProps = {
 }
 
 /** Formats byte sizes without exposing implementation details in the file list. */
-function formatSize(sizeBytes?: number): string | undefined {
+export function formatSize(sizeBytes?: number): string | undefined {
   if (sizeBytes === undefined || !Number.isFinite(sizeBytes)) return undefined
   if (sizeBytes < 1024) return `${sizeBytes} B`
   if (sizeBytes < 1024 * 1024) return `${Math.round(sizeBytes / 1024)} KB`
@@ -298,7 +301,7 @@ export function ProjectFiles({
                         size="sm"
                         onClick={() => actions.onOpenSource?.(source)}
                       >
-                        <ArrowUpRightIcon size={15} /> Open original file
+                        <ArrowUpRightIcon size={15} /> Overview & preview
                       </Button>
                     </div>
                   ) : null}

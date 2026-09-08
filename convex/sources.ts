@@ -284,12 +284,17 @@ export const createOriginalSource = mutation({
         return {
           sourceId: duplicate._id,
           ingestionJobId: job._id,
+          ingestionStatus: "queued" as const,
           duplicate: false,
         }
       }
       return {
         sourceId: duplicate._id,
         ingestionJobId: job?._id,
+        ...(job?.status ? { ingestionStatus: job.status } : {}),
+        ...(job?.leaseExpiresAt !== undefined
+          ? { ingestionLeaseExpiresAt: job.leaseExpiresAt }
+          : {}),
         duplicate: true,
       }
     }
@@ -380,10 +385,22 @@ export const getOriginalSource = query({
       contentHash: source.contentHash,
       status: source.status,
       hasExtractedText: Boolean(source.extractedText.trim()),
+      extractedText: source.extractedText,
+      kind: source.kind,
       ingestionJobId: ingestionJob?._id,
       ingestionStatus: ingestionJob?.status,
       ingestionLeaseExpiresAt: ingestionJob?.leaseExpiresAt,
     }
+  },
+})
+
+/** Returns one complete source record for preview, overview, and inspection. */
+export const getSource = query({
+  args: { projectId: v.id("projects"), sourceId: v.id("sources") },
+  handler: async (ctx, args) => {
+    const source = await ctx.db.get(args.sourceId)
+    if (!source || source.projectId !== args.projectId) return null
+    return source
   },
 })
 
