@@ -7,10 +7,13 @@ import { useState } from "react"
 
 import { Button } from "@/components/ui/button"
 import {
+  AiSearch01Icon,
+  ArrowDownIcon,
   CheckIcon,
   HelpIcon,
-  RotateLeftIcon,
+  Refresh04Icon,
   SparklesIcon,
+  ZapIcon,
 } from "@/components/ui/icon"
 import { Markdown } from "@/components/ui/markdown"
 import type {
@@ -105,9 +108,24 @@ function answerForOption(
   return item.type === "true-false" ? optionId === "true" : optionId
 }
 
+/** Shared card surface styles applied to each visible face. */
+const cardFaceClass =
+  "w-full rounded-[28px] border border-border/70 bg-card px-5 py-6 shadow-sm transition-[max-height] duration-300 sm:px-8 sm:py-8 lg:px-10 lg:py-10"
+
 /** Builds the focused first prompt for a card-backed, source-grounded deep dive. */
 function buildDeepDivePrompt(conceptTitle: string, itemTitle: string): string {
   return `Give me a deeper explanation of "${itemTitle}" within "${conceptTitle}". Use the attached card and source material. Explain the underlying idea, why it matters, how it works, one concrete example, and any common misconception the source supports. Connect it to other relevant topics in this project when that connection is useful, and distinguish source-backed claims from reasonable inferences. Keep the answer focused and cite the source material.`
+}
+
+/** Checks whether an explanation card has enough detail to offer an expansion toggle. */
+function hasExpandableExplanation(
+  deepExplanation?: string,
+  body?: string
+): boolean {
+  if (!deepExplanation?.trim()) return false
+  const trimmedDeep = deepExplanation.trim()
+  const trimmedBody = body?.trim() ?? ""
+  return trimmedDeep !== trimmedBody && trimmedDeep.length > 120
 }
 
 /** Renders one explanation or inline check inside the walkthrough stage. */
@@ -125,8 +143,32 @@ export function WalkthroughCard({
   const [pending, setPending] = useState(false)
   const [error, setError] = useState("")
   const [flipped, setFlipped] = useState(false)
+  const [expanded, setExpanded] = useState(false)
   const isExplanation = item.type === "explain"
   const isMultipleAnswer = item.type === "multiple-answer"
+  const isExpandable =
+    isExplanation &&
+    hasExpandableExplanation(item.deepExplanation, item.body)
+
+  const [prevItemId, setPrevItemId] = useState(item.id)
+  if (prevItemId !== item.id) {
+    setPrevItemId(item.id)
+    setFlipped(false)
+    setExpanded(false)
+  }
+
+  /** Flips back to the front face and collapses any expanded explanation. */
+  function handleFlipToFront(): void {
+    setFlipped(false)
+    setExpanded(false)
+  }
+
+  /** Advances to the next card while resetting face flipping and expansion. */
+  function handleNext(): void {
+    setFlipped(false)
+    setExpanded(false)
+    onNext?.()
+  }
 
   /** Checks whether the server identified one visible option as correct. */
   function optionIsCorrect(optionId: string): boolean {
@@ -193,7 +235,6 @@ export function WalkthroughCard({
     )
   }
 
-  const sources = item.sourceLabels.join(" · ") || "Project sources"
   const chatHref = `/chat?cardProjectId=${encodeURIComponent(projectId)}&cardId=${encodeURIComponent(item.id)}`
   const deepDivePrompt = buildDeepDivePrompt(conceptTitle, item.title)
   const deepDiveHref = `${chatHref}&prompt=${encodeURIComponent(deepDivePrompt)}`
@@ -204,136 +245,141 @@ export function WalkthroughCard({
 
   /** Renders the quick-reading face and keeps the existing answer interaction intact. */
   const frontFace = (
-    <div className="flex min-h-full flex-col">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <span className="inline-flex items-center gap-2 text-xs font-medium tracking-wide text-brand uppercase">
-          {isExplanation ? (
-            <SparklesIcon size={15} aria-hidden="true" />
-          ) : (
-            <HelpIcon size={15} aria-hidden="true" />
-          )}
-          {isExplanation ? "Walkthrough" : "Quick check"}
-        </span>
-        <span className="text-xs text-muted-foreground">
-          {position + 1} of {total}
-        </span>
+    <div className="flex min-h-full flex-col justify-between">
+      <div>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <span className="inline-flex items-center gap-2 text-xs font-medium tracking-wide text-brand uppercase">
+            {isExplanation ? (
+              <SparklesIcon size={15} aria-hidden="true" />
+            ) : (
+              <HelpIcon size={15} aria-hidden="true" />
+            )}
+            {isExplanation ? "Walkthrough" : "Quick check"}
+          </span>
+          <span className="text-xs text-muted-foreground">
+            {position + 1} of {total}
+          </span>
+        </div>
+
+        <p className="mt-6 text-sm font-medium text-muted-foreground">
+          {conceptTitle}
+        </p>
+        <h2 className="mt-2 max-w-2xl font-heading text-[clamp(2rem,5vw,3.35rem)] leading-[1.02] font-medium tracking-[-0.04em]">
+          {isExplanation ? item.title : item.question}
+        </h2>
+
+        {isExplanation ? (
+          <div className="mt-7 max-w-[68ch] text-base leading-7 text-foreground/[0.82] sm:text-lg sm:leading-8 [&_.chat-markdown]:space-y-4 [&_.chat-markdown_p]:leading-[inherit]">
+            <Markdown text={item.body ?? ""} />
+          </div>
+        ) : (
+          <div
+            className="mt-7 space-y-3"
+            role={isMultipleAnswer ? "group" : "radiogroup"}
+            aria-label={
+              isMultipleAnswer ? "Select all that apply" : "Answer options"
+            }
+            aria-busy={pending}
+          >
+            {isMultipleAnswer ? (
+              <p className="pb-1 text-sm text-muted-foreground">
+                Select all that apply
+              </p>
+            ) : null}
+            {optionsForItem(item).map((option, optionIndex) => {
+              const isSelected = isMultipleAnswer
+                ? selectedMany.includes(option.id)
+                : selected === option.id
+              return (
+                <button
+                  key={option.id}
+                  type="button"
+                  role={isMultipleAnswer ? "checkbox" : "radio"}
+                  aria-checked={isSelected}
+                  disabled={pending || feedback !== null}
+                  className={optionClass(option.id, isSelected)}
+                  onClick={() =>
+                    isMultipleAnswer
+                      ? toggleOption(option.id)
+                      : selectOption(option.id)
+                  }
+                >
+                  <span
+                    className={cn(
+                      "flex size-8 shrink-0 items-center justify-center rounded-xl border bg-muted/60 text-xs font-medium text-muted-foreground",
+                      isSelected && !feedback && "border-brand/60 text-brand",
+                      feedback &&
+                        optionIsCorrect(option.id) &&
+                        "border-emerald-500/60 bg-emerald-500/15 text-emerald-700 dark:text-emerald-300",
+                      feedback &&
+                        isSelected &&
+                        !optionIsCorrect(option.id) &&
+                        "border-destructive/60 bg-destructive/15 text-destructive"
+                    )}
+                  >
+                    {feedback && optionIsCorrect(option.id) ? (
+                      <CheckIcon size={15} aria-hidden="true" />
+                    ) : item.type === "true-false" ? (
+                      option.text.slice(0, 1)
+                    ) : (
+                      String.fromCharCode(65 + optionIndex)
+                    )}
+                  </span>
+                  <span className="flex-1">{option.text}</span>
+                </button>
+              )
+            })}
+            {isMultipleAnswer && !feedback ? (
+              <Button
+                type="button"
+                disabled={!selectedMany.length || pending}
+                onClick={() => void scoreAnswer(selectedMany)}
+                className="mt-2 min-h-11 rounded-full bg-brand px-5 text-brand-foreground hover:bg-brand/85"
+              >
+                {pending ? "Checking…" : "Check answers"}
+              </Button>
+            ) : null}
+          </div>
+        )}
+
+        {feedback ? (
+          <div
+            className={cn(
+              "mt-6 rounded-2xl border px-4 py-4",
+              feedback.isCorrect
+                ? "border-emerald-500/35 bg-emerald-500/[0.08]"
+                : "border-destructive/35 bg-destructive/[0.08]"
+            )}
+            role="status"
+          >
+            <p className="font-medium">
+              {feedback.isCorrect ? "Correct" : "Not quite"}
+            </p>
+            {feedback.feedback?.body ? (
+              <p className="mt-1 text-sm leading-6 text-muted-foreground">
+                {feedback.feedback.body}
+              </p>
+            ) : null}
+          </div>
+        ) : null}
+
+        {error ? (
+          <p className="mt-5 text-sm text-destructive" role="alert">
+            {error}
+          </p>
+        ) : null}
       </div>
 
-      <p className="mt-6 text-sm font-medium text-muted-foreground">
-        {conceptTitle}
-      </p>
-      <h2 className="mt-2 max-w-2xl font-heading text-[clamp(2rem,5vw,3.35rem)] leading-[1.02] font-medium tracking-[-0.04em]">
-        {isExplanation ? item.title : item.question}
-      </h2>
-
-      {isExplanation ? (
-        <div className="mt-7 max-w-[68ch] text-base leading-7 text-foreground/[0.82] sm:text-lg sm:leading-8 [&_.chat-markdown]:space-y-4 [&_.chat-markdown_p]:leading-[inherit]">
-          <Markdown text={item.body ?? ""} />
-        </div>
-      ) : (
-        <div
-          className="mt-7 space-y-3"
-          role={isMultipleAnswer ? "group" : "radiogroup"}
-          aria-label={
-            isMultipleAnswer ? "Select all that apply" : "Answer options"
-          }
-          aria-busy={pending}
-        >
-          {isMultipleAnswer ? (
-            <p className="pb-1 text-sm text-muted-foreground">
-              Select all that apply
-            </p>
-          ) : null}
-          {optionsForItem(item).map((option, optionIndex) => {
-            const isSelected = isMultipleAnswer
-              ? selectedMany.includes(option.id)
-              : selected === option.id
-            return (
-              <button
-                key={option.id}
-                type="button"
-                role={isMultipleAnswer ? "checkbox" : "radio"}
-                aria-checked={isSelected}
-                disabled={pending || feedback !== null}
-                className={optionClass(option.id, isSelected)}
-                onClick={() =>
-                  isMultipleAnswer
-                    ? toggleOption(option.id)
-                    : selectOption(option.id)
-                }
-              >
-                <span
-                  className={cn(
-                    "flex size-8 shrink-0 items-center justify-center rounded-xl border bg-muted/60 text-xs font-medium text-muted-foreground",
-                    isSelected && !feedback && "border-brand/60 text-brand",
-                    feedback &&
-                      optionIsCorrect(option.id) &&
-                      "border-emerald-500/60 bg-emerald-500/15 text-emerald-700 dark:text-emerald-300",
-                    feedback &&
-                      isSelected &&
-                      !optionIsCorrect(option.id) &&
-                      "border-destructive/60 bg-destructive/15 text-destructive"
-                  )}
-                >
-                  {feedback && optionIsCorrect(option.id) ? (
-                    <CheckIcon size={15} aria-hidden="true" />
-                  ) : item.type === "true-false" ? (
-                    option.text.slice(0, 1)
-                  ) : (
-                    String.fromCharCode(65 + optionIndex)
-                  )}
-                </span>
-                <span className="flex-1">{option.text}</span>
-              </button>
-            )
-          })}
-          {isMultipleAnswer && !feedback ? (
-            <Button
-              type="button"
-              disabled={!selectedMany.length || pending}
-              onClick={() => void scoreAnswer(selectedMany)}
-              className="mt-2 min-h-11 rounded-full bg-brand px-5 text-brand-foreground hover:bg-brand/85"
-            >
-              {pending ? "Checking…" : "Check answers"}
-            </Button>
-          ) : null}
-        </div>
-      )}
-
-      {feedback ? (
-        <div
-          className={cn(
-            "mt-6 rounded-2xl border px-4 py-4",
-            feedback.isCorrect
-              ? "border-emerald-500/35 bg-emerald-500/[0.08]"
-              : "border-destructive/35 bg-destructive/[0.08]"
-          )}
-          role="status"
-        >
-          <p className="font-medium">
-            {feedback.isCorrect ? "Correct" : "Not quite"}
-          </p>
-          {feedback.feedback?.body ? (
-            <p className="mt-1 text-sm leading-6 text-muted-foreground">
-              {feedback.feedback.body}
-            </p>
-          ) : null}
-        </div>
-      ) : null}
-
-      {error ? (
-        <p className="mt-5 text-sm text-destructive" role="alert">
-          {error}
-        </p>
-      ) : null}
-
       <div className="mt-8 flex flex-wrap items-center justify-between gap-3 border-t border-border/60 pt-5">
-        <p
-          className="max-w-md truncate text-xs text-muted-foreground"
-          title={sources}
+        <Button
+          asChild
+          variant="outline"
+          className="min-h-11 rounded-full px-4"
         >
-          Source · {sources}
-        </p>
+          <Link href={chatHref}>
+            <ZapIcon aria-hidden="true" /> Ask Codex
+          </Link>
+        </Button>
         <div className="flex flex-wrap items-center justify-end gap-2">
           {isExplanation ? (
             <Button
@@ -342,20 +388,13 @@ export function WalkthroughCard({
               className="min-h-11 rounded-full px-4"
               onClick={() => setFlipped(true)}
             >
-              <RotateLeftIcon aria-hidden="true" /> See more detail
+              <Refresh04Icon aria-hidden="true" /> See more detail
             </Button>
           ) : null}
-          <Button
-            asChild
-            variant="ghost"
-            className="min-h-11 rounded-full px-4"
-          >
-            <Link href={chatHref}>Ask Codex</Link>
-          </Button>
           {onNext ? (
             <Button
               type="button"
-              onClick={onNext}
+              onClick={handleNext}
               className="min-h-11 rounded-full bg-brand px-5 text-brand-foreground hover:bg-brand/85"
             >
               Next card
@@ -366,60 +405,102 @@ export function WalkthroughCard({
     </div>
   )
 
+  /** Renders the source-grounded deeper explanation with expandable full detail. */
   const backFace = (
-    <div className="flex min-h-full flex-col">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <span className="inline-flex items-center gap-2 text-xs font-medium tracking-wide text-brand uppercase">
-          <SparklesIcon size={15} aria-hidden="true" /> In-depth explanation
-        </span>
-        <span className="text-xs text-muted-foreground">
-          {position + 1} of {total}
-        </span>
+    <div className="flex min-h-full flex-col justify-between">
+      <div>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <span className="inline-flex items-center gap-2 text-xs font-medium tracking-wide text-brand uppercase">
+            <SparklesIcon size={15} aria-hidden="true" /> In-depth explanation
+          </span>
+          <span className="text-xs text-muted-foreground">
+            {position + 1} of {total}
+          </span>
+        </div>
+
+        <p className="mt-6 text-sm font-medium text-muted-foreground">
+          {conceptTitle}
+        </p>
+        <h2 className="mt-2 max-w-2xl font-heading text-[clamp(2rem,5vw,3.35rem)] leading-[1.02] font-medium tracking-[-0.04em]">
+          {item.title}
+        </h2>
+
+        <div
+          id={`walkthrough-deep-explanation-${item.id}`}
+          className={cn(
+            "relative mt-7 max-w-[68ch] text-base leading-7 text-foreground/[0.82] transition-[max-height] duration-300 ease-in-out sm:text-lg sm:leading-8 [&_.chat-markdown]:space-y-4 [&_.chat-markdown_p]:leading-[inherit] motion-reduce:transition-none",
+            isExpandable && !expanded
+              ? "max-h-[4.5rem] overflow-hidden sm:max-h-[5.25rem]"
+              : "max-h-[2000px]"
+          )}
+        >
+          <Markdown text={detailedExplanation} />
+          {isExpandable ? (
+            <div
+              aria-hidden="true"
+              className={cn(
+                "pointer-events-none absolute inset-x-0 bottom-0 h-10 bg-gradient-to-t from-card to-transparent transition-opacity duration-200 motion-reduce:transition-none",
+                expanded ? "opacity-0" : "opacity-100"
+              )}
+            />
+          ) : null}
+        </div>
+
+        {isExpandable ? (
+          <div className="mt-2.5">
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              aria-expanded={expanded}
+              aria-controls={`walkthrough-deep-explanation-${item.id}`}
+              onClick={() => setExpanded((prev) => !prev)}
+              className="-ml-2 h-7 gap-1.5 rounded-full px-2.5 text-xs font-semibold text-brand hover:bg-brand/10 hover:text-brand focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              <span>{expanded ? "Show less" : "Show more"}</span>
+              <ArrowDownIcon
+                size={14}
+                aria-hidden="true"
+                className={cn(
+                  "transition-transform duration-200 motion-reduce:transition-none",
+                  expanded && "rotate-180"
+                )}
+              />
+            </Button>
+          </div>
+        ) : null}
+
+        {isExpandable && !expanded ? null : (
+          <p className="mt-6 max-w-[68ch] text-sm leading-6 text-muted-foreground">
+            Want to connect this idea to the rest of your material?
+          </p>
+        )}
       </div>
-
-      <p className="mt-6 text-sm font-medium text-muted-foreground">
-        {conceptTitle}
-      </p>
-      <h2 className="mt-2 max-w-2xl font-heading text-[clamp(2rem,5vw,3.35rem)] leading-[1.02] font-medium tracking-[-0.04em]">
-        {item.title}
-      </h2>
-
-      <div className="mt-7 max-w-[68ch] text-base leading-7 text-foreground/[0.82] sm:text-lg sm:leading-8 [&_.chat-markdown]:space-y-4 [&_.chat-markdown_p]:leading-[inherit]">
-        <Markdown text={detailedExplanation} />
-      </div>
-
-      <p className="mt-6 max-w-[68ch] text-sm leading-6 text-muted-foreground">
-        Want to connect this idea to the rest of your material?
-      </p>
 
       <div className="mt-8 flex flex-wrap items-center justify-between gap-3 border-t border-border/60 pt-5">
-        <p
-          className="max-w-md truncate text-xs text-muted-foreground"
-          title={sources}
+        <Button
+          asChild
+          variant="outline"
+          className="min-h-11 rounded-full px-4"
         >
-          Source · {sources}
-        </p>
+          <Link href={deepDiveHref}>
+            <AiSearch01Icon aria-hidden="true" /> Delve Deeper
+          </Link>
+        </Button>
         <div className="flex flex-wrap items-center justify-end gap-2">
-          <Button
-            asChild
-            className="min-h-11 rounded-full bg-brand px-5 text-brand-foreground hover:bg-brand/85"
-          >
-            <Link href={deepDiveHref}>Delve Deeper</Link>
-          </Button>
           <Button
             type="button"
             variant="outline"
             className="min-h-11 rounded-full px-4"
-            onClick={() => setFlipped(false)}
+            onClick={handleFlipToFront}
           >
-            <RotateLeftIcon aria-hidden="true" /> Show front
+            <Refresh04Icon aria-hidden="true" /> Show front
           </Button>
           {onNext ? (
             <Button
               type="button"
-              variant="ghost"
-              onClick={onNext}
-              className="min-h-11 rounded-full px-4"
+              onClick={handleNext}
+              className="min-h-11 rounded-full bg-brand px-5 text-brand-foreground hover:bg-brand/85"
             >
               Next card
             </Button>
@@ -430,7 +511,7 @@ export function WalkthroughCard({
   )
 
   return (
-    <article className="w-full max-w-[760px] rounded-[28px] border border-border/70 bg-card px-5 py-6 shadow-sm sm:px-8 sm:py-8 lg:px-10 lg:py-10">
+    <article className="my-auto w-full max-w-[760px]">
       {isExplanation ? (
         <div className="[perspective:1400px]">
           <div
@@ -443,7 +524,8 @@ export function WalkthroughCard({
               aria-hidden={flipped}
               inert={flipped ? true : undefined}
               className={cn(
-                "col-start-1 row-start-1 [backface-visibility:hidden]",
+                "col-start-1 row-start-1 [backface-visibility:hidden] [-webkit-backface-visibility:hidden]",
+                cardFaceClass,
                 flipped && "pointer-events-none"
               )}
             >
@@ -453,7 +535,8 @@ export function WalkthroughCard({
               aria-hidden={!flipped}
               inert={!flipped ? true : undefined}
               className={cn(
-                "col-start-1 row-start-1 [transform:rotateY(180deg)] [backface-visibility:hidden]",
+                "col-start-1 row-start-1 [transform:rotateY(180deg)] [backface-visibility:hidden] [-webkit-backface-visibility:hidden]",
+                cardFaceClass,
                 !flipped && "pointer-events-none"
               )}
             >
@@ -462,7 +545,7 @@ export function WalkthroughCard({
           </div>
         </div>
       ) : (
-        frontFace
+        <div className={cardFaceClass}>{frontFace}</div>
       )}
     </article>
   )
