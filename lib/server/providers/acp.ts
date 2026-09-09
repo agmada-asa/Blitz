@@ -566,7 +566,7 @@ export async function inspectAcpAuthentication(
   const child = options.spawnProcess
     ? options.spawnProcess(command, workspaceDirectory)
     : spawnAcpProcess(command, workspaceDirectory)
-  const client = new AcpJsonRpcClient(child, { requestTimeoutMs: 8_000 })
+  const client = new AcpJsonRpcClient(child, { requestTimeoutMs: 30_000 })
   try {
     const initialized = await client.initialize()
     if (!options.verifySession) return { authenticated: null, ...initialized }
