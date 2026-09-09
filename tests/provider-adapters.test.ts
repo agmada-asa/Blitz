@@ -12,6 +12,7 @@ import {
 } from "../lib/server/providers/acp.ts"
 import {
   claudeArgs,
+  claudeUserContent,
   runClaudeCodeTextTurn,
   type ClaudeCodeChildProcess,
 } from "../lib/server/providers/claude-code.ts"
@@ -225,9 +226,39 @@ test("extracts Antigravity models from ACP session configuration", () => {
   )
 })
 
+/** Covers the nested model advertisement shape used by newer ACP peers. */
+test("extracts models from the native models.availableModels shape", () => {
+  assert.deepEqual(
+    parseAcpModelOptions({
+      models: {
+        currentModelId: "native-high",
+        availableModels: [
+          { modelId: "native-low", name: "Native Low" },
+          { id: "native-high", name: "Native High" },
+        ],
+      },
+    }),
+    [
+      { id: "native-low", label: "Native Low", reasoningEffort: "low" },
+      { id: "native-high", label: "Native High", reasoningEffort: "high" },
+    ]
+  )
+})
+
 /** Confirms an explicit Antigravity variant is applied through its native model selector. */
 test("applies an Antigravity model and encoded reasoning choice", async () => {
   const child = new FakeAcpProcess()
+  child.sessionResult = {
+    sessionId: "acp-session-1",
+    configOptions: [
+      {
+        id: "model",
+        category: "model",
+        type: "select",
+        options: [{ value: "gemini-flash-high", name: "Gemini Flash (High)" }],
+      },
+    ],
+  }
   await runAcpTextTurn(
     {
       selection: {
@@ -801,6 +832,7 @@ test("Claude maps access policies without weakening background turns", () => {
   assert.ok(!full.includes("--restricted"))
   const ask = claudeArgs({ ...base, approvalPolicy: "on-request" })
   assert.ok(ask.includes("--permission-prompt-tool"))
+  assert.match(ask[ask.indexOf("--tools") + 1] ?? "", /AskUserQuestion/)
   assert.ok(!ask.includes("--dangerously-skip-permissions"))
   const background = claudeArgs({
     ...base,
@@ -809,6 +841,36 @@ test("Claude maps access policies without weakening background turns", () => {
   })
   assert.equal(background[background.indexOf("--tools") + 1], "")
   assert.ok(!background.includes("--dangerously-skip-permissions"))
+})
+
+/** Images use Claude's native base64 content blocks and force structured stdin. */
+test("Claude serializes native image input and developer instructions", () => {
+  const request = {
+    selection: { providerId: "claude-code" as const, model: "sonnet" },
+    workspaceDirectory: "/tmp/blitz-test",
+    prompt: "Read this image",
+    developerInstructions: "Use the project rules.",
+    attachments: [
+      {
+        type: "image" as const,
+        mimeType: "image/png" as const,
+        data: "aGVsbG8=",
+        name: "diagram.png",
+      },
+    ],
+  }
+  const args = claudeArgs(request)
+  assert.ok(args.includes("--input-format"))
+  assert.ok(args.includes("stream-json"))
+  assert.ok(args.includes("--append-system-prompt"))
+  assert.ok(!args.includes(request.prompt))
+  assert.deepEqual(claudeUserContent(request), [
+    { type: "text", text: "Read this image" },
+    {
+      type: "image",
+      source: { type: "base64", media_type: "image/png", data: "aGVsbG8=" },
+    },
+  ])
 })
 
 /** A pending review cannot grant a tool after the turn's deadline. */

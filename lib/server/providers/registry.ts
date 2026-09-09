@@ -1,6 +1,7 @@
 /** Registers Blitz's local providers and performs bounded executable checks. */
 
 import { spawn } from "node:child_process"
+import { CHAT_PROVIDER_CAPABILITIES } from "../../provider-capabilities.ts"
 
 import {
   AI_PROVIDER_IDS,
@@ -10,64 +11,16 @@ import {
 import type {
   ProviderAdapterDefinition,
   ProviderAvailability,
-  ProviderCapabilities,
   ProviderCommand,
   ProviderHealthOptions,
 } from "./types.ts"
 import { AcpProviderError, inspectAcpAuthentication } from "./acp.ts"
 import { discoverAntigravityExecutable } from "./antigravity-runtime.ts"
+import { getCodexModelCatalog } from "./codex-models.ts"
 
 const DEFAULT_INSTANCE_ID = "local"
 const PROBE_TIMEOUT_MS = 5_000
 const MAX_STATUS_BYTES = 16_000
-
-/** Provider capabilities used before a live provider session reports more detail. */
-const CAPABILITIES: Readonly<Record<AiProviderId, ProviderCapabilities>> = {
-  codex: {
-    streaming: true,
-    resumableSessions: true,
-    structuredOutput: true,
-    approvals: true,
-    webSearch: true,
-    workspaceWrites: true,
-    sessionModelSwitch: false,
-    promptlessTurnContinuation: false,
-    conversationRollback: false,
-  },
-  "claude-code": {
-    streaming: true,
-    resumableSessions: true,
-    structuredOutput: true,
-    approvals: true,
-    webSearch: false,
-    workspaceWrites: true,
-    sessionModelSwitch: false,
-    promptlessTurnContinuation: false,
-    conversationRollback: false,
-  },
-  opencode: {
-    streaming: true,
-    resumableSessions: true,
-    structuredOutput: true,
-    approvals: true,
-    webSearch: false,
-    workspaceWrites: true,
-    sessionModelSwitch: false,
-    promptlessTurnContinuation: false,
-    conversationRollback: false,
-  },
-  antigravity: {
-    streaming: true,
-    resumableSessions: true,
-    structuredOutput: true,
-    approvals: true,
-    webSearch: false,
-    workspaceWrites: true,
-    sessionModelSwitch: false,
-    promptlessTurnContinuation: false,
-    conversationRollback: false,
-  },
-}
 
 /** Returns a local command without interpreting user input through a shell. */
 export function providerCommand(providerId: AiProviderId): ProviderCommand {
@@ -248,9 +201,24 @@ async function providerAuthentication(
   }
   if (providerId === "codex") {
     const status = await readCommand(command.executable, ["login", "status"])
+    const authenticated = status.code === 0 && /logged in/i.test(status.output)
+    let models: ProviderAvailability["models"]
+    if (authenticated) {
+      try {
+        models = await getCodexModelCatalog({
+          workspaceDirectory: options.workspaceDirectory,
+          executable: command.executable,
+          requestTimeoutMs: PROBE_TIMEOUT_MS,
+        })
+      } catch {
+        // Authentication remains useful setup state even if this optional catalog read is unavailable.
+        models = undefined
+      }
+    }
     return {
-      authenticated: status.code === 0 && /logged in/i.test(status.output),
-      canDisconnect: status.code === 0 && /logged in/i.test(status.output),
+      authenticated,
+      canDisconnect: authenticated,
+      ...(models === undefined ? {} : { models }),
       authMethods: [
         {
           id: "codex-login",
@@ -370,7 +338,7 @@ function definition(
     providerId,
     displayName,
     tasks: AI_PROVIDER_TASKS[providerId],
-    capabilities: CAPABILITIES[providerId],
+    capabilities: CHAT_PROVIDER_CAPABILITIES[providerId],
     checkAvailability: (options) =>
       checkProviderAvailability(providerId, options),
   }

@@ -13,12 +13,14 @@ import type {
   ProviderCommand,
   ProviderEvent,
   ProviderModelOption,
+  ProviderSelection,
   ProviderTextTurnRequest,
   ProviderTextTurnResult,
 } from "./types.ts"
 
 const MAX_OUTPUT_BYTES = 250_000
 const MAX_STREAM_BYTES = 4_000_000
+const MAX_PROMPT_BYTES = 30_000_000
 
 const DEFAULT_TIMEOUT_MS = 120_000
 const DEFAULT_LINE_BYTES = 1_000_000
@@ -77,6 +79,17 @@ type PendingRequest = {
   readonly timer: ReturnType<typeof setTimeout>
 }
 
+/** Handles a verified ACP reverse request and returns its native JSON result. */
+export type AcpRequestHandler = (request: {
+  readonly requestId: JsonRpcId
+  readonly method: string
+  readonly params: unknown
+  /** Provider session extracted from the request when the protocol supplies it. */
+  readonly sessionId?: string
+  /** Aborts when the provider turn is cancelled or the request times out. */
+  readonly signal?: AbortSignal
+}) => Promise<unknown>
+
 /** Converts an unknown value into an object without trusting its fields. */
 function record(value: unknown): Record<string, unknown> | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value))
@@ -91,6 +104,69 @@ function stringField(
 ): string | undefined {
   const field = value?.[key]
   return typeof field === "string" && field.trim() ? field : undefined
+}
+
+/** Returns whether Antigravity encoded this permission request as a question. */
+export function isAntigravityUserInputRequest(params: unknown): boolean {
+  const input = record(params)
+  const toolCall = record(input?.toolCall)
+  const id = stringField(toolCall, "toolCallId")
+  return id?.startsWith("interaction_") === true
+}
+
+/** Extracts a bounded Antigravity single-choice question from ACP permission data. */
+export function extractAntigravityUserInputQuestion(params: unknown): {
+  readonly id: string
+  readonly header: "Question"
+  readonly question: string
+  readonly multiSelect: false
+  readonly allowCustomAnswer: false
+  readonly options: readonly { value: string; label: string; description: string }[]
+} | undefined {
+  const input = record(params)
+  const toolCall = record(input?.toolCall)
+  const id = stringField(toolCall, "toolCallId")
+  const options = Array.isArray(input?.options) ? input.options.map(record) : []
+  if (!id?.startsWith("interaction_") || options.length === 0) return undefined
+  const seen = new Set<string>()
+  const normalized = options.flatMap((option) => {
+    const optionId = stringField(option, "optionId")
+    if (!optionId || seen.has(optionId)) return []
+    seen.add(optionId)
+    const label = stringField(option, "name") ?? optionId
+    return [{ value: optionId, label, description: label }]
+  })
+  if (normalized.length !== options.length) return undefined
+  const question = stringField(toolCall, "title") ?? "Choose an option."
+  return {
+    id,
+    header: "Question",
+    question: question.slice(0, 8_000),
+    multiSelect: false,
+    allowCustomAnswer: false,
+    options: normalized,
+  }
+}
+
+/** Converts one Antigravity question answer map into its native permission result. */
+export function makeAntigravityUserInputResponse(
+  params: unknown,
+  answers: unknown
+): { outcome: { outcome: "selected"; optionId: string } } | undefined {
+  const question = extractAntigravityUserInputQuestion(params)
+  if (!question) return undefined
+  const answerRecord = record(answers)
+  const raw = answerRecord?.[question.id]
+  const answer = Array.isArray(raw)
+    ? raw.length === 1 && typeof raw[0] === "string" ? raw[0] : undefined
+    : typeof raw === "string" ? raw : undefined
+  if (!answer) return undefined
+  const exact = question.options.find((option) => option.value === answer)
+  if (exact) return { outcome: { outcome: "selected", optionId: exact.value } }
+  const labels = question.options.filter((option) => option.label === answer)
+  return labels.length === 1
+    ? { outcome: { outcome: "selected", optionId: labels[0].value } }
+    : undefined
 }
 
 /** Maps a provider model label or ID to Blitz's reasoning vocabulary when it is explicit. */
@@ -125,6 +201,11 @@ export function parseAcpModelOptions(
         (option.id === "model" || option.category === "model")
     )
   const rawOptions = Array.isArray(config?.options) ? config.options : []
+  const models = record(setup?.models)
+  const rawModels = Array.isArray(models?.availableModels)
+    ? models.availableModels
+    : []
+  const source = rawOptions.length > 0 ? rawOptions : rawModels
   const entries = rawOptions.flatMap((entry): Record<string, unknown>[] => {
     const option = record(entry)
     if (!option) return []
@@ -136,6 +217,19 @@ export function parseAcpModelOptions(
         >[])
       : []
   })
+  if (rawOptions.length === 0) {
+    entries.push(
+      ...source.flatMap((entry): Record<string, unknown>[] => {
+        const option = record(entry)
+        if (!option) return []
+        const id =
+          stringField(option, "id") ??
+          stringField(option, "modelId") ??
+          stringField(option, "value")
+        return id ? [{ ...option, value: id }] : []
+      })
+    )
+  }
   const seen = new Set<string>()
   return entries.flatMap((entry): ProviderModelOption[] => {
     const id = stringField(entry, "value")
@@ -178,6 +272,14 @@ class AcpJsonRpcClient {
   private outputBytes = 0
   private activeSessionId?: string
   private readonly approvalHandler?: ProviderApprovalHandler
+  private readonly requestHandler?: AcpRequestHandler
+  private agentCapabilities: Record<string, unknown> = {}
+  private readonly configOptions = new Map<string, Set<string>>()
+  private availableModes?: Set<string>
+  private modelConfigId?: string
+  private legacyModelSelector = false
+  private modelOptions = new Map<string, ProviderModelOption>()
+  private readonly activeReverseRequests = new Map<JsonRpcId, AbortController>()
 
   /** Attaches readers and lifecycle handlers to a new ACP process. */
   constructor(
@@ -186,10 +288,12 @@ class AcpJsonRpcClient {
       requestTimeoutMs?: number
       maxLineBytes?: number
       approvalHandler?: ProviderApprovalHandler
+      requestHandler?: AcpRequestHandler
     } = {}
   ) {
     this.child = child
     this.approvalHandler = options.approvalHandler
+    this.requestHandler = options.requestHandler
     this.requestTimeoutMs =
       options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS
     this.maxLineBytes = options.maxLineBytes ?? DEFAULT_LINE_BYTES
@@ -245,6 +349,7 @@ class AcpJsonRpcClient {
         "ACP protocol version is unsupported"
       )
     const capabilities = record(result?.agentCapabilities)
+    this.agentCapabilities = capabilities ?? {}
     this.loadSession = capabilities?.loadSession === true
     this.resumeSupported = !!record(
       record(capabilities?.sessionCapabilities)?.resume
@@ -303,8 +408,11 @@ class AcpJsonRpcClient {
     const sessionId = stringField(result, "sessionId")
     if (!sessionId)
       throw new AcpProviderError("protocol", "ACP did not return a session ID")
+    this.recordSessionOptions(result)
+    const models = parseAcpModelOptions(result)
+    this.modelOptions = new Map(models.map((option) => [option.id, option]))
     await this.trySelectModel(sessionId, model)
-    return { sessionId, models: parseAcpModelOptions(result) }
+    return { sessionId, models }
   }
 
   /** Loads a provider-owned session when the ACP runtime supports resuming it. */
@@ -332,33 +440,66 @@ class AcpJsonRpcClient {
       )
     )
     const loadedId = stringField(result, "sessionId") ?? sessionId
+    this.recordSessionOptions(result)
+    const models = parseAcpModelOptions(result)
+    this.modelOptions = new Map(models.map((option) => [option.id, option]))
     await this.trySelectModel(loadedId, model)
     return loadedId
   }
 
   /** Reasserts the native mode before every prompt, including resumed sessions. */
   async selectMode(sessionId: string, modeId: string): Promise<void> {
+    if (this.availableModes && !this.availableModes.has(modeId))
+      throw new AcpProviderError(
+        "invalid-input",
+        "ACP mode is not advertised by this provider"
+      )
     await this.request("session/set_mode", { sessionId, modeId })
     this.activeSessionId = sessionId
   }
 
   /** Sends one prompt and waits for the ACP request response. */
   async prompt(sessionId: string, prompt: string): Promise<void> {
+    const content: Array<Record<string, unknown>> = [
+      { type: "text", text: prompt },
+    ]
+    if (this.promptImages.length) content.push(...this.promptImages)
     await this.request("session/prompt", {
       sessionId,
-      prompt: [{ type: "text", text: prompt }],
-    })
+      prompt: content,
+    }, MAX_PROMPT_BYTES)
+  }
+
+  private promptImages: Array<Record<string, unknown>> = []
+
+  /** Sets native ACP image blocks after capability negotiation. */
+  setPromptImages(images: Array<Record<string, unknown>>): void {
+    this.promptImages = images
+  }
+
+  /** Returns whether initialization advertised native image prompt support. */
+  supportsPromptImages(): boolean {
+    return Boolean(record(this.agentCapabilities.promptCapabilities)?.image)
   }
 
   /** Cancels the active ACP prompt without waiting for another model response. */
   cancel(sessionId: string): void {
     if (this.closed) return
-    this.write({ method: "session/cancel", params: { sessionId } })
+    for (const controller of this.activeReverseRequests.values())
+      controller.abort()
+    this.write({
+      jsonrpc: "2.0",
+      method: "session/cancel",
+      params: { sessionId },
+    })
   }
 
   /** Closes the child process and rejects any in-flight protocol requests. */
   async close(): Promise<void> {
     this.closed = true
+    for (const controller of this.activeReverseRequests.values())
+      controller.abort()
+    this.activeReverseRequests.clear()
     for (const [id, pending] of this.pending) {
       clearTimeout(pending.timer)
       pending.reject(new AcpProviderError("transport", "ACP connection closed"))
@@ -383,25 +524,112 @@ class AcpJsonRpcClient {
       model === "antigravity/default"
     )
       return
-    await this.request("session/set_config_option", {
-      sessionId,
-      configId: "model",
-      value: model,
+    const supported = this.modelConfigId
+      ? this.configOptions.get(this.modelConfigId)
+      : undefined
+    if (this.legacyModelSelector && !this.modelOptions.has(model))
+      throw new AcpProviderError(
+        "invalid-input",
+        "The selected ACP model is not advertised by this provider"
+      )
+    if (supported && !supported.has(model))
+      throw new AcpProviderError(
+        "invalid-input",
+        "The selected ACP model is not advertised by this provider"
+      )
+    const selected = this.modelOptions.get(model)
+    const effort = this.requestedEffort
+    if (
+      effort &&
+      effort !== "default" &&
+      this.modelOptions.size > 0 &&
+      selected?.reasoningEffort !== effort
+    )
+      throw new AcpProviderError(
+        "invalid-input",
+        "The selected ACP model does not support the requested reasoning effort"
+      )
+    if (this.legacyModelSelector) {
+      await this.request("session/set_model", { sessionId, modelId: model })
+    } else if (this.modelConfigId) {
+      await this.request("session/set_config_option", {
+        sessionId,
+        configId: this.modelConfigId,
+        value: model,
+      })
+    } else {
+      throw new AcpProviderError(
+        "invalid-input",
+        "ACP did not advertise a model selector"
+      )
+    }
+  }
+
+  private requestedEffort?: ProviderSelection["effort"]
+
+  /** Records the provider-neutral effort before native model validation. */
+  setRequestedEffort(effort: ProviderSelection["effort"]): void {
+    this.requestedEffort = effort
+  }
+
+  /** Stores session-advertised modes and config values before selecting any option. */
+  private recordSessionOptions(
+    value: Record<string, unknown> | undefined
+  ): void {
+    const modeContainer = record(value?.modes)
+    const advertisedModes = Array.isArray(value?.availableModes)
+      ? value.availableModes
+      : Array.isArray(modeContainer?.availableModes)
+        ? modeContainer.availableModes
+        : []
+    const modes = advertisedModes.flatMap((entry) => {
+      const mode = record(entry)
+      const id =
+        stringField(mode, "id") ??
+        stringField(mode, "modeId") ??
+        (typeof entry === "string" ? entry : undefined)
+      return id ? [id] : []
     })
+    if (modes.length) this.availableModes = new Set(modes)
+    const options = Array.isArray(value?.configOptions)
+      ? value.configOptions
+      : []
+    for (const raw of options) {
+      const option = record(raw)
+      const id = stringField(option, "id")
+      if (!id || !Array.isArray(option?.options)) continue
+      const values = option.options.flatMap((entry) => {
+        const item = record(entry)
+        const value = stringField(item, "value")
+        return value ? [value] : []
+      })
+      if (values.length) this.configOptions.set(id, new Set(values))
+      if (option.category === "model" || id === "model") this.modelConfigId = id
+    }
+    const models = record(value?.models)
+    if (Array.isArray(models?.availableModels) && !this.modelConfigId)
+      this.legacyModelSelector = true
   }
 
   /** Writes one bounded JSON-RPC message to the provider process. */
-  private write(message: Record<string, unknown>): void {
+  private write(
+    message: Record<string, unknown>,
+    maxBytes = this.maxLineBytes
+  ): void {
     if (this.closed)
       throw new AcpProviderError("transport", "ACP connection is closed")
     const encoded = `${JSON.stringify(message)}\n`
-    if (new TextEncoder().encode(encoded).byteLength > this.maxLineBytes)
+    if (new TextEncoder().encode(encoded).byteLength > maxBytes)
       throw new AcpProviderError("invalid-input", "ACP request is too large")
     this.child.stdin.write(encoded)
   }
 
   /** Sends one correlated ACP request with a bounded response deadline. */
-  private request(method: string, params?: unknown): Promise<unknown> {
+  private request(
+    method: string,
+    params?: unknown,
+    maxBytes = this.maxLineBytes
+  ): Promise<unknown> {
     if (this.closed)
       return Promise.reject(
         new AcpProviderError("transport", "ACP connection is closed")
@@ -421,7 +649,7 @@ class AcpJsonRpcClient {
           id,
           method,
           ...(params ? { params } : {}),
-        })
+        }, maxBytes)
       } catch (error) {
         clearTimeout(timer)
         this.pending.delete(id)
@@ -502,6 +730,12 @@ class AcpJsonRpcClient {
         )
         return
       }
+      if (method === "session/elicitation") {
+        void this.respondElicitation(id, params).catch((error: unknown) =>
+          this.closeWithError("ACP elicitation failed", error)
+        )
+        return
+      }
       this.write({
         jsonrpc: "2.0",
         id,
@@ -513,11 +747,83 @@ class AcpJsonRpcClient {
     this.emitAcpNotification(method, params)
   }
 
+  /** Rejects unsupported ACP elicitation instead of pretending to implement form responses. */
+  private async respondElicitation(
+    id: JsonRpcId,
+    params: unknown
+  ): Promise<void> {
+    const sessionId = stringField(record(params), "sessionId")
+    if (this.activeReverseRequests.has(id)) {
+      this.write({
+        jsonrpc: "2.0",
+        id,
+        error: { code: -32600, message: "Duplicate ACP request ID" },
+      })
+      return
+    }
+    if (sessionId && sessionId !== this.activeSessionId) {
+      this.write({
+        jsonrpc: "2.0",
+        id,
+        error: { code: -32002, message: "ACP elicitation session is not active" },
+      })
+      return
+    }
+    this.write({
+      jsonrpc: "2.0",
+      id,
+      error: {
+        code: -32001,
+        message: "ACP elicitation is unsupported by Blitz",
+      },
+    })
+  }
+
   /** Returns only allow-once or cancellation, never a persistent provider grant. */
   private async respondPermission(
     id: JsonRpcId,
     params: unknown
   ): Promise<void> {
+    if (this.activeReverseRequests.has(id)) {
+      this.write({
+        jsonrpc: "2.0",
+        id,
+        error: { code: -32600, message: "Duplicate ACP request ID" },
+      })
+      return
+    }
+    if (this.requestHandler) {
+      const sessionId = stringField(record(params), "sessionId")
+      if (!sessionId || sessionId !== this.activeSessionId) {
+        this.write({
+          jsonrpc: "2.0",
+          id,
+          result: { outcome: { outcome: "cancelled" } },
+        })
+        return
+      }
+      const controller = this.beginReverseRequest(id)
+      try {
+        let result: unknown
+        try {
+          result = await this.requestHandler({
+            requestId: id,
+            method: "session/request_permission",
+            params,
+            sessionId,
+            signal: controller.signal,
+          })
+        } catch {
+          result = { outcome: { outcome: "cancelled" } }
+        }
+        const validated = this.validatePermissionResult(params, result)
+        if (!this.closed) this.write({ jsonrpc: "2.0", id, result: validated })
+      } finally {
+        this.activeReverseRequests.get(id)?.abort()
+        this.activeReverseRequests.delete(id)
+      }
+      return
+    }
     const input = record(params)
     const choices = Array.isArray(input?.options)
       ? input.options.map(record)
@@ -530,23 +836,75 @@ class AcpJsonRpcClient {
       input?.sessionId === this.activeSessionId &&
       record(input?.toolCall) &&
       Buffer.byteLength(JSON.stringify(params)) <= 20_000
+    let decision: Awaited<ReturnType<ProviderApprovalHandler>> = false
+    if (valid && once && this.approvalHandler) {
+      const controller = this.beginReverseRequest(id)
+      try {
+        decision = await this.approvalHandler({
+          requestId: id,
+          method: "session/request_permission",
+          params,
+          signal: controller.signal,
+        }).catch(() => false)
+      } finally {
+        this.activeReverseRequests.get(id)?.abort()
+        this.activeReverseRequests.delete(id)
+      }
+    }
     const approved =
-      valid && once && this.approvalHandler
-        ? await this.approvalHandler({
-            method: "session/request_permission",
-            params,
-          }).catch(() => false)
-        : false
+      typeof decision === "boolean" ? decision : decision.accepted
+    const selectedOptionId =
+      typeof decision === "boolean" ? undefined : decision.optionId
     if (this.closed) return
     this.write({
       jsonrpc: "2.0",
       id,
       result: {
         outcome: approved
-          ? { outcome: "selected", optionId: once!.optionId }
+          ? {
+              outcome: "selected",
+              optionId:
+                selectedOptionId &&
+                choices.some((choice) => choice?.optionId === selectedOptionId)
+                  ? selectedOptionId
+                  : once!.optionId,
+            }
           : { outcome: "cancelled" },
       },
     })
+  }
+
+  /** Registers a reverse request and bounds its wait independently of the provider turn. */
+  private beginReverseRequest(id: JsonRpcId): AbortController {
+    if (this.activeReverseRequests.has(id))
+      throw new AcpProviderError("protocol", "Duplicate ACP request ID")
+    const controller = new AbortController()
+    this.activeReverseRequests.set(id, controller)
+    const timer = setTimeout(() => controller.abort(), this.requestTimeoutMs)
+    controller.signal.addEventListener("abort", () => clearTimeout(timer), {
+      once: true,
+    })
+    return controller
+  }
+
+  /** Whitelists native permission choices and refuses cross-session responses. */
+  private validatePermissionResult(params: unknown, result: unknown): unknown {
+    const input = record(params)
+    if (input?.sessionId !== this.activeSessionId)
+      return { outcome: { outcome: "cancelled" } }
+    const response = record(result)
+    const outcome = record(response?.outcome)
+    if (outcome?.outcome === "cancelled") return result
+    if (
+      outcome?.outcome === "selected" &&
+      typeof outcome.optionId === "string" &&
+      Array.isArray(input?.options) &&
+      input.options.some(
+        (option) => record(option)?.optionId === outcome.optionId
+      )
+    )
+      return result
+    return { outcome: { outcome: "cancelled" } }
   }
 
   /** Converts ACP notifications into the provider event vocabulary. */
@@ -708,6 +1066,7 @@ export async function runAcpTextTurn(
     ) => AcpChildProcess
     onEvent?: (event: ProviderEvent) => void
     approvalHandler?: ProviderApprovalHandler
+    requestHandler?: AcpRequestHandler
   }
 ): Promise<ProviderTextTurnResult> {
   const provider = request.selection.providerId
@@ -727,15 +1086,6 @@ export async function runAcpTextTurn(
     throw new AcpProviderError(
       "invalid-input",
       "This provider cannot enforce a workspace-only OS sandbox. Choose approval mode or full access."
-    )
-  if (
-    provider !== "antigravity" &&
-    request.selection.effort &&
-    request.selection.effort !== "default"
-  )
-    throw new AcpProviderError(
-      "invalid-input",
-      "ACP reasoning selection is unsupported"
     )
   if (!isAbsolute(request.workspaceDirectory))
     throw new AcpProviderError(
@@ -773,6 +1123,13 @@ export async function runAcpTextTurn(
         request.approvalPolicy === "untrusted")
         ? options.approvalHandler
         : undefined,
+    requestHandler:
+      !request.ephemeral &&
+      request.sandbox !== "read-only" &&
+      request.webSearchMode !== "disabled" &&
+      request.approvalPolicy !== "never"
+        ? options.requestHandler
+        : undefined,
   })
   const signal = request.signal
   let sessionId: string | undefined
@@ -780,6 +1137,7 @@ export async function runAcpTextTurn(
   const startTime = Date.now()
   let text = ""
   let thought = ""
+  let semanticOutput = false
   let settled = false
   let prompting = false
   const emit = (event: ProviderEvent): void => {
@@ -794,6 +1152,7 @@ export async function runAcpTextTurn(
       thought += normalized.delta
       options.onEvent?.(normalized)
     } else options.onEvent?.(event)
+    if (prompting && event.type !== "turn-started") semanticOutput = true
   }
   const unsubscribe = client.onEvent(emit)
   let rejectInterruption: ((error: AcpProviderError) => void) | undefined
@@ -821,6 +1180,21 @@ export async function runAcpTextTurn(
   try {
     const operation = (async (): Promise<ProviderTextTurnResult> => {
       await client.initialize()
+      client.setRequestedEffort(request.selection.effort)
+      if (request.attachments?.length) {
+        if (!client.supportsPromptImages())
+          throw new AcpProviderError(
+            "invalid-input",
+            "This ACP provider does not support image attachments"
+          )
+        client.setPromptImages(
+          request.attachments.map((attachment) => ({
+            type: "image",
+            mimeType: attachment.mimeType,
+            data: attachment.data,
+          }))
+        )
+      }
       sessionId = request.session?.providerSessionId
         ? await client.resumeSession(
             request.workspaceDirectory,
@@ -841,13 +1215,21 @@ export async function runAcpTextTurn(
         turnId,
       })
       prompting = true
-      await client.prompt(activeSessionId, request.prompt)
+      if ((request.developerInstructions?.length ?? 0) > 16_000)
+        throw new AcpProviderError(
+          "invalid-input",
+          "Provider application instructions exceed the 16,000 character limit"
+        )
+      const prompt = request.developerInstructions?.trim()
+        ? `<blitz_application_context>\n${request.developerInstructions.trim()}\n</blitz_application_context>\n\n${request.prompt}`
+        : request.prompt
+      await client.prompt(activeSessionId, prompt)
       if (signal?.aborted)
         throw new AcpProviderError("aborted", "Provider turn was interrupted")
-      if (!text.trim())
+      if (!text.trim() && !semanticOutput)
         throw new AcpProviderError(
           "transport",
-          "Provider completed without assistant text"
+          "Provider completed without semantic output"
         )
       settled = true
       return {

@@ -3,7 +3,10 @@
  * process, model turn, subscription usage, or network connection is used.
  */
 
-import { runProviderTextTurn } from "../lib/server/providers/run-text-turn.ts"
+import {
+  resolveCodexApproval,
+  runProviderTextTurn,
+} from "../lib/server/providers/run-text-turn.ts"
 import { test } from "node:test"
 import assert from "node:assert/strict"
 import {
@@ -454,4 +457,96 @@ test("forwards approval policy to new and resumed Codex threads", async () => {
       )
     }
   }
+})
+
+/** Reasserts the selected native sandbox on both thread and turn lifecycle calls. */
+test("forwards Codex sandbox policy through the provider router", async () => {
+  for (const [sandbox, expected] of [
+    ["read-only", { type: "readOnly", networkAccess: false }],
+    [
+      "workspace-write",
+      {
+        type: "workspaceWrite",
+        writableRoots: ["/tmp/blitz-owned-workspace"],
+        networkAccess: false,
+        excludeSlashTmp: true,
+        excludeTmpdirEnvVar: true,
+      },
+    ],
+    ["danger-full-access", { type: "dangerFullAccess" }],
+  ] as const) {
+    const transport = new FakeTransport()
+    transport.completeImmediately = true
+    await runProviderTextTurn(
+      {
+        providerId: "codex",
+        workspaceDirectory: "/tmp/blitz-owned-workspace",
+        prompt: "Question",
+        sandbox,
+        developerInstructions: "Follow the project rules.",
+        attachments: [
+          {
+            type: "image",
+            mimeType: "image/png",
+            data: "aGVsbG8=",
+            name: "diagram.png",
+          },
+        ],
+        approvalPolicy:
+          sandbox === "danger-full-access" ? "full-access" : "on-request",
+      },
+      { createCodexTransport: factoryFor(transport) }
+    )
+    assert.deepEqual(transport.turnOptions?.sandboxPolicy, expected)
+    assert.equal(transport.startOptions?.sandbox, sandbox)
+    assert.match(
+      transport.startOptions?.developerInstructions ?? "",
+      /project rules/
+    )
+    assert.match(
+      transport.startOptions?.developerInstructions ?? "",
+      /Execution environment supplied by Blitz/
+    )
+    assert.deepEqual(transport.turnOptions?.images, [
+      { type: "image", url: "data:image/png;base64,aGVsbG8=" },
+    ])
+  }
+})
+
+/** Preserves native request IDs while validating approval decisions centrally. */
+test("maps provider approvals without accepting raw or out-of-band decisions", async () => {
+  const seen: { id?: string | number; method?: string } = {}
+  const denied = await resolveCodexApproval(
+    {
+      id: 42,
+      method: "item/commandExecution/requestApproval",
+      params: { command: "pwd" },
+    },
+    async (request) => {
+      seen.id = request.requestId
+      seen.method = request.method
+      return {
+        accepted: false,
+        response: JSON.stringify({
+          permissions: { network: { enabled: true } },
+          scope: "session",
+        }),
+      }
+    }
+  )
+  assert.deepEqual(seen, {
+    id: 42,
+    method: "item/commandExecution/requestApproval",
+  })
+  assert.deepEqual(denied, { decision: "decline" })
+
+  const acceptedForSession = await resolveCodexApproval(
+    {
+      id: 43,
+      method: "item/commandExecution/requestApproval",
+      params: { command: "pwd" },
+    },
+    async () => ({ accepted: true, optionId: "acceptForSession" })
+  )
+  assert.deepEqual(acceptedForSession, { decision: "acceptForSession" })
 })

@@ -12,7 +12,16 @@ import type {
   AiProviderId,
   AiReasoningEffort,
 } from "../../ai-model-settings.ts"
-import { runAcpTextTurn, AcpProviderError } from "./acp.ts"
+import {
+  providerExecutionInstructions,
+  resolveProviderExecution,
+} from "../../provider-execution.ts"
+import { projectApprovalResponse } from "../project-agent-approval.ts"
+import {
+  runAcpTextTurn,
+  AcpProviderError,
+  type AcpRequestHandler,
+} from "./acp.ts"
 import {
   ClaudeCodeProviderError,
   runClaudeCodeTextTurn,
@@ -23,7 +32,13 @@ import {
   providerCommand,
   providerInstanceId,
 } from "./registry.ts"
+import {
+  getCodexModelCatalog,
+  validateCodexModelSelection,
+} from "./codex-models.ts"
 import type {
+  ProviderImageAttachment,
+  ProviderModelOption,
   ProviderEvent,
   ProviderSelection,
   ProviderTextTurnRequest,
@@ -44,6 +59,10 @@ export interface RunProviderTextTurnRequest {
   readonly workspaceDirectory: string
   /** Bounded prompt text. */
   readonly prompt: string
+  /** Optional bounded native image attachments for multimodal providers. */
+  readonly attachments?: readonly ProviderImageAttachment[]
+  /** Application-owned instructions sent through a provider instruction channel. */
+  readonly developerInstructions?: string
   /** Existing provider session to resume. */
   readonly threadId?: string
   /** Whether this turn should use a disposable session. */
@@ -66,8 +85,37 @@ export type ProviderTextTurnOptions = {
   readonly onEvent?: (event: CardChatEvent) => void
   /** Resolves one interactive native tool request. Omission denies it. */
   readonly approvalHandler?: ProviderApprovalHandler
+  /** Handles verified ACP structured elicitation requests with native results. */
+  readonly requestHandler?: AcpRequestHandler
   /** Codex-only transport factory retained for existing tests and approval bridges. */
   readonly createCodexTransport?: CardChatTransportFactory
+  /** Runtime Codex catalog supplied by a caller that owns a custom transport. */
+  readonly codexModelCatalog?: readonly ProviderModelOption[]
+}
+
+/** Converts one provider-neutral approval into the exact Codex native response. */
+export async function resolveCodexApproval(
+  request: { id: string | number; method: string; params?: unknown },
+  handler: ProviderApprovalHandler
+): Promise<import("../codex-app-server.ts").CodexApprovalResponse> {
+  const response = await handler({
+    requestId: request.id,
+    method: request.method,
+    params: request.params,
+  })
+  const accepted =
+    typeof response === "boolean" ? response : response?.accepted === true
+  const optionId =
+    typeof response === "boolean" ? undefined : response?.optionId
+  return projectApprovalResponse(
+    {
+      id: request.id,
+      method: request.method,
+      params: request.params,
+    },
+    accepted,
+    optionId
+  )
 }
 
 /** Converts provider events into the product event shape used by existing chat code. */
@@ -111,7 +159,7 @@ function providerError(error: unknown): CardChatError {
   if (code === "invalid-input")
     return new CardChatError(
       "invalid-input",
-      "Provider turn input is invalid",
+      error instanceof Error ? error.message : "Provider turn input is invalid",
       error
     )
   return new CardChatError(
@@ -136,10 +184,28 @@ export async function runProviderTextTurn(
       ? { effort: request.effort.trim() as AiReasoningEffort }
       : {}),
   }
+  const execution = resolveProviderExecution({
+    providerId: request.providerId,
+    workspaceDirectory: request.workspaceDirectory,
+    sandbox: request.sandbox,
+    approvalPolicy: request.approvalPolicy,
+    ephemeral: request.ephemeral,
+    webSearchMode: request.webSearchMode,
+  })
+  const executionInstructions = providerExecutionInstructions(execution)
   const providerRequest: ProviderTextTurnRequest = {
     selection,
     workspaceDirectory: request.workspaceDirectory,
     prompt: request.prompt,
+    ...(request.attachments?.length
+      ? { attachments: request.attachments }
+      : {}),
+    developerInstructions: [
+      request.developerInstructions?.trim(),
+      executionInstructions,
+    ]
+      .filter(Boolean)
+      .join("\n\n"),
     ...(request.threadId
       ? {
           session: {
@@ -168,12 +234,73 @@ export async function runProviderTextTurn(
   }
   try {
     if (request.providerId === "codex") {
+      if (!options.createCodexTransport || options.codexModelCatalog) {
+        let catalog
+        if (options.codexModelCatalog) catalog = options.codexModelCatalog
+        else {
+          try {
+            catalog = await getCodexModelCatalog({
+              workspaceDirectory: request.workspaceDirectory,
+              executable: providerCommand("codex").executable,
+              requestTimeoutMs: Math.min(request.timeoutMs ?? 5_000, 5_000),
+            })
+          } catch (error) {
+            throw new CardChatError(
+              "transport",
+              "Codex model capabilities could not be checked before this turn",
+              error
+            )
+          }
+        }
+        const selectedModel =
+          selection.model === "default"
+            ? catalog.find((model) => model.isDefault)
+            : catalog.find((model) => model.id === selection.model)
+        if (selection.model !== "default" && !selectedModel)
+          throw new CardChatError(
+            "invalid-input",
+            `Codex model is not available: ${selection.model}`
+          )
+        if (selectedModel) {
+          try {
+            validateCodexModelSelection(
+              catalog,
+              {
+                model: selectedModel.id,
+                ...(selection.effort === undefined
+                  ? {}
+                  : { effort: selection.effort }),
+              },
+              Boolean(request.attachments?.length)
+            )
+          } catch (error) {
+            throw new CardChatError(
+              "invalid-input",
+              error instanceof Error
+                ? error.message
+                : "Codex model selection is invalid",
+              error
+            )
+          }
+        } else if (selection.effort || request.attachments?.length) {
+          throw new CardChatError(
+            "invalid-input",
+            "Codex default model capabilities are unavailable"
+          )
+        }
+      }
       return await runCodexTextTurn(
         {
           approvalPolicy:
             request.approvalPolicy === "full-access"
               ? "never"
               : request.approvalPolicy,
+          sandbox: request.sandbox,
+          developerInstructions: providerRequest.developerInstructions,
+          images: request.attachments?.map((attachment) => ({
+            type: "image" as const,
+            url: `data:${attachment.mimeType};base64,${attachment.data}`,
+          })),
           workspaceDirectory: request.workspaceDirectory,
           prompt: request.prompt,
           ...(request.threadId ? { threadId: request.threadId } : {}),
@@ -195,6 +322,10 @@ export async function runProviderTextTurn(
         {
           createTransport: options.createCodexTransport,
           onEvent: options.onEvent,
+          approvalHandler: options.approvalHandler
+            ? (serverRequest) =>
+                resolveCodexApproval(serverRequest, options.approvalHandler!)
+            : undefined,
         }
       )
     }
@@ -226,6 +357,7 @@ export async function runProviderTextTurn(
         providerInstanceId: instanceId,
         onEvent,
         approvalHandler: options.approvalHandler,
+        requestHandler: options.requestHandler,
       })
     }
     return {

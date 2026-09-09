@@ -139,6 +139,8 @@ export type AiReasoningField = (typeof AI_REASONING_FIELDS)[number]
 
 /** The reasoning levels offered by the installed Codex model picker. */
 export const AI_REASONING_EFFORTS = [
+  "none",
+  "minimal",
   "low",
   "medium",
   "high",
@@ -156,6 +158,7 @@ export type CodexModelOption = {
   readonly id: string
   readonly label: string
   readonly reasoningEfforts: readonly AiReasoningEffort[]
+  readonly inputModalities?: readonly ("text" | "image" | "audio")[]
 }
 
 /** One generation grouping of Codex models separated by menu dividers. */
@@ -213,6 +216,7 @@ export type AiProviderModelOption = {
   readonly id: string
   readonly label: string
   readonly reasoningEfforts: readonly AiReasoningEffort[]
+  readonly inputModalities?: readonly ("text" | "image" | "audio")[]
 }
 
 /** Curated defaults used until a provider reports a runtime model catalog. */
@@ -356,7 +360,7 @@ export function getAiModelPickerOptions(
   model: string,
   runtimeOptions?: readonly AiProviderModelOption[]
 ): readonly AiProviderModelOption[] {
-  if (provider === "codex") return getCodexModelPickerOptions(model)
+  if (provider === "codex") return getCodexModelPickerOptions(model, runtimeOptions)
   const options = runtimeOptions?.length
     ? runtimeOptions
     : AI_PROVIDER_MODEL_OPTIONS[provider]
@@ -437,15 +441,28 @@ export function getDefaultAiModelOption(
 
 /** Returns curated model choices while preserving one previously saved legacy model as selectable. */
 export function getCodexModelPickerOptions(
-  model: string
+  model: string,
+  runtimeOptions?: readonly AiProviderModelOption[]
 ): readonly CodexModelOption[] {
+  if (runtimeOptions?.length) {
+    if (!model || !model.trim() || runtimeOptions.some((option) => option.id === model))
+      return runtimeOptions
+    return [
+      {
+        id: model,
+        label: `${model} (saved model)`,
+        reasoningEfforts: ["default"],
+      },
+      ...runtimeOptions,
+    ]
+  }
   if (!model || !model.trim() || isKnownCodexModel(model))
     return CODEX_MODEL_OPTIONS
   return [
     {
       id: model,
       label: `${model} (saved model)`,
-      reasoningEfforts: AI_REASONING_EFFORTS,
+      reasoningEfforts: ["default"],
     },
     ...CODEX_MODEL_OPTIONS,
   ]
@@ -455,7 +472,7 @@ export function getCodexModelPickerOptions(
 export function getSupportedAiReasoningEfforts(
   model: string
 ): readonly AiReasoningEffort[] {
-  return MODEL_OPTION_BY_ID.get(model)?.reasoningEfforts ?? AI_REASONING_EFFORTS
+  return MODEL_OPTION_BY_ID.get(model)?.reasoningEfforts ?? ["default"]
 }
 
 /** Returns reasoning levels supported by a selected provider and model. */
@@ -466,7 +483,7 @@ export function getSupportedAiReasoningEffortsForProvider(
 ): readonly AiReasoningEffort[] {
   if (provider === "opencode") return ["default"]
   if (provider === "antigravity" && !runtimeOptions?.length)
-    return model === "antigravity/default" ? ["default"] : AI_REASONING_EFFORTS
+    return ["default"]
   const normalizedModel =
     provider === "claude-code"
       ? model.replace(/^claude-(sonnet|opus|haiku)$/, "$1")
@@ -553,13 +570,13 @@ export function validateAiReasoningEffort(
     !(AI_REASONING_EFFORTS as readonly string[]).includes(effort)
   )
     throw new Error(`${label} reasoning level is not supported`)
-  const supportedEfforts = provider
-    ? getSupportedAiReasoningEffortsForProvider(provider, model)
-    : getSupportedAiReasoningEfforts(model)
-  // Older records offered effort choices for adapters/models with no such control.
-  // Normalize those records to an explicit default so they stay editable.
-  if (supportedEfforts.length === 1 && supportedEfforts[0] === "default")
-    return "default"
+  // Opaque ACP model variants require the authenticated runtime catalog. Keep
+  // a requested effort for adapter validation without advertising unknown UI controls.
+  const supportedEfforts = provider === "antigravity" && model !== "antigravity/default"
+    ? ["default", ...AI_REASONING_EFFORTS]
+    : provider
+      ? getSupportedAiReasoningEffortsForProvider(provider, model)
+      : getSupportedAiReasoningEfforts(model)
   if (!supportedEfforts.includes(effort)) {
     throw new Error(`${label} reasoning level is not available for ${model}`)
   }

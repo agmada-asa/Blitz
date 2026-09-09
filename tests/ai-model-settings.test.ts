@@ -89,7 +89,7 @@ test("validates provider-aware task selections", () => {
     cardGenerationModel: "opencode/big-pickle",
     researchEffort: "medium",
     replyEffort: "high",
-    cardGenerationEffort: "low",
+    cardGenerationEffort: "default",
     replyProvider: "claude-code",
     cardGenerationProvider: "opencode",
   })
@@ -126,7 +126,7 @@ test("resolves a provider selection for each task", () => {
     cardGenerationModel: "antigravity/default",
     researchEffort: "medium",
     replyEffort: "high",
-    cardGenerationEffort: "low",
+    cardGenerationEffort: "default",
     researchProvider: "codex",
     replyProvider: "claude-code",
     cardGenerationProvider: "antigravity",
@@ -323,6 +323,7 @@ test("validates native provider access choices and task restrictions", () => {
     ...DEFAULT_AI_MODEL_SETTINGS,
     cardGenerationProvider: "antigravity",
     cardGenerationModel: "antigravity/default",
+    cardGenerationEffort: "default",
   })
   assert.throws(() => validateAiTaskProviders(legacy), /workspace chat only/)
   assert.ok(

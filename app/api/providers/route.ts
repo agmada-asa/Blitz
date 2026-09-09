@@ -8,12 +8,13 @@ import { isTrustedBlitzOrigin } from "@/lib/server/request-origin"
 /** Runs executable checks on the local Node.js host. */
 export const runtime = "nodejs"
 
-/** Checks configured providers without sending prompts or starting model sessions. */
+/** Checks configured providers and their catalogs without sending model prompts. */
 export async function GET() {
   const providers = await Promise.all(
-    PROVIDER_DEFINITIONS.map((provider) =>
-      provider.checkAvailability({ workspaceDirectory: process.cwd() })
-    )
+    PROVIDER_DEFINITIONS.map(async (provider) => ({
+      ...(await provider.checkAvailability({ workspaceDirectory: process.cwd() })),
+      capabilities: provider.capabilities,
+    }))
   )
   return Response.json(providers, { headers: { "Cache-Control": "no-store" } })
 }

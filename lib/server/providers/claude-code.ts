@@ -8,6 +8,7 @@ import { StringDecoder } from "node:string_decoder"
 import { getSupportedAiReasoningEffortsForProvider } from "../../ai-model-settings.ts"
 
 import type {
+  ProviderImageAttachment,
   ProviderApprovalHandler,
   ProviderCommand,
   ProviderEvent,
@@ -136,17 +137,71 @@ function sessionIdFromEvent(value: unknown): string | undefined {
     : undefined
 }
 
+/** Extracts compact Claude tool lifecycle blocks without forwarding raw inputs or results. */
+function toolActivityEvents(
+  value: unknown
+): Array<{ method: string; params: Record<string, unknown> }> {
+  const event = record(value)
+  if (!event) return []
+  const candidates: unknown[] = []
+  const message = record(event.message)
+  if (Array.isArray(message?.content)) candidates.push(...message.content)
+  const nested = record(event.event)
+  const block = record(nested?.content_block)
+  if (block) candidates.push(block)
+  if (record(event.content_block)) candidates.push(event.content_block)
+  const activities: Array<{
+    method: string
+    params: Record<string, unknown>
+  }> = []
+  for (const candidate of candidates) {
+    const item = record(candidate)
+    if (!item || (item.type !== "tool_use" && item.type !== "tool_result"))
+      continue
+    if (item.type === "tool_use") {
+      const input = record(item.input)
+      activities.push({
+        method: "claude/tool_use",
+        params: {
+          block: {
+            type: "tool_use",
+            id: item.id,
+            name: item.name,
+            ...(typeof input?.command === "string"
+              ? { input: { command: input.command } }
+              : {}),
+          },
+        },
+      })
+      continue
+    }
+    activities.push({
+      method: "claude/tool_result",
+      params: {
+        block: {
+          type: "tool_result",
+          tool_use_id: item.tool_use_id,
+          is_error: item.is_error === true,
+        },
+      },
+    })
+  }
+  return activities
+}
+
 /** Builds the safe non-interactive Claude Code command line. */
 export function claudeArgs(request: ProviderTextTurnRequest): string[] {
   // Claude Code requires verbose mode for stream-json print output.
+  const streamInput = Boolean(
+    request.attachments?.length ||
+    (request.approvalPolicy === "on-request" &&
+      request.sandbox !== "read-only" &&
+      request.webSearchMode !== "disabled" &&
+      !request.ephemeral)
+  )
   const args = [
     "-p",
-    ...(request.approvalPolicy === "on-request" &&
-    request.sandbox !== "read-only" &&
-    request.webSearchMode !== "disabled" &&
-    !request.ephemeral
-      ? []
-      : [request.prompt]),
+    ...(streamInput ? [] : [request.prompt]),
     "--output-format",
     "stream-json",
     "--verbose",
@@ -185,6 +240,7 @@ export function claudeArgs(request: ProviderTextTurnRequest): string[] {
     "Edit",
     "Write",
     "Bash",
+    "AskUserQuestion",
     "WebFetch",
     "WebSearch",
   ]
@@ -237,7 +293,30 @@ export function claudeArgs(request: ProviderTextTurnRequest): string[] {
     )
   }
   if (request.ephemeral) args.push("--no-session-persistence")
+  if (request.developerInstructions?.trim())
+    args.push("--append-system-prompt", request.developerInstructions.trim())
+  if (request.attachments?.length && !args.includes("--input-format"))
+    args.push("--input-format", "stream-json")
   return args
+}
+
+/** Builds Claude's native stream-json user content from bounded text and images. */
+export function claudeUserContent(
+  request: ProviderTextTurnRequest
+): Array<Record<string, unknown>> {
+  return [
+    { type: "text", text: request.prompt },
+    ...(request.attachments ?? []).map(
+      (attachment: ProviderImageAttachment) => ({
+        type: "image",
+        source: {
+          type: "base64",
+          media_type: attachment.mimeType,
+          data: attachment.data,
+        },
+      })
+    ),
+  ]
 }
 
 /** Starts one Claude Code process without invoking a shell. */
@@ -340,7 +419,7 @@ export async function runClaudeCodeTextTurn(
     if (typeof id !== "string") return
     const approvalAbort = new AbortController()
     permissionControllers.set(id, approvalAbort)
-    const allowed =
+    const decision =
       control?.subtype === "can_use_tool" &&
       typeof control.tool_name === "string" &&
       record(control.input) &&
@@ -348,12 +427,32 @@ export async function runClaudeCodeTextTurn(
       options.approvalHandler
         ? await options
             .approvalHandler({
+              requestId: id,
               method: "claude/can_use_tool",
               params: control,
               signal: approvalAbort.signal,
             })
             .catch(() => false)
         : false
+    const normalizedDecision =
+      typeof decision === "boolean" ? { accepted: decision } : decision
+    const allowed = normalizedDecision.accepted
+    let updatedInput: unknown = control?.input
+    if (
+      allowed &&
+      normalizedDecision.response &&
+      control?.tool_name === "AskUserQuestion"
+    ) {
+      try {
+        const parsed = JSON.parse(normalizedDecision.response) as {
+          answers?: Record<string, string | string[]>
+        }
+        if (parsed.answers && updatedInput)
+          updatedInput = { ...updatedInput, answers: parsed.answers }
+      } catch {
+        updatedInput = undefined
+      }
+    }
     permissionControllers.delete(id)
     if (
       ended ||
@@ -368,7 +467,7 @@ export async function runClaudeCodeTextTurn(
         subtype: "success",
         request_id: id,
         response: allowed
-          ? { behavior: "allow", updatedInput: control!.input }
+          ? { behavior: "allow", updatedInput }
           : { behavior: "deny", message: "Blitz denied this operation" },
       },
     })
@@ -407,7 +506,7 @@ export async function runClaudeCodeTextTurn(
         writeControl({
           type: "user",
           session_id: "",
-          message: { role: "user", content: request.prompt },
+          message: { role: "user", content: claudeUserContent(request) },
           parent_tool_use_id: null,
         })
       }
@@ -433,6 +532,12 @@ export async function runClaudeCodeTextTurn(
         )
     }
     sessionId = sessionIdFromEvent(event) ?? sessionId
+    for (const activity of toolActivityEvents(event))
+      options.onEvent?.({
+        type: "activity",
+        method: activity.method,
+        params: activity.params,
+      })
     const thoughtFragment = thoughtFromEvent(event)
     if (thoughtFragment) {
       emitStarted()
@@ -531,6 +636,18 @@ export async function runClaudeCodeTextTurn(
         request_id: initializeId,
         request: { subtype: "initialize", hooks: null },
       })
+    } catch (error) {
+      failStream(error)
+    }
+  } else if (request.attachments?.length) {
+    try {
+      writeControl({
+        type: "user",
+        session_id: "",
+        message: { role: "user", content: claudeUserContent(request) },
+        parent_tool_use_id: null,
+      })
+      child.stdin?.end()
     } catch (error) {
       failStream(error)
     }

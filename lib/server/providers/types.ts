@@ -6,27 +6,20 @@ import type {
   AiTask,
 } from "../../ai-model-settings.ts"
 
-/** Capabilities that change how Blitz may route a task through a provider. */
-export interface ProviderCapabilities {
-  /** Whether the adapter can stream assistant text while a turn runs. */
-  readonly streaming: boolean
-  /** Whether the adapter can resume a provider-owned session. */
-  readonly resumableSessions: boolean
-  /** Whether the provider can return schema-constrained JSON safely. */
-  readonly structuredOutput: boolean
-  /** Whether the adapter can surface interactive approval requests. */
-  readonly approvals: boolean
-  /** Whether a turn may request hosted or provider-native web search. */
-  readonly webSearch: boolean
-  /** Whether the provider can write inside Blitz's selected workspace. */
-  readonly workspaceWrites: boolean
-  /** Whether a session can switch models without being recreated. */
-  readonly sessionModelSwitch: boolean
-  /** Whether a provider session supports promptless continuation. */
-  readonly promptlessTurnContinuation: boolean
-  /** Whether the provider can roll a conversation back to a checkpoint. */
-  readonly conversationRollback: boolean
+/** Native image content validated from a stored upload before provider dispatch. */
+export interface ProviderImageAttachment {
+  readonly type: "image"
+  /** MIME type verified by the upload boundary. */
+  readonly mimeType: "image/png" | "image/jpeg" | "image/webp" | "image/gif"
+  /** Base64 image bytes, never a client-controlled local path. */
+  readonly data: string
+  /** Original display name retained for attachment context. */
+  readonly name: string
 }
+
+/** Shared capabilities used by both the browser and server, with no duplicate provider catalog. */
+export type { ChatProviderCapabilities as ProviderCapabilities } from "../../provider-capabilities.ts"
+import type { ChatProviderCapabilities as ProviderCapabilities } from "../../provider-capabilities.ts"
 
 /** A local provider command and optional arguments used by health checks. */
 export interface ProviderCommand {
@@ -73,6 +66,12 @@ export interface ProviderModelOption {
   readonly label: string
   /** Reasoning level represented by this exact provider choice, when recognizable. */
   readonly reasoningEffort?: AiReasoningEffort
+  /** All native reasoning levels exposed by this exact runtime model. */
+  readonly reasoningEfforts?: readonly AiReasoningEffort[]
+  /** Input modalities accepted by this exact runtime model. */
+  readonly inputModalities?: readonly ("text" | "image" | "audio")[]
+  /** Whether the runtime selected this model as its default model. */
+  readonly isDefault?: boolean
 }
 
 /** One provider-owned authentication choice displayed without credential data. */
@@ -119,6 +118,10 @@ export interface ProviderTextTurnRequest {
   readonly workspaceDirectory: string
   /** Bounded prompt text. */
   readonly prompt: string
+  /** Native images kept separate from the textual prompt. */
+  readonly attachments?: readonly ProviderImageAttachment[]
+  /** Application instructions sent through a native instruction channel when available. */
+  readonly developerInstructions?: string
   /** Existing provider session to resume. */
   readonly session?: ProviderSessionReference
   /** Whether the provider should avoid retaining a disposable session. */
@@ -211,9 +214,23 @@ export interface ProviderAdapterDefinition {
 }
 
 /** Reviews one bounded provider operation; true grants only this invocation. */
+export type ProviderApprovalDecision =
+  | boolean
+  | {
+      /** Whether this provider operation is accepted. */
+      readonly accepted: boolean
+      /** Exact provider option selected by the user, when applicable. */
+      readonly optionId?: string
+      /** Structured response payload for provider-specific prompts. */
+      readonly response?: string
+    }
+
+/** Reviews one bounded provider operation and preserves its native identity. */
 export type ProviderApprovalHandler = (request: {
+  /** Native provider request ID used to correlate the eventual response. */
+  readonly requestId?: string | number
   readonly method: string
   readonly params: unknown
   /** Cancels this review independently of the surrounding turn. */
   readonly signal?: AbortSignal
-}) => Promise<boolean>
+}) => Promise<ProviderApprovalDecision>

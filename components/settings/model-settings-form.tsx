@@ -2,6 +2,7 @@
 
 /** Owns the editable, persisted model and reasoning choices for each AI task in Blitz. */
 
+import { providerAccessChoice } from "@/lib/provider-capabilities"
 import { useState, type FormEvent } from "react"
 import { useMutation, useQuery } from "convex/react"
 
@@ -322,15 +323,7 @@ function ModelSettingsEditor({
                       {AI_PROVIDER_APPROVAL_POLICIES[provider.id].map(
                         (policy) => (
                           <SelectItem key={policy} value={policy}>
-                            {policy === "untrusted"
-                              ? "Ask for untrusted actions"
-                              : policy === "on-request"
-                                ? "Ask when needed"
-                                : policy === "full-access"
-                                  ? "Full access"
-                                  : provider.id === "antigravity"
-                                    ? "Deny permission requests"
-                                    : "Never approve"}
+                            {providerAccessChoice(provider.id, policy).label}
                           </SelectItem>
                         )
                       )}

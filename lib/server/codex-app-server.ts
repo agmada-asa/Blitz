@@ -12,7 +12,8 @@ import { StringDecoder } from "node:string_decoder"
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000
 const DEFAULT_MAX_LINE_BYTES = 1_000_000
 const DEFAULT_MAX_PENDING_REQUESTS = 64
-const DEFAULT_MAX_REQUEST_BYTES = 1_000_000
+/** Outbound JSONL messages allow native multimodal payloads while staying bounded. */
+const DEFAULT_MAX_REQUEST_BYTES = 30_000_000
 
 /** JSON-RPC identifiers supported by the app-server protocol. */
 export type CodexRequestId = number | string
@@ -292,6 +293,11 @@ export interface CodexStartTurnOptions {
       }
   /** User text sent as the supported text input item. */
   text: string
+  /** Optional native image inputs appended to the text input item. */
+  images?: readonly {
+    type: "image"
+    url: string
+  }[]
   /** Optional model override supported by the installed protocol. */
   model?: string
   /** Optional reasoning effort override supported by the installed protocol. */
@@ -312,6 +318,28 @@ export interface CodexTurnResponse {
   turn: CodexTurn
   /** Preserve additional server response fields. */
   [key: string]: unknown
+}
+
+/** One native model returned by the app-server `model/list` request. */
+export interface CodexModel {
+  readonly id: string
+  readonly model: string
+  readonly displayName: string
+  readonly supportedReasoningEfforts: readonly {
+    readonly reasoningEffort: string
+    readonly description?: string
+  }[]
+  readonly defaultReasoningEffort?: string
+  readonly inputModalities: readonly ("text" | "image" | "audio")[]
+  readonly hidden?: boolean
+  readonly isDefault?: boolean
+  readonly [key: string]: unknown
+}
+
+/** Paginated response returned by the app-server `model/list` request. */
+export interface CodexModelListResponse {
+  readonly data: readonly CodexModel[]
+  readonly nextCursor: string | null
 }
 
 /** Factory type used to start the real local Codex process. */
@@ -618,7 +646,7 @@ export class CodexAppServerClient {
     const result = await this.request("turn/start", {
       threadId,
       cwd: this.workspaceDirectory,
-      input: [{ type: "text", text: options.text }],
+      input: [{ type: "text", text: options.text }, ...(options.images ?? [])],
       ...(options.approvalPolicy === undefined
         ? {}
         : { approvalPolicy: options.approvalPolicy }),
@@ -643,6 +671,46 @@ export class CodexAppServerClient {
     if (!threadId) throw new CodexAppServerError("threadId is required")
     if (!turnId) throw new CodexAppServerError("turnId is required")
     await this.request("turn/interrupt", { threadId, turnId })
+  }
+
+  /** Reads the authenticated runtime model catalog without starting a model turn. */
+  async listModels(options: {
+    cursor?: string
+    limit?: number
+    includeHidden?: boolean
+  } = {}): Promise<CodexModelListResponse> {
+    const result = await this.request("model/list", {
+      ...(options.cursor === undefined ? {} : { cursor: options.cursor }),
+      ...(options.limit === undefined ? {} : { limit: options.limit }),
+      ...(options.includeHidden === undefined
+        ? {}
+        : { includeHidden: options.includeHidden }),
+    })
+    const record = asRecord(result, "model/list response")
+    if (!Array.isArray(record.data))
+      throw new CodexProtocolError("Codex model/list response has no data")
+    const data = record.data.map((value) => {
+      const model = asRecord(value, "model/list model")
+      if (
+        typeof model.id !== "string" ||
+        typeof model.model !== "string" ||
+        typeof model.displayName !== "string" ||
+        !Array.isArray(model.supportedReasoningEfforts) ||
+        !Array.isArray(model.inputModalities)
+      )
+        throw new CodexProtocolError("Codex model/list model has invalid fields")
+      return model as unknown as CodexModel
+    })
+    return {
+      data,
+      nextCursor: record.nextCursor === null || record.nextCursor === undefined
+        ? null
+        : typeof record.nextCursor === "string"
+          ? record.nextCursor
+          : (() => {
+              throw new CodexProtocolError("Codex model/list cursor is invalid")
+            })(),
+    }
   }
 
   /** Stops the child process, clears pending requests, and releases listeners. */

@@ -10,6 +10,7 @@
  * - An optional Access level trigger with lock icon that opens a dropdown for approval policies.
  */
 
+import { providerAccessChoice } from "@/lib/provider-capabilities"
 import { useCallback, useEffect, useMemo, useState } from "react"
 
 import {
@@ -93,41 +94,14 @@ export function reasoningLabel(effort: AiReasoningEffort): string {
     : `${effort.slice(0, 1).toUpperCase()}${effort.slice(1)}`
 }
 
-/** Returns a concise, user-friendly label for one access/approval policy. */
-export function accessPolicyLabel(policy: AiApprovalPolicy): string {
-  switch (policy) {
-    case "full-access":
-      return "Full access"
-    case "on-request":
-      return "Ask when needed"
-    case "untrusted":
-      return "Ask for untrusted"
-    case "never":
-      return "Never approve"
-    default:
-      return policy
-  }
+/** Returns the label for the adapter's actual access policy. */
+export function accessPolicyLabel(policy: AiApprovalPolicy, provider: AiProviderId = "codex"): string {
+  return providerAccessChoice(provider, policy).label
 }
 
-/** Returns a short explanation of what an access policy grants. */
-export function accessPolicyDescription(
-  policy: AiApprovalPolicy,
-  provider?: AiProviderId
-): string {
-  switch (policy) {
-    case "full-access":
-      return "Tools run automatically without interactive prompts"
-    case "on-request":
-      return "Prompts for approval when actions require review"
-    case "untrusted":
-      return "Prompts only on untrusted or risky operations"
-    case "never":
-      return provider === "antigravity"
-        ? "Denies permission requests in workspace chat"
-        : "Denies all tool approval requests"
-    default:
-      return ""
-  }
+/** Describes enforced access without implying unsupported sandboxing or automatic review. */
+export function accessPolicyDescription(policy: AiApprovalPolicy, provider: AiProviderId = "codex"): string {
+  return providerAccessChoice(provider, policy).description
 }
 
 /**
@@ -205,7 +179,12 @@ export function ModelReasoningPicker({
       return models?.map((option) => ({
         id: option.id,
         label: option.label,
-        reasoningEfforts: [option.reasoningEffort ?? "default"],
+        reasoningEfforts:
+          option.reasoningEfforts ??
+          (option.reasoningEffort ? [option.reasoningEffort] : ["default"]),
+        ...(option.inputModalities
+          ? { inputModalities: option.inputModalities }
+          : {}),
       }))
     },
     [availability]
@@ -355,7 +334,9 @@ export function ModelReasoningPicker({
   const showLegacyModels = legacyExpanded || selectedModelIsLegacy
 
   const accessibleLabel = `${labelPrefix} ${selectedProviderLabel}, ${selectedModelLabel}, ${selectedReasoningLabel} reasoning${
-    accessPolicy ? `, ${accessPolicyLabel(accessPolicy)} access` : ""
+    accessPolicy
+      ? `, ${accessPolicyLabel(accessPolicy, provider)} access`
+      : ""
   }`
 
   return (
@@ -791,11 +772,11 @@ export function ModelReasoningPicker({
                 type="button"
                 disabled={disabled || supportedAccessPolicies.length <= 1}
                 className="flex shrink-0 items-center gap-1.5 rounded-r-lg px-2.5 py-1.5 text-muted-foreground transition-colors hover:bg-muted/70 hover:text-foreground"
-                title={`Access level: ${accessPolicyLabel(accessPolicy)}`}
+                title={`Access level: ${accessPolicyLabel(accessPolicy, provider)}`}
               >
                 <LockIcon className="size-3.5 shrink-0 text-muted-foreground" />
                 <span className="truncate font-normal">
-                  {accessPolicyLabel(accessPolicy)}
+                  {accessPolicyLabel(accessPolicy, provider)}
                 </span>
                 {supportedAccessPolicies.length > 1 ? (
                   <ChevronDownIcon className="size-3 shrink-0 text-muted-foreground" />
@@ -811,7 +792,9 @@ export function ModelReasoningPicker({
                   className="justify-between py-1.5 text-xs"
                 >
                   <div className="min-w-0 pr-2">
-                    <p className="font-medium">{accessPolicyLabel(policy)}</p>
+                  <p className="font-medium">
+                    {accessPolicyLabel(policy, provider)}
+                  </p>
                     <p className="mt-0.5 text-[11px] leading-snug text-muted-foreground">
                       {accessPolicyDescription(policy, provider)}
                     </p>

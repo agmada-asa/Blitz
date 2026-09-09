@@ -9,6 +9,7 @@ import { isAbsolute } from "node:path"
 import {
   CodexAppServerClient,
   type CodexAppServerEvent,
+  type CodexApprovalHandler,
   type CodexNotification,
   type CodexResumeThreadOptions,
   type CodexServerRequest,
@@ -18,6 +19,7 @@ import {
   type CodexTurn,
   type CodexTurnResponse,
   type CodexWebSearchMode,
+  type CodexSandboxMode,
 } from "./codex-app-server.ts"
 
 /** Maximum question size accepted by the card chat boundary. */
@@ -86,6 +88,12 @@ export interface CardChatRequest {
 export interface CodexTextTurnRequest {
   /** Approval policy enforced for new and resumed provider threads. */
   readonly approvalPolicy?: "untrusted" | "on-request" | "never"
+  /** Explicit sandbox mode reasserted on both thread and turn requests. */
+  readonly sandbox?: CodexSandboxMode
+  /** Application-owned instructions sent through Codex's developer channel. */
+  readonly developerInstructions?: string
+  /** Optional native image inputs appended to the user text item. */
+  readonly images?: readonly { type: "image"; url: string }[]
   /** Explicit absolute Blitz-owned workspace for local Codex. */
   readonly workspaceDirectory: string
   /** Already prepared, bounded prompt text. */
@@ -266,6 +274,8 @@ export interface CardChatRunOptions {
   readonly onEvent?: (event: CardChatEvent) => void
   /** Injectable app-server client factory. */
   readonly createTransport?: CardChatTransportFactory
+  /** Resolves one native Codex request for the current turn. */
+  readonly approvalHandler?: CodexApprovalHandler
 }
 
 /** Returns a string truncated with an explicit marker under a hard character bound. */
@@ -508,6 +518,7 @@ export async function runCodexTextTurn(
     ((transportOptions) =>
       CodexAppServerClient.connect({
         workspaceDirectory: transportOptions.workspaceDirectory,
+        approvalHandler: options.approvalHandler,
         ...(transportOptions.webSearchMode === undefined
           ? {}
           : { webSearchMode: transportOptions.webSearchMode }),
@@ -817,7 +828,10 @@ export async function runCodexTextTurn(
     unsubscribe = client.onEvent(handleTransportEvent)
     const threadOptions: CodexStartThreadOptions = {
       approvalPolicy: request.approvalPolicy ?? "on-request",
-      sandbox: "read-only",
+      sandbox: request.sandbox ?? "read-only",
+      ...(request.developerInstructions
+        ? { developerInstructions: request.developerInstructions }
+        : {}),
       ...(request.ephemeral === undefined
         ? {}
         : { ephemeral: request.ephemeral }),
@@ -825,7 +839,10 @@ export async function runCodexTextTurn(
     }
     const resumeOptions: CodexResumeThreadOptions = {
       approvalPolicy: request.approvalPolicy ?? "on-request",
-      sandbox: "read-only",
+      sandbox: request.sandbox ?? "read-only",
+      ...(request.developerInstructions
+        ? { developerInstructions: request.developerInstructions }
+        : {}),
       ...(request.model === undefined ? {} : { model: request.model }),
     }
     const thread = request.threadId
@@ -838,7 +855,19 @@ export async function runCodexTextTurn(
       client.startTurn(threadId, {
         text: request.prompt,
         approvalPolicy: request.approvalPolicy ?? "on-request",
-        sandboxPolicy: { type: "readOnly", networkAccess: false },
+        sandboxPolicy:
+          request.sandbox === "danger-full-access"
+            ? { type: "dangerFullAccess" }
+            : request.sandbox === "workspace-write"
+              ? {
+                  type: "workspaceWrite",
+                  writableRoots: [request.workspaceDirectory],
+                  networkAccess: false,
+                  excludeSlashTmp: true,
+                  excludeTmpdirEnvVar: true,
+                }
+              : { type: "readOnly", networkAccess: false },
+        ...(request.images?.length ? { images: request.images } : {}),
         ...(request.model === undefined ? {} : { model: request.model }),
         ...(request.effort === undefined ? {} : { effort: request.effort }),
       })

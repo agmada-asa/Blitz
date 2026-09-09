@@ -45,7 +45,8 @@ export function projectApprovalDetails(
 /** Grants one reviewed operation, or denies it; permission grants expire with the turn. */
 export function projectApprovalResponse(
   request: CodexServerRequest,
-  approved: boolean
+  approved: boolean,
+  optionId?: string
 ): CodexApprovalResponse {
   if (request.method === "item/permissions/requestApproval") {
     const permissions = approvalRecord(
@@ -66,7 +67,9 @@ export function projectApprovalResponse(
   return {
     decision:
       approved && supportedProjectApproval(request.method)
-        ? "accept"
+        ? optionId === "acceptForSession"
+          ? "acceptForSession"
+          : "accept"
         : "decline",
   }
 }

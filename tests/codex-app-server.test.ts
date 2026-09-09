@@ -291,6 +291,33 @@ test("starts and interrupts a turn using server-issued identifiers", async () =>
   }
 })
 
+test("allows bounded native image payloads above the inbound line limit", async () => {
+  const process = new FakeProcess()
+  const client = await CodexAppServerClient.connect({
+    workspaceDirectory: "/tmp/blitz-owned-workspace",
+    spawnProcess: () => {
+      queueMicrotask(() => initialize(process))
+      return process
+    },
+  })
+  try {
+    const imageData = "a".repeat(2_000_000)
+    const turnPromise = client.startTurn("thr_image", {
+      text: "describe this image",
+      images: [{ type: "image", url: `data:image/png;base64,${imageData}` }],
+    })
+    const request = messages(process).at(-1)
+    assert.ok(JSON.stringify(request).length > 1_000_000)
+    process.respond({
+      id: request?.id,
+      result: { turn: { id: "turn_image", status: "inProgress" } },
+    })
+    assert.equal((await turnPromise).turn.id, "turn_image")
+  } finally {
+    await client.close()
+  }
+})
+
 test("declines approval requests by default and surfaces them to observers", async () => {
   const process = new FakeProcess()
   const client = await CodexAppServerClient.connect({
