@@ -8,6 +8,7 @@ import {
   BLITZ_REQUEST_USER_INPUT_TOOL,
   codexAgentRequestTools,
   dynamicToolResponse,
+  genericApprovalRequest,
   mcpElicitationResponse,
   normalizeCodexAgentRequest,
   userInputResponse,
@@ -201,4 +202,20 @@ test("only accepts HTTP URLs for URL-mode elicitation", () => {
       }),
     /URL request has no URL/
   )
+})
+
+test("preserves exact native approval option IDs for the composer", () => {
+  const spec = genericApprovalRequest(
+    "session/request_permission",
+    JSON.stringify({
+      options: [
+        { optionId: "allow_once_7", name: "Allow once", kind: "allow_once" },
+        { optionId: "deny_7", name: "Deny", kind: "reject_once" },
+      ],
+    })
+  )
+  assert.deepEqual(spec.input?.approvalOptions, [
+    { value: "allow_once_7", label: "Allow once" },
+    { value: "deny_7", label: "Deny" },
+  ])
 })

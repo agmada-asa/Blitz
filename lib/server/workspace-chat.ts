@@ -24,8 +24,12 @@ export interface WorkspaceChatCardReference {
 export interface WorkspaceChatInlineAttachment {
   /** Durable ad hoc upload, resolved by the server before persistence or generation. */
   documentId?: Id<"chatDocuments">
+  /** Opaque token proving ownership of an unbound projectless upload. */
+  ownerToken?: string
   kind: "file" | "link"
   label: string
+  /** Optional native image MIME type retained for provider delivery. */
+  mimeType?: "image/png" | "image/jpeg" | "image/webp" | "image/gif"
   text: string
   url?: string
 }
@@ -278,6 +282,13 @@ export function parseWorkspaceChatRequest(
       throw new Error("Attachment type is invalid")
     const kind: WorkspaceChatInlineAttachment["kind"] = attachment.kind
     const label = requiredString(attachment.label, "Attachment label", 255)
+    const mimeType: WorkspaceChatInlineAttachment["mimeType"] =
+      attachment.mimeType === "image/png" ||
+      attachment.mimeType === "image/jpeg" ||
+      attachment.mimeType === "image/webp" ||
+      attachment.mimeType === "image/gif"
+        ? attachment.mimeType
+        : undefined
     const documentId =
       attachment.documentId === undefined
         ? undefined
@@ -286,6 +297,10 @@ export function parseWorkspaceChatRequest(
             "Document ID",
             200
           ) as Id<"chatDocuments">)
+    const ownerToken =
+      attachment.ownerToken === undefined
+        ? undefined
+        : requiredString(attachment.ownerToken, "Upload token", 256)
     const text = documentId
       ? ""
       : requiredString(
@@ -318,7 +333,9 @@ export function parseWorkspaceChatRequest(
       kind,
       label,
       text,
+      ...(mimeType ? { mimeType } : {}),
       ...(documentId ? { documentId } : {}),
+      ...(ownerToken ? { ownerToken } : {}),
       ...(url ? { url } : {}),
     }
   })

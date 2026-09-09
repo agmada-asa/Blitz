@@ -44,6 +44,7 @@ function persistedChatProvider(
 /** Validator shared by card, file, link, and project context records. */
 const attachmentInput = v.object({
   documentId: v.optional(v.id("chatDocuments")),
+  ownerToken: v.optional(v.string()),
   kind: v.union(
     v.literal("card"),
     v.literal("project"),
@@ -51,6 +52,14 @@ const attachmentInput = v.object({
     v.literal("link")
   ),
   label: v.string(),
+  mimeType: v.optional(
+    v.union(
+      v.literal("image/png"),
+      v.literal("image/jpeg"),
+      v.literal("image/webp"),
+      v.literal("image/gif")
+    )
+  ),
   projectId: v.optional(v.id("projects")),
   itemId: v.optional(v.id("learningItems")),
   text: v.optional(v.string()),
@@ -121,8 +130,10 @@ function replayAttachments(attachments: Doc<"workspaceChatAttachments">[]): {
   card?: { projectId: Id<"projects">; itemId: Id<"learningItems"> }
   projectIds: Id<"projects">[]
   attachments: Array<{
+    documentId?: Id<"chatDocuments">
     kind: "file" | "link"
     label: string
+    mimeType?: "image/png" | "image/jpeg" | "image/webp" | "image/gif"
     text: string
     url?: string
   }>
@@ -132,8 +143,10 @@ function replayAttachments(attachments: Doc<"workspaceChatAttachments">[]): {
     { projectId: Id<"projects">; itemId: Id<"learningItems"> } | undefined
   const projectIds: Id<"projects">[] = []
   const inline: Array<{
+    documentId?: Id<"chatDocuments">
     kind: "file" | "link"
     label: string
+    mimeType?: "image/png" | "image/jpeg" | "image/webp" | "image/gif"
     text: string
     url?: string
   }> = []
@@ -162,8 +175,10 @@ function replayAttachments(attachments: Doc<"workspaceChatAttachments">[]): {
       continue
     const text = attachment.text.slice(0, Math.min(24_000, remaining))
     inline.push({
+      ...(attachment.documentId ? { documentId: attachment.documentId } : {}),
       kind: attachment.kind,
       label: attachment.label,
+      ...(attachment.mimeType ? { mimeType: attachment.mimeType } : {}),
       text,
       ...(attachment.url ? { url: attachment.url } : {}),
     })
@@ -379,6 +394,8 @@ export const get = query({
         durationMs: message.durationMs ?? null,
         status: message.status,
         agentApproval: message.agentApproval,
+        agentRequests: message.agentRequests ?? [],
+        providerEvents: message.providerEvents ?? [],
         citations: message.citations ?? [],
         annotations: message.annotations ?? [],
         createdAt: message.createdAt,
@@ -388,6 +405,7 @@ export const get = query({
         documentId: attachment.documentId,
         kind: attachment.kind,
         label: attachment.label,
+        ...(attachment.mimeType ? { mimeType: attachment.mimeType } : {}),
         ...(attachment.projectId ? { projectId: attachment.projectId } : {}),
         ...(attachment.itemId ? { itemId: attachment.itemId } : {}),
         url: attachment.url ?? null,
@@ -409,11 +427,31 @@ async function recoverStaleTurn(
   )
     return
   const active = await ctx.db.get(chat.activeMessageId)
-  if (active && active.status === "running")
+  if (active && active.status === "running") {
+    const approval = active.agentApproval
+    const terminal = approval
+      ? {
+          ...approval,
+          ...(approval.status === "pending"
+            ? { status: "cancelled" as const }
+            : {}),
+        }
+      : undefined
     await ctx.db.patch(active._id, {
       status: "failed",
+      ...(terminal ? { agentApproval: terminal } : {}),
+      ...(active.agentRequests
+        ? {
+            agentRequests: active.agentRequests.map((request) =>
+              request.status === "pending"
+                ? { ...request, status: "cancelled" as const, completedAt: now }
+                : request
+            ),
+          }
+        : {}),
       updatedAt: now,
     })
+  }
   await ctx.db.patch(chat._id, {
     status: "failed",
     activeMessageId: undefined,
@@ -559,6 +597,15 @@ export const startTurn = mutation({
         lastError: undefined,
         updatedAt: now,
       })
+      // A provider session is resumable only when this failed turn reached the
+      // provider and yielded an accepted turn ID. Upload or transport failures
+      // before acceptance must replay the original request in a fresh session.
+      const canResumeProviderTurn = Boolean(
+        continuation.providerTurnId ?? continuation.codexTurnId
+      )
+      const providerSessionId = canResumeProviderTurn
+        ? chat.providerSessionId ?? chat.codexThreadId ?? null
+        : null
       return {
         chatId: chat._id,
         assistantMessageId: continuation._id,
@@ -566,10 +613,10 @@ export const startTurn = mutation({
         ...(selectedInstance ? { providerInstanceId: selectedInstance } : {}),
         ...(selectedModel ? { providerModel: selectedModel } : {}),
         ...(selectedEffort ? { providerEffort: selectedEffort } : {}),
-        providerSessionId: chat.providerSessionId ?? chat.codexThreadId ?? null,
-        codexThreadId: chat.codexThreadId ?? null,
+        providerSessionId,
+        codexThreadId: canResumeProviderTurn ? chat.codexThreadId ?? null : null,
         shouldReplayContext:
-          !(chat.providerSessionId ?? chat.codexThreadId) ||
+          !providerSessionId ||
           chat.codexContextReady !== true,
         replyPrefix: continuation.content,
         replayContext: {
@@ -601,16 +648,41 @@ export const startTurn = mutation({
       if (attachment.documentId) {
         const document = await ctx.db.get(attachment.documentId)
         const expectedProjectId = chat?.projectId ?? args.projectId
-        if (
-          !document ||
-          (expectedProjectId && document.projectId !== expectedProjectId)
-        )
-          throw new Error("File does not belong to this chat's project")
+        if (!document) throw new Error("File attachment was not found")
+        const projectOwned =
+          Boolean(expectedProjectId) && document.projectId === expectedProjectId
+        const chatOwned = Boolean(chat) && document.chatId === chat!._id
+        const draftOwned =
+          !document.projectId &&
+          !document.chatId &&
+          Boolean(attachment.ownerToken) &&
+          document.ownerToken === attachment.ownerToken
+        if (!projectOwned && !chatOwned && !draftOwned)
+          throw new Error("File does not belong to this chat")
         if (attachment.kind !== "file" && attachment.kind !== "link")
           throw new Error("Invalid file attachment")
+        if (draftOwned)
+          await ctx.db.patch(document._id, {
+            chatId,
+          })
       }
       const label = boundedText(attachment.label, "Attachment label", 255)
-      const text = attachment.text?.trim() || undefined
+      const document = attachment.documentId
+        ? await ctx.db.get(attachment.documentId)
+        : null
+      const text =
+        (attachment.text?.trim() || document?.text.trim() || undefined)?.slice(
+          0,
+          48_000
+        )
+      const mimeType =
+        attachment.mimeType ??
+        (document?.mimeType === "image/png" ||
+        document?.mimeType === "image/jpeg" ||
+        document?.mimeType === "image/webp" ||
+        document?.mimeType === "image/gif"
+          ? document.mimeType
+          : undefined)
       if (text && text.length > 48_000)
         throw new Error("Attachment is too large")
       if (attachment.kind === "project" && !attachment.projectId)
@@ -633,6 +705,7 @@ export const startTurn = mutation({
         clientMessageId,
         kind: attachment.kind,
         label,
+        ...(mimeType ? { mimeType } : {}),
         ...(attachment.projectId ? { projectId: attachment.projectId } : {}),
         ...(attachment.itemId ? { itemId: attachment.itemId } : {}),
         ...(text ? { text } : {}),
@@ -790,6 +863,9 @@ export const branch = mutation({
         role: message.role,
         content: message.content,
         ...(message.thought ? { thought: message.thought } : {}),
+        ...(message.providerEvents
+          ? { providerEvents: message.providerEvents }
+          : {}),
         ...(message.durationMs !== undefined
           ? { durationMs: message.durationMs }
           : {}),
@@ -801,6 +877,7 @@ export const branch = mutation({
       })
     }
     const editAttachmentClientMessageId = `branch:${branchId}:edit`
+    const branchDocuments = new Map<Id<"chatDocuments">, Id<"chatDocuments">>()
     for (const attachment of sourceAttachments) {
       const branchClientMessageId = clientMessageIds.get(
         attachment.clientMessageId
@@ -809,12 +886,35 @@ export const branch = mutation({
         !args.includeMessage &&
         attachment.clientMessageId === target.clientMessageId
       if (!branchClientMessageId && !belongsToEditedMessage) continue
+      let documentId = attachment.documentId
+      if (documentId) {
+        const sourceDocumentId = documentId
+        const existing = branchDocuments.get(sourceDocumentId)
+        if (existing) documentId = existing
+        else {
+          const document = await ctx.db.get(documentId)
+          if (!document) continue
+          documentId = await ctx.db.insert("chatDocuments", {
+            ...(document.projectId ? { projectId: document.projectId } : {}),
+            ...(document.ownerToken ? { ownerToken: document.ownerToken } : {}),
+            chatId: branchId,
+            filename: document.filename,
+            relativeKey: document.relativeKey,
+            mimeType: document.mimeType,
+            text: document.text,
+            sizeBytes: document.sizeBytes,
+            createdAt: now,
+          })
+          branchDocuments.set(sourceDocumentId, documentId)
+        }
+      }
       await ctx.db.insert("workspaceChatAttachments", {
-        ...(attachment.documentId ? { documentId: attachment.documentId } : {}),
+        ...(documentId ? { documentId } : {}),
         chatId: branchId,
         clientMessageId: branchClientMessageId ?? editAttachmentClientMessageId,
         kind: attachment.kind,
         label: attachment.label,
+        ...(attachment.mimeType ? { mimeType: attachment.mimeType } : {}),
         ...(attachment.projectId ? { projectId: attachment.projectId } : {}),
         ...(attachment.itemId ? { itemId: attachment.itemId } : {}),
         ...(attachment.text ? { text: attachment.text } : {}),
@@ -934,6 +1034,46 @@ export const progress = mutation({
       updatedAt: now,
     })
     await ctx.db.patch(chat._id, { updatedAt: now })
+  },
+})
+
+/** Persists a bounded snapshot of provider tool activity for the active assistant message. */
+export const saveProviderEvents = mutation({
+  args: {
+    chatId: v.id("workspaceChats"),
+    messageId: v.id("workspaceChatMessages"),
+    events: v.array(
+      v.object({
+        id: v.string(),
+        type: v.literal("tool"),
+        title: v.string(),
+        status: v.union(
+          v.literal("running"),
+          v.literal("completed"),
+          v.literal("failed")
+        ),
+        detail: v.optional(v.string()),
+      })
+    ),
+  },
+  handler: async (ctx, args) => {
+    if (args.events.length > 64) throw new Error("Provider activity is too long")
+    const chat = await ctx.db.get(args.chatId)
+    const message = await ctx.db.get(args.messageId)
+    if (
+      !chat ||
+      !message ||
+      chat.activeMessageId !== message._id ||
+      message.status !== "running"
+    )
+      return
+    const seen = new Set<string>()
+    const events = args.events.filter((item) => {
+      if (seen.has(item.id)) return false
+      seen.add(item.id)
+      return item.title.length <= 120 && (item.detail?.length ?? 0) <= 240
+    })
+    await ctx.db.patch(message._id, { providerEvents: events, updatedAt: Date.now() })
   },
 })
 

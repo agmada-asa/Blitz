@@ -101,6 +101,8 @@ export function codexAgentRequestTools(): CodexDynamicToolSpec[] {
 export type AgentRequestSpec = {
   /** Protocol method that initiated the request. */
   method: string
+  /** Provider request identifier used to correlate native responses. */
+  providerRequestId?: string
   /** Composer control family used for the request. */
   kind: AgentRequestKind
   /** Short title shown above the control. */
@@ -176,8 +178,59 @@ export function genericApprovalRequest(
   details: string
 ): AgentRequestSpec {
   let displayDetails = details
+  let approvalOptions: AgentRequestOption[] | undefined
   try {
-    displayDetails = requestDetails(JSON.parse(details))
+    const parsed = JSON.parse(details) as unknown
+    displayDetails = requestDetails(parsed)
+    const params = record(parsed)
+    const toolInput = record(params?.input)
+    if (
+      method === "claude/can_use_tool" &&
+      params?.tool_name === "AskUserQuestion" &&
+      Array.isArray(toolInput?.questions)
+    ) {
+      const questions = toolInput.questions.flatMap((value): AgentRequestQuestion[] => {
+        const question = record(value)
+        const text = stringField(question, "question")
+        if (!text) return []
+        const options = Array.isArray(question?.options)
+          ? question.options.flatMap((option): AgentRequestOption[] => {
+              const item = record(option)
+              const label = stringField(item, "label")
+              return label ? [{ value: label, label }] : []
+            })
+          : []
+        return [
+          {
+            id: text,
+            header: stringField(question, "header") ?? text,
+            question: text,
+            ...(options.length ? { options } : {}),
+            ...(question?.multiSelect === true ? { multiSelect: true } : {}),
+          },
+        ]
+      })
+      if (questions.length && questions.length <= MAX_CONTROLS)
+        return {
+          method,
+          kind: "question",
+          title: "Blitz needs your input",
+          details: displayDetails,
+          prompt: "Answer these questions so Claude can continue.",
+          input: { questions },
+        }
+    }
+    if (Array.isArray(params?.options)) {
+      const options = params.options.flatMap((value): AgentRequestOption[] => {
+        const option = record(value)
+        const id = stringField(option, "optionId")
+        const label =
+          stringField(option, "name") ?? stringField(option, "title") ?? id
+        return id && label ? [{ value: id, label }] : []
+      })
+      if (options.length && options.length <= MAX_OPTIONS)
+        approvalOptions = options
+    }
   } catch {
     if (details.length > MAX_REQUEST_DETAILS)
       throw new Error(
@@ -190,6 +243,7 @@ export function genericApprovalRequest(
     title: agentRequestTitle(method),
     details: displayDetails,
     prompt: "Review this request before Blitz continues.",
+    ...(approvalOptions ? { input: { approvalOptions } } : {}),
   }
 }
 
@@ -221,6 +275,17 @@ function approvalRequest(
     title: agentRequestTitle(request.method),
     details: projectApprovalDetails(request, item),
     prompt: approvalPrompt(request.method, params),
+    ...(request.method === "item/commandExecution/requestApproval" ||
+    request.method === "item/fileChange/requestApproval"
+      ? {
+          input: {
+            approvalOptions: [
+              { value: "accept", label: "Allow once" },
+              { value: "acceptForSession", label: "Allow for this session" },
+            ],
+          },
+        }
+      : {}),
   }
 }
 
@@ -505,13 +570,18 @@ function questionAnswers(
 ): string[] | undefined {
   const answerRecord = record(value)
   const answers = answerRecord?.answers
-  if (!Array.isArray(answers) || answers.length !== 1) return undefined
-  const answer = responseString(answers[0])
-  if (!answer) return undefined
+  if (!Array.isArray(answers) || !answers.length) return undefined
+  if (!question.multiSelect && answers.length !== 1) return undefined
+  const selected = answers.map(responseString)
+  if (selected.some((answer) => !answer)) return undefined
   const values = question.options?.map((option) => option.value ?? option.label)
-  if (values?.length && !values.includes(answer) && !question.isOther)
+  if (
+    values?.length &&
+    selected.some((answer) => !values.includes(answer!)) &&
+    !question.isOther
+  )
     return undefined
-  return [answer]
+  return selected as string[]
 }
 
 /** Builds the protocol response for a Codex request_user_input decision. */

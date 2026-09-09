@@ -34,6 +34,24 @@ test("parseWorkspaceChatRequest accepts mixed attachment context", () => {
   assert.equal(result.attachments[0]?.kind, "link")
 })
 
+test("parseWorkspaceChatRequest ignores non-native MIME metadata for text files", () => {
+  const result = parseWorkspaceChatRequest({
+    message: "Read this PDF",
+    clientMessageId: "message-pdf",
+    projectIds: [],
+    attachments: [
+      {
+        kind: "file",
+        label: "notes.pdf",
+        text: "PDF text",
+        mimeType: "application/pdf",
+      },
+    ],
+  })
+
+  assert.equal(result.attachments[0]?.mimeType, undefined)
+})
+
 test("parseWorkspaceChatRequest rejects unsafe attachment URLs", () => {
   assert.throws(
     () =>

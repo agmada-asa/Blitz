@@ -464,6 +464,22 @@ export default defineSchema({
     content: v.string(),
     /** Cumulative internal thought, reasoning, or commentary trace for assistant messages. */
     thought: v.optional(v.string()),
+    /** Bounded provider tool lifecycle records retained for the assistant activity timeline. */
+    providerEvents: v.optional(
+      v.array(
+        v.object({
+          id: v.string(),
+          type: v.literal("tool"),
+          title: v.string(),
+          status: v.union(
+            v.literal("running"),
+            v.literal("completed"),
+            v.literal("failed")
+          ),
+          detail: v.optional(v.string()),
+        })
+      )
+    ),
     /** Wall-clock duration of the completed turn in milliseconds. */
     durationMs: v.optional(v.number()),
     status: v.union(
@@ -477,6 +493,8 @@ export default defineSchema({
     agentApproval: v.optional(
       v.object({
         id: v.string(),
+        /** Native provider request identifier, when the provider exposes one. */
+        providerRequestId: v.optional(v.string()),
         method: v.string(),
         /** Composer control family; omitted on legacy approval records. */
         kind: v.optional(
@@ -497,12 +515,46 @@ export default defineSchema({
         status: v.union(
           v.literal("pending"),
           v.literal("approved"),
-          v.literal("denied")
+          v.literal("denied"),
+          v.literal("expired"),
+          v.literal("cancelled")
         ),
         expiresAt: v.number(),
         /** Serialized user response consumed by the waiting provider turn. */
         response: v.optional(v.string()),
       })
+    ),
+    /** Bounded interaction history retained after each request is consumed. */
+    agentRequests: v.optional(
+      v.array(
+        v.object({
+          id: v.string(),
+          providerRequestId: v.optional(v.string()),
+          method: v.string(),
+          kind: v.optional(
+            v.union(
+              v.literal("approval"),
+              v.literal("question"),
+              v.literal("form"),
+              v.literal("url")
+            )
+          ),
+          title: v.optional(v.string()),
+          prompt: v.optional(v.string()),
+          input: v.optional(v.string()),
+          details: v.string(),
+          status: v.union(
+            v.literal("pending"),
+            v.literal("approved"),
+            v.literal("denied"),
+            v.literal("expired"),
+            v.literal("cancelled")
+          ),
+          expiresAt: v.number(),
+          response: v.optional(v.string()),
+          completedAt: v.optional(v.number()),
+        })
+      )
     ),
     /** Immutable user annotations attached to this turn. */
     annotations: v.optional(
@@ -535,6 +587,14 @@ export default defineSchema({
       v.literal("link")
     ),
     label: v.string(),
+    mimeType: v.optional(
+      v.union(
+        v.literal("image/png"),
+        v.literal("image/jpeg"),
+        v.literal("image/webp"),
+        v.literal("image/gif")
+      )
+    ),
     projectId: v.optional(v.id("projects")),
     itemId: v.optional(v.id("learningItems")),
     text: v.optional(v.string()),
@@ -544,14 +604,22 @@ export default defineSchema({
 
   /** Ad hoc chat uploads retain originals without entering study generation. */
   chatDocuments: defineTable({
-    projectId: v.id("projects"),
+    /** Project owner for legacy/project-scoped uploads; absent for drafts. */
+    projectId: v.optional(v.id("projects")),
+    /** Opaque server-issued token accepted only until the document is bound. */
+    ownerToken: v.optional(v.string()),
+    /** Chat owner assigned when a draft is first sent. */
+    chatId: v.optional(v.id("workspaceChats")),
     filename: v.string(),
     relativeKey: v.string(),
     mimeType: v.string(),
     text: v.string(),
     sizeBytes: v.number(),
     createdAt: v.number(),
-  }).index("by_project", ["projectId"]),
+  })
+    .index("by_project", ["projectId"])
+    .index("by_ownerToken", ["ownerToken"])
+    .index("by_chat", ["chatId"]),
 
   conversations: defineTable({
     projectId: v.id("projects"),

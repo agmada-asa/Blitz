@@ -28,6 +28,13 @@ import {
   approvalRecord,
   projectApprovalResponse,
 } from "./project-agent-approval.ts"
+import {
+  extractAntigravityUserInputQuestion,
+  isAntigravityUserInputRequest,
+  makeAntigravityUserInputResponse,
+} from "./providers/acp.ts"
+import type { ProviderApprovalDecision } from "./providers/types.ts"
+import type { AcpRequestHandler } from "./providers/acp.ts"
 
 /** Builds a turn-scoped transport and approval bridge; callers close it on every exit path. */
 export function createChatAgentSession(options: {
@@ -82,14 +89,24 @@ export function createChatAgentSession(options: {
         runtime.thread.approvalPolicy === "never"
       )
         return projectApprovalResponse(request, false)
-      const result = await review(spec)
+      const result = await review({
+        ...spec,
+        providerRequestId: String(request.id),
+      })
       if (request.method === "item/tool/call")
         return dynamicToolResponse(spec, result.accepted, result.response)
       if (spec.kind === "question")
         return userInputResponse(spec.input, result.accepted, result.response)
       if (spec.kind === "form" || spec.kind === "url")
         return mcpElicitationResponse(spec, result.accepted, result.response)
-      return projectApprovalResponse(request, result.accepted)
+      let optionId: string | undefined
+      try {
+        const parsed = result.response ? JSON.parse(result.response) : undefined
+        optionId = parsed?.optionId
+      } catch {
+        optionId = undefined
+      }
+      return projectApprovalResponse(request, result.accepted, optionId)
     })
     queue = operation.catch(() => undefined)
     return operation
@@ -102,6 +119,9 @@ export function createChatAgentSession(options: {
   ): Promise<{ accepted: boolean; response?: string }> {
     const request = {
       id: randomUUID(),
+      ...(spec.providerRequestId
+        ? { providerRequestId: spec.providerRequestId }
+        : {}),
       method: spec.method,
       kind: spec.kind,
       title: spec.title,
@@ -114,6 +134,9 @@ export function createChatAgentSession(options: {
       ...identity,
       approval: {
         id: request.id,
+        ...(request.providerRequestId
+          ? { providerRequestId: request.providerRequestId }
+          : {}),
         method: request.method,
         details: request.details,
         expiresAt: request.expiresAt,
@@ -153,7 +176,10 @@ export function createChatAgentSession(options: {
       return { accepted: false }
     } finally {
       await options.client
-        .mutation(api.chatAgents.clearApproval, identity)
+        .mutation(api.chatAgents.clearApproval, {
+          ...identity,
+          approvalId: request.id,
+        })
         .catch(() => undefined)
       options.send({ type: "agent-request-resolved", requestId: request.id })
     }
@@ -164,7 +190,7 @@ export function createChatAgentSession(options: {
     method: string
     params: unknown
     signal?: AbortSignal
-  }): Promise<boolean> {
+  }): Promise<ProviderApprovalDecision> {
     const operation = queue.then(async () => {
       if (
         signal.aborted ||
@@ -175,12 +201,93 @@ export function createChatAgentSession(options: {
       const details = JSON.stringify(request.params, null, 2)
       if (!details || details.length > 20_000) return false
       return review(
-        genericApprovalRequest(request.method, details),
+        {
+          ...genericApprovalRequest(request.method, details),
+          ...(request.requestId === undefined ? {} : { providerRequestId: String(request.requestId) }),
+        },
         request.signal ? AbortSignal.any([signal, request.signal]) : signal
-      ).then((result) => result.accepted)
+      )
     })
     queue = operation.catch(() => undefined)
-    return operation
+    return operation.catch(() => false)
+  }
+
+  /** Bridges verified ACP reverse requests through durable composer interactions. */
+  const handleProviderRequest: AcpRequestHandler = async (request) => {
+    const operation = queue.then(async () => {
+      if (request.signal?.aborted || signal.aborted)
+        return { outcome: { outcome: "cancelled" } }
+      const details = JSON.stringify(request.params, null, 2)
+      if (!details || details.length > 20_000)
+        return { outcome: { outcome: "cancelled" } }
+      const question =
+        request.method === "session/request_permission" &&
+        isAntigravityUserInputRequest(request.params)
+          ? extractAntigravityUserInputQuestion(request.params)
+          : undefined
+      const spec = question
+        ? {
+            method: request.method,
+            kind: "question" as const,
+            title: "Blitz needs your input",
+            details,
+            prompt: "Choose an option so the provider can continue.",
+            input: {
+              questions: [
+                {
+                  ...question,
+                  options: question.options.map((option) => ({ ...option })),
+                },
+              ],
+            },
+          }
+        : genericApprovalRequest(request.method, details)
+      const result = await review(
+        { ...spec, providerRequestId: String(request.requestId) },
+        request.signal ? AbortSignal.any([signal, request.signal]) : signal
+      )
+      if (!result.accepted) return { outcome: { outcome: "cancelled" } }
+      if (question) {
+        try {
+          const parsed = result.response
+            ? (JSON.parse(result.response) as { answers?: Record<string, unknown> })
+            : undefined
+          const answerMap = Object.fromEntries(
+            Object.entries(parsed?.answers ?? {}).map(([id, value]) => {
+              const nested = value as { answers?: unknown }
+              return [
+                id,
+                nested && typeof nested === "object" && "answers" in nested
+                  ? nested.answers
+                  : value,
+              ]
+            })
+          )
+          const response = makeAntigravityUserInputResponse(
+            request.params,
+            answerMap
+          )
+          return response ?? { outcome: { outcome: "cancelled" } }
+        } catch {
+          return { outcome: { outcome: "cancelled" } }
+        }
+      }
+      let optionId: string | undefined
+      try {
+        const parsed = result.response ? JSON.parse(result.response) : undefined
+        optionId =
+          parsed && typeof parsed.optionId === "string"
+            ? parsed.optionId
+            : undefined
+      } catch {
+        optionId = undefined
+      }
+      return optionId
+        ? { outcome: { outcome: "selected", optionId } }
+        : { outcome: { outcome: "cancelled" } }
+    })
+    queue = operation.catch(() => undefined)
+    return operation.catch(() => ({ outcome: { outcome: "cancelled" } }))
   }
 
   /** Collects bounded file diffs emitted before the associated approval request. */
@@ -210,14 +317,14 @@ export function createChatAgentSession(options: {
         client.startThread({
           ...settings,
           ...runtime.thread,
-          developerInstructions: instructions,
+          developerInstructions: settings?.developerInstructions ?? instructions,
           dynamicTools: codexAgentRequestTools(),
         }),
       resumeThread: (id, settings) =>
         client.resumeThread(id, {
           ...settings,
           ...runtime.thread,
-          developerInstructions: instructions,
+          developerInstructions: settings?.developerInstructions ?? instructions,
         }),
       startTurn: (id, settings) =>
         client.startTurn(id, {
@@ -241,5 +348,11 @@ export function createChatAgentSession(options: {
       .mutation(api.chatAgents.clearApproval, identity)
       .catch(() => undefined)
   }
-  return { createTransport, observe, approveProvider, close }
+  return {
+    createTransport,
+    observe,
+    approveProvider,
+    handleProviderRequest,
+    close,
+  }
 }

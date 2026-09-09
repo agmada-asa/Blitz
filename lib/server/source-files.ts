@@ -1,6 +1,6 @@
 /** Stores bounded original sources through the shared project filesystem boundary. */
 
-import { randomBytes } from "node:crypto"
+import { createHash, randomBytes } from "node:crypto"
 import { promises as fs } from "node:fs"
 import { basename, join, relative } from "node:path"
 import { Readable } from "node:stream"
@@ -25,6 +25,15 @@ export interface StoredSourceFile {
   readonly mimeType: string | null
   readonly filename: string
   readonly duplicate: boolean
+}
+
+/** Durable metadata returned for a projectless chat upload. */
+export interface StoredChatFile {
+  readonly key: string
+  readonly sha256: string
+  readonly size: number
+  readonly mimeType: string | null
+  readonly filename: string
 }
 
 /** Converts an untrusted client filename to one safe relative path segment. */
@@ -97,6 +106,47 @@ export async function storeOriginalSource(input: {
     mimeType: input.mimeType?.trim() || null,
     filename,
     duplicate: false,
+  }
+}
+
+/** Derives an isolated filesystem identity from an opaque pre-chat upload token. */
+export function chatStorageId(ownerToken: string): string {
+  if (!/^[A-Za-z0-9_-]{32,256}$/.test(ownerToken))
+    throw new Error("Chat upload token is invalid")
+  return `chat-${createHash("sha256").update(ownerToken).digest("hex")}`
+}
+
+/** Stores a projectless chat upload below the server-owned chat upload directory. */
+export async function storeOriginalChatUpload(input: {
+  ownerToken: string
+  filename: string
+  mimeType?: string | null
+  body: ReadableStream<Uint8Array>
+  maxBytes?: number
+}): Promise<StoredChatFile> {
+  const storageId = chatStorageId(input.ownerToken)
+  const filename = safeSourceFilename(input.filename)
+  const temporaryKey = `Uploads/.upload-${randomBytes(12).toString("hex")}`
+  const stored = await storeProjectFile(
+    storageId,
+    temporaryKey,
+    Readable.from(
+      boundedChunks(input.body, input.maxBytes ?? MAX_ORIGINAL_SOURCE_BYTES)
+    )
+  )
+  if (!stored.size) {
+    await fs.rm(stored.path, { force: true })
+    throw new Error("Source upload is empty")
+  }
+  const durableKey = `Uploads/${stored.sha256}-${filename}`
+  const durablePath = await resolveProjectFile(storageId, durableKey)
+  await fs.rename(stored.path, durablePath)
+  return {
+    key: durableKey,
+    sha256: stored.sha256,
+    size: stored.size,
+    mimeType: input.mimeType?.trim() || null,
+    filename,
   }
 }
 

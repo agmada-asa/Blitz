@@ -12,6 +12,7 @@ const autonomy = v.union(
 const AGENT_REQUEST_TOOLS_VERSION = 1
 const approvalInput = v.object({
   id: v.string(),
+  providerRequestId: v.optional(v.string()),
   method: v.string(),
   kind: v.optional(
     v.union(
@@ -27,6 +28,61 @@ const approvalInput = v.object({
   details: v.string(),
   expiresAt: v.number(),
 })
+
+/** Copies one interaction into the bounded per-message request history. */
+function historyEntry(
+  approval: {
+    id: string
+    providerRequestId?: string
+    method: string
+    kind?: "approval" | "question" | "form" | "url"
+    title?: string
+    prompt?: string
+    input?: string
+    details: string
+    expiresAt: number
+  },
+  status: "pending" | "approved" | "denied" | "expired" | "cancelled",
+  response?: string,
+  completedAt?: number
+) {
+  return {
+    ...approval,
+    ...(approval.providerRequestId
+      ? { providerRequestId: approval.providerRequestId }
+      : {}),
+    kind: approval.kind ?? "approval",
+    status,
+    ...(response === undefined ? {} : { response }),
+    ...(completedAt === undefined ? {} : { completedAt }),
+  }
+}
+
+/** Removes secret question and form values before retaining completed history. */
+function safeHistoryResponse(input: string | undefined, response: string | undefined): string | undefined {
+  if (!response) return response
+  if (!input) return response
+  try {
+    const controls = JSON.parse(input) as {
+      questions?: Array<{ id?: string; isSecret?: boolean }>
+      fields?: Array<{ id?: string; secret?: boolean }>
+    }
+    const value = JSON.parse(response) as Record<string, unknown>
+    const secretQuestions = new Set(
+      (controls.questions ?? []).filter((q) => q.isSecret && q.id).map((q) => q.id!)
+    )
+    const secretFields = new Set(
+      (controls.fields ?? []).filter((f) => f.secret && f.id).map((f) => f.id!)
+    )
+    const answers = value.answers as Record<string, unknown> | undefined
+    if (answers) for (const id of secretQuestions) delete answers[id]
+    const content = value.content as Record<string, unknown> | undefined
+    if (content) for (const id of secretFields) delete content[id]
+    return JSON.stringify(value)
+  } catch {
+    return undefined
+  }
+}
 
 /** Validates the bounded request payload and its short-lived expiry. */
 function validateApproval(
@@ -182,8 +238,13 @@ export const requestApproval = mutation({
       kind: args.approval.kind ?? "approval",
       status: "pending" as const,
     }
+    const history = [
+      ...(message.agentRequests ?? []),
+      historyEntry(args.approval, "pending"),
+    ].slice(-20)
     await ctx.db.patch(args.messageId, {
       agentApproval: approval,
+      agentRequests: history,
       updatedAt: now,
     })
     return approval
@@ -222,8 +283,21 @@ export const decideApproval = mutation({
       status: args.decision,
       ...(args.response === undefined ? {} : { response: args.response }),
     }
+    const history = (message.agentRequests ?? []).map((entry) =>
+      entry.id === approval.id
+        ? {
+            ...entry,
+            status: args.decision,
+            ...(args.response === undefined
+              ? {}
+              : { response: safeHistoryResponse(approval.input, args.response) }),
+            completedAt: Date.now(),
+          }
+        : entry
+    )
     await ctx.db.patch(args.messageId, {
       agentApproval: updated,
+      agentRequests: history,
       updatedAt: Date.now(),
     })
     return { success: true, approval: updated }
@@ -256,13 +330,48 @@ export const clearApproval = mutation({
   args: {
     chatId: v.id("workspaceChats"),
     messageId: v.id("workspaceChatMessages"),
+    approvalId: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     await chatFor(ctx, args.chatId)
     await messageFor(ctx, args.chatId, args.messageId)
+    const message = await ctx.db.get(args.messageId)
+    if (!message) return
+    if (
+      args.approvalId !== undefined &&
+      message.agentApproval?.id !== args.approvalId
+    )
+      return
+    const now = Date.now()
+    const current = message.agentApproval
+    const history = (message.agentRequests ?? []).map((entry) =>
+      current && entry.id === current.id && entry.status === "pending"
+        ? {
+            ...entry,
+            status: current.expiresAt <= now ? ("expired" as const) : ("cancelled" as const),
+            completedAt: now,
+          }
+        : entry
+    )
     await ctx.db.patch(args.messageId, {
-      agentApproval: undefined,
-      updatedAt: Date.now(),
+      agentApproval: current
+        ? {
+            ...current,
+            ...(current.response === undefined
+              ? {}
+              : { response: safeHistoryResponse(current.input, current.response) }),
+            ...(current.status === "pending"
+              ? {
+                  status:
+                    current.expiresAt <= now
+                      ? ("expired" as const)
+                      : ("cancelled" as const),
+                }
+              : {}),
+          }
+        : undefined,
+      agentRequests: history,
+      updatedAt: now,
     })
   },
 })

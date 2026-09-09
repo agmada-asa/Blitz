@@ -188,13 +188,15 @@ test("ad hoc passages survive completion, follow-up, and branching; cross-chat r
     branchedMessage.citations,
     (await db.get(messageId))?.citations
   )
-  assert.ok(
-    db.rows.some(
-      (row) =>
-        row.table === "workspaceChatAttachments" &&
-        row.chatId === branch.chatId &&
-        row.documentId === documentId
-    )
+  const branchAttachment = db.rows.find(
+    (row) =>
+      row.table === "workspaceChatAttachments" && row.chatId === branch.chatId
+  )
+  assert.ok(branchAttachment?.documentId)
+  assert.notEqual(branchAttachment?.documentId, documentId)
+  assert.equal(
+    (await db.get(String(branchAttachment?.documentId)))?.mimeType,
+    "application/pdf"
   )
   const followup = db.seed("workspaceChatMessages", {
     chatId,
@@ -282,6 +284,135 @@ test("submission rejects an ad hoc document from another project", async () => {
         ],
       }
     ),
-    /File does not belong to this chat's project/
+    /File does not belong to this chat/
   )
+})
+
+test("submission binds an owned projectless draft to its new chat", async () => {
+  const api = await handlers()
+  const db = new MemoryDb()
+  const documentId = db.seed("chatDocuments", {
+    ownerToken: "a".repeat(32),
+    text: "Draft text",
+    filename: "draft.txt",
+    mimeType: "image/png",
+  })
+  const result = (await api.start(
+    { db },
+    {
+      clientMessageId: "owned-draft",
+      message: "Read this",
+      attachments: [
+        {
+          kind: "file",
+          label: "draft.txt",
+          documentId,
+          ownerToken: "a".repeat(32),
+        },
+      ],
+    }
+  )) as { chatId: string }
+  assert.equal((await db.get(documentId))?.chatId, result.chatId)
+  const savedAttachment = db.rows.find(
+    (row) => row.table === "workspaceChatAttachments" && row.chatId === result.chatId
+  )
+  assert.equal(savedAttachment?.text, "Draft text")
+  assert.equal(savedAttachment?.mimeType, "image/png")
+})
+
+test("submission binds an owned projectless draft to an existing projectless chat", async () => {
+  const api = await handlers()
+  const db = new MemoryDb()
+  const chatId = db.seed("workspaceChats", {
+    title: "Existing",
+    status: "idle",
+  })
+  const documentId = db.seed("chatDocuments", {
+    ownerToken: "b".repeat(32),
+    text: "Draft text",
+    filename: "draft.txt",
+  })
+  await api.start(
+    { db },
+    {
+      chatId,
+      clientMessageId: "owned-existing-draft",
+      message: "Read this",
+      attachments: [
+        {
+          kind: "file",
+          label: "draft.txt",
+          documentId,
+          ownerToken: "b".repeat(32),
+          text: "Draft text",
+        },
+      ],
+    }
+  )
+  assert.equal((await db.get(documentId))?.chatId, chatId)
+})
+
+test("continuation replays before provider acceptance and resumes after acceptance", async () => {
+  const api = await handlers()
+  const db = new MemoryDb()
+  const chatId = db.seed("workspaceChats", {
+    title: "Retry",
+    status: "failed",
+    providerSessionId: "session-old",
+    codexThreadId: "thread-old",
+    codexContextReady: true,
+  })
+  const userId = db.seed("workspaceChatMessages", {
+    chatId,
+    role: "user",
+    status: "completed",
+    content: "Describe the image",
+    clientMessageId: "original",
+    createdAt: 1,
+  })
+  void userId
+  const failedId = db.seed("workspaceChatMessages", {
+    chatId,
+    role: "assistant",
+    status: "failed",
+    content: "",
+    clientMessageId: "original",
+    createdAt: 2,
+  })
+  await db.patch(chatId, { activeMessageId: failedId })
+  const fresh = (await api.start(
+    { db },
+    {
+      chatId,
+      continuationOf: failedId,
+      clientMessageId: "retry-before-accept",
+      message: "",
+      attachments: [],
+    }
+  )) as { providerSessionId: string | null; shouldReplayContext: boolean }
+  assert.equal(fresh.providerSessionId, null)
+  assert.equal(fresh.shouldReplayContext, true)
+
+  const acceptedId = db.seed("workspaceChatMessages", {
+    chatId,
+    role: "assistant",
+    status: "failed",
+    content: "Partial answer",
+    providerTurnId: "turn-accepted",
+    clientMessageId: "accepted",
+    createdAt: 3,
+  })
+  await db.patch(chatId, { activeMessageId: acceptedId, status: "failed" })
+  const resumed = (await api.start(
+    { db },
+    {
+      chatId,
+      continuationOf: acceptedId,
+      clientMessageId: "retry-after-accept",
+      message: "",
+      attachments: [],
+    }
+  )) as { providerSessionId: string | null; replyPrefix: string }
+  assert.equal(resumed.providerSessionId, "session-old")
+  assert.equal(resumed.replyPrefix, "Partial answer")
 })
