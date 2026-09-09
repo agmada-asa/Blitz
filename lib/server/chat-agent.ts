@@ -1,4 +1,5 @@
 /** Attaches folder instructions and bridges interactive runtime approvals into a persisted chat. */
+import type { AiApprovalPolicy } from "../ai-model-settings.ts"
 import { randomUUID } from "node:crypto"
 import { setTimeout as delay } from "node:timers/promises"
 import type { ConvexHttpClient } from "convex/browser"
@@ -28,6 +29,8 @@ export function createChatAgentSession(options: {
   chatId: Id<"workspaceChats">
   messageId: Id<"workspaceChatMessages">
   workspaceDirectory: string
+  /** Provider setting for the chat approval mode, applied to start and resume. */
+  approvalPolicy?: AiApprovalPolicy
   autonomy: ProjectAgentAutonomy
   additionalInstructions: string
   signal: AbortSignal
@@ -41,6 +44,8 @@ export function createChatAgentSession(options: {
     options.autonomy,
     options.workspaceDirectory
   )
+  if (options.autonomy === "approval" && options.approvalPolicy)
+    runtime.thread.approvalPolicy = options.approvalPolicy
   const instructions = projectAgentInstructions(
     options.workspaceDirectory,
     options.additionalInstructions
@@ -53,7 +58,10 @@ export function createChatAgentSession(options: {
   ): Promise<CodexApprovalResponse> {
     const operation = queue.then(async () => {
       signal.throwIfAborted()
-      if (!supportedProjectApproval(request.method))
+      if (
+        runtime.thread.approvalPolicy === "never" ||
+        !supportedProjectApproval(request.method)
+      )
         return projectApprovalResponse(request, false)
       const params = approvalRecord(request.params)
       const item =

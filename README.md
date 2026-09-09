@@ -4,7 +4,7 @@ Blitz turns source material into a scrolling learning feed for Android and the w
 
 ## Run locally
 
-Use Node.js 22.13 or newer, with at least one supported local provider installed and signed in. Codex is the default provider; Claude Code, OpenCode, and Antigravity can be selected independently for supported tasks. Development has been verified with Node.js 24 on macOS.
+Use Node.js 22.13 or newer, with at least one supported local provider installed and signed in. Codex is the default provider. Claude Code 2.1.248 or newer can run replies and card generation with tools disabled. OpenCode and Antigravity remain unavailable until their adapters can enforce source isolation. Development has been verified with Node.js 24 on macOS.
 
 ```bash
 npm ci
@@ -25,6 +25,16 @@ npm run worker:research
 ```
 
 The workers load `.env.local`. `BLITZ_CONVEX_URL` can point them at a loopback address while `NEXT_PUBLIC_CONVEX_URL` points browser clients at the LAN address. No cloud deployment or API key is required for this local setup.
+
+## Provider controls
+
+Settings checks installed runtimes before enabling a provider and again before saving. This checks executable setup, not account authentication. Sign in through the provider locally. Claude Code uses the documented `sonnet`, `opus`, and `haiku` aliases; older saved `claude-*` aliases are translated when a turn starts.
+
+Provider approvals are stored independently of model choices. Codex supports asking for untrusted actions, asking when needed, and never approving requests. The setting applies to chat in approval mode. Explicit project/full autonomy modes keep their existing policies. Claude runs without tools or customizations and supports only never approve. ACP adapters cannot collect interactive approvals and are disabled in the picker. Never approve denies requests; it does not bypass permissions. Background card preparation and card chat always deny approvals.
+
+Claude passes supported reasoning selections with `--effort`. Haiku and ACP expose only the provider default. Legacy unsupported effort selections are normalized to that default. Claude turns require restricted mode and disable built-in tools, MCP tools, hooks, and local customizations. Source preparation also requests a read-only workspace and disables search. ACP rejects those restrictions before spawning, since client filesystem and terminal capabilities do not constrain an agent's own tools.
+
+The ACP client negotiates `session/load` and `session/resume`. If neither is supported, it fails before accepting a turn so workspace chat can rebuild its saved history in a new session. Historical load notifications are excluded from the new answer. Both adapters bound stdout and assistant output, decode split UTF-8 safely, and terminate on transport failures or deadlines.
 
 ## Learn
 

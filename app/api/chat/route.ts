@@ -15,6 +15,7 @@ import { isAbsolute, join } from "node:path"
 import type { Id } from "@/convex/_generated/dataModel"
 import {
   resolveAiTaskSelection,
+  resolveProviderApprovalPolicy,
   type AiProviderId,
 } from "@/lib/ai-model-settings"
 import { CardChatError } from "@/lib/server/card-chat"
@@ -390,6 +391,10 @@ export async function POST(request: Request): Promise<Response> {
           model: turn.providerModel ?? configuredSelection.model,
           effort: turn.providerEffort ?? configuredSelection.effort,
         }
+        const approvalPolicy =
+          autonomy === "approval"
+            ? resolveProviderApprovalPolicy(modelSettings, selection.providerId)
+            : "never"
         if (selection.providerId === "codex") {
           agentSession = createChatAgentSession({
             client,
@@ -398,6 +403,7 @@ export async function POST(request: Request): Promise<Response> {
             workspaceDirectory,
             autonomy,
             additionalInstructions,
+            approvalPolicy,
             signal: turnSignal,
             send,
           })
@@ -472,7 +478,7 @@ export async function POST(request: Request): Promise<Response> {
               model: selection.model,
               effort: selection.effort,
               sandbox: "read-only",
-              approvalPolicy: autonomy === "approval" ? "on-request" : "never",
+              approvalPolicy,
               signal: turnSignal,
               timeoutMs: WORKSPACE_CHAT_TIMEOUT_MS,
             },

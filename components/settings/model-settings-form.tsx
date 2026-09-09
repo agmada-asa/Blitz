@@ -15,9 +15,21 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
+import type { ProviderAvailability } from "@/lib/server/providers/types"
 import { api } from "@/convex/_generated/api"
 import {
+  AI_PROVIDER_OPTIONS,
+  AI_PROVIDER_APPROVAL_POLICIES,
+  resolveProviderApprovalPolicy,
+  type AiApprovalPolicy,
   DEFAULT_AI_MODEL_SETTINGS,
   getDefaultAiModelOption,
   resolveAiProvider,
@@ -155,14 +167,31 @@ function ModelSettingsEditor({
     setIsSaving(true)
     setFeedback(null)
     try {
+      const response = await fetch("/api/providers", { cache: "no-store" })
+      if (!response.ok)
+        throw new Error("Could not check provider setup. Try again.")
+      const availability = (await response.json()) as ProviderAvailability[]
+      for (const { providerField } of MODEL_FIELDS) {
+        const provider = availability.find(
+          (item) =>
+            item.providerId === resolveAiProvider(settings, providerField)
+        )
+        if (!provider?.available)
+          throw new Error(
+            provider?.message ?? "Could not check provider setup. Try again."
+          )
+      }
       const saved = await saveSettings(settings)
       setDraft(saved)
       setIsDirty(false)
       setFeedback({ tone: "success", message: "AI settings saved." })
-    } catch {
+    } catch (error) {
       setFeedback({
         tone: "error",
-        message: "Could not save AI settings. Try again.",
+        message:
+          error instanceof Error
+            ? error.message
+            : "Could not save AI settings. Try again.",
       })
     } finally {
       setIsSaving(false)
@@ -244,6 +273,70 @@ function ModelSettingsEditor({
               )
             }
           )}
+          <div className="space-y-4 px-4 py-5">
+            <div>
+              <h3 className="text-sm font-medium">Provider approvals</h3>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Applies to chat in approval mode. Background tasks never request
+                approval. Never approve denies requests; it does not grant
+                unrestricted access.
+              </p>
+            </div>
+            {AI_PROVIDER_OPTIONS.map((provider) => (
+              <div
+                key={provider.id}
+                className="grid gap-2 sm:grid-cols-2 sm:items-center"
+              >
+                <label htmlFor={`approval-${provider.id}`} className="text-sm">
+                  {provider.label}
+                </label>
+                <div>
+                  <Select
+                    value={resolveProviderApprovalPolicy(draft, provider.id)}
+                    disabled={
+                      isSaving ||
+                      AI_PROVIDER_APPROVAL_POLICIES[provider.id].length === 1
+                    }
+                    onValueChange={(value) => {
+                      setDraft((current) => ({
+                        ...current,
+                        providerApprovalPolicies: {
+                          ...current.providerApprovalPolicies,
+                          [provider.id]: value as AiApprovalPolicy,
+                        },
+                      }))
+                      markDirty()
+                    }}
+                  >
+                    <SelectTrigger
+                      id={`approval-${provider.id}`}
+                      className="h-10"
+                    >
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {AI_PROVIDER_APPROVAL_POLICIES[provider.id].map(
+                        (policy) => (
+                          <SelectItem key={policy} value={policy}>
+                            {policy === "untrusted"
+                              ? "Ask for untrusted actions"
+                              : policy === "on-request"
+                                ? "Ask when needed"
+                                : "Never approve"}
+                          </SelectItem>
+                        )
+                      )}
+                    </SelectContent>
+                  </Select>
+                  {provider.id !== "codex" ? (
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Interactive approvals are unavailable for this provider.
+                    </p>
+                  ) : null}
+                </div>
+              </div>
+            ))}
+          </div>
         </CardContent>
         <CardFooter className="flex-col items-start justify-between gap-3 sm:flex-row sm:items-center">
           <p
