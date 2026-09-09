@@ -17,8 +17,9 @@ The current public surface is intentionally small:
 
 - `CodexAppServerClient.connect(options)` starts a connection and completes the
   handshake.
-- `startThread({ model?, ephemeral?, approvalPolicy?, sandbox? })` creates a
-  thread.
+- `startThread({ model?, ephemeral?, approvalPolicy?, sandbox?, dynamicTools? })`
+  creates a thread. Dynamic tools require `experimentalApi: true` during the
+  connection handshake.
 - `resumeThread(threadId, { approvalPolicy?, sandbox? })` reopens a stored
   thread.
 - `startTurn(threadId, { text, model?, effort? })` starts a text turn.
@@ -29,23 +30,26 @@ The current public surface is intentionally small:
 
 Inbound lines, outbound messages, and concurrent requests are bounded. A
 malformed line, oversized line, request timeout, child error, or child exit
-rejects pending calls and terminates the connection. Approval requests are
-always surfaced as `server-request` events. Until Blitz supplies a user-facing
-approval flow, command and file-change requests receive `decline`, and
-additional-permission requests receive an empty permission grant. A caller can
-provide `approvalHandler` to make an explicit decision; handler failures fall
-back to the same safe denial.
+rejects pending calls and terminates the connection. Approval, Codex user-input,
+app-owned dynamic tool, and MCP elicitation requests are surfaced as
+`server-request` events. A caller
+can provide `requestHandler` to return the protocol response after Blitz has
+shown the request in its composer; the older `approvalHandler` remains
+available for approval-only callers. Missing handlers and handler failures fall
+back to safe denial, an empty answer map, a failed dynamic tool result, or MCP
+cancellation.
 
 Thread creation and resume explicitly use `approvalPolicy: "on-request"` and
 `sandbox: "read-only"` by default. Callers must opt into other verified
 protocol values such as `workspace-write` when a later Blitz job requires them.
 
-This is a transport foundation, not full Codex feature parity. It does not yet
-implement tool execution, user-input elicitation, dynamic tools, thread
-listing, reconnection, or persistence of Blitz-side chat records. Those belong
-in the source and chat jobs after this boundary is reviewed.
+This is a transport foundation, not full Codex feature parity. It supports
+bounded application-provided function tools, but does not implement arbitrary
+tool execution, thread listing, reconnection, or persistence of Blitz-side chat
+records. Those belong in the source and chat jobs after this boundary is
+reviewed.
 
-The protocol was checked against the installed `codex-cli 0.153.0` using
+The protocol was checked against the installed `codex-cli 0.153.4` using
 `codex app-server --help` and its generated v2 JSON Schema. The tests use an
 injectable in-memory child and never start a live Codex turn.
 
