@@ -1,5 +1,7 @@
 # Blitz
 
+![Blitz](app/icon.svg)
+
 Blitz turns source material into a scrolling learning feed for Android and the web. A local Mac worker prepares explanations and questions through Codex App Server using your existing Codex sign-in.
 
 ## Run locally

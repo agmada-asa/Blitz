@@ -3,6 +3,7 @@
     "name": "Blitz",
     "slug": "blitz",
     "version": "0.0.1",
+    "icon": "./assets/icon.png",
     "orientation": "portrait",
     "scheme": "blitz",
     "android": {

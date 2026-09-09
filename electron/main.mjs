@@ -7,6 +7,8 @@ import { assertProjectPath, repositoryRoot } from "./paths.mjs"
 
 const port = Number(process.env.BLITZ_PORT || 3001)
 const host = process.env.BLITZ_LAN_ADDRESS ? "0.0.0.0" : "127.0.0.1"
+/** Shared native icon used by the macOS Dock and non-macOS window chrome. */
+const appIconPath = join(repositoryRoot(), "app", "apple-icon.png")
 const services = new ServiceManager({ cwd: repositoryRoot(), port, host })
 let mainWindow
 let shuttingDown = false
@@ -18,6 +20,7 @@ async function createWindow() {
     height: 960,
     minWidth: 960,
     minHeight: 640,
+    icon: appIconPath,
     webPreferences: {
       preload: join(repositoryRoot(), "electron", "preload.cjs"),
       contextIsolation: true,
@@ -82,6 +85,7 @@ async function boot() {
     app.quit()
     return
   }
+  if (process.platform === "darwin") app.dock?.setIcon(appIconPath)
   app.on("second-instance", () => mainWindow?.show())
   registerIpc()
   await services.start()
