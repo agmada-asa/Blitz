@@ -44,6 +44,7 @@ class FakeAcpProcess extends EventEmitter {
     configId?: string
     value?: string
   }> = []
+  modeSelections: Array<{ sessionId?: string; modeId?: string }> = []
 
   readonly stdout = new EventEmitter()
   readonly stderr = new EventEmitter()
@@ -52,7 +53,12 @@ class FakeAcpProcess extends EventEmitter {
       const message = JSON.parse(chunk) as {
         id?: number
         method?: string
-        params?: { sessionId?: string; configId?: string; value?: string }
+        params?: {
+          sessionId?: string
+          configId?: string
+          value?: string
+          modeId?: string
+        }
       }
       queueMicrotask(() => this.respond(message))
       return true
@@ -66,7 +72,12 @@ class FakeAcpProcess extends EventEmitter {
   protected respond(message: {
     id?: number
     method?: string
-    params?: { sessionId?: string; configId?: string; value?: string }
+    params?: {
+      sessionId?: string
+      configId?: string
+      value?: string
+      modeId?: string
+    }
   }): void {
     if (message.method) this.methods.push(message.method)
     if (message.method === "initialize") {
@@ -110,6 +121,7 @@ class FakeAcpProcess extends EventEmitter {
       return
     }
     if (message.method === "session/set_mode") {
+      this.modeSelections.push(message.params ?? {})
       this.send({ jsonrpc: "2.0", id: message.id, result: {} })
       return
     }
@@ -397,6 +409,42 @@ test("normalizes ACP provider output", async () => {
       (event) => event.type === "text-delta" && event.turnId === result.turnId
     )
   )
+})
+
+/** Reapplies the selected native ACP mode after loading an existing conversation. */
+test("ACP sets the current access mode before every resumed prompt", async () => {
+  for (const [approvalPolicy, modeId] of [
+    ["on-request", "default"],
+    ["full-access", "yolo"],
+  ] as const) {
+    const child = new FakeAcpProcess()
+    child.capabilities = { sessionCapabilities: { resume: {} } }
+    await runAcpTextTurn(
+      {
+        selection: { providerId: "antigravity", model: "default" },
+        workspaceDirectory: "/tmp/blitz-provider-test",
+        prompt: "Use the current access mode.",
+        session: {
+          providerId: "antigravity",
+          providerSessionId: "acp-session-1",
+        },
+        approvalPolicy,
+        webSearchMode: "live",
+      },
+      {
+        command: { executable: "fake-antigravity", args: [] },
+        providerInstanceId: "local",
+        spawnProcess: () => child,
+      }
+    )
+    assert.deepEqual(child.modeSelections, [
+      { sessionId: "acp-session-1", modeId },
+    ])
+    assert.ok(
+      child.methods.indexOf("session/set_mode") <
+        child.methods.indexOf("session/prompt")
+    )
+  }
 })
 
 /** Builds one ACP request with a fake executable and no external model usage. */

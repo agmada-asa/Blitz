@@ -154,6 +154,8 @@ test("project tasks attach developer instructions and selected runtime policy be
         },
         startTurn: async (_id, options) => {
           assert.equal(options.text, "Make a study guide")
+          assert.equal(options.approvalPolicy, "never")
+          assert.equal(options.approvalsReviewer, "user")
           assert.equal(options.sandboxPolicy?.type, "workspaceWrite")
           await writeFile(join(workspace.projectDirectory, "guide.md"), "Guide")
           listener?.({

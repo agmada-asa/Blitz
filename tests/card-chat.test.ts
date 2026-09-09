@@ -288,6 +288,11 @@ test("returns IDs and handles completion racing the turn/start response", async 
   assert.equal(transport.startOptions?.model, "gpt-test")
   assert.equal(transport.turnOptions?.model, "gpt-test")
   assert.equal(transport.turnOptions?.effort, "low")
+  assert.equal(transport.turnOptions?.approvalPolicy, "on-request")
+  assert.deepEqual(transport.turnOptions?.sandboxPolicy, {
+    type: "readOnly",
+    networkAccess: false,
+  })
 })
 
 test("resumes a supplied persistent thread and streams activity", async () => {
@@ -310,6 +315,7 @@ test("resumes a supplied persistent thread and streams activity", async () => {
   assert.equal(result.threadId, "thr_saved")
   assert.equal(transport.resumeCalls, 1)
   assert.equal(transport.resumeOptions?.approvalPolicy, "on-request")
+  assert.equal(transport.turnOptions?.approvalPolicy, "on-request")
   assert.ok(events.some((event) => event.type === "activity"))
 })
 

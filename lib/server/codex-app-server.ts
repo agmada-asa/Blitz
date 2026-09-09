@@ -275,6 +275,10 @@ export interface CodexResumeThreadOptions {
 
 /** Parameters accepted by the bridge's narrow turn/start API. */
 export interface CodexStartTurnOptions {
+  /** Reasserts the approval policy for this turn and subsequent turns. */
+  approvalPolicy?: "untrusted" | "on-request" | "never"
+  /** Keeps approval decisions with the user for this turn and subsequent turns. */
+  approvalsReviewer?: "user"
   /** Explicit per-turn sandbox overrides, independent of local user configuration. */
   sandboxPolicy?:
     | { type: "dangerFullAccess" }
@@ -615,6 +619,12 @@ export class CodexAppServerClient {
       threadId,
       cwd: this.workspaceDirectory,
       input: [{ type: "text", text: options.text }],
+      ...(options.approvalPolicy === undefined
+        ? {}
+        : { approvalPolicy: options.approvalPolicy }),
+      ...(options.approvalsReviewer === undefined
+        ? {}
+        : { approvalsReviewer: options.approvalsReviewer }),
       ...(options.sandboxPolicy === undefined
         ? {}
         : { sandboxPolicy: options.sandboxPolicy }),

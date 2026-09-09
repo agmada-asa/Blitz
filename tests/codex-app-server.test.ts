@@ -159,6 +159,35 @@ test("performs the handshake, correlates out-of-order replies, and uses the supp
     })
     assert.equal((await first).thread.id, "thr_new")
     assert.equal((await second).thread.id, "thr_existing")
+
+    const turn = client.startTurn("thr_existing", {
+      text: "Use the current policy",
+      approvalPolicy: "untrusted",
+      approvalsReviewer: "user",
+      sandboxPolicy: { type: "readOnly", networkAccess: false },
+    })
+    const turnRequest = messages(process).at(-1)
+    assert.equal(turnRequest?.method, "turn/start")
+    assert.equal(
+      turnRequest?.params &&
+        (turnRequest.params as Record<string, unknown>).approvalPolicy,
+      "untrusted"
+    )
+    assert.equal(
+      turnRequest?.params &&
+        (turnRequest.params as Record<string, unknown>).approvalsReviewer,
+      "user"
+    )
+    assert.deepEqual(
+      turnRequest?.params &&
+        (turnRequest.params as Record<string, unknown>).sandboxPolicy,
+      { type: "readOnly", networkAccess: false }
+    )
+    process.respond({
+      id: turnRequest?.id,
+      result: { turn: { id: "turn_current", status: "inProgress" } },
+    })
+    assert.equal((await turn).turn.id, "turn_current")
   } finally {
     await client.close()
   }

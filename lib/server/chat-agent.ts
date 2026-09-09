@@ -220,7 +220,12 @@ export function createChatAgentSession(options: {
           developerInstructions: instructions,
         }),
       startTurn: (id, settings) =>
-        client.startTurn(id, { ...settings, sandboxPolicy: runtime.turn }),
+        client.startTurn(id, {
+          ...settings,
+          approvalPolicy: runtime.thread.approvalPolicy,
+          approvalsReviewer: runtime.thread.approvalsReviewer,
+          sandboxPolicy: runtime.turn,
+        }),
       interruptTurn: (threadId, turnId) =>
         client.interruptTurn(threadId, turnId),
       onEvent: (listener) => client.onEvent(listener),

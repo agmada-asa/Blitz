@@ -837,6 +837,8 @@ export async function runCodexTextTurn(
     const turn = await raceCancellation(
       client.startTurn(threadId, {
         text: request.prompt,
+        approvalPolicy: request.approvalPolicy ?? "on-request",
+        sandboxPolicy: { type: "readOnly", networkAccess: false },
         ...(request.model === undefined ? {} : { model: request.model }),
         ...(request.effort === undefined ? {} : { effort: request.effort }),
       })
