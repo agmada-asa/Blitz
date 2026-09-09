@@ -241,35 +241,62 @@ function ModelSettingsEditor({
                   </div>
                   <div className="space-y-1.5">
                     <span className="text-xs font-medium">
-                      Model and reasoning
+                      {task === "reply"
+                        ? "Model, reasoning, and access"
+                        : "Model and reasoning"}
                     </span>
-                    <ModelReasoningPicker
-                      task={task}
-                      provider={selectedProvider}
-                      model={selectedModel}
-                      reasoning={selectedEffort}
-                      disabled={isSaving}
-                      labelPrefix={label}
-                      aria-describedby={descriptionId}
-                      className="h-11 w-full max-w-none justify-between rounded-lg border border-input bg-transparent px-3 text-sm text-foreground hover:bg-muted dark:bg-input/30"
-                      onProviderChange={(provider) =>
-                        updateProvider(
-                          providerField,
-                          modelField,
-                          effortField,
-                          provider
-                        )
-                      }
-                      onChange={(model, reasoning) =>
-                        updateSelection(
-                          providerField,
-                          modelField,
-                          effortField,
-                          model,
-                          reasoning
-                        )
-                      }
-                    />
+                    <div>
+                      <ModelReasoningPicker
+                        task={task}
+                        provider={selectedProvider}
+                        model={selectedModel}
+                        reasoning={selectedEffort}
+                        accessPolicy={
+                          task === "reply"
+                            ? resolveProviderApprovalPolicy(
+                                draft,
+                                selectedProvider
+                              )
+                            : undefined
+                        }
+                        showAccessPolicy={task === "reply"}
+                        onAccessPolicyChange={
+                          task === "reply"
+                            ? (policy) => {
+                                setDraft((current) => ({
+                                  ...current,
+                                  providerApprovalPolicies: {
+                                    ...current.providerApprovalPolicies,
+                                    [selectedProvider]: policy,
+                                  },
+                                }))
+                                markDirty()
+                              }
+                            : undefined
+                        }
+                        disabled={isSaving}
+                        labelPrefix={label}
+                        aria-describedby={descriptionId}
+                        className="h-9 w-fit"
+                        onProviderChange={(provider) =>
+                          updateProvider(
+                            providerField,
+                            modelField,
+                            effortField,
+                            provider
+                          )
+                        }
+                        onChange={(model, reasoning) =>
+                          updateSelection(
+                            providerField,
+                            modelField,
+                            effortField,
+                            model,
+                            reasoning
+                          )
+                        }
+                      />
+                    </div>
                   </div>
                 </div>
               )

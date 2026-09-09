@@ -1,6 +1,11 @@
 "use client"
 
-/** Lets learners choose the saved model and reasoning level for replies without leaving chat. */
+/**
+ * Lets learners choose the saved model, reasoning level, and access policy for replies without leaving chat.
+ *
+ * This component integrates the t3 code model and reasoning picker directly into the chat composer,
+ * providing one-click access to model selection, reasoning effort levels, and tool access policies.
+ */
 
 import { useEffect, useState } from "react"
 import { useMutation, useQuery } from "convex/react"
@@ -11,7 +16,9 @@ import {
   DEFAULT_AI_MODEL_SETTINGS,
   getDefaultAiModelOption,
   resolveAiProvider,
+  resolveProviderApprovalPolicy,
   validateAiModelSettings,
+  type AiApprovalPolicy,
   type AiModelSettings,
   type AiProviderId,
   type AiReasoningEffort,
@@ -19,11 +26,18 @@ import {
 
 /** Options that let a parent prevent a configuration race with an active chat turn. */
 type ReplyModelPickerProps = {
+  /** Prevents changing settings during an active assistant stream. */
   disabled?: boolean
+  /** Notifies the parent composer when an asynchronous save operation is running. */
   onSaveStateChange?: (saving: boolean) => void
 }
 
-/** Loads the saved reply configuration before rendering its compact controls. */
+/**
+ * Loads the saved reply configuration before rendering its compact controls.
+ *
+ * @param props - Disabled state and save state callbacks.
+ * @returns The reply model picker editor or a loading indicator.
+ */
 export function ReplyModelPicker({
   disabled = false,
   onSaveStateChange,
@@ -46,7 +60,7 @@ export function ReplyModelPicker({
   )
 }
 
-/** Saves an optimistic reply-only selection while preserving settings for the other AI tasks. */
+/** Saves an optimistic reply selection while preserving settings for other AI tasks. */
 function ReplyModelPickerEditor({
   initialSettings,
   disabled,
@@ -105,15 +119,35 @@ function ReplyModelPickerEditor({
     })
   }
 
+  /** Updates the approval policy for the current reply provider. */
+  const selectAccessPolicy = (policy: AiApprovalPolicy): void => {
+    const provider = resolveAiProvider(draft, "replyProvider")
+    void persist({
+      ...draft,
+      providerApprovalPolicies: {
+        ...draft.providerApprovalPolicies,
+        [provider]: policy,
+      },
+    })
+  }
+
+  const currentProvider = resolveAiProvider(draft, "replyProvider")
+  const currentAccessPolicy = resolveProviderApprovalPolicy(
+    draft,
+    currentProvider
+  )
   const isDisabled = disabled || isSaving
 
   return (
     <div className="flex min-w-0 items-center">
       <ModelReasoningPicker
         task="reply"
-        provider={resolveAiProvider(draft, "replyProvider")}
+        provider={currentProvider}
         model={draft.replyModel}
         reasoning={draft.replyEffort}
+        accessPolicy={currentAccessPolicy}
+        onAccessPolicyChange={selectAccessPolicy}
+        showAccessPolicy={true}
         disabled={isDisabled}
         labelPrefix="Reply model"
         onProviderChange={selectProvider}
