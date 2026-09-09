@@ -111,6 +111,8 @@ async function main(): Promise<void> {
                 signal,
                 timeoutMs: 120_000,
                 ephemeral: true,
+                sandbox: "read-only",
+                approvalPolicy: "never",
                 // Preparation must stay grounded in the uploaded source section.
                 webSearchMode: "disabled",
               })

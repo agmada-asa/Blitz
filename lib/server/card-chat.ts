@@ -84,6 +84,8 @@ export interface CardChatRequest {
 
 /** Generic bounded text-turn input reusable by server-side generation jobs. */
 export interface CodexTextTurnRequest {
+  /** Approval policy enforced for new and resumed provider threads. */
+  readonly approvalPolicy?: "untrusted" | "on-request" | "never"
   /** Explicit absolute Blitz-owned workspace for local Codex. */
   readonly workspaceDirectory: string
   /** Already prepared, bounded prompt text. */
@@ -656,7 +658,7 @@ export async function runCodexTextTurn(
     if (cancelReason) throw cancelReason
     unsubscribe = client.onEvent(handleTransportEvent)
     const threadOptions: CodexStartThreadOptions = {
-      approvalPolicy: "on-request",
+      approvalPolicy: request.approvalPolicy ?? "on-request",
       sandbox: "read-only",
       ...(request.ephemeral === undefined
         ? {}
@@ -664,7 +666,7 @@ export async function runCodexTextTurn(
       ...(request.model === undefined ? {} : { model: request.model }),
     }
     const resumeOptions: CodexResumeThreadOptions = {
-      approvalPolicy: "on-request",
+      approvalPolicy: request.approvalPolicy ?? "on-request",
       sandbox: "read-only",
       ...(request.model === undefined ? {} : { model: request.model }),
     }

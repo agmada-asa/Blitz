@@ -17,6 +17,7 @@ import {
   runClaudeCodeTextTurn,
 } from "./claude-code.ts"
 import {
+  checkProviderAvailability,
   getProviderDefinition,
   providerCommand,
   providerInstanceId,
@@ -164,6 +165,7 @@ export async function runProviderTextTurn(
     if (request.providerId === "codex") {
       return await runCodexTextTurn(
         {
+          approvalPolicy: request.approvalPolicy,
           workspaceDirectory: request.workspaceDirectory,
           prompt: request.prompt,
           ...(request.threadId ? { threadId: request.threadId } : {}),
@@ -188,6 +190,13 @@ export async function runProviderTextTurn(
         }
       )
     }
+    const availability = await checkProviderAvailability(request.providerId, {
+      workspaceDirectory: request.workspaceDirectory,
+      providerInstanceId: request.providerInstanceId,
+      signal: request.signal,
+    })
+    if (!availability.available)
+      throw new CardChatError("transport", availability.message)
     getProviderDefinition(request.providerId)
     const instanceId =
       request.providerInstanceId ?? providerInstanceId(request.providerId)

@@ -104,20 +104,34 @@ export function providerInstanceId(providerId: AiProviderId): string {
 
 /** Probes whether an executable starts successfully without logging its output. */
 async function probeCommand(
-  command: ProviderCommand
+  command: ProviderCommand,
+  requireRestrictedClaude = false
 ): Promise<
   | { available: true }
-  | { available: false; reason: "missing-executable" | "probe-failed" }
+  | {
+      available: false
+      reason: "missing-executable" | "probe-failed" | "unsupported"
+    }
 > {
   return new Promise((resolve) => {
     let settled = false
-    const child = spawn(command.executable, [...command.args, "--version"], {
-      stdio: "ignore",
+    let versionOutput = ""
+    const child = spawn(command.executable, ["--version"], {
+      stdio: ["ignore", "pipe", "ignore"],
+    })
+    child.stdout.on("data", (chunk: Buffer) => {
+      if (versionOutput.length < 4096)
+        versionOutput += chunk
+          .toString("utf8")
+          .slice(0, 4096 - versionOutput.length)
     })
     const finish = (
       value:
         | { available: true }
-        | { available: false; reason: "missing-executable" | "probe-failed" }
+        | {
+            available: false
+            reason: "missing-executable" | "probe-failed" | "unsupported"
+          }
     ): void => {
       if (settled) return
       settled = true
@@ -125,7 +139,7 @@ async function probeCommand(
       resolve(value)
     }
     const timer = setTimeout(() => {
-      child.kill("SIGTERM")
+      child.kill("SIGKILL")
       finish({ available: false, reason: "probe-failed" })
     }, PROBE_TIMEOUT_MS)
     child.on("error", (error: unknown) => {
@@ -139,7 +153,25 @@ async function probeCommand(
       })
     })
     child.on("close", (code: unknown) => {
-      finish({ available: code === 0, reason: "probe-failed" })
+      if (code !== 0) {
+        finish({ available: false, reason: "probe-failed" })
+        return
+      }
+      const version = versionOutput.match(/\b(\d+)\.(\d+)\.(\d+)\b/)
+      if (
+        requireRestrictedClaude &&
+        (!version ||
+          !(
+            Number(version[1]) > 2 ||
+            (Number(version[1]) === 2 &&
+              (Number(version[2]) > 1 ||
+                (Number(version[2]) === 1 && Number(version[3]) >= 248)))
+          ))
+      ) {
+        finish({ available: false, reason: "unsupported" })
+        return
+      }
+      finish({ available: true })
     })
   })
 }
@@ -149,28 +181,30 @@ export async function checkProviderAvailability(
   providerId: AiProviderId,
   options: ProviderHealthOptions
 ): Promise<ProviderAvailability> {
-  const instanceId =
-    options.providerInstanceId ?? providerInstanceId(providerId)
-  if (
-    providerId === "antigravity" &&
-    !process.env.BLITZ_ANTIGRAVITY_ACP_COMMAND
-  ) {
+  if (providerId === "opencode" || providerId === "antigravity") {
     return {
       providerId,
-      providerInstanceId: instanceId,
+      providerInstanceId:
+        options.providerInstanceId ?? providerInstanceId(providerId),
       available: false,
-      reason: "missing-executable",
-      message: "Configure the managed Antigravity ACP runtime before using it.",
+      reason: "unsupported",
+      message:
+        "Unavailable for source-based tasks. Choose Codex or Claude Code.",
     }
   }
-  const result = await probeCommand(providerCommand(providerId))
+  const instanceId =
+    options.providerInstanceId ?? providerInstanceId(providerId)
+  const result = await probeCommand(
+    providerCommand(providerId),
+    providerId === "claude-code"
+  )
   return result.available
     ? {
         providerId,
         providerInstanceId: instanceId,
         available: true,
         reason: "ready",
-        message: `${providerId} is ready on this Mac.`,
+        message: "Installed. Sign in locally before running a turn.",
       }
     : {
         providerId,
@@ -178,9 +212,11 @@ export async function checkProviderAvailability(
         available: false,
         reason: result.reason,
         message:
-          result.reason === "missing-executable"
-            ? `Install or configure ${providerId} before selecting it.`
-            : `${providerId} did not pass its local runtime check.`,
+          result.reason === "unsupported"
+            ? "Update Claude Code to version 2.1.248 or newer for restricted turns."
+            : result.reason === "missing-executable"
+              ? "Install this provider and sign in locally before selecting it."
+              : `${providerId} did not pass its local runtime check.`,
       }
 }
 

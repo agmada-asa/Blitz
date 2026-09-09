@@ -12,6 +12,9 @@ import type {
   ProviderTextTurnResult,
 } from "./types.ts"
 
+const MAX_OUTPUT_BYTES = 250_000
+const MAX_STREAM_BYTES = 4_000_000
+
 const DEFAULT_TIMEOUT_MS = 120_000
 const DEFAULT_LINE_BYTES = 1_000_000
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000
@@ -108,6 +111,10 @@ class AcpJsonRpcClient {
   private inputBuffer = ""
   private closed = false
   private processClosed = false
+  private loadSession = false
+  private resumeSupported = false
+  private streamBytes = 0
+  private outputBytes = 0
 
   /** Attaches readers and lifecycle handlers to a new ACP process. */
   constructor(
@@ -136,7 +143,10 @@ class AcpJsonRpcClient {
     child.on("error", (error: unknown) =>
       this.closeWithError("ACP process failed", error)
     )
-    child.on("close", () => this.closeWithError("ACP process closed"))
+    child.on("close", () => {
+      this.processClosed = true
+      this.closeWithError("ACP process closed")
+    })
   }
 
   /** Subscribes to normalized ACP activity and text events. */
@@ -147,14 +157,26 @@ class AcpJsonRpcClient {
 
   /** Completes the ACP initialize handshake. */
   async initialize(): Promise<void> {
-    await this.request("initialize", {
-      protocolVersion: 1,
-      clientInfo: { name: "blitz", title: "Blitz", version: "0.0.1" },
-      clientCapabilities: {
-        fs: { readTextFile: false, writeTextFile: false },
-        terminal: false,
-      },
-    })
+    const result = record(
+      await this.request("initialize", {
+        protocolVersion: 1,
+        clientInfo: { name: "blitz", title: "Blitz", version: "0.0.1" },
+        clientCapabilities: {
+          fs: { readTextFile: false, writeTextFile: false },
+          terminal: false,
+        },
+      })
+    )
+    if (result?.protocolVersion !== 1)
+      throw new AcpProviderError(
+        "protocol",
+        "ACP protocol version is unsupported"
+      )
+    const capabilities = record(result?.agentCapabilities)
+    this.loadSession = capabilities?.loadSession === true
+    this.resumeSupported = !!record(
+      record(capabilities?.sessionCapabilities)?.resume
+    )
   }
 
   /** Starts one ACP session with MCP disabled at the protocol boundary. */
@@ -183,12 +205,21 @@ class AcpJsonRpcClient {
   ): Promise<string> {
     if (!sessionId.trim())
       throw new AcpProviderError("invalid-input", "ACP session ID is required")
+    // The caller can rebuild history on a fresh session before any turn is accepted.
+    if (!this.loadSession && !this.resumeSupported)
+      throw new AcpProviderError(
+        "transport",
+        "ACP cannot resume this session; replay the conversation in a new session"
+      )
     const result = record(
-      await this.request("session/load", {
-        sessionId,
-        cwd: workspaceDirectory,
-        mcpServers: [],
-      })
+      await this.request(
+        this.resumeSupported ? "session/resume" : "session/load",
+        {
+          sessionId,
+          cwd: workspaceDirectory,
+          mcpServers: [],
+        }
+      )
     )
     const loadedId = stringField(result, "sessionId") ?? sessionId
     await this.trySelectModel(loadedId, model)
@@ -211,7 +242,6 @@ class AcpJsonRpcClient {
 
   /** Closes the child process and rejects any in-flight protocol requests. */
   async close(): Promise<void> {
-    if (this.closed) return
     this.closed = true
     for (const [id, pending] of this.pending) {
       clearTimeout(pending.timer)
@@ -226,21 +256,17 @@ class AcpJsonRpcClient {
     }
   }
 
-  /** Attempts the ACP model-selection extension without making it mandatory. */
+  /** Selects an explicit model or fails instead of silently using a different model. */
   private async trySelectModel(
     sessionId: string,
     model: string | undefined
   ): Promise<void> {
     if (!model?.trim() || model === "default") return
-    try {
-      await this.request("session/set_config_option", {
-        sessionId,
-        configId: "model",
-        value: model,
-      })
-    } catch {
-      // Some ACP agents expose no model selector. Their configured default remains valid.
-    }
+    await this.request("session/set_config_option", {
+      sessionId,
+      configId: "model",
+      value: model,
+    })
   }
 
   /** Writes one bounded JSON-RPC message to the provider process. */
@@ -286,12 +312,21 @@ class AcpJsonRpcClient {
   /** Handles one stdout chunk and parses complete JSON-RPC lines. */
   private handleChunk(chunk: unknown): void {
     if (this.closed) return
-    const text = typeof chunk === "string" ? chunk : String(chunk)
-    this.inputBuffer += this.decoder.write(text)
+    const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk))
+    this.streamBytes += bytes.length
+    if (this.streamBytes > MAX_STREAM_BYTES) {
+      this.closeWithError("ACP stream exceeded the configured limit")
+      return
+    }
+    this.inputBuffer += this.decoder.write(bytes)
     while (true) {
       const newline = this.inputBuffer.indexOf("\n")
-      if (newline < 0) break
-      const line = this.inputBuffer.slice(0, newline).trim()
+      if (newline < 0) {
+        if (Buffer.byteLength(this.inputBuffer) > this.maxLineBytes)
+          this.closeWithError("ACP response exceeded the line limit")
+        break
+      }
+      const line = this.inputBuffer.slice(0, newline)
       this.inputBuffer = this.inputBuffer.slice(newline + 1)
       if (!line) continue
       if (new TextEncoder().encode(line).byteLength > this.maxLineBytes) {
@@ -362,6 +397,12 @@ class AcpJsonRpcClient {
       typeof content.text === "string" &&
       content.text.length > 0
     ) {
+      this.outputBytes += Buffer.byteLength(content.text)
+      if (this.outputBytes > MAX_OUTPUT_BYTES)
+        throw new AcpProviderError(
+          "transport",
+          "ACP assistant output exceeded the configured limit"
+        )
       this.emit({
         type: "text-delta",
         threadId: sessionId,
@@ -386,8 +427,9 @@ class AcpJsonRpcClient {
 
   /** Rejects pending requests once and records only a safe transport message. */
   private closeWithError(message: string, cause?: unknown): void {
-    if (this.processClosed) return
-    this.processClosed = true
+    if (this.closed) return
+    this.closed = true
+    if (!this.processClosed) this.child.kill("SIGKILL")
     for (const [id, pending] of this.pending) {
       clearTimeout(pending.timer)
       pending.reject(new AcpProviderError("transport", message, cause))
@@ -409,6 +451,21 @@ export async function runAcpTextTurn(
     onEvent?: (event: ProviderEvent) => void
   }
 ): Promise<ProviderTextTurnResult> {
+  // ACP client fs/terminal capabilities do not constrain the agent's own tools.
+  if (
+    request.sandbox ||
+    request.approvalPolicy ||
+    request.webSearchMode === "disabled"
+  )
+    throw new AcpProviderError(
+      "invalid-input",
+      "ACP cannot enforce Blitz's sandbox policy"
+    )
+  if (request.selection.effort && request.selection.effort !== "default")
+    throw new AcpProviderError(
+      "invalid-input",
+      "ACP reasoning selection is unsupported"
+    )
   if (!isAbsolute(request.workspaceDirectory))
     throw new AcpProviderError(
       "invalid-input",
@@ -429,8 +486,10 @@ export async function runAcpTextTurn(
   const turnId = randomUUID()
   let text = ""
   let settled = false
+  let prompting = false
   const emit = (event: ProviderEvent): void => {
     if (event.type === "text-delta") {
+      if (!prompting || event.threadId !== sessionId) return
       const normalized = { ...event, turnId }
       text += normalized.delta
       options.onEvent?.(normalized)
@@ -478,6 +537,7 @@ export async function runAcpTextTurn(
         threadId: activeSessionId,
         turnId,
       })
+      prompting = true
       await client.prompt(activeSessionId, request.prompt)
       if (signal?.aborted)
         throw new AcpProviderError("aborted", "Provider turn was interrupted")

@@ -3,6 +3,7 @@
  * process, model turn, subscription usage, or network connection is used.
  */
 
+import { runProviderTextTurn } from "../lib/server/providers/run-text-turn.ts"
 import { test } from "node:test"
 import assert from "node:assert/strict"
 import {
@@ -419,4 +420,33 @@ test("fails when streamed assistant text exceeds the collection bound", async ()
     (error: unknown) =>
       error instanceof CardChatError && error.reason === "transport"
   )
+})
+
+/** Confirms the router enforces the requested approval policy on both thread lifecycle paths. */
+test("forwards approval policy to new and resumed Codex threads", async () => {
+  for (const threadId of [undefined, "thr_saved"]) {
+    for (const approvalPolicy of [
+      "never",
+      "on-request",
+      "untrusted",
+    ] as const) {
+      const transport = new FakeTransport()
+      transport.completeImmediately = true
+      await runProviderTextTurn(
+        {
+          providerId: "codex",
+          workspaceDirectory: "/tmp/blitz-owned-workspace",
+          prompt: "Question",
+          threadId,
+          approvalPolicy,
+        },
+        { createCodexTransport: factoryFor(transport) }
+      )
+      assert.equal(
+        (threadId ? transport.resumeOptions : transport.startOptions)
+          ?.approvalPolicy,
+        approvalPolicy
+      )
+    }
+  }
 })

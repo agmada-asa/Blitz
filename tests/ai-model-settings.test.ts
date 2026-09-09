@@ -4,6 +4,9 @@ import assert from "node:assert/strict"
 import test from "node:test"
 
 import {
+  resolveProviderApprovalPolicy,
+  validateProviderApprovalPolicies,
+  getSupportedAiReasoningEffortsForProvider,
   CODEX_MODEL_OPTIONS,
   DEFAULT_AI_MODEL_SETTINGS,
   DEFAULT_AI_MODELS,
@@ -96,7 +99,7 @@ test("validates provider-aware task selections", () => {
 /** Confirms switching providers starts with a model owned by the new provider. */
 test("selects a provider-owned default model", () => {
   assert.equal(getDefaultAiModelOption("codex").id, "gpt-5.6-luna")
-  assert.equal(getDefaultAiModelOption("claude-code").id, "claude-sonnet")
+  assert.equal(getDefaultAiModelOption("claude-code").id, "sonnet")
   assert.equal(getDefaultAiModelOption("opencode").id, "opencode/big-pickle")
   assert.equal(getDefaultAiModelOption("antigravity").id, "antigravity/default")
 })
@@ -134,7 +137,7 @@ test("resolves a provider selection for each task", () => {
   assert.deepEqual(resolveAiTaskSelection(settings, "cardGeneration"), {
     providerId: "antigravity",
     model: "antigravity/default",
-    effort: "low",
+    effort: "default",
   })
 })
 
@@ -248,4 +251,39 @@ test("groups models by major and minor generation with dividers", () => {
   ])
   assert.equal(customGroups[0]?.generation, "OTHER")
   assert.equal(customGroups[0]?.options[0]?.id, "custom-worker")
+})
+
+/** Confirms unsupported reasoning settings become explicit provider defaults. */
+test("does not advertise ignored ACP or Haiku reasoning controls", () => {
+  assert.deepEqual(
+    getSupportedAiReasoningEffortsForProvider("opencode", "default"),
+    ["default"]
+  )
+  assert.deepEqual(
+    getSupportedAiReasoningEffortsForProvider("claude-code", "haiku"),
+    ["default"]
+  )
+})
+
+/** Confirms per-provider approval choices survive validation and unsupported grants fail closed. */
+test("validates and resolves provider approval policies", () => {
+  for (const policy of ["never", "on-request", "untrusted"] as const) {
+    const settings = validateAiModelSettings({
+      ...DEFAULT_AI_MODEL_SETTINGS,
+      providerApprovalPolicies: { codex: policy },
+    })
+    assert.equal(resolveProviderApprovalPolicy(settings, "codex"), policy)
+    assert.equal(
+      resolveProviderApprovalPolicy(settings, "claude-code"),
+      "never"
+    )
+  }
+  assert.throws(
+    () => validateProviderApprovalPolicies({ "claude-code": "on-request" }),
+    /not supported/
+  )
+  assert.throws(
+    () => validateProviderApprovalPolicies({ opencode: "bypassPermissions" }),
+    /not supported/
+  )
 })

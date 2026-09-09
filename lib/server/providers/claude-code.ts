@@ -5,6 +5,8 @@ import { spawn } from "node:child_process"
 import { isAbsolute } from "node:path"
 import { StringDecoder } from "node:string_decoder"
 
+import { getSupportedAiReasoningEffortsForProvider } from "../../ai-model-settings.ts"
+
 import type {
   ProviderCommand,
   ProviderEvent,
@@ -96,7 +98,7 @@ function sessionIdFromEvent(value: unknown): string | undefined {
 }
 
 /** Builds the safe non-interactive Claude Code command line. */
-function claudeArgs(request: ProviderTextTurnRequest): string[] {
+export function claudeArgs(request: ProviderTextTurnRequest): string[] {
   // Claude Code requires verbose mode for stream-json print output.
   const args = [
     "-p",
@@ -108,8 +110,41 @@ function claudeArgs(request: ProviderTextTurnRequest): string[] {
   if (request.session?.providerSessionId)
     args.push("--resume", request.session.providerSessionId)
   if (request.selection.model.trim() && request.selection.model !== "default")
-    args.push("--model", request.selection.model)
-  if (request.sandbox === "read-only") args.push("--permission-mode", "plan")
+    args.push(
+      "--model",
+      request.selection.model.replace(/^claude-(sonnet|opus|haiku)$/, "$1")
+    )
+  const effort = request.selection.effort
+  if (effort && effort !== "default") {
+    const supported = getSupportedAiReasoningEffortsForProvider(
+      "claude-code",
+      request.selection.model
+    )
+    if (!supported.includes(effort))
+      throw new ClaudeCodeProviderError(
+        "invalid-input",
+        "Claude Code reasoning level is unsupported for this model"
+      )
+    args.push("--effort", effort)
+  }
+  // These turns already contain their source context. Remove all model tools and
+  // local customizations so imported text cannot trigger filesystem or network work.
+  args.push(
+    "--restricted",
+    "--safe-mode",
+    "--tools",
+    "",
+    "--disallowedTools",
+    "*",
+    "--strict-mcp-config",
+    "--mcp-config",
+    '{"mcpServers":{}}',
+    "--settings",
+    '{"disableAllHooks":true}',
+    "--permission-mode",
+    "dontAsk"
+  )
+  if (request.ephemeral) args.push("--no-session-persistence")
   return args
 }
 
@@ -118,7 +153,11 @@ function spawnClaude(
   command: ProviderCommand,
   request: ProviderTextTurnRequest
 ): ClaudeCodeChildProcess {
+  const env = { ...process.env }
+  // An inherited effort override must not silently win over the saved selection.
+  if (request.selection.effort) delete env.CLAUDE_CODE_EFFORT_LEVEL
   return spawn(command.executable, [...command.args, ...claudeArgs(request)], {
+    env,
     cwd: request.workspaceDirectory,
     stdio: ["ignore", "pipe", "pipe"],
   }) as unknown as ClaudeCodeChildProcess
@@ -137,6 +176,11 @@ export async function runClaudeCodeTextTurn(
     onEvent?: (event: ProviderEvent) => void
   }
 ): Promise<ProviderTextTurnResult> {
+  if (request.approvalPolicy && request.approvalPolicy !== "never")
+    throw new ClaudeCodeProviderError(
+      "invalid-input",
+      "Claude Code only supports never-approve turns in Blitz"
+    )
   if (!isAbsolute(request.workspaceDirectory))
     throw new ClaudeCodeProviderError(
       "invalid-input",
@@ -165,6 +209,9 @@ export async function runClaudeCodeTextTurn(
   let exitCode: number | null = null
   let processError: unknown
   let ended = false
+  let streamBytes = 0
+  let streamFailed = false
+  let failStream: (error: unknown) => void = () => undefined
   const turnId = randomUUID()
   let emittedStarted = false
 
@@ -210,27 +257,50 @@ export async function runClaudeCodeTextTurn(
     })
   }
 
-  /** Parses stdout chunks while preserving partial UTF-8 and JSON lines. */
-  const handleChunk = (chunk: unknown): void => {
-    inputBuffer += decoder.write(chunk as string)
-    while (true) {
-      const newline = inputBuffer.indexOf("\n")
-      if (newline < 0) break
-      const line = inputBuffer.slice(0, newline)
-      inputBuffer = inputBuffer.slice(newline + 1)
-      handleLine(line)
+  const closePromise = new Promise<void>((resolve, reject) => {
+    /** Rejects stream failures through the awaited promise, never the event emitter. */
+    failStream = (error: unknown): void => {
+      streamFailed = true
+      reject(error)
+      child.kill("SIGKILL")
     }
-  }
-
-  child.stdout.on("data", handleChunk)
-  child.stdout.on("end", () => {
-    if (inputBuffer.trim()) handleLine(inputBuffer)
-    ended = true
-  })
-  child.stderr?.on("data", () => {
-    // Provider stderr can contain source snippets or credentials. Never retain it.
-  })
-  const closePromise = new Promise<void>((resolve) => {
+    /** Parses bounded stdout bytes while retaining partial UTF-8 sequences. */
+    child.stdout.on("data", (chunk: unknown) => {
+      if (streamFailed) return
+      try {
+        const bytes = Buffer.isBuffer(chunk)
+          ? chunk
+          : Buffer.from(String(chunk))
+        streamBytes += bytes.length
+        if (streamBytes > 2_000_000)
+          throw new ClaudeCodeProviderError(
+            "transport",
+            "Claude Code stream exceeded the configured limit"
+          )
+        inputBuffer += decoder.write(bytes)
+        let newline: number
+        while ((newline = inputBuffer.indexOf("\n")) >= 0) {
+          const line = inputBuffer.slice(0, newline)
+          inputBuffer = inputBuffer.slice(newline + 1)
+          handleLine(line)
+        }
+      } catch (error) {
+        failStream(error)
+      }
+    })
+    child.stdout.on("end", () => {
+      if (streamFailed) return
+      try {
+        inputBuffer += decoder.end()
+        if (inputBuffer.trim()) handleLine(inputBuffer)
+        inputBuffer = ""
+      } catch (error) {
+        failStream(error)
+      }
+    })
+    child.stderr?.on("data", () => {
+      // Discard diagnostics, which may contain private source text.
+    })
     child.on("close", (...args: unknown[]) => {
       exitCode = typeof args[0] === "number" ? args[0] : null
       ended = true
@@ -245,30 +315,26 @@ export async function runClaudeCodeTextTurn(
   let timeoutHandle: ReturnType<typeof setTimeout> | undefined
   let abortHandler: (() => void) | undefined
   try {
-    await new Promise<void>((resolve, reject) => {
-      timeoutHandle = setTimeout(() => {
-        child.kill("SIGTERM")
-        reject(
-          new ClaudeCodeProviderError("timeout", "Provider turn timed out")
-        )
-      }, timeoutMs)
-      abortHandler = () => {
-        child.kill("SIGTERM")
-        reject(
-          new ClaudeCodeProviderError(
-            "aborted",
-            "Provider turn was interrupted"
+    await Promise.race([
+      closePromise,
+      new Promise<never>((_, reject) => {
+        timeoutHandle = setTimeout(() => {
+          reject(
+            new ClaudeCodeProviderError("timeout", "Provider turn timed out")
           )
-        )
-      }
-      request.signal?.addEventListener("abort", abortHandler, { once: true })
-      const check = (): void => {
-        if (ended) resolve()
-        else setTimeout(check, 20)
-      }
-      check()
-    })
-    await closePromise
+        }, timeoutMs)
+        abortHandler = () => {
+          reject(
+            new ClaudeCodeProviderError(
+              "aborted",
+              "Provider turn was interrupted"
+            )
+          )
+        }
+        request.signal?.addEventListener("abort", abortHandler, { once: true })
+        if (request.signal?.aborted) abortHandler()
+      }),
+    ])
     if (processError)
       throw new ClaudeCodeProviderError(
         "transport",

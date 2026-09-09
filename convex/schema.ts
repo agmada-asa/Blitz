@@ -396,6 +396,8 @@ export default defineSchema({
 
   /** One global record for the provider, model, and reasoning choices used by each AI task. */
   aiModelSettings: defineTable({
+    /** Per-provider interactive chat approval policy; omitted on legacy records. */
+    providerApprovalPolicies: v.optional(v.record(v.string(), v.string())),
     scope: v.literal("global"),
     researchProvider: v.optional(v.string()),
     replyProvider: v.optional(v.string()),

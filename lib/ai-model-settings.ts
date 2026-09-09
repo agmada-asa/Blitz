@@ -11,6 +11,48 @@ export const AI_PROVIDER_IDS = [
 /** Stable identifier for one local provider integration. */
 export type AiProviderId = (typeof AI_PROVIDER_IDS)[number]
 
+/** Approval modes that the local adapters can enforce. `never` denies approval requests; it does not bypass checks. */
+export type AiApprovalPolicy = "untrusted" | "on-request" | "never"
+
+/** Per-provider approval choices. Text-only and ACP adapters cannot collect interactive approvals. */
+export const AI_PROVIDER_APPROVAL_POLICIES: Readonly<
+  Record<AiProviderId, readonly AiApprovalPolicy[]>
+> = {
+  codex: ["untrusted", "on-request", "never"],
+  "claude-code": ["never"],
+  opencode: ["never"],
+  antigravity: ["never"],
+}
+
+/** Validates persisted policies and fills legacy records with conservative defaults. */
+export function validateProviderApprovalPolicies(
+  policies: Partial<Record<AiProviderId, string>> = {}
+): Record<AiProviderId, AiApprovalPolicy> {
+  const result = {} as Record<AiProviderId, AiApprovalPolicy>
+  for (const provider of AI_PROVIDER_IDS) {
+    const policy =
+      policies[provider] ?? AI_PROVIDER_APPROVAL_POLICIES[provider][0]
+    if (
+      !AI_PROVIDER_APPROVAL_POLICIES[provider].includes(
+        policy as AiApprovalPolicy
+      )
+    )
+      throw new Error(`Approval policy is not supported by ${provider}`)
+    result[provider] = policy as AiApprovalPolicy
+  }
+  return result
+}
+
+/** Resolves the provider policy for interactive chat; background jobs always deny approvals. */
+export function resolveProviderApprovalPolicy(
+  settings: AiModelSettings | null | undefined,
+  provider: AiProviderId
+): AiApprovalPolicy {
+  return validateProviderApprovalPolicies(settings?.providerApprovalPolicies)[
+    provider
+  ]
+}
+
 /** Labels and setup guidance shown when a provider is selected in settings. */
 export type AiProviderOption = {
   readonly id: AiProviderId
@@ -104,8 +146,9 @@ export const AI_REASONING_EFFORTS = [
   "ultra",
 ] as const
 
-/** One reasoning level that can be passed to a Codex turn. */
-export type AiReasoningEffort = (typeof AI_REASONING_EFFORTS)[number]
+/** A supported reasoning level, or an explicit provider default when no control exists. */
+export type AiReasoningEffort =
+  (typeof AI_REASONING_EFFORTS)[number] | "default"
 
 /** One curated Codex model and the reasoning levels it supports in Blitz. */
 export type CodexModelOption = {
@@ -177,33 +220,33 @@ export const AI_PROVIDER_MODEL_OPTIONS: Readonly<
 > = {
   "claude-code": [
     {
-      id: "claude-sonnet",
+      id: "sonnet",
       label: "Claude Sonnet",
       reasoningEfforts: ["low", "medium", "high"],
     },
     {
-      id: "claude-opus",
+      id: "opus",
       label: "Claude Opus",
       reasoningEfforts: ["medium", "high", "xhigh"],
     },
     {
-      id: "claude-haiku",
+      id: "haiku",
       label: "Claude Haiku",
-      reasoningEfforts: ["low", "medium"],
+      reasoningEfforts: ["default"],
     },
   ],
   opencode: [
     {
       id: "opencode/big-pickle",
       label: "OpenCode Big Pickle",
-      reasoningEfforts: ["low", "medium", "high"],
+      reasoningEfforts: ["default"],
     },
   ],
   antigravity: [
     {
       id: "antigravity/default",
       label: "Antigravity default",
-      reasoningEfforts: ["low", "medium", "high"],
+      reasoningEfforts: ["default"],
     },
   ],
 }
@@ -211,12 +254,16 @@ export const AI_PROVIDER_MODEL_OPTIONS: Readonly<
 /** Untrusted model and reasoning strings accepted at the persistence boundary. */
 export type AiModelSettingsInput = Record<AiModelField, string> &
   Record<AiReasoningField, string> &
-  Partial<Record<AiProviderField, string>>
+  Partial<Record<AiProviderField, string>> & {
+    providerApprovalPolicies?: Partial<Record<AiProviderId, string>>
+  }
 
 /** One validated model and reasoning selection for every AI task Blitz runs. */
 export type AiModelSettings = Record<AiModelField, string> &
   Record<AiReasoningField, AiReasoningEffort> &
-  Partial<Record<AiProviderField, AiProviderId>>
+  Partial<Record<AiProviderField, AiProviderId>> & {
+    providerApprovalPolicies?: Partial<Record<AiProviderId, AiApprovalPolicy>>
+  }
 
 /** Model used by each task before a setting or legacy environment fallback exists. */
 export const DEFAULT_AI_MODELS: Readonly<Record<AiModelField, string>> = {
@@ -236,6 +283,7 @@ export const DEFAULT_AI_REASONING_EFFORTS: Readonly<
 
 /** Complete default configuration used until the first settings record is saved. */
 export const DEFAULT_AI_MODEL_SETTINGS: Readonly<AiModelSettings> = {
+  providerApprovalPolicies: validateProviderApprovalPolicies(),
   ...DEFAULT_AI_MODELS,
   ...DEFAULT_AI_REASONING_EFFORTS,
   researchProvider: "codex",
@@ -313,7 +361,7 @@ export function getAiModelPickerOptions(
     {
       id: model,
       label: `${model} (saved model)`,
-      reasoningEfforts: AI_REASONING_EFFORTS,
+      reasoningEfforts: ["default"],
     },
     ...options,
   ]
@@ -360,9 +408,14 @@ export function getSupportedAiReasoningEffortsForProvider(
   provider: AiProviderId,
   model: string
 ): readonly AiReasoningEffort[] {
+  if (provider === "opencode" || provider === "antigravity") return ["default"]
+  const normalizedModel =
+    provider === "claude-code"
+      ? model.replace(/^claude-(sonnet|opus|haiku)$/, "$1")
+      : model
   return (
-    getAiModelPickerOptions(provider, model).find(
-      (option) => option.id === model
+    getAiModelPickerOptions(provider, normalizedModel).find(
+      (option) => option.id === normalizedModel
     )?.reasoningEfforts ?? AI_REASONING_EFFORTS
   )
 }
@@ -437,11 +490,18 @@ export function validateAiReasoningEffort(
 ): AiReasoningEffort {
   const effort = value.trim() as AiReasoningEffort
   const label = AI_REASONING_FIELD_LABELS[field]
-  if (!AI_REASONING_EFFORTS.includes(effort))
+  if (
+    effort !== "default" &&
+    !(AI_REASONING_EFFORTS as readonly string[]).includes(effort)
+  )
     throw new Error(`${label} reasoning level is not supported`)
   const supportedEfforts = provider
     ? getSupportedAiReasoningEffortsForProvider(provider, model)
     : getSupportedAiReasoningEfforts(model)
+  // Older records offered effort choices for adapters/models with no such control.
+  // Normalize those records to an explicit default so they stay editable.
+  if (supportedEfforts.length === 1 && supportedEfforts[0] === "default")
+    return "default"
   if (!supportedEfforts.includes(effort)) {
     throw new Error(`${label} reasoning level is not available for ${model}`)
   }
@@ -478,6 +538,9 @@ export function validateAiModelSettings(
       "Research requires a provider with an approved web-search capability"
     )
   return {
+    providerApprovalPolicies: validateProviderApprovalPolicies(
+      settings.providerApprovalPolicies
+    ),
     researchModel,
     replyModel,
     cardGenerationModel,

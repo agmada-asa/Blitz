@@ -18,6 +18,7 @@ function savedSettingsInput(
 ): Parameters<typeof validateAiModelSettings>[0] | null {
   if (!settings) return null
   return {
+    providerApprovalPolicies: settings.providerApprovalPolicies,
     researchProvider: settings.researchProvider,
     replyProvider: settings.replyProvider,
     cardGenerationProvider: settings.cardGenerationProvider,

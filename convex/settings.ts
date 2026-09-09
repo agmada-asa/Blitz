@@ -24,6 +24,7 @@ export const get = query({
       .unique()
     if (!settings) return null
     return validateAiModelSettings({
+      providerApprovalPolicies: settings.providerApprovalPolicies,
       researchProvider: settings.researchProvider,
       replyProvider: settings.replyProvider,
       cardGenerationProvider: settings.cardGenerationProvider,
@@ -44,6 +45,7 @@ export const get = query({
 /** Validates and saves all AI choices together so workers never observe a partial configuration. */
 export const save = mutation({
   args: {
+    providerApprovalPolicies: v.optional(v.record(v.string(), v.string())),
     researchProvider: v.optional(v.string()),
     replyProvider: v.optional(v.string()),
     cardGenerationProvider: v.optional(v.string()),
