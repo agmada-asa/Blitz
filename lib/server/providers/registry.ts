@@ -14,9 +14,12 @@ import type {
   ProviderCommand,
   ProviderHealthOptions,
 } from "./types.ts"
+import { AcpProviderError, inspectAcpAuthentication } from "./acp.ts"
+import { discoverAntigravityExecutable } from "./antigravity-runtime.ts"
 
 const DEFAULT_INSTANCE_ID = "local"
 const PROBE_TIMEOUT_MS = 5_000
+const MAX_STATUS_BYTES = 16_000
 
 /** Provider capabilities used before a live provider session reports more detail. */
 const CAPABILITIES: Readonly<Record<AiProviderId, ProviderCapabilities>> = {
@@ -86,10 +89,8 @@ export function providerCommand(providerId: AiProviderId): ProviderCommand {
       }
     case "antigravity":
       return {
-        executable:
-          process.env.BLITZ_ANTIGRAVITY_ACP_COMMAND?.trim() ||
-          "agy_acp_server.par",
-        args: [],
+        executable: discoverAntigravityExecutable() || "agy_acp_server.par",
+        args: process.platform === "linux" ? ["--uid="] : [],
       }
   }
 }
@@ -186,6 +187,119 @@ async function probeCommand(
   })
 }
 
+/** Runs one non-interactive provider status command with bounded output. */
+async function readCommand(
+  executable: string,
+  args: readonly string[]
+): Promise<{ code: number | null; output: string }> {
+  return new Promise((resolve, reject) => {
+    let output = ""
+    let settled = false
+    const child = spawn(executable, args, {
+      stdio: ["ignore", "pipe", "pipe"],
+    })
+    const finish = (result: { code: number | null; output: string }): void => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      resolve(result)
+    }
+    const append = (chunk: Buffer): void => {
+      if (output.length < MAX_STATUS_BYTES)
+        output += chunk
+          .toString("utf8")
+          .slice(0, MAX_STATUS_BYTES - output.length)
+    }
+    child.stdout.on("data", append)
+    child.stderr.on("data", append)
+    child.on("error", reject)
+    child.on("close", (code) => finish({ code, output }))
+    const timer = setTimeout(() => {
+      child.kill("SIGKILL")
+      finish({ code: null, output })
+    }, PROBE_TIMEOUT_MS)
+  })
+}
+
+/** Extracts configured provider names from OpenCode's human-readable credential list. */
+export function parseOpenCodeAccounts(output: string): readonly string[] {
+  const clean = output.replace(/\u001b\[[0-9;]*m/g, "")
+  return clean.split("\n").flatMap((line) => {
+    const match = line.match(/^\s*[●•]\s+(.+?)(?:\s{2,}|\s+(?:api|oauth)$)/i)
+    return match?.[1]?.trim() ? [match[1].trim()] : []
+  })
+}
+
+/** Reads credential state through the provider's own local status interface. */
+async function providerAuthentication(
+  providerId: AiProviderId,
+  options: ProviderHealthOptions
+): Promise<
+  Pick<
+    ProviderAvailability,
+    "authenticated" | "authMethods" | "accounts" | "canDisconnect"
+  >
+> {
+  const command = providerCommand(providerId)
+  if (providerId === "antigravity") {
+    return inspectAcpAuthentication(command, options.workspaceDirectory, {
+      verifySession: true,
+    })
+  }
+  if (providerId === "codex") {
+    const status = await readCommand(command.executable, ["login", "status"])
+    return {
+      authenticated: status.code === 0 && /logged in/i.test(status.output),
+      canDisconnect: status.code === 0 && /logged in/i.test(status.output),
+      authMethods: [
+        {
+          id: "codex-login",
+          name: "Continue with ChatGPT",
+          type: "agent",
+        },
+      ],
+    }
+  }
+  if (providerId === "claude-code") {
+    const status = await readCommand(command.executable, [
+      "auth",
+      "status",
+      "--json",
+    ])
+    const authenticated =
+      status.code === 0 &&
+      (/"loggedIn"\s*:\s*true/i.test(status.output) ||
+        /"authenticated"\s*:\s*true/i.test(status.output))
+    return {
+      authenticated,
+      canDisconnect: authenticated,
+      authMethods: [
+        {
+          id: "claude-login",
+          name: "Sign in to Claude",
+          type: "agent",
+        },
+      ],
+    }
+  }
+  const status = await readCommand(command.executable, ["auth", "list"])
+  const accounts = status.code === 0 ? parseOpenCodeAccounts(status.output) : []
+  return {
+    authenticated: accounts.length > 0,
+    accounts,
+    canDisconnect: accounts.length > 0,
+    authMethods: [
+      {
+        id: "opencode-login",
+        name: "Add an OpenCode provider",
+        description:
+          "Choose a model provider and finish its sign-in in Terminal.",
+        type: "terminal",
+      },
+    ],
+  }
+}
+
 /** Checks one provider's local runtime without starting a model session. */
 export async function checkProviderAvailability(
   providerId: AiProviderId,
@@ -193,31 +307,58 @@ export async function checkProviderAvailability(
 ): Promise<ProviderAvailability> {
   const instanceId =
     options.providerInstanceId ?? providerInstanceId(providerId)
-  const result = await probeCommand(providerCommand(providerId), providerId)
-  return result.available
-    ? {
-        providerId,
-        providerInstanceId: instanceId,
-        available: true,
-        reason: "ready",
-        message: "Installed. Sign in locally before running a turn.",
-      }
-    : {
+  try {
+    const result =
+      providerId === "antigravity"
+        ? ({ available: true } as const)
+        : await probeCommand(providerCommand(providerId), providerId)
+    if (!result.available)
+      return {
         providerId,
         providerInstanceId: instanceId,
         available: false,
+        authenticated: null,
         reason: result.reason,
         message:
           result.reason === "unsupported"
             ? providerId === "opencode"
               ? "Install OpenCode 1.18.21 or newer within v1 for native permissions."
               : "Update Claude Code to version 2.1.248 or newer for restricted turns."
-            : result.reason === "missing-executable"
-              ? providerId === "antigravity"
-                ? "Install Google Antigravity from the ACP registry, set BLITZ_ANTIGRAVITY_ACP_COMMAND to agy_acp_server.par, and sign in through an ACP client. The agy CLI is separate."
-                : "Install this provider and sign in locally before selecting it."
-              : `${providerId} did not pass its local runtime check.`,
+            : "Install this provider before connecting it to Blitz.",
       }
+    const authentication = await providerAuthentication(providerId, options)
+    return {
+      providerId,
+      providerInstanceId: instanceId,
+      available: true,
+      ...authentication,
+      reason: authentication.authenticated === false ? "missing-auth" : "ready",
+      message:
+        authentication.authenticated === false
+          ? "Installed, but not connected to Blitz."
+          : authentication.authenticated === true
+            ? "Connected and ready."
+            : "Installed. Blitz could not verify the account state.",
+    }
+  } catch (error) {
+    const missingExecutable =
+      error instanceof AcpProviderError &&
+      typeof error.cause === "object" &&
+      error.cause !== null &&
+      "code" in error.cause &&
+      error.cause.code === "ENOENT"
+    return {
+      providerId,
+      providerInstanceId: instanceId,
+      available: false,
+      authenticated: null,
+      reason: missingExecutable ? "missing-executable" : "probe-failed",
+      message:
+        missingExecutable && providerId === "antigravity"
+          ? "No shared Antigravity ACP server was found."
+          : `${providerId} did not pass its local runtime check.`,
+    }
+  }
 }
 
 /** Returns one provider definition with its stable capability snapshot. */

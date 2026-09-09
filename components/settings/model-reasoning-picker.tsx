@@ -380,10 +380,13 @@ export function ModelReasoningPicker({
               {/* Provider Tabs */}
               {providerOptions.map((opt) => {
                 const isSelected = selectedRailTab === opt.id
+                const providerState = availability.find(
+                  (item) => item.providerId === opt.id
+                )
                 const isAvailable =
                   availabilityError ||
-                  availability.find((item) => item.providerId === opt.id)
-                    ?.available !== false
+                  (providerState?.available !== false &&
+                    providerState?.authenticated !== false)
                 return (
                   <button
                     key={opt.id}

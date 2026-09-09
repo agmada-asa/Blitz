@@ -201,7 +201,7 @@ export async function runProviderTextTurn(
       providerInstanceId: request.providerInstanceId,
       signal: request.signal,
     })
-    if (!availability.available)
+    if (!availability.available || availability.authenticated === false)
       throw new CardChatError("transport", availability.message)
     getProviderDefinition(request.providerId)
     const instanceId =

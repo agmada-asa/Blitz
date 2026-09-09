@@ -2,6 +2,7 @@
 
 import { AppearanceSettings } from "@/components/settings/appearance-settings"
 import { ModelSettingsForm } from "@/components/settings/model-settings-form"
+import { ProviderConnections } from "@/components/settings/provider-connections"
 
 /** Renders the settings route and groups appearance choices above AI settings. */
 export default function SettingsPage() {
@@ -44,6 +45,7 @@ export default function SettingsPage() {
               card generation, and replies.
             </p>
           </div>
+          <ProviderConnections />
           <ModelSettingsForm />
         </section>
       </div>

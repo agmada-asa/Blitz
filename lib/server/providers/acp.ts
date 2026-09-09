@@ -8,6 +8,7 @@ import { StringDecoder } from "node:string_decoder"
 import { openCodeEnvironment } from "./opencode-policy.ts"
 
 import type {
+  ProviderAuthMethod,
   ProviderApprovalHandler,
   ProviderCommand,
   ProviderEvent,
@@ -168,12 +169,16 @@ class AcpJsonRpcClient {
   }
 
   /** Completes the ACP initialize handshake. */
-  async initialize(): Promise<void> {
+  async initialize(): Promise<{
+    authMethods: readonly ProviderAuthMethod[]
+    canDisconnect: boolean
+  }> {
     const result = record(
       await this.request("initialize", {
         protocolVersion: 1,
         clientInfo: { name: "blitz", title: "Blitz", version: "0.0.1" },
         clientCapabilities: {
+          auth: { terminal: false },
           fs: { readTextFile: false, writeTextFile: false },
           terminal: false,
         },
@@ -189,6 +194,44 @@ class AcpJsonRpcClient {
     this.resumeSupported = !!record(
       record(capabilities?.sessionCapabilities)?.resume
     )
+    const auth = record(capabilities?.auth)
+    const authMethods = Array.isArray(result?.authMethods)
+      ? result.authMethods.flatMap((value): ProviderAuthMethod[] => {
+          const method = record(value)
+          const id = stringField(method, "id")
+          const name = stringField(method, "name")
+          if (!id || !name) return []
+          return [
+            {
+              id,
+              name,
+              ...(stringField(method, "description")
+                ? { description: stringField(method, "description") }
+                : {}),
+              type:
+                stringField(method, "type") === "terminal"
+                  ? "terminal"
+                  : "agent",
+            },
+          ]
+        })
+      : []
+    return {
+      authMethods,
+      canDisconnect: !!record(auth?.logout),
+    }
+  }
+
+  /** Runs one provider-owned login method after initialization. */
+  async authenticate(methodId: string): Promise<void> {
+    if (!methodId.trim())
+      throw new AcpProviderError("invalid-input", "Login method is required")
+    await this.request("authenticate", { methodId })
+  }
+
+  /** Clears credentials when the initialized provider advertised logout support. */
+  async logout(): Promise<void> {
+    await this.request("logout", {})
   }
 
   /** Starts one ACP session with MCP disabled at the protocol boundary. */
@@ -501,6 +544,79 @@ class AcpJsonRpcClient {
       pending.reject(new AcpProviderError("transport", message, cause))
       this.pending.delete(id)
     }
+  }
+}
+
+/** Inspects an ACP runtime and optionally tests whether it can create an authenticated session. */
+export async function inspectAcpAuthentication(
+  command: ProviderCommand,
+  workspaceDirectory: string,
+  options: {
+    spawnProcess?: (
+      command: ProviderCommand,
+      workspaceDirectory: string
+    ) => AcpChildProcess
+    verifySession?: boolean
+  } = {}
+): Promise<{
+  authenticated: boolean | null
+  authMethods: readonly ProviderAuthMethod[]
+  canDisconnect: boolean
+}> {
+  const child = options.spawnProcess
+    ? options.spawnProcess(command, workspaceDirectory)
+    : spawnAcpProcess(command, workspaceDirectory)
+  const client = new AcpJsonRpcClient(child, { requestTimeoutMs: 8_000 })
+  try {
+    const initialized = await client.initialize()
+    if (!options.verifySession) return { authenticated: null, ...initialized }
+    try {
+      await client.startSession(workspaceDirectory)
+      return { authenticated: true, ...initialized }
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        /auth|credential|log in|login/i.test(error.message)
+      )
+        return { authenticated: false, ...initialized }
+      throw error
+    }
+  } finally {
+    await client.close()
+  }
+}
+
+/** Runs a supported ACP connect or disconnect request without starting a model turn. */
+export async function changeAcpAuthentication(
+  command: ProviderCommand,
+  workspaceDirectory: string,
+  action: { type: "connect"; methodId: string } | { type: "disconnect" }
+): Promise<void> {
+  const child = spawnAcpProcess(command, workspaceDirectory)
+  const client = new AcpJsonRpcClient(child, { requestTimeoutMs: 120_000 })
+  try {
+    const initialized = await client.initialize()
+    if (action.type === "connect") {
+      if (
+        !initialized.authMethods.some(
+          (method) => method.id === action.methodId && method.type === "agent"
+        )
+      )
+        throw new AcpProviderError(
+          "invalid-input",
+          "This login method is not available"
+        )
+      await client.authenticate(action.methodId)
+      return
+    }
+    if (!initialized.canDisconnect)
+      throw new AcpProviderError(
+        "invalid-input",
+        "This provider does not support disconnecting from Blitz"
+      )
+    await client.logout()
+  } finally {
+    await client.close()
   }
 }
 

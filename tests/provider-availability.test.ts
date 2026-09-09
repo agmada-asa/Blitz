@@ -5,7 +5,20 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
 import assert from "node:assert/strict"
-import { checkProviderAvailability } from "../lib/server/providers/registry.ts"
+import {
+  checkProviderAvailability,
+  parseOpenCodeAccounts,
+} from "../lib/server/providers/registry.ts"
+
+/** Extracts only account labels from OpenCode's ANSI-formatted credential list. */
+test("parses configured OpenCode accounts without credential data", () => {
+  assert.deepEqual(
+    parseOpenCodeAccounts(
+      "\u001b[0m●  Google \u001b[90mapi\u001b[0m\n●  OpenAI \u001b[90moauth\u001b[0m\n"
+    ),
+    ["Google", "OpenAI"]
+  )
+})
 
 /** Restores the process environment and removes every temporary probe after checking versions. */
 test("reports missing and obsolete Claude runtimes before a turn starts", async () => {

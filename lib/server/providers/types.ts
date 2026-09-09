@@ -44,6 +44,14 @@ export interface ProviderAvailability {
   readonly providerInstanceId: string
   /** Whether a turn can start with this configuration. */
   readonly available: boolean
+  /** Whether the installed runtime currently has credentials it can use. */
+  readonly authenticated: boolean | null
+  /** Login choices reported by the provider, when it exposes them safely. */
+  readonly authMethods?: readonly ProviderAuthMethod[]
+  /** Configured account names that the provider allows Blitz to disconnect. */
+  readonly accounts?: readonly string[]
+  /** Whether Blitz can ask the provider to clear its current credentials. */
+  readonly canDisconnect?: boolean
   /** Safe reason shown in setup or recovery UI. */
   readonly reason?:
     | "ready"
@@ -53,6 +61,18 @@ export interface ProviderAvailability {
     | "probe-failed"
   /** User-safe setup detail without command output or credentials. */
   readonly message: string
+}
+
+/** One provider-owned authentication choice displayed without credential data. */
+export interface ProviderAuthMethod {
+  /** Opaque provider method identifier sent back only to that provider. */
+  readonly id: string
+  /** Human-readable method name supplied by the provider. */
+  readonly name: string
+  /** Optional provider explanation of the login method. */
+  readonly description?: string
+  /** Whether authentication runs through ACP or needs an interactive terminal. */
+  readonly type: "agent" | "terminal"
 }
 
 /** Provider selection resolved for one immutable task or chat snapshot. */

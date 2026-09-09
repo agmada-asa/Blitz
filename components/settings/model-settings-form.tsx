@@ -178,7 +178,7 @@ function ModelSettingsEditor({
           (item) =>
             item.providerId === resolveAiProvider(settings, providerField)
         )
-        if (!provider?.available)
+        if (!provider?.available || provider.authenticated === false)
           throw new Error(
             provider?.message ?? "Could not check provider setup. Try again."
           )

@@ -5,6 +5,7 @@ import assert from "node:assert/strict"
 import test from "node:test"
 
 import {
+  inspectAcpAuthentication,
   runAcpTextTurn,
   type AcpChildProcess,
 } from "../lib/server/providers/acp.ts"
@@ -30,6 +31,7 @@ class FakeClaudeProcess extends EventEmitter {
 /** Satisfies the ACP child shape while replying to the protocol messages under test. */
 class FakeAcpProcess extends EventEmitter {
   capabilities: Record<string, unknown> = {}
+  authMethods: Record<string, unknown>[] = []
   methods: string[] = []
   answer = "ACP answer"
   splitBytes = false
@@ -59,7 +61,11 @@ class FakeAcpProcess extends EventEmitter {
       this.send({
         jsonrpc: "2.0",
         id: message.id,
-        result: { protocolVersion: 1, agentCapabilities: this.capabilities },
+        result: {
+          protocolVersion: 1,
+          agentCapabilities: this.capabilities,
+          authMethods: this.authMethods,
+        },
       })
       return
     }
@@ -125,6 +131,34 @@ class FakeAcpProcess extends EventEmitter {
     return true
   }
 }
+
+/** Confirms ACP inspection returns provider-owned login choices and logout support. */
+test("inspects ACP authentication methods without starting a model turn", async () => {
+  const child = new FakeAcpProcess()
+  child.capabilities = { auth: { logout: {} } }
+  child.authMethods = [
+    {
+      id: "oauth-personal",
+      name: "Log in with Google",
+      description: "Use a Google account",
+    },
+  ]
+  const result = await inspectAcpAuthentication(
+    { executable: "fake-antigravity", args: [] },
+    "/tmp/blitz-provider-test",
+    { spawnProcess: () => child }
+  )
+  assert.equal(result.authenticated, null)
+  assert.equal(result.canDisconnect, true)
+  assert.deepEqual(result.authMethods, [
+    {
+      id: "oauth-personal",
+      name: "Log in with Google",
+      description: "Use a Google account",
+      type: "agent",
+    },
+  ])
+})
 
 /** Confirms Claude stream-json deltas are normalized without duplicating the final result. */
 test("normalizes Claude Code streaming output", async () => {
