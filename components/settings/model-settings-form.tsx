@@ -34,6 +34,7 @@ import {
   getDefaultAiModelOption,
   resolveAiProvider,
   validateAiModelSettings,
+  validateAiTaskProviders,
   type AiModelField,
   type AiModelSettings,
   type AiProviderField,
@@ -75,7 +76,7 @@ const MODEL_FIELDS: Array<{
     modelField: "replyModel",
     effortField: "replyEffort",
     label: "Replies",
-    description: "Answers questions you ask about an individual study card.",
+    description: "Answers questions in workspace chat and about study cards.",
   },
 ]
 
@@ -154,6 +155,7 @@ function ModelSettingsEditor({
     let settings: AiModelSettings
     try {
       settings = validateAiModelSettings(draft)
+      validateAiTaskProviders(settings)
     } catch (error) {
       setFeedback({
         tone: "error",
@@ -275,11 +277,10 @@ function ModelSettingsEditor({
           )}
           <div className="space-y-4 px-4 py-5">
             <div>
-              <h3 className="text-sm font-medium">Provider approvals</h3>
+              <h3 className="text-sm font-medium">Provider access</h3>
               <p className="mt-1 text-sm text-muted-foreground">
-                Applies to chat in approval mode. Background tasks never request
-                approval. Never approve denies requests; it does not grant
-                unrestricted access.
+                Applies when chat uses Provider policy. Full access allows tools
+                without review. Background tasks always use restricted policies.
               </p>
             </div>
             {AI_PROVIDER_OPTIONS.map((provider) => (
@@ -322,15 +323,21 @@ function ModelSettingsEditor({
                               ? "Ask for untrusted actions"
                               : policy === "on-request"
                                 ? "Ask when needed"
-                                : "Never approve"}
+                                : policy === "full-access"
+                                  ? "Full access"
+                                  : provider.id === "antigravity"
+                                    ? "Deny permission requests"
+                                    : "Never approve"}
                           </SelectItem>
                         )
                       )}
                     </SelectContent>
                   </Select>
-                  {provider.id !== "codex" ? (
+                  {provider.id === "antigravity" ? (
                     <p className="mt-1 text-xs text-muted-foreground">
-                      Interactive approvals are unavailable for this provider.
+                      Workspace chat only. Native reads and administrator
+                      policies still apply. Card generation and background card
+                      replies are unavailable.
                     </p>
                   ) : null}
                 </div>

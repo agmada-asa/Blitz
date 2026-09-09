@@ -4,7 +4,7 @@ Blitz turns source material into a scrolling learning feed for Android and the w
 
 ## Run locally
 
-Use Node.js 22.13 or newer, with at least one supported local provider installed and signed in. Codex is the default provider. Claude Code 2.1.248 or newer can run replies and card generation with tools disabled. OpenCode and Antigravity remain unavailable until their adapters can enforce source isolation. Development has been verified with Node.js 24 on macOS.
+Use Node.js 22.13 or newer, with at least one supported local provider installed and signed in. Codex is the default provider. Claude Code 2.1.248 or newer can run replies and card generation with tools disabled. OpenCode v1.18.21 or newer within v1 supports native tool permissions. Google Antigravity ACP supports interactive workspace chat. Development has been verified with Node.js 24 on macOS.
 
 ```bash
 npm ci
@@ -30,9 +30,22 @@ The workers load `.env.local`. `BLITZ_CONVEX_URL` can point them at a loopback a
 
 Settings checks installed runtimes before enabling a provider and again before saving. This checks executable setup, not account authentication. Sign in through the provider locally. Claude Code uses the documented `sonnet`, `opus`, and `haiku` aliases; older saved `claude-*` aliases are translated when a turn starts.
 
-Provider approvals are stored independently of model choices. Codex supports asking for untrusted actions, asking when needed, and never approving requests. The setting applies to chat in approval mode. Explicit project/full autonomy modes keep their existing policies. Claude runs without tools or customizations and supports only never approve. ACP adapters cannot collect interactive approvals and are disabled in the picker. Never approve denies requests; it does not bypass permissions. Background card preparation and card chat always deny approvals.
+Provider access is saved separately for each provider. Chat's **Provider policy** option uses that setting; explicit **Full access** uses the provider's native bypass mode. **Project access** remains Codex-only because the other adapters do not supply an equivalent workspace-only OS sandbox. Provider-native tool rules are not an OS sandbox, and administrator policies still apply.
 
-Claude passes supported reasoning selections with `--effort`. Haiku and ACP expose only the provider default. Legacy unsupported effort selections are normalized to that default. Claude turns require restricted mode and disable built-in tools, MCP tools, hooks, and local customizations. Source preparation also requests a read-only workspace and disables search. ACP rejects those restrictions before spawning, since client filesystem and terminal capabilities do not constrain an agent's own tools.
+| Provider | Deny requests | Ask when needed | Full access |
+| --- | --- | --- | --- |
+| Codex | Read-only sandbox, approvals `never` | `on-request`, or `untrusted` | `danger-full-access`, approvals `never` |
+| Claude Code | Restricted mode with all tools disabled | Explicit tool ask rules and the SDK's stdin approval protocol | `bypassPermissions` |
+| OpenCode | Dedicated agent with `permission["*"] = "deny"` | Dedicated agent with `permission["*"] = "ask"` | Dedicated agent with `permission["*"] = "allow"` |
+| Antigravity ACP | Native `default` mode; Blitz denies permission requests | Native `default` mode; Blitz reviews permission requests | Native `yolo` mode |
+
+Claude and ACP requests use the existing chat approval panel. Decisions grant one operation only; Blitz never sends persistent permission updates or ACP `allow_always`. Missing handlers, oversized requests, cancellation, and failed reviews deny the request. Modes are reasserted on resumed sessions. Claude disables local customizations and MCP servers. OpenCode uses `--pure`, disables project configuration, and creates a distinct agent per process so saved agents cannot override its selected policy. Agent delegation and mode switching tools stay disabled in OpenCode.
+
+Background card preparation and card replies always use restricted policies regardless of saved full access. Claude removes all tools; OpenCode denies all native tools. Antigravity is unavailable for these background tasks: its ACP default mode allows reads, and there is no advertised tool-off mode. The installed `agy` CLI's `--prompt`/`--print` selects one-shot output, not tool isolation. A local CLI 1.1.22 probe with a custom agent declaring `tools: []` still advertised shell, file, browser, and network tools. The adapter does not treat that as a security boundary.
+
+For Antigravity, install **Google Antigravity** from the [official ACP registry](https://github.com/agentclientprotocol/registry/blob/main/antigravity-acp/agent.json), sign in using an ACP client, and set `BLITZ_ANTIGRAVITY_ACP_COMMAND` to the downloaded `agy_acp_server.par` executable. The separate `agy` CLI is not an ACP server. Its existing CLI login does not automatically select authentication for ACP. Blitz does not change global provider settings or start an interactive sign-in flow.
+
+Claude passes supported reasoning selections with `--effort`. Haiku and ACP expose only the provider default. Legacy unsupported effort selections are normalized to that default. Native permission references: [Claude CLI](https://code.claude.com/docs/en/cli-reference), [Claude SDK approvals](https://code.claude.com/docs/en/agent-sdk/user-input), [OpenCode permissions](https://opencode.ai/docs/permissions/), [Antigravity CLI headless behavior](https://antigravity.google/docs/cli/headless/). Antigravity ACP modes were verified against Google's official `agy_acp_server_1.1.1` distribution; its defaults differ from CLI print mode.
 
 The ACP client negotiates `session/load` and `session/resume`. If neither is supported, it fails before accepting a turn so workspace chat can rebuild its saved history in a new session. Historical load notifications are excluded from the new answer. Both adapters bound stdout and assistant output, decode split UTF-8 safely, and terminate on transport failures or deadlines.
 

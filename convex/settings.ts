@@ -6,6 +6,7 @@ import { v } from "convex/values"
 import {
   DEFAULT_AI_REASONING_EFFORTS,
   validateAiModelSettings,
+  validateAiTaskProviders,
   type AiModelSettings,
 } from "../lib/ai-model-settings"
 
@@ -58,6 +59,7 @@ export const save = mutation({
   },
   handler: async (ctx, args): Promise<AiModelSettings> => {
     const settings = validateAiModelSettings(args)
+    validateAiTaskProviders(settings)
     const existing = await ctx.db
       .query("aiModelSettings")
       .withIndex("by_scope", (index) =>
