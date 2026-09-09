@@ -23,6 +23,7 @@ import { createChatProgress } from "@/lib/server/chat-progress"
 import { loadSavedAiModelSettings } from "@/lib/server/ai-model-settings"
 import { runProviderTextTurn } from "@/lib/server/providers/run-text-turn"
 import { isTrustedBlitzOrigin } from "@/lib/server/request-origin"
+import { generateChatTitle } from "@/lib/server/chat-title"
 import {
   buildWorkspaceChatPrompt,
   combineWorkspaceChatContinuation,
@@ -58,6 +59,16 @@ type PersistedAttachment = {
   url?: string
 }
 
+/** Annotation shape persisted alongside the user message that introduced it. */
+type PersistedAnnotation = {
+  id: string
+  number?: number
+  messageId: string
+  selectedText: string
+  note: string
+  createdAt?: number
+}
+
 const getCardContext = makeFunctionReference<
   "query",
   { projectId: Id<"projects">; itemId: Id<"learningItems"> },
@@ -77,10 +88,12 @@ const startWorkspaceTurn = makeFunctionReference<
     clientMessageId: string
     message: string
     attachments: PersistedAttachment[]
+    annotations?: PersistedAnnotation[]
   },
   {
     chatId: Id<"workspaceChats">
     assistantMessageId: Id<"workspaceChatMessages">
+    initialTitle?: string
     providerId: AiProviderId
     providerInstanceId?: string
     providerModel?: string
@@ -114,6 +127,7 @@ const saveWorkspaceProgress = makeFunctionReference<
     chatId: Id<"workspaceChats">
     messageId: Id<"workspaceChatMessages">
     reply: string
+    thought?: string
   },
   null
 >("workspaceChats:progress")
@@ -130,6 +144,8 @@ const completeWorkspaceTurn = makeFunctionReference<
     codexThreadId?: string
     codexTurnId?: string
     reply: string
+    thought?: string
+    durationMs?: number
   },
   null
 >("workspaceChats:complete")
@@ -249,6 +265,7 @@ export async function POST(request: Request): Promise<Response> {
         | undefined
       let progress: ReturnType<typeof createChatProgress> | undefined
       let bindingPromise: Promise<unknown> | undefined
+      let titlePromise: Promise<void> | undefined
       /** Writes one event while tolerating a browser that has left the page. */
       const send = (value: unknown): void => {
         if (closed) return
@@ -293,10 +310,18 @@ export async function POST(request: Request): Promise<Response> {
             throw new Error("Remove a file or link before adding another.")
           attachmentBudget -= attachment.text.length
         }
+        const retrievalQuestion =
+          input.message.trim() ||
+          input.annotations
+            ?.map((a) => `${a.note} ${a.selectedText}`)
+            .join(" ")
+            .slice(0, 500)
+            .trim() ||
+          ""
         const projects = input.projectIds.length
           ? await client.query(getProjectContext, {
               projectIds: input.projectIds,
-              question: input.message,
+              question: retrievalQuestion || undefined,
             })
           : []
         const card = input.card
@@ -342,17 +367,21 @@ export async function POST(request: Request): Promise<Response> {
           clientMessageId: input.clientMessageId,
           message: input.message,
           attachments: persistedAttachments,
+          ...(input.annotations?.length
+            ? { annotations: input.annotations }
+            : {}),
         })
         activeTurn = {
           chatId: turn.chatId,
           assistantMessageId: turn.assistantMessageId,
         }
         progress = createChatProgress(
-          (reply) =>
+          (reply, thought) =>
             client.mutation(saveWorkspaceProgress, {
               chatId: turn.chatId,
               messageId: turn.assistantMessageId,
               reply,
+              ...(thought ? { thought } : {}),
             }),
           turn.replyPrefix
         )
@@ -361,6 +390,32 @@ export async function POST(request: Request): Promise<Response> {
           chatId: turn.chatId,
           messageId: turn.assistantMessageId,
         })
+        if (turn.initialTitle !== undefined) {
+          const initialTitle = turn.initialTitle
+          const contextLabels = persistedAttachments.map(
+            (attachment) => attachment.label
+          )
+          titlePromise = (async () => {
+            try {
+              const succinctTitle = await generateChatTitle({
+                message: input.message,
+                contextLabels,
+                providerId: turn.providerId,
+                providerInstanceId: turn.providerInstanceId,
+                fallbackTitle: initialTitle,
+              })
+              if (succinctTitle && succinctTitle !== initialTitle) {
+                await client.mutation(api.workspaceChats.setGeneratedTitle, {
+                  chatId: turn.chatId,
+                  title: succinctTitle,
+                  expectedCurrentTitle: initialTitle,
+                })
+              }
+            } catch {
+              // Chat retains initialTitle on any unexpected generation or update failure.
+            }
+          })()
+        }
         const savedAgentSettings = await client.query(
           api.chatAgents.getSettings,
           { chatId: turn.chatId }
@@ -523,6 +578,10 @@ export async function POST(request: Request): Promise<Response> {
                     })
                   return
                 }
+                if (event.type === "thought-delta") {
+                  progress?.appendThought(event.delta)
+                  send({ type: "thought-delta", text: event.delta })
+                }
                 if (event.type === "text-delta") {
                   progress?.append(event.delta)
                   send({ type: "delta", text: event.delta })
@@ -543,7 +602,7 @@ export async function POST(request: Request): Promise<Response> {
             projects.push(
               ...(await client.query(getProjectContext, {
                 projectIds: [projectId],
-                question: input.message,
+                question: retrievalQuestion || undefined,
               }))
             )
           } catch {
@@ -568,14 +627,14 @@ export async function POST(request: Request): Promise<Response> {
           citationProjectIds.map((projectId) =>
             client.query(api.chatCitations.projectPassages, {
               projectId,
-              question: input.message,
+              question: retrievalQuestion,
             })
           )
         )
         const citations = await client.mutation(api.chatCitations.prepare, {
           chatId: turn.chatId,
           messageId: turn.assistantMessageId,
-          question: input.message,
+          question: retrievalQuestion,
           chunkIds: [
             ...new Set(
               retrieved.flatMap((result) =>
@@ -634,11 +693,14 @@ export async function POST(request: Request): Promise<Response> {
               }
             : {}),
           reply,
+          thought: result.thought,
+          durationMs: result.durationMs,
         })
         send({
           type: "complete",
           chatId: turn.chatId,
           threadId: result.threadId,
+          durationMs: result.durationMs,
         })
       } catch (error) {
         await bindingPromise
@@ -663,6 +725,12 @@ export async function POST(request: Request): Promise<Response> {
       } finally {
         turnAbort.abort()
         await agentSession?.close()
+        if (titlePromise) {
+          await Promise.race([
+            titlePromise,
+            new Promise((resolve) => setTimeout(resolve, 2_000)),
+          ]).catch(() => undefined)
+        }
         if (!closed) controller.close()
         closed = true
       }

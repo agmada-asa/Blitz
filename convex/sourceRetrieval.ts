@@ -130,7 +130,9 @@ export async function retrieveProjectContext(
     maxChars?: number
   } = {}
 ): Promise<{ results: RetrievalResult[]; characterCount: number }> {
-  const words = boundedQuery(question)
+  const trimmed = question.trim()
+  if (!trimmed) return { results: [], characterCount: 0 }
+  const words = boundedQuery(trimmed)
     .toLocaleLowerCase()
     .split(/[^\p{L}\p{N}]+/u)
     .filter((word) => word.length >= 2)

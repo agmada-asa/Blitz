@@ -1,4 +1,4 @@
-/** Attaches folder instructions and bridges interactive runtime approvals into a persisted chat. */
+/** Attaches folder instructions and bridges interactive runtime requests into a persisted chat. */
 import type { AiApprovalPolicy } from "../ai-model-settings.ts"
 import { randomUUID } from "node:crypto"
 import { setTimeout as delay } from "node:timers/promises"
@@ -7,10 +7,18 @@ import { api } from "../../convex/_generated/api.js"
 import type { Id } from "../../convex/_generated/dataModel"
 import {
   CodexAppServerClient,
-  type CodexApprovalResponse,
   type CodexServerRequest,
 } from "./codex-app-server.ts"
 import type { CardChatEvent, CardChatTransportFactory } from "./card-chat.ts"
+import {
+  codexAgentRequestTools,
+  dynamicToolResponse,
+  genericApprovalRequest,
+  mcpElicitationResponse,
+  normalizeCodexAgentRequest,
+  userInputResponse,
+  type AgentRequestSpec,
+} from "./agent-request.ts"
 import {
   projectAgentInstructions,
   projectAgentRuntimePolicy,
@@ -18,9 +26,7 @@ import {
 } from "./project-agent.ts"
 import {
   approvalRecord,
-  projectApprovalDetails,
   projectApprovalResponse,
-  supportedProjectApproval,
 } from "./project-agent-approval.ts"
 
 /** Builds a turn-scoped transport and approval bridge; callers close it on every exit path. */
@@ -51,76 +57,105 @@ export function createChatAgentSession(options: {
         : options.approvalPolicy
   const instructions = projectAgentInstructions(
     options.workspaceDirectory,
-    options.additionalInstructions
+    options.additionalInstructions,
+    true
   )
   let queue: Promise<unknown> = Promise.resolve()
 
   /** Keeps simultaneous requests separate and never carries grants into later turns. */
-  function approve(
-    request: CodexServerRequest
-  ): Promise<CodexApprovalResponse> {
+  function handleCodexRequest(request: CodexServerRequest): Promise<unknown> {
     const operation = queue.then(async () => {
       signal.throwIfAborted()
-      if (
-        runtime.thread.approvalPolicy === "never" ||
-        !supportedProjectApproval(request.method)
-      )
-        return projectApprovalResponse(request, false)
       const params = approvalRecord(request.params)
       const item =
         typeof params?.itemId === "string"
           ? items.get(params.itemId)
           : undefined
+      const spec = normalizeCodexAgentRequest(request, item)
+      if (!spec) return projectApprovalResponse(request, false)
       // File changes must include reviewable diffs; an opaque grantRoot is insufficient.
       if (request.method === "item/fileChange/requestApproval" && !item)
         return projectApprovalResponse(request, false)
-      return projectApprovalResponse(
-        request,
-        await review(request.method, projectApprovalDetails(request, item))
+      if (
+        spec.kind === "approval" &&
+        request.method !== "item/tool/call" &&
+        runtime.thread.approvalPolicy === "never"
       )
+        return projectApprovalResponse(request, false)
+      const result = await review(spec)
+      if (request.method === "item/tool/call")
+        return dynamicToolResponse(spec, result.accepted, result.response)
+      if (spec.kind === "question")
+        return userInputResponse(spec.input, result.accepted, result.response)
+      if (spec.kind === "form" || spec.kind === "url")
+        return mcpElicitationResponse(spec, result.accepted, result.response)
+      return projectApprovalResponse(request, result.accepted)
     })
     queue = operation.catch(() => undefined)
     return operation
   }
 
-  /** Persists one review and clears it on approval, rejection, timeout, or cancellation. */
+  /** Persists one request and clears it after the user responds or the turn ends. */
   async function review(
-    method: string,
-    details: string,
+    spec: AgentRequestSpec,
     reviewSignal = signal
-  ): Promise<boolean> {
-    const approval = {
+  ): Promise<{ accepted: boolean; response?: string }> {
+    const request = {
       id: randomUUID(),
-      method,
-      details,
+      method: spec.method,
+      kind: spec.kind,
+      title: spec.title,
+      details: spec.details,
+      ...(spec.prompt ? { prompt: spec.prompt } : {}),
+      ...(spec.input ? { input: JSON.stringify(spec.input) } : {}),
       expiresAt: Date.now() + 300_000,
     }
     await options.client.mutation(api.chatAgents.requestApproval, {
       ...identity,
-      approval,
+      approval: {
+        id: request.id,
+        method: request.method,
+        details: request.details,
+        expiresAt: request.expiresAt,
+        kind: request.kind,
+        title: request.title,
+        ...(request.prompt ? { prompt: request.prompt } : {}),
+        ...(request.input ? { input: request.input } : {}),
+      },
     })
     options.send({
-      type: "approval",
+      type: "agent-request",
       ...identity,
-      approval: { ...approval, status: "pending" },
+      request: { ...request, status: "pending" },
     })
     try {
-      while (!reviewSignal.aborted && Date.now() < approval.expiresAt) {
+      while (!reviewSignal.aborted && Date.now() < request.expiresAt) {
         const state = await options.client.query(
           api.chatAgents.getApproval,
           identity
         )
-        if (!state.active || state.approval?.id !== approval.id) return false
-        if (state.approval.status !== "pending")
-          return state.approval.status === "approved"
+        const approval = state.approval as
+          | {
+              id: string
+              status: "pending" | "approved" | "denied"
+              response?: string
+            }
+          | undefined
+        if (!state.active || approval?.id !== request.id)
+          return { accepted: false }
+        if (approval.status !== "pending")
+          return {
+            accepted: approval.status === "approved",
+            ...(approval.response ? { response: approval.response } : {}),
+          }
         await delay(500, undefined, { signal: reviewSignal })
       }
-      return false
+      return { accepted: false }
     } finally {
       await options.client
         .mutation(api.chatAgents.clearApproval, identity)
         .catch(() => undefined)
-      options.send({ type: "approval-resolved", approvalId: approval.id })
+      options.send({ type: "agent-request-resolved", requestId: request.id })
     }
   }
 
@@ -140,10 +175,9 @@ export function createChatAgentSession(options: {
       const details = JSON.stringify(request.params, null, 2)
       if (!details || details.length > 20_000) return false
       return review(
-        request.method,
-        details,
+        genericApprovalRequest(request.method, details),
         request.signal ? AbortSignal.any([signal, request.signal]) : signal
-      )
+      ).then((result) => result.accepted)
     })
     queue = operation.catch(() => undefined)
     return operation
@@ -167,8 +201,9 @@ export function createChatAgentSession(options: {
   const createTransport: CardChatTransportFactory = async () => {
     const client = await CodexAppServerClient.connect({
       workspaceDirectory: options.workspaceDirectory,
-      webSearchMode: options.autonomy === "full" ? "live" : "disabled",
-      approvalHandler: options.autonomy === "approval" ? approve : undefined,
+      webSearchMode: "live",
+      experimentalApi: true,
+      requestHandler: handleCodexRequest,
     })
     return {
       startThread: (settings) =>
@@ -176,6 +211,7 @@ export function createChatAgentSession(options: {
           ...settings,
           ...runtime.thread,
           developerInstructions: instructions,
+          dynamicTools: codexAgentRequestTools(),
         }),
       resumeThread: (id, settings) =>
         client.resumeThread(id, {

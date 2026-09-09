@@ -1,11 +1,11 @@
-/** Receives an explicit, single-use decision for an approval shown in a chat message. */
+/** Receives an explicit, single-use response for an agent request shown in the composer. */
 import { ConvexHttpClient } from "convex/browser"
 import { z } from "zod"
 import { api } from "@/convex/_generated/api"
 import type { Id } from "@/convex/_generated/dataModel"
 import { isTrustedBlitzOrigin } from "@/lib/server/request-origin"
 
-/** Approval handling uses the same local Node host as chat execution. */
+/** Agent request handling uses the same local Node host as chat execution. */
 export const runtime = "nodejs"
 
 /** Checks the browser origin and delegates scope, expiry, and active-message checks to Convex. */
@@ -19,6 +19,7 @@ export async function POST(request: Request): Promise<Response> {
         messageId: z.string().min(1),
         approvalId: z.string().min(1),
         decision: z.enum(["approved", "denied"]),
+        response: z.string().max(20_000).optional(),
       })
       .parse(await request.json())
     const url =
@@ -38,7 +39,7 @@ export async function POST(request: Request): Promise<Response> {
         error:
           error instanceof Error
             ? error.message
-            : "Approval could not be saved.",
+            : "Agent response could not be saved.",
       },
       { status: 400 }
     )

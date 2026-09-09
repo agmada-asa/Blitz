@@ -57,6 +57,16 @@ const attachmentInput = v.object({
   url: v.optional(v.string()),
 })
 
+/** Validator for user annotations attached to an assistant reply. */
+const annotationInput = v.object({
+  id: v.string(),
+  number: v.optional(v.number()),
+  messageId: v.string(),
+  selectedText: v.string(),
+  note: v.string(),
+  createdAt: v.optional(v.number()),
+})
+
 /** Trims a required value and rejects text outside its persistence bound. */
 function boundedText(value: string, label: string, maximum: number): string {
   const text = value.trim()
@@ -68,6 +78,7 @@ function boundedText(value: string, label: string, maximum: number): string {
 /** Derives a compact stable title from the first user message. */
 function titleForMessage(message: string): string {
   const firstLine = message.split(/\r?\n/, 1)[0]!.trim().replace(/\s+/g, " ")
+  if (!firstLine) return "Annotation on reply"
   return firstLine.length <= 64
     ? firstLine
     : `${firstLine.slice(0, 63).trimEnd()}…`
@@ -167,29 +178,64 @@ function replayAttachments(attachments: Doc<"workspaceChatAttachments">[]): {
 
 /** Returns chat summaries in most-recently-active order for the history sidebar. */
 export const list = query({
-  args: {},
-  handler: async (ctx) => {
-    const [pinnedChats, recentChats] = await Promise.all([
-      ctx.db
+  args: {
+    archived: v.optional(v.boolean()),
+  },
+  handler: async (ctx, args) => {
+    const wantArchived = args.archived === true
+    let chats: Doc<"workspaceChats">[]
+    if (wantArchived) {
+      chats = await ctx.db
         .query("workspaceChats")
-        .withIndex("by_pinned_updatedAt", (index) => index.eq("isPinned", true))
+        .withIndex("by_archived_updatedAt", (index) =>
+          index.eq("isArchived", true)
+        )
         .order("desc")
-        .take(60),
-      ctx.db
-        .query("workspaceChats")
-        .withIndex("by_updatedAt")
-        .order("desc")
-        .take(60),
-    ])
-    const seen = new Set<Id<"workspaceChats">>()
-    const chats = [...pinnedChats, ...recentChats].filter((chat) => {
-      if (seen.has(chat._id)) return false
-      seen.add(chat._id)
-      return true
-    })
+        .take(60)
+    } else {
+      const [pinnedChats, recentChats] = await Promise.all([
+        ctx.db
+          .query("workspaceChats")
+          .withIndex("by_pinned_updatedAt", (index) =>
+            index.eq("isPinned", true)
+          )
+          .order("desc")
+          .take(60),
+        ctx.db
+          .query("workspaceChats")
+          .withIndex("by_updatedAt")
+          .order("desc")
+          .take(60),
+      ])
+      const seen = new Set<Id<"workspaceChats">>()
+      chats = [...pinnedChats, ...recentChats].filter((chat) => {
+        if (chat.isArchived) return false
+        if (seen.has(chat._id)) return false
+        seen.add(chat._id)
+        return true
+      })
+    }
+    const projectIds = [
+      ...new Set(
+        chats
+          .map((c) => c.projectId)
+          .filter((id): id is Id<"projects"> => Boolean(id))
+      ),
+    ]
+    const projectDocs = await Promise.all(
+      projectIds.map((id) => ctx.db.get(id))
+    )
+    const projectMap = new Map(
+      projectDocs
+        .filter((p): p is Doc<"projects"> => p !== null)
+        .map((p) => [p._id, p.title])
+    )
     return chats.slice(0, 60).map((chat) => ({
       id: chat._id,
       projectId: chat.projectId,
+      projectTitle: chat.projectId
+        ? (projectMap.get(chat.projectId) ?? null)
+        : null,
       title: chat.title,
       providerId: chat.providerId ?? "codex",
       providerInstanceId: chat.providerInstanceId ?? null,
@@ -197,6 +243,7 @@ export const list = query({
       status: chat.status,
       isUnread: chat.isUnread ?? false,
       isPinned: chat.isPinned ?? false,
+      isArchived: chat.isArchived ?? false,
       updatedAt: chat.updatedAt,
     }))
   },
@@ -213,12 +260,34 @@ export const rename = mutation({
   },
 })
 
+/** Updates a chat title with a generated succinct title if the user has not manually renamed it. */
+export const setGeneratedTitle = mutation({
+  args: {
+    chatId: v.id("workspaceChats"),
+    title: v.string(),
+    expectedCurrentTitle: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const title = boundedText(args.title, "Chat name", 64)
+    const chat = await ctx.db.get(args.chatId)
+    if (!chat) return
+    if (
+      args.expectedCurrentTitle !== undefined &&
+      chat.title !== args.expectedCurrentTitle
+    ) {
+      return
+    }
+    await ctx.db.patch(chat._id, { title })
+  },
+})
+
 /** Sets the manual unread state for one saved chat. */
 export const setUnread = mutation({
   args: { chatId: v.id("workspaceChats"), unread: v.boolean() },
   handler: async (ctx, args) => {
     const chat = await ctx.db.get(args.chatId)
-    if (!chat) throw new Error("Chat not found")
+    // Treat stale history actions as already complete when another client removed the chat.
+    if (!chat) return
     await ctx.db.patch(chat._id, { isUnread: args.unread })
   },
 })
@@ -230,6 +299,46 @@ export const setPinned = mutation({
     const chat = await ctx.db.get(args.chatId)
     if (!chat) throw new Error("Chat not found")
     await ctx.db.patch(chat._id, { isPinned: args.pinned })
+  },
+})
+
+/** Sets whether one saved chat is archived or active. */
+export const setArchived = mutation({
+  args: { chatId: v.id("workspaceChats"), archived: v.boolean() },
+  handler: async (ctx, args) => {
+    const chat = await ctx.db.get(args.chatId)
+    if (!chat) throw new Error("Chat not found")
+    const now = Date.now()
+    await ctx.db.patch(chat._id, {
+      isArchived: args.archived,
+      ...(args.archived
+        ? { isPinned: false, archivedAt: now }
+        : { archivedAt: undefined }),
+    })
+  },
+})
+
+/** Deletes one saved chat, its messages, and its context attachments atomically. */
+export const remove = mutation({
+  args: { chatId: v.id("workspaceChats") },
+  handler: async (ctx, args) => {
+    const chat = await ctx.db.get(args.chatId)
+    if (!chat) return
+    const messages = await ctx.db
+      .query("workspaceChatMessages")
+      .withIndex("by_chat_createdAt", (index) =>
+        index.eq("chatId", args.chatId)
+      )
+      .take(2001)
+    const attachments = await ctx.db
+      .query("workspaceChatAttachments")
+      .withIndex("by_chat_createdAt", (index) =>
+        index.eq("chatId", args.chatId)
+      )
+      .take(2001)
+    for (const message of messages) await ctx.db.delete(message._id)
+    for (const attachment of attachments) await ctx.db.delete(attachment._id)
+    await ctx.db.delete(chat._id)
   },
 })
 
@@ -257,6 +366,7 @@ export const get = query({
       providerInstanceId: chat.providerInstanceId ?? null,
       providerSessionId: chat.providerSessionId ?? chat.codexThreadId ?? null,
       status: chat.status,
+      isArchived: chat.isArchived ?? false,
       agentAutonomy: chat.agentAutonomy ?? "approval",
       agentInstructions: chat.agentInstructions ?? "",
       workingProjectId: chat.workingProjectId,
@@ -265,9 +375,12 @@ export const get = query({
         id: message._id,
         role: message.role,
         content: message.content,
+        thought: message.thought ?? null,
+        durationMs: message.durationMs ?? null,
         status: message.status,
         agentApproval: message.agentApproval,
         citations: message.citations ?? [],
+        annotations: message.annotations ?? [],
         createdAt: message.createdAt,
       })),
       attachments: attachments.map((attachment) => ({
@@ -322,6 +435,7 @@ export const startTurn = mutation({
     clientMessageId: v.string(),
     message: v.string(),
     attachments: v.array(attachmentInput),
+    annotations: v.optional(v.array(annotationInput)),
   },
   handler: async (ctx, args) => {
     const clientMessageId = boundedText(
@@ -329,7 +443,13 @@ export const startTurn = mutation({
       "Client message ID",
       200
     )
-    const message = boundedText(args.message, "Message", 4_000)
+    const rawMessage = args.message.trim()
+    const hasAnnotations = (args.annotations?.length ?? 0) > 0
+    if (!rawMessage && !hasAnnotations && !args.continuationOf) {
+      throw new Error("Message is required")
+    }
+    if (rawMessage.length > 4_000) throw new Error("Message is too long")
+    const message = rawMessage
     if (args.attachments.length > 8) throw new Error("Attach at most 8 items")
     if (args.continuationOf && args.attachments.length)
       throw new Error("A continued response cannot add context")
@@ -364,8 +484,6 @@ export const startTurn = mutation({
       ? await ctx.db.get(args.chatId)
       : null
     if (args.chatId && !chat) throw new Error("Chat not found")
-    if (!chat && !args.projectId)
-      throw new Error("Choose a project before starting a chat")
     if (chat?.projectId && args.projectId && chat.projectId !== args.projectId)
       throw new Error("Chat project cannot be changed")
     if (args.projectId && !(await ctx.db.get(args.projectId)))
@@ -461,11 +579,13 @@ export const startTurn = mutation({
       }
     }
     let chatId: Id<"workspaceChats">
+    let initialTitle: string | undefined
     if (chat) chatId = chat._id
     else {
+      initialTitle = titleForMessage(message)
       chatId = await ctx.db.insert("workspaceChats", {
-        projectId: args.projectId!,
-        title: titleForMessage(message),
+        ...(args.projectId ? { projectId: args.projectId } : {}),
+        title: initialTitle,
         isUnread: false,
         isPinned: false,
         status: "idle",
@@ -480,9 +600,10 @@ export const startTurn = mutation({
     for (const attachment of args.attachments) {
       if (attachment.documentId) {
         const document = await ctx.db.get(attachment.documentId)
+        const expectedProjectId = chat?.projectId ?? args.projectId
         if (
           !document ||
-          document.projectId !== (chat?.projectId ?? args.projectId)
+          (expectedProjectId && document.projectId !== expectedProjectId)
         )
           throw new Error("File does not belong to this chat's project")
         if (attachment.kind !== "file" && attachment.kind !== "link")
@@ -500,7 +621,7 @@ export const startTurn = mutation({
         const item = await ctx.db.get(attachment.itemId)
         if (!item || item.projectId !== attachment.projectId)
           throw new Error("Card attachment does not belong to its project")
-        if (!chat && attachment.projectId !== args.projectId)
+        if (!chat && args.projectId && attachment.projectId !== args.projectId)
           throw new Error("Card attachment does not belong to the chat project")
         if (text) throw new Error("Card attachment text is not allowed")
       }
@@ -519,11 +640,20 @@ export const startTurn = mutation({
         createdAt: now,
       })
     }
+    const annotations = args.annotations?.map((annotation) => ({
+      id: boundedText(annotation.id, "Annotation ID", 200),
+      ...(annotation.number !== undefined ? { number: annotation.number } : {}),
+      messageId: boundedText(annotation.messageId, "Annotated message ID", 200),
+      selectedText: boundedText(annotation.selectedText, "Quoted text", 4_000),
+      note: boundedText(annotation.note, "Annotation note", 4_000),
+      createdAt: annotation.createdAt ?? now,
+    }))
     await ctx.db.insert("workspaceChatMessages", {
       chatId,
       clientMessageId,
       role: "user",
       content: message,
+      ...(annotations?.length ? { annotations } : {}),
       status: "completed",
       createdAt: now,
       updatedAt: now,
@@ -556,6 +686,7 @@ export const startTurn = mutation({
     return {
       chatId,
       assistantMessageId,
+      ...(initialTitle !== undefined ? { initialTitle } : {}),
       providerId: selectedProvider,
       ...(selectedInstance ? { providerInstanceId: selectedInstance } : {}),
       ...(selectedModel ? { providerModel: selectedModel } : {}),
@@ -588,10 +719,6 @@ export const branch = mutation({
     const target = await ctx.db.get(args.messageId)
     if (!chat || !target || target.chatId !== chat._id)
       throw new Error("Chat message was not found")
-    if (!chat.projectId)
-      throw new Error(
-        "This older chat needs a project before it can be branched"
-      )
     if (chat.status === "running")
       throw new Error("Pause the active reply before branching")
     if (args.includeMessage && target.role !== "assistant")
@@ -631,7 +758,7 @@ export const branch = mutation({
 
     const now = Date.now()
     const branchId = await ctx.db.insert("workspaceChats", {
-      projectId: chat.projectId,
+      ...(chat.projectId ? { projectId: chat.projectId } : {}),
       title:
         !args.includeMessage && targetIndex === 0 && editedMessage
           ? titleForMessage(editedMessage)
@@ -662,7 +789,12 @@ export const branch = mutation({
         clientMessageId: branchClientMessageId,
         role: message.role,
         content: message.content,
+        ...(message.thought ? { thought: message.thought } : {}),
+        ...(message.durationMs !== undefined
+          ? { durationMs: message.durationMs }
+          : {}),
         ...(message.citations ? { citations: message.citations } : {}),
+        ...(message.annotations ? { annotations: message.annotations } : {}),
         status: message.status === "running" ? "failed" : message.status,
         createdAt: now + index,
         updatedAt: now,
@@ -761,16 +893,19 @@ export const bindTurn = mutation({
   },
 })
 
-/** Saves a cumulative reply snapshot for the active assistant message. */
+/** Saves a cumulative reply and thought snapshot for the active assistant message. */
 export const progress = mutation({
   args: {
     chatId: v.id("workspaceChats"),
     messageId: v.id("workspaceChatMessages"),
     reply: v.string(),
+    thought: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     if (args.reply.length > MAX_REPLY_LENGTH)
       throw new Error("Reply is too long")
+    if (args.thought && args.thought.length > MAX_REPLY_LENGTH)
+      throw new Error("Thought is too long")
     const chat = await ctx.db.get(args.chatId)
     const message = await ctx.db.get(args.messageId)
     if (
@@ -781,9 +916,23 @@ export const progress = mutation({
       message.status !== "running"
     )
       throw new Error("Chat turn is no longer active")
-    if (args.reply.length < message.content.length) return
+    const replyLength = args.reply.length
+    const thoughtLength = args.thought?.length ?? 0
+    const currentReplyLength = message.content.length
+    const currentThoughtLength = message.thought?.length ?? 0
+    if (
+      replyLength < currentReplyLength ||
+      (replyLength === currentReplyLength &&
+        args.thought !== undefined &&
+        thoughtLength < currentThoughtLength)
+    )
+      return
     const now = Date.now()
-    await ctx.db.patch(message._id, { content: args.reply, updatedAt: now })
+    await ctx.db.patch(message._id, {
+      content: args.reply,
+      ...(args.thought !== undefined ? { thought: args.thought } : {}),
+      updatedAt: now,
+    })
     await ctx.db.patch(chat._id, { updatedAt: now })
   },
 })
@@ -800,9 +949,19 @@ export const complete = mutation({
     codexThreadId: v.optional(v.string()),
     codexTurnId: v.optional(v.string()),
     reply: v.string(),
+    thought: v.optional(v.string()),
+    durationMs: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const reply = boundedText(args.reply, "Reply", MAX_REPLY_LENGTH)
+    const thought =
+      args.thought !== undefined
+        ? boundedText(args.thought, "Thought", MAX_REPLY_LENGTH)
+        : undefined
+    const durationMs =
+      typeof args.durationMs === "number" && args.durationMs >= 0
+        ? Math.round(args.durationMs)
+        : undefined
     const chat = await ctx.db.get(args.chatId)
     const message = await ctx.db.get(args.messageId)
     if (!chat || !message || chat.activeMessageId !== message._id)
@@ -825,6 +984,8 @@ export const complete = mutation({
     const now = Date.now()
     await ctx.db.patch(message._id, {
       content: reply,
+      ...(thought !== undefined ? { thought } : {}),
+      ...(durationMs !== undefined ? { durationMs } : {}),
       status: "completed",
       providerTurnId,
       ...(args.codexTurnId

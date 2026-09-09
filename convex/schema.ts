@@ -413,7 +413,7 @@ export default defineSchema({
 
   /** General Blitz sessions opened from the top-level Chat tab. */
   workspaceChats: defineTable({
-    /** Owning project. Optional only for chats created before project ownership. */
+    /** Optional owning project. Chats can exist independently of projects. */
     projectId: v.optional(v.id("projects")),
     title: v.string(),
     /** Optional chat agent policy; legacy chats use approval with no extra instructions. */
@@ -422,9 +422,13 @@ export default defineSchema({
     ),
     agentInstructions: v.optional(v.string()),
     workingProjectId: v.optional(v.id("projects")),
+    /** Version of the app-owned interactive tool set attached to the provider session. */
+    agentRequestToolsVersion: v.optional(v.number()),
     /** Manual history state. Optional keeps chats created before this feature readable. */
     isUnread: v.optional(v.boolean()),
     isPinned: v.optional(v.boolean()),
+    isArchived: v.optional(v.boolean()),
+    archivedAt: v.optional(v.number()),
     branchedFromChatId: v.optional(v.id("workspaceChats")),
     branchedFromMessageId: v.optional(v.id("workspaceChatMessages")),
     /** Provider snapshot for new sessions; absent on legacy Codex chats. */
@@ -447,7 +451,8 @@ export default defineSchema({
   })
     .index("by_updatedAt", ["updatedAt"])
     .index("by_project_updatedAt", ["projectId", "updatedAt"])
-    .index("by_pinned_updatedAt", ["isPinned", "updatedAt"]),
+    .index("by_pinned_updatedAt", ["isPinned", "updatedAt"])
+    .index("by_archived_updatedAt", ["isArchived", "updatedAt"]),
 
   /** User and assistant messages retained for a general Blitz session. */
   workspaceChatMessages: defineTable({
@@ -457,6 +462,10 @@ export default defineSchema({
     clientMessageId: v.string(),
     role: v.union(v.literal("user"), v.literal("assistant")),
     content: v.string(),
+    /** Cumulative internal thought, reasoning, or commentary trace for assistant messages. */
+    thought: v.optional(v.string()),
+    /** Wall-clock duration of the completed turn in milliseconds. */
+    durationMs: v.optional(v.number()),
     status: v.union(
       v.literal("running"),
       v.literal("completed"),
@@ -464,11 +473,26 @@ export default defineSchema({
     ),
     providerTurnId: v.optional(v.string()),
     codexTurnId: v.optional(v.string()),
-    /** Pending or decided file operation approval attached to this assistant turn. */
+    /** Pending or decided agent request attached to this assistant turn. */
     agentApproval: v.optional(
       v.object({
         id: v.string(),
         method: v.string(),
+        /** Composer control family; omitted on legacy approval records. */
+        kind: v.optional(
+          v.union(
+            v.literal("approval"),
+            v.literal("question"),
+            v.literal("form"),
+            v.literal("url")
+          )
+        ),
+        /** Human-readable title shown in the composer request panel. */
+        title: v.optional(v.string()),
+        /** Optional prompt shown above structured controls. */
+        prompt: v.optional(v.string()),
+        /** Serialized bounded questions, form fields, or URL metadata. */
+        input: v.optional(v.string()),
         details: v.string(),
         status: v.union(
           v.literal("pending"),
@@ -476,7 +500,22 @@ export default defineSchema({
           v.literal("denied")
         ),
         expiresAt: v.number(),
+        /** Serialized user response consumed by the waiting provider turn. */
+        response: v.optional(v.string()),
       })
+    ),
+    /** Immutable user annotations attached to this turn. */
+    annotations: v.optional(
+      v.array(
+        v.object({
+          id: v.string(),
+          number: v.optional(v.number()),
+          messageId: v.string(),
+          selectedText: v.string(),
+          note: v.string(),
+          createdAt: v.number(),
+        })
+      )
     ),
     createdAt: v.number(),
     updatedAt: v.number(),

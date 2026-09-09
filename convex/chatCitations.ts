@@ -48,11 +48,14 @@ export const getDocument = query({
 /** Retrieves project passages once per question, with their source identity intact. */
 export const projectPassages = query({
   args: { projectId: v.id("projects"), question: v.string() },
-  handler: async (ctx, args) =>
-    retrieveProjectContext(ctx, args.projectId, args.question.slice(0, 500), {
+  handler: async (ctx, args) => {
+    const question = args.question.trim()
+    if (!question) return { results: [], characterCount: 0 }
+    return retrieveProjectContext(ctx, args.projectId, question.slice(0, 500), {
       maxChars: 16_000,
       neighborRadius: 1,
-    }),
+    })
+  },
 })
 
 /** Creates the citation manifest from persisted attachments and verified retrieved chunk IDs. */
@@ -110,7 +113,10 @@ export const prepare = mutation({
     for (const attachment of attachments) {
       if (attachment.documentId) {
         const document = await ctx.db.get(attachment.documentId)
-        if (document && document.projectId === chat.projectId)
+        if (
+          document &&
+          (!chat.projectId || document.projectId === chat.projectId)
+        )
           add(document.text, {
             filename: document.filename,
             projectId: document.projectId,
