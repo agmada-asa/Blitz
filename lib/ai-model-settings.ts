@@ -357,7 +357,8 @@ export function getAiModelPickerOptions(
 ): readonly AiProviderModelOption[] {
   if (provider === "codex") return getCodexModelPickerOptions(model)
   const options = AI_PROVIDER_MODEL_OPTIONS[provider]
-  if (options.some((option) => option.id === model)) return options
+  if (!model || !model.trim() || options.some((option) => option.id === model))
+    return options
   return [
     {
       id: model,
@@ -386,7 +387,8 @@ export function getDefaultAiModelOption(
 export function getCodexModelPickerOptions(
   model: string
 ): readonly CodexModelOption[] {
-  if (isKnownCodexModel(model)) return CODEX_MODEL_OPTIONS
+  if (!model || !model.trim() || isKnownCodexModel(model))
+    return CODEX_MODEL_OPTIONS
   return [
     {
       id: model,

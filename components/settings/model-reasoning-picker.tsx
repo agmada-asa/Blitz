@@ -261,9 +261,14 @@ export function ModelReasoningPicker({
       // Gather favorited models from all available task providers
       const all: EnrichedModel[] = []
       for (const p of providerOptions) {
-        const opts = getAiModelPickerOptions(p.id, model)
+        // Only pass the active model to its owning provider so foreign providers do not inherit it as a saved model
+        const activeModelForProvider = p.id === provider ? model : ""
+        const opts = getAiModelPickerOptions(p.id, activeModelForProvider)
         for (const opt of opts) {
-          if (favorites.includes(opt.id)) {
+          if (
+            favorites.includes(opt.id) &&
+            !all.some((existing) => existing.id === opt.id && existing.provider === p.id)
+          ) {
             all.push({
               id: opt.id,
               label: opt.label,
