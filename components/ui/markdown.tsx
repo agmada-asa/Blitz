@@ -1,14 +1,84 @@
+"use client"
+
 /** Renders chat Markdown as semantic React elements without injecting generated HTML. */
 import { memo, type ReactNode } from "react"
 import type { Token, Tokens } from "marked"
+import { QuoteUpIcon } from "@hugeicons/core-free-icons"
+import { HugeiconsIcon } from "@hugeicons/react"
 import { markdownHref, markdownText, parseMarkdown } from "@/lib/markdown"
 import { resolveCitation, type ChatCitation } from "@/lib/citations"
 import { Button } from "@/components/ui/button"
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover"
 
-/** Optional server-validated source links supported by this Markdown instance. */
+/** User annotation shape resolved by Markdown hyperlinks. */
+export type ChatAnnotation = {
+  id: string
+  number?: number
+  messageId: string
+  selectedText: string
+  note: string
+  createdAt?: number
+}
+
+/** Optional server-validated source links and annotations supported by this Markdown instance. */
 type CitationOptions = {
   citations?: readonly ChatCitation[]
   onCitation?: (citation: ChatCitation) => void
+  annotations?: readonly ChatAnnotation[]
+}
+
+/** Renders a model hyperlink referencing a user annotation, opening a read-only text display bubble. */
+function AnnotationLink({
+  annotation,
+  children,
+}: {
+  annotation: ChatAnnotation
+  children: ReactNode
+}) {
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 align-baseline text-xs font-medium text-brand bg-brand/10 hover:bg-brand/20 underline decoration-brand/40 underline-offset-2 transition-colors cursor-pointer"
+          aria-label={`Annotation ${annotation.number ?? ""}: ${annotation.note.slice(0, 40)}`}
+        >
+          <HugeiconsIcon icon={QuoteUpIcon} size={12} className="shrink-0" />
+          <span>{children}</span>
+        </button>
+      </PopoverTrigger>
+      <PopoverContent
+        side="top"
+        align="center"
+        sideOffset={6}
+        className="w-72 sm:w-80 rounded-xl border border-border bg-card p-3 shadow-lg text-xs"
+      >
+        <div className="flex items-center justify-between pb-1.5 border-b border-border/60">
+          <div className="flex items-center gap-1.5 font-semibold text-foreground">
+            <span className="flex size-4.5 items-center justify-center rounded-full bg-brand text-[10px] font-bold text-brand-foreground">
+              {annotation.number ?? 1}
+            </span>
+            <span>Annotation {annotation.number ?? ""}</span>
+          </div>
+          <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+            Read only
+          </span>
+        </div>
+        {annotation.selectedText ? (
+          <blockquote className="mt-2.5 max-h-24 overflow-y-auto rounded bg-muted/40 p-2 text-muted-foreground italic border-l-2 border-brand/60 text-[11px] leading-relaxed">
+            &ldquo;{annotation.selectedText}&rdquo;
+          </blockquote>
+        ) : null}
+        <div className="mt-2 text-foreground leading-relaxed whitespace-pre-wrap">
+          {annotation.note}
+        </div>
+      </PopoverContent>
+    </Popover>
+  )
 }
 
 /** Renders inline formatting and disables unsupported or unsafe links and images. */
@@ -30,6 +100,31 @@ function inline(tokens: Token[], options: CitationOptions): ReactNode {
       case "br":
         return <br key={key} />
       case "link": {
+        const annotationMatch = /^annotation:(.+)$/.exec(token.href)
+        if (annotationMatch) {
+          const keyOrId = annotationMatch[1]
+          const annotation = options.annotations?.find(
+            (item) =>
+              item.id === keyOrId ||
+              (item.number !== undefined && String(item.number) === keyOrId)
+          )
+          if (annotation) {
+            return (
+              <AnnotationLink key={key} annotation={annotation}>
+                {children}
+              </AnnotationLink>
+            )
+          }
+          return (
+            <span
+              key={key}
+              className="text-muted-foreground"
+              title="This annotation could not be found"
+            >
+              {children}
+            </span>
+          )
+        }
         const citation = resolveCitation(token.href, options.citations ?? [])
         if (citation && options.onCitation)
           return (

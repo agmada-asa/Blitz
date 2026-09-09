@@ -6,6 +6,7 @@ import {
   AiSparklesIcon,
   ArrowDown01Icon,
   ArrowLeft01Icon,
+  ArrowRight01Icon,
   ArrowUpRight01Icon,
   BookOpen01Icon,
   BulbIcon,
@@ -49,6 +50,8 @@ export const AddIcon = makeIcon(Add01Icon)
 export const AiSearch01Icon = makeIcon(AiSearch01Glyph)
 /** Downward direction glyph. */
 export const ArrowDownIcon = makeIcon(ArrowDown01Icon)
+/** Forward direction glyph. */
+export const ArrowRightIcon = makeIcon(ArrowRight01Icon)
 /** Back navigation glyph. */
 export const ArrowLeftIcon = makeIcon(ArrowLeft01Icon)
 /** External or forward navigation glyph. */

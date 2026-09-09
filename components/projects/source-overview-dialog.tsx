@@ -506,7 +506,8 @@ export function SourceOverviewDialog({
           {hasPreview ? (
             <TabsContent
               value="preview"
-              className="mt-0 min-h-0 flex-1 overflow-y-auto p-5 sm:p-6"
+              forceMount
+              className="mt-0 min-h-0 flex-1 overflow-y-auto p-5 sm:p-6 data-[state=inactive]:hidden"
             >
               {isPdf && activeSource.relativeKey ? (
                 <div className="space-y-3">

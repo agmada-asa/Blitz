@@ -3,17 +3,23 @@
 /** Owns persisted Blitz chat selection, streaming, and mixed-context attachments. */
 
 import {
+  Archive02Icon,
   BookTextIcon,
   Chat01Icon,
+  CheckUnread01Icon,
   Copy01Icon,
+  Delete02Icon,
   File01Icon,
   Folder01Icon,
   Link02Icon,
   Menu01Icon,
+  MoreHorizontalIcon,
   PauseIcon,
   PencilEdit02Icon,
+  Pin02Icon,
   PlayIcon,
   PlusIcon,
+  QuoteUpIcon,
   SendIcon,
   SplitIcon,
   Tick02Icon,
@@ -21,16 +27,24 @@ import {
 import { HugeiconsIcon } from "@hugeicons/react"
 import { useMutation, useQuery } from "convex/react"
 import Link from "next/link"
-import { useEffect, useRef, useState, type KeyboardEvent } from "react"
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type KeyboardEvent,
+} from "react"
 
 import {
   ChatHistory,
   type ChatHistoryItem,
 } from "@/components/chat/chat-history"
+import { ArchivedChatsDialog } from "@/components/chat/archived-chats-dialog"
 import {
   NewChatDialog,
   type NewChatProject,
 } from "@/components/chat/new-chat-dialog"
+import { AgentRequestPanel } from "@/components/chat/agent-request-panel"
 import {
   ChatAgentControls,
   type ChatAgentAutonomy,
@@ -39,6 +53,8 @@ import {
   useCachedAgentAutonomy,
   writeCachedAgentAutonomy,
 } from "@/components/chat/chat-agent-controls"
+import { AnnotatedAssistantMessage } from "@/components/chat/annotated-assistant-message"
+import { type FloatingAnnotation } from "@/components/chat/floating-annotation-chip"
 import { ReplyModelPicker } from "@/components/chat/reply-model-picker"
 import { Button } from "@/components/ui/button"
 import {
@@ -53,16 +69,27 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Input } from "@/components/ui/input"
-import { Markdown } from "@/components/ui/markdown"
+import { type ChatAnnotation } from "@/components/ui/markdown"
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover"
 import { SourcePane } from "@/components/chat/source-pane"
+import { ThoughtTrace } from "@/components/chat/thought-trace"
 import { Textarea } from "@/components/ui/textarea"
 import { CancelIcon, LoadingIcon, SparklesIcon } from "@/components/ui/icon"
 import { api } from "@/convex/_generated/api"
 import type { Id } from "@/convex/_generated/dataModel"
 import { extractSourceResponse } from "@/lib/client/extract-source"
+import {
+  type AgentRequest,
+  type AgentRequestSubmission,
+} from "@/lib/agent-request"
 import { cn } from "@/lib/utils"
 
 /** Maximum context items accepted with one message. */
@@ -90,24 +117,21 @@ type DraftAttachment = {
 type ChatEvent =
   | { type: "started"; chatId: Id<"workspaceChats"> }
   | { type: "delta"; text: string }
-  | { type: "complete"; chatId: Id<"workspaceChats">; threadId: string }
+  | { type: "thought-delta"; text: string }
   | {
-      type: "approval"
+      type: "complete"
+      chatId: Id<"workspaceChats">
+      threadId: string
+      durationMs?: number
+    }
+  | {
+      type: "agent-request"
       chatId: Id<"workspaceChats">
       messageId: string
-      approval: ChatApproval
+      request: AgentRequest
     }
-  | { type: "approval-resolved"; approvalId: string }
+  | { type: "agent-request-resolved"; requestId: string }
   | { type: "error"; message: string }
-
-/** Approval request emitted while an agent is waiting for user authorization. */
-type ChatApproval = {
-  id: string
-  method: string
-  details: string
-  expiresAt: number
-  status: "pending" | "approved" | "denied"
-}
 
 /** Initial saved chat selected by the route query string. */
 type ChatWorkspaceProps = {
@@ -151,6 +175,175 @@ function messageForError(error: unknown, fallback: string): string {
     : fallback
 }
 
+/** Converts persisted or streamed data into a safe composer request envelope. */
+function agentRequestFromValue(value: unknown): AgentRequest | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    return undefined
+  const candidate = value as Record<string, unknown>
+  if (
+    typeof candidate.id !== "string" ||
+    typeof candidate.method !== "string" ||
+    typeof candidate.details !== "string" ||
+    typeof candidate.expiresAt !== "number" ||
+    (candidate.status !== "pending" &&
+      candidate.status !== "approved" &&
+      candidate.status !== "denied")
+  )
+    return undefined
+  const kind =
+    candidate.kind === "question" ||
+    candidate.kind === "form" ||
+    candidate.kind === "url"
+      ? candidate.kind
+      : "approval"
+  const title =
+    typeof candidate.title === "string" && candidate.title.trim()
+      ? candidate.title.trim()
+      : "Review needed"
+  return {
+    id: candidate.id,
+    method: candidate.method,
+    kind,
+    title,
+    details: candidate.details,
+    ...(typeof candidate.prompt === "string"
+      ? { prompt: candidate.prompt }
+      : {}),
+    ...(typeof candidate.input === "string" ? { input: candidate.input } : {}),
+    expiresAt: candidate.expiresAt,
+    status: candidate.status,
+    ...(typeof candidate.response === "string"
+      ? { response: candidate.response }
+      : {}),
+  }
+}
+
+/** Builds deterministic local requests for exercising every composer request control. */
+function createRequestUiFixtureRequests(): AgentRequest[] {
+  const expiresAt = Date.now() + 5 * 60 * 1_000
+  return [
+    {
+      id: "request-ui-fixture-approval",
+      method: "item/commandExecution/requestApproval",
+      kind: "approval",
+      title: "Request UI test: allow a harmless command",
+      prompt: "This local fixture simulates a runtime approval request.",
+      details: JSON.stringify(
+        {
+          command: "printf 'request UI test\\n'",
+          cwd: "/tmp",
+          risk: "No files are changed.",
+        },
+        null,
+        2
+      ),
+      expiresAt,
+      status: "pending",
+    },
+    {
+      id: "request-ui-fixture-question",
+      method: "item/tool/requestUserInput",
+      kind: "question",
+      title: "Request UI test: choose an option",
+      prompt: "This local fixture simulates a structured agent question.",
+      details: JSON.stringify({ source: "local request UI fixture" }, null, 2),
+      input: JSON.stringify({
+        questions: [
+          {
+            id: "study-mode",
+            header: "Study mode",
+            question: "Which mode should Blitz use for this test?",
+            options: [
+              {
+                value: "quick",
+                label: "Quick review",
+                description: "Keep the response short and focused.",
+              },
+              {
+                value: "deep",
+                label: "Deep review",
+                description: "Include more explanation and context.",
+              },
+            ],
+            isOther: true,
+          },
+        ],
+      }),
+      expiresAt,
+      status: "pending",
+    },
+    {
+      id: "request-ui-fixture-form",
+      method: "mcpServer/elicitation/request",
+      kind: "form",
+      title: "Request UI test: fill in a form",
+      prompt: "This local fixture simulates an MCP form elicitation.",
+      details: JSON.stringify(
+        { serverName: "Local request fixture", mode: "form" },
+        null,
+        2
+      ),
+      input: JSON.stringify({
+        serverName: "Local request fixture",
+        message: "Provide a few values to continue.",
+        fields: [
+          {
+            id: "topic",
+            label: "Topic",
+            type: "text",
+            required: true,
+            description: "A required text field.",
+          },
+          {
+            id: "count",
+            label: "Number of cards",
+            type: "integer",
+            required: true,
+            defaultValue: 3,
+          },
+          {
+            id: "format",
+            label: "Format",
+            type: "single-select",
+            required: true,
+            options: [
+              { value: "cards", label: "Study cards" },
+              { value: "outline", label: "Outline" },
+            ],
+          },
+          {
+            id: "include-sources",
+            label: "Include source links",
+            type: "boolean",
+            defaultValue: true,
+          },
+        ],
+      }),
+      expiresAt,
+      status: "pending",
+    },
+    {
+      id: "request-ui-fixture-url",
+      method: "mcpServer/elicitation/request",
+      kind: "url",
+      title: "Request UI test: open a requested page",
+      prompt: "This local fixture simulates an MCP URL handoff.",
+      details: JSON.stringify(
+        { serverName: "Local request fixture", mode: "url" },
+        null,
+        2
+      ),
+      input: JSON.stringify({
+        serverName: "Local request fixture",
+        message: "Open the page, then return here when you are finished.",
+        url: "https://example.com/request-ui-test",
+      }),
+      expiresAt,
+      status: "pending",
+    },
+  ]
+}
+
 /** Copies text on localhost and LAN browsers that lack the async Clipboard API. */
 async function writeClipboardText(text: string): Promise<void> {
   if (navigator.clipboard?.writeText) {
@@ -182,6 +375,8 @@ function parseChatEvent(value: unknown): ChatEvent {
     return { type: "started", chatId: event.chatId as Id<"workspaceChats"> }
   if (event.type === "delta" && typeof event.text === "string")
     return { type: "delta", text: event.text }
+  if (event.type === "thought-delta" && typeof event.text === "string")
+    return { type: "thought-delta", text: event.text }
   if (
     event.type === "complete" &&
     typeof event.chatId === "string" &&
@@ -191,7 +386,27 @@ function parseChatEvent(value: unknown): ChatEvent {
       type: "complete",
       chatId: event.chatId as Id<"workspaceChats">,
       threadId: event.threadId,
+      ...(typeof event.durationMs === "number"
+        ? { durationMs: event.durationMs }
+        : {}),
     }
+  if (
+    event.type === "agent-request" &&
+    typeof event.chatId === "string" &&
+    typeof event.messageId === "string" &&
+    event.request &&
+    typeof event.request === "object"
+  ) {
+    const request = agentRequestFromValue(event.request)
+    if (request?.status === "pending")
+      return {
+        type: "agent-request",
+        chatId: event.chatId as Id<"workspaceChats">,
+        messageId: event.messageId,
+        request,
+      }
+  }
+  // Keep an in-flight browser compatible with the previous approval event name.
   if (
     event.type === "approval" &&
     typeof event.chatId === "string" &&
@@ -199,26 +414,28 @@ function parseChatEvent(value: unknown): ChatEvent {
     event.approval &&
     typeof event.approval === "object"
   ) {
-    const approval = event.approval as Record<string, unknown>
-    if (
-      typeof approval.id === "string" &&
-      typeof approval.method === "string" &&
-      typeof approval.details === "string" &&
-      typeof approval.expiresAt === "number" &&
-      approval.status === "pending"
-    )
+    const request = agentRequestFromValue({
+      ...(event.approval as Record<string, unknown>),
+      kind: "approval",
+    })
+    if (request?.status === "pending")
       return {
-        type: "approval",
+        type: "agent-request",
         chatId: event.chatId as Id<"workspaceChats">,
         messageId: event.messageId,
-        approval: approval as unknown as ChatApproval,
+        request,
       }
   }
+  if (
+    event.type === "agent-request-resolved" &&
+    typeof event.requestId === "string"
+  )
+    return { type: "agent-request-resolved", requestId: event.requestId }
   if (
     event.type === "approval-resolved" &&
     typeof event.approvalId === "string"
   )
-    return { type: "approval-resolved", approvalId: event.approvalId }
+    return { type: "agent-request-resolved", requestId: event.approvalId }
   if (event.type === "error" && typeof event.message === "string")
     return { type: "error", message: event.message }
   throw new Error("Blitz returned an invalid response.")
@@ -259,8 +476,12 @@ export function ChatWorkspace({
   initialProject,
 }: ChatWorkspaceProps) {
   const projects = useQuery(api.projects.listProjects)
-  const chats = useQuery(api.workspaceChats.list) as
+  const chats = useQuery(api.workspaceChats.list, { archived: false }) as
     ChatHistoryItem[] | undefined
+  const archivedChats = useQuery(api.workspaceChats.list, {
+    archived: true,
+  }) as ChatHistoryItem[] | undefined
+  const archivedCount = archivedChats?.length ?? 0
   const fileInputRef = useRef<HTMLInputElement>(null)
   const messageEndRef = useRef<HTMLDivElement>(null)
   const requestControllerRef = useRef<AbortController | undefined>(undefined)
@@ -270,6 +491,8 @@ export function ChatWorkspace({
   const renameChat = useMutation(api.workspaceChats.rename)
   const setChatUnread = useMutation(api.workspaceChats.setUnread)
   const setChatPinned = useMutation(api.workspaceChats.setPinned)
+  const setChatArchived = useMutation(api.workspaceChats.setArchived)
+  const deleteChat = useMutation(api.workspaceChats.remove)
   const [activeChatId, setActiveChatId] = useState<
     Id<"workspaceChats"> | undefined
   >(initialCard ? undefined : initialChatId)
@@ -292,6 +515,12 @@ export function ChatWorkspace({
         : []
   )
   const [draft, setDraft] = useState(() => initialPrompt?.slice(0, 4_000) ?? "")
+  const [draftAnnotations, setDraftAnnotations] = useState<
+    FloatingAnnotation[]
+  >([])
+  const [expandedAnnotationId, setExpandedAnnotationId] = useState<
+    string | undefined
+  >()
   const [sending, setSending] = useState(false)
   const [savingReplySettings, setSavingReplySettings] = useState(false)
   const [messageActionId, setMessageActionId] = useState<string>()
@@ -308,6 +537,9 @@ export function ChatWorkspace({
   }>()
   const [renameChatId, setRenameChatId] = useState<Id<"workspaceChats">>()
   const [renameDraft, setRenameDraft] = useState("")
+  const [deleteChatId, setDeleteChatId] = useState<Id<"workspaceChats">>()
+  const [deletingChat, setDeletingChat] = useState(false)
+  const [archivedDialogOpen, setArchivedDialogOpen] = useState(false)
   const [chatActionPending, setChatActionPending] = useState(false)
   const [chatActionError, setChatActionError] = useState("")
   const cachedAgentAutonomy = useCachedAgentAutonomy()
@@ -319,9 +551,13 @@ export function ChatWorkspace({
     Id<"projects"> | undefined
   >(initialCard?.projectId ?? initialProject?._id)
   const [agentSettingsTouched, setAgentSettingsTouched] = useState(false)
-  const [streamApprovals, setStreamApprovals] = useState<
-    Record<string, { approval: ChatApproval; messageId: string }>
+  const [streamAgentRequests, setStreamAgentRequests] = useState<
+    Record<string, { request: AgentRequest; messageId: string }>
   >({})
+  const [requestFixtureRequests, setRequestFixtureRequests] = useState<
+    AgentRequest[]
+  >([])
+  const [requestFixtureStep, setRequestFixtureStep] = useState<number>()
   const [approvalBusy, setApprovalBusy] = useState<string>()
   const [projectDialogOpen, setProjectDialogOpen] = useState(false)
   const [newChatDialogOpen, setNewChatDialogOpen] = useState(false)
@@ -333,6 +569,87 @@ export function ChatWorkspace({
   const [importingLink, setImportingLink] = useState(false)
   const persistedAttachments = activeChat?.attachments ?? []
   const messages = activeChat?.messages ?? []
+  const sentAnnotations = messages.flatMap((m) =>
+    m.role === "user" && "annotations" in m && Array.isArray(m.annotations)
+      ? (m.annotations as FloatingAnnotation[])
+      : []
+  )
+  const allChatAnnotations: ChatAnnotation[] = [
+    ...sentAnnotations.map((a, index) => ({
+      id: a.id,
+      number: a.number ?? index + 1,
+      messageId: a.messageId,
+      selectedText: a.selectedText,
+      note: a.note,
+      createdAt: a.createdAt,
+    })),
+    ...draftAnnotations.map((a) => ({
+      id: a.id,
+      number: a.number,
+      messageId: a.messageId,
+      selectedText: a.selectedText,
+      note: a.note,
+      createdAt: a.createdAt,
+    })),
+  ]
+
+  /** Creates a new draft annotation anchored to the selected text on an assistant reply. */
+  const addAnnotation = useCallback(
+    (messageId: string, selectedText: string): void => {
+      const id = crypto.randomUUID()
+      const now = Date.now()
+      setDraftAnnotations((prev) => {
+        const cleaned = prev.filter((item) => item.note.trim().length > 0)
+        return [
+          ...cleaned.map((item, index) => ({
+            ...item,
+            number: index + 1,
+          })),
+          {
+            id,
+            number: cleaned.length + 1,
+            messageId,
+            selectedText,
+            note: "",
+            createdAt: now,
+            isDraft: true,
+          },
+        ]
+      })
+      setExpandedAnnotationId(id)
+    },
+    [setDraftAnnotations, setExpandedAnnotationId]
+  )
+
+  /** Saves an edited note for one draft annotation, or deletes it if the note is empty. */
+  const saveAnnotation = (id: string, note: string): void => {
+    const trimmed = note.trim()
+    if (!trimmed) {
+      deleteAnnotation(id)
+      return
+    }
+    setDraftAnnotations((prev) =>
+      prev.map((item) => (item.id === id ? { ...item, note: trimmed } : item))
+    )
+    setExpandedAnnotationId(undefined)
+  }
+
+  /** Deletes one draft annotation and renumbers remaining draft annotations. */
+  const deleteAnnotation = (id: string): void => {
+    setDraftAnnotations((prev) => {
+      const filtered = prev.filter((item) => item.id !== id)
+      return filtered.map((item, index) => ({
+        ...item,
+        number: index + 1,
+      }))
+    })
+    setExpandedAnnotationId((current) => (current === id ? undefined : current))
+  }
+
+  /** Toggles expansion of one floating annotation chip. */
+  const toggleExpandAnnotation = (id: string): void => {
+    setExpandedAnnotationId((current) => (current === id ? undefined : id))
+  }
   const lastMessageContent = messages.at(-1)?.content
   const selectedProject = attachments.find(
     (attachment) => attachment.kind === "project" && attachment.projectId
@@ -346,13 +663,53 @@ export function ChatWorkspace({
     sending ||
     activeChat?.status === "running" ||
     savingReplySettings ||
-    Boolean(messageActionId)
+    Boolean(messageActionId) ||
+    requestFixtureStep !== undefined
+  const persistedAgentRequestEntry =
+    activeChat?.status === "running"
+      ? messages.reduceRight<
+          { request: AgentRequest; messageId: string } | undefined
+        >((found, message) => {
+          if (
+            found ||
+            message.role !== "assistant" ||
+            message.status !== "running"
+          )
+            return found
+          const request = agentRequestFromValue(
+            "agentApproval" in message ? message.agentApproval : undefined
+          )
+          return request?.status === "pending"
+            ? { request, messageId: message.id }
+            : found
+        }, undefined)
+      : undefined
+  const liveAgentRequestEntry = Object.values(streamAgentRequests).at(-1)
+  const composerAgentRequestEntry =
+    liveAgentRequestEntry ?? persistedAgentRequestEntry
+  const requestFixtureRequest =
+    requestFixtureStep === undefined
+      ? undefined
+      : requestFixtureRequests[requestFixtureStep]
+  const visibleComposerRequest = requestFixtureRequest
+    ? { request: requestFixtureRequest, messageId: "request-ui-fixture" }
+    : activeChatId
+      ? composerAgentRequestEntry
+      : undefined
   const canAttach = attachments.length < MAX_ATTACHMENTS
   const canAttachProject =
     canAttach &&
     attachments.filter((attachment) => attachment.kind === "project").length <
       MAX_PROJECT_ATTACHMENTS
-  const renameTarget = chats?.find((chat) => chat.id === renameChatId)
+  const renameTarget =
+    chats?.find((chat) => chat.id === renameChatId) ??
+    archivedChats?.find((chat) => chat.id === renameChatId)
+  const deleteTarget =
+    chats?.find((chat) => chat.id === deleteChatId) ??
+    archivedChats?.find((chat) => chat.id === deleteChatId)
+  const activeChatTarget =
+    chats?.find((chat) => chat.id === activeChatId) ??
+    archivedChats?.find((chat) => chat.id === activeChatId)
 
   const persistedAgentSettings = activeChat as
     | (typeof activeChat & {
@@ -393,7 +750,7 @@ export function ChatWorkspace({
 
   /** Clears a manual unread marker whenever a saved chat becomes active. */
   useEffect(() => {
-    if (!activeChatId) return
+    if (!activeChatId || activeChat?.id !== activeChatId) return
     void setChatUnread({ chatId: activeChatId, unread: false }).catch(
       (cause) => {
         setError(
@@ -401,17 +758,36 @@ export function ChatWorkspace({
         )
       }
     )
-  }, [activeChatId, setChatUnread])
+  }, [activeChat?.id, activeChatId, setChatUnread])
+
+  /** Starts the development-only sequence that exercises each composer request mode. */
+  const startRequestUiFixture = (): void => {
+    setError("")
+    setRequestFixtureRequests(createRequestUiFixtureRequests())
+    setRequestFixtureStep(0)
+  }
+
+  /** Advances the local request fixture after a simulated approval or denial. */
+  const resolveRequestUiFixture = (): void => {
+    setRequestFixtureStep((current) => {
+      if (current === undefined || current + 1 >= requestFixtureRequests.length)
+        return undefined
+      return current + 1
+    })
+  }
 
   /** Selects one saved chat and mirrors it in the address bar. */
   const selectChat = (chatId: Id<"workspaceChats">): void => {
     setSourceSelection(undefined)
     setActiveChatId(chatId)
     setAttachments([])
+    setDraftAnnotations([])
+    setExpandedAnnotationId(undefined)
     setError("")
     setEditingMessageId(undefined)
     setEditDraft("")
-    setStreamApprovals({})
+    setStreamAgentRequests({})
+    setRequestFixtureStep(undefined)
     setAgentAutonomy(undefined)
     setAgentSettingsTouched(false)
     setHistoryOpen(false)
@@ -422,11 +798,28 @@ export function ChatWorkspace({
     )
   }
 
-  /** Opens project selection before clearing the current conversation. */
+  /** Clears the active conversation and starts a new standalone chat. */
   const startNewChat = (): void => {
     if (isRunning) return
-    setNewChatDialogOpen(true)
+    setSourceSelection(undefined)
+    setActiveChatId(undefined)
+    setAttachments([])
+    setDraft("")
+    setDraftAnnotations([])
+    setExpandedAnnotationId(undefined)
+    setError("")
+    setEditingMessageId(undefined)
+    setEditDraft("")
+    setAgentAutonomy(readCachedAgentAutonomy())
+    setAgentInstructions("")
+    setWorkingProjectId(undefined)
+    setNewChatProjectId(undefined)
+    setStreamAgentRequests({})
+    setRequestFixtureStep(undefined)
+    setAgentSettingsTouched(false)
     setHistoryOpen(false)
+    setNewChatDialogOpen(false)
+    window.history.replaceState(null, "", "/chat")
   }
 
   /** Clears the composer and assigns the selected project to the pending chat. */
@@ -442,6 +835,8 @@ export function ChatWorkspace({
       },
     ])
     setDraft("")
+    setDraftAnnotations([])
+    setExpandedAnnotationId(undefined)
     setError("")
     setEditingMessageId(undefined)
     setEditDraft("")
@@ -449,7 +844,8 @@ export function ChatWorkspace({
     setAgentInstructions("")
     setWorkingProjectId(project._id)
     setNewChatProjectId(project._id)
-    setStreamApprovals({})
+    setStreamAgentRequests({})
+    setRequestFixtureStep(undefined)
     setAgentSettingsTouched(false)
     setHistoryOpen(false)
     setNewChatDialogOpen(false)
@@ -519,6 +915,34 @@ export function ChatWorkspace({
     })
   }
 
+  /** Changes a chat's archive state from its context menu or actions menu. */
+  const toggleChatArchived = (
+    chatId: Id<"workspaceChats">,
+    archived: boolean
+  ): void => {
+    void setChatArchived({ chatId, archived }).catch((cause) => {
+      setError(messageForError(cause, "This chat could not be updated."))
+    })
+  }
+
+  /** Confirms and permanently removes a chat and its dependencies. */
+  const confirmDeleteChat = async (): Promise<void> => {
+    if (!deleteChatId || deletingChat) return
+    setDeletingChat(true)
+    try {
+      const targetId = deleteChatId
+      await deleteChat({ chatId: targetId })
+      setDeleteChatId(undefined)
+      if (activeChatId === targetId) {
+        setActiveChatId(undefined)
+      }
+    } catch (cause) {
+      setError(messageForError(cause, "This chat could not be deleted."))
+    } finally {
+      setDeletingChat(false)
+    }
+  }
+
   /** Adds an unsent attachment unless the same project or URL is already selected. */
   const addAttachment = (attachment: DraftAttachment): void => {
     setAttachments((current) => {
@@ -538,9 +962,11 @@ export function ChatWorkspace({
   /** Saves selected originals before allowing a message to use them as source context. */
   const chooseFiles = async (files: File[]): Promise<void> => {
     if (uploadingFiles) return
-    const projectId = activeChat?.projectId ?? newChatProjectId
+    const projectId =
+      activeChat?.projectId ?? newChatProjectId ?? selectedProject?.projectId
     if (!projectId) {
-      setError("Choose a project before attaching a file.")
+      setError("Attach a project to this chat before uploading files.")
+      setProjectDialogOpen(true)
       return
     }
     setUploadingFiles(true)
@@ -614,7 +1040,8 @@ export function ChatWorkspace({
       if (remainingCharacters <= 0)
         throw new Error("Remove a file or link before adding another.")
       let documentId: Id<"chatDocuments"> | undefined
-      const projectId = activeChat?.projectId ?? newChatProjectId
+      const projectId =
+        activeChat?.projectId ?? newChatProjectId ?? selectedProject?.projectId
       if (projectId && /\.(pdf|pptx)$/i.test(source.filename)) {
         const saved = await fetch("/api/chat/files", {
           method: "POST",
@@ -661,11 +1088,16 @@ export function ChatWorkspace({
   const sendMessage = async (
     options: SendMessageOptions = {}
   ): Promise<boolean> => {
-    const message = (options.message ?? draft).trim()
+    const submittedAnnotations =
+      options.message === undefined && !options.continuationOf
+        ? draftAnnotations.filter((a) => a.note.trim().length > 0)
+        : []
+    const rawMessage = (options.message ?? draft).trim()
+    const message = rawMessage
     const targetChatId = options.chatId ?? activeChatId
     const targetProjectId = targetChatId ? undefined : newChatProjectId
     if (
-      (!message && !options.continuationOf) ||
+      (!message && !submittedAnnotations.length && !options.continuationOf) ||
       sending ||
       uploadingFiles ||
       importingLink ||
@@ -674,10 +1106,6 @@ export function ChatWorkspace({
       (options.continuationOf && !targetChatId)
     )
       return false
-    if (!targetChatId && !targetProjectId) {
-      setNewChatDialogOpen(true)
-      return false
-    }
     const submittedAttachments =
       options.message === undefined && !options.continuationOf
         ? attachments
@@ -686,7 +1114,11 @@ export function ChatWorkspace({
       (attachment) =>
         attachment.kind === "card" && attachment.projectId && attachment.itemId
     )
-    if (!options.continuationOf) setDraft("")
+    if (!options.continuationOf) {
+      setDraft("")
+      setDraftAnnotations([])
+      setExpandedAnnotationId(undefined)
+    }
     setError("")
     setSending(true)
     pausedByUserRef.current = false
@@ -737,6 +1169,18 @@ export function ChatWorkspace({
                 ]
               : []
           ),
+          ...(submittedAnnotations.length
+            ? {
+                annotations: submittedAnnotations.map((annotation) => ({
+                  id: annotation.id,
+                  number: annotation.number,
+                  messageId: annotation.messageId,
+                  selectedText: annotation.selectedText,
+                  note: annotation.note,
+                  createdAt: annotation.createdAt,
+                })),
+              }
+            : {}),
           autonomy: effectiveAgentAutonomy,
           additionalInstructions: effectiveAgentInstructions,
           ...(effectiveWorkingProjectId
@@ -755,21 +1199,23 @@ export function ChatWorkspace({
         if (event.type === "started") {
           started = true
           setAttachments([])
+          setDraftAnnotations([])
+          setExpandedAnnotationId(undefined)
           selectChat(event.chatId)
         }
-        if (event.type === "approval") {
-          setStreamApprovals((current) => ({
+        if (event.type === "agent-request") {
+          setStreamAgentRequests((current) => ({
             ...current,
-            [event.approval.id]: {
-              approval: event.approval,
+            [event.request.id]: {
+              request: event.request,
               messageId: event.messageId,
             },
           }))
         }
-        if (event.type === "approval-resolved") {
-          setStreamApprovals((current) => {
+        if (event.type === "agent-request-resolved") {
+          setStreamAgentRequests((current) => {
             const next = { ...current }
-            delete next[event.approvalId]
+            delete next[event.requestId]
             return next
           })
         }
@@ -786,7 +1232,10 @@ export function ChatWorkspace({
             "Blitz could not finish that reply. Try again."
           )
         )
-      if (!started && !options.continuationOf) setDraft(message)
+      if (!started && !options.continuationOf) {
+        setDraft(rawMessage)
+        setDraftAnnotations(submittedAnnotations)
+      }
     } finally {
       if (requestControllerRef.current === controller)
         requestControllerRef.current = undefined
@@ -870,14 +1319,14 @@ export function ChatWorkspace({
     requestControllerRef.current.abort()
   }
 
-  /** Resolves a pending agent approval for the current chat message. */
-  const decideApproval = async (
-    approval: ChatApproval,
+  /** Resolves a pending agent request for the current chat message. */
+  const decideAgentRequest = async (
+    request: AgentRequest,
     messageId: string,
-    decision: "approved" | "denied"
+    submission: AgentRequestSubmission
   ): Promise<void> => {
     if (!activeChatId) return
-    setApprovalBusy(approval.id)
+    setApprovalBusy(request.id)
     setError("")
     try {
       const response = await fetch("/api/chat/approval", {
@@ -886,22 +1335,27 @@ export function ChatWorkspace({
         body: JSON.stringify({
           chatId: activeChatId,
           messageId,
-          approvalId: approval.id,
-          decision,
+          approvalId: request.id,
+          decision: submission.decision,
+          ...(submission.response !== undefined
+            ? { response: submission.response }
+            : {}),
         }),
       })
       const payload = (await response.json().catch(() => null)) as {
         error?: string
       } | null
       if (!response.ok)
-        throw new Error(payload?.error || "Approval decision failed.")
-      setStreamApprovals((current) => {
+        throw new Error(
+          payload?.error || "Agent request could not be resolved."
+        )
+      setStreamAgentRequests((current) => {
         const next = { ...current }
-        delete next[approval.id]
+        delete next[request.id]
         return next
       })
     } catch (cause) {
-      setError(messageForError(cause, "Approval decision failed."))
+      setError(messageForError(cause, "Agent request could not be resolved."))
     } finally {
       setApprovalBusy(undefined)
     }
@@ -936,9 +1390,14 @@ export function ChatWorkspace({
       activeChatId={activeChatId}
       onSelect={selectChat}
       onNew={startNewChat}
+      onNewInProject={startNewChatForProject}
       onRename={openRenameChat}
       onToggleUnread={toggleChatUnread}
       onTogglePin={toggleChatPinned}
+      onToggleArchive={toggleChatArchived}
+      onDelete={(id) => setDeleteChatId(id)}
+      onOpenArchived={() => setArchivedDialogOpen(true)}
+      archivedCount={archivedCount}
     />
   )
 
@@ -969,6 +1428,82 @@ export function ChatWorkspace({
             <h1 className="truncate text-xl font-medium tracking-tight">
               {activeChat?.title ?? "New chat"}
             </h1>
+            {activeChat && (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-xs"
+                    className="size-7 rounded-lg text-muted-foreground hover:text-foreground"
+                    aria-label={`Actions for ${activeChat.title}`}
+                  >
+                    <HugeiconsIcon icon={MoreHorizontalIcon} size={16} />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start">
+                  <DropdownMenuItem
+                    onSelect={() => openRenameChat(activeChat.id)}
+                  >
+                    <HugeiconsIcon
+                      icon={PencilEdit02Icon}
+                      size={15}
+                      aria-hidden="true"
+                    />
+                    Rename chat
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onSelect={() => toggleChatUnread(activeChat.id, true)}
+                  >
+                    <HugeiconsIcon
+                      icon={CheckUnread01Icon}
+                      size={15}
+                      aria-hidden="true"
+                    />
+                    Mark as unread
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onSelect={() =>
+                      toggleChatPinned(
+                        activeChat.id,
+                        !activeChatTarget?.isPinned
+                      )
+                    }
+                  >
+                    <HugeiconsIcon
+                      icon={Pin02Icon}
+                      size={15}
+                      aria-hidden="true"
+                    />
+                    {activeChatTarget?.isPinned ? "Unpin chat" : "Pin chat"}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onSelect={() =>
+                      toggleChatArchived(activeChat.id, !activeChat.isArchived)
+                    }
+                  >
+                    <HugeiconsIcon
+                      icon={Archive02Icon}
+                      size={15}
+                      aria-hidden="true"
+                    />
+                    {activeChat.isArchived ? "Restore chat" : "Archive chat"}
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem
+                    className="text-destructive focus:text-destructive"
+                    onSelect={() => setDeleteChatId(activeChat.id)}
+                  >
+                    <HugeiconsIcon
+                      icon={Delete02Icon}
+                      size={15}
+                      aria-hidden="true"
+                    />
+                    Delete chat
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
           </div>
           <Button
             type="button"
@@ -985,6 +1520,31 @@ export function ChatWorkspace({
           aria-label="Conversation"
           className="flex min-h-0 flex-1 flex-col overflow-y-auto py-5"
         >
+          {activeChat?.isArchived && (
+            <div className="mx-auto mb-3 flex w-full max-w-2xl shrink-0 items-center justify-between gap-3 rounded-xl border border-border/80 bg-muted/60 px-4 py-2 text-xs text-muted-foreground">
+              <div className="flex items-center gap-2">
+                <HugeiconsIcon
+                  icon={Archive02Icon}
+                  size={15}
+                  className="shrink-0 text-muted-foreground"
+                  aria-hidden="true"
+                />
+                <span>
+                  This chat is archived. Restore it to continue the
+                  conversation.
+                </span>
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-7 text-xs"
+                onClick={() => toggleChatArchived(activeChat.id, false)}
+              >
+                Restore chat
+              </Button>
+            </div>
+          )}
           {activeChatId && activeChat === undefined ? (
             <div
               className="m-auto flex items-center gap-2 text-sm text-muted-foreground"
@@ -1054,10 +1614,14 @@ export function ChatWorkspace({
                 const editing = editingMessageId === message.id
                 const latest = index === messages.length - 1
                 const actionPending = messageActionId === message.id
-                const persistedApproval =
-                  "agentApproval" in message && message.agentApproval
-                    ? (message.agentApproval as unknown as ChatApproval)
-                    : undefined
+                const messageAnnotations: FloatingAnnotation[] = [
+                  ...sentAnnotations
+                    .filter((a) => a.messageId === message.id)
+                    .map((a) => ({ ...a, isDraft: false })),
+                  ...draftAnnotations
+                    .filter((a) => a.messageId === message.id)
+                    .map((a) => ({ ...a, isDraft: true })),
+                ]
                 return (
                   <article
                     key={message.id}
@@ -1076,30 +1640,52 @@ export function ChatWorkspace({
                       )}
                     >
                       {message.role === "assistant" ? (
-                        message.content ? (
-                          <Markdown
-                            text={message.content}
-                            citations={message.citations}
-                            onCitation={(citation) => {
-                              if (activeChatId)
-                                setSourceSelection({
-                                  chatId: activeChatId,
-                                  messageId: message.id,
-                                  citationId: citation.id,
-                                })
-                            }}
-                          />
-                        ) : message.status === "running" ? (
-                          <span className="flex items-center gap-2 text-muted-foreground">
-                            <LoadingIcon className="size-4 animate-spin motion-reduce:animate-none" />
-                            Blitz is reading your context…
-                          </span>
-                        ) : (
-                          <p>
-                            {activeChat?.lastError ||
-                              "Blitz could not finish this reply."}
-                          </p>
-                        )
+                        <>
+                          {message.thought ? (
+                            <ThoughtTrace
+                              thought={message.thought}
+                              durationMs={message.durationMs}
+                              status={message.status}
+                              startedAt={message.createdAt}
+                            />
+                          ) : null}
+                          {message.content ? (
+                            <AnnotatedAssistantMessage
+                              messageId={message.id}
+                              content={message.content}
+                              citations={message.citations}
+                              annotations={messageAnnotations}
+                              allChatAnnotations={allChatAnnotations}
+                              expandedAnnotationId={expandedAnnotationId}
+                              isReadOnly={isRunning}
+                              onToggleExpand={toggleExpandAnnotation}
+                              onCitation={(citation) => {
+                                if (activeChatId)
+                                  setSourceSelection({
+                                    chatId: activeChatId,
+                                    messageId: message.id,
+                                    citationId: citation.id,
+                                  })
+                              }}
+                              onAddAnnotation={(selectedText) =>
+                                addAnnotation(message.id, selectedText)
+                              }
+                              onSaveAnnotation={saveAnnotation}
+                              onDeleteAnnotation={deleteAnnotation}
+                            />
+                          ) : message.status === "running" &&
+                            !message.thought ? (
+                            <span className="flex items-center gap-2 text-muted-foreground">
+                              <LoadingIcon className="size-4 animate-spin motion-reduce:animate-none" />
+                              Blitz is reading your context…
+                            </span>
+                          ) : message.status === "failed" ? (
+                            <p>
+                              {activeChat?.lastError ||
+                                "Blitz could not finish this reply."}
+                            </p>
+                          ) : null}
+                        </>
                       ) : editing ? (
                         <div className="space-y-2">
                           <Textarea
@@ -1149,51 +1735,32 @@ export function ChatWorkspace({
                           </div>
                         </div>
                       ) : (
-                        <p className="whitespace-pre-wrap">{message.content}</p>
+                        <div>
+                          {message.content ? (
+                            <p className="whitespace-pre-wrap">
+                              {message.content}
+                            </p>
+                          ) : null}
+                          {"annotations" in message &&
+                          Array.isArray(message.annotations) &&
+                          message.annotations.length ? (
+                            <div
+                              className={cn(
+                                message.content
+                                  ? "mt-1 flex justify-end"
+                                  : "flex items-center"
+                              )}
+                            >
+                              <UserMessageAnnotationsBadge
+                                annotations={
+                                  message.annotations as FloatingAnnotation[]
+                                }
+                              />
+                            </div>
+                          ) : null}
+                        </div>
                       )}
                     </div>
-
-                    {persistedApproval?.status === "pending" && activeChatId ? (
-                      <div className="mt-3 rounded-xl border border-orange-500/40 bg-orange-500/10 px-3 py-2 text-xs">
-                        <p className="font-medium">
-                          Approval needed: {persistedApproval.method}
-                        </p>
-                        <p className="mt-1 whitespace-pre-wrap text-muted-foreground">
-                          {persistedApproval.details}
-                        </p>
-                        <div className="mt-2 flex gap-2">
-                          <Button
-                            type="button"
-                            size="sm"
-                            disabled={approvalBusy === persistedApproval.id}
-                            onClick={() =>
-                              void decideApproval(
-                                persistedApproval,
-                                message.id,
-                                "approved"
-                              )
-                            }
-                          >
-                            Approve
-                          </Button>
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="outline"
-                            disabled={approvalBusy === persistedApproval.id}
-                            onClick={() =>
-                              void decideApproval(
-                                persistedApproval,
-                                message.id,
-                                "denied"
-                              )
-                            }
-                          >
-                            Deny
-                          </Button>
-                        </div>
-                      </div>
-                    ) : null}
 
                     {!editing ? (
                       <div
@@ -1241,28 +1808,32 @@ export function ChatWorkspace({
                         ) : (
                           <>
                             {message.content ? (
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="sm"
-                                className="h-10 gap-1.5 px-2.5 text-xs font-normal sm:h-7 sm:px-2"
-                                disabled={isRunning || Boolean(messageActionId)}
-                                onClick={() =>
-                                  void branchFromResponse(message.id)
-                                }
-                              >
-                                {actionPending ? (
-                                  <LoadingIcon className="size-3.5 animate-spin motion-reduce:animate-none" />
-                                ) : (
-                                  <HugeiconsIcon
-                                    icon={SplitIcon}
-                                    size={14}
-                                    className="rotate-90"
-                                    aria-hidden="true"
-                                  />
-                                )}
-                                Branch
-                              </Button>
+                              <>
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-10 gap-1.5 px-2.5 text-xs font-normal sm:h-7 sm:px-2"
+                                  disabled={
+                                    isRunning || Boolean(messageActionId)
+                                  }
+                                  onClick={() =>
+                                    void branchFromResponse(message.id)
+                                  }
+                                >
+                                  {actionPending ? (
+                                    <LoadingIcon className="size-3.5 animate-spin motion-reduce:animate-none" />
+                                  ) : (
+                                    <HugeiconsIcon
+                                      icon={SplitIcon}
+                                      size={14}
+                                      className="rotate-90"
+                                      aria-hidden="true"
+                                    />
+                                  )}
+                                  Branch
+                                </Button>
+                              </>
                             ) : null}
                             {latest &&
                             message.status === "running" &&
@@ -1320,7 +1891,9 @@ export function ChatWorkspace({
         </section>
 
         <div className="mx-auto w-full max-w-3xl shrink-0 pb-3">
-          {persistedAttachments.length || attachments.length ? (
+          {persistedAttachments.length ||
+          attachments.length ||
+          draftAnnotations.length ? (
             <div className="mb-2 flex min-w-0 flex-wrap items-center gap-1.5 px-1">
               <ul
                 aria-label="Attached context"
@@ -1351,8 +1924,40 @@ export function ChatWorkspace({
                     }}
                   />
                 ))}
+                {draftAnnotations.length ? (
+                  <AnnotationAttachmentChip
+                    annotations={draftAnnotations}
+                    onSelect={(id) => setExpandedAnnotationId(id)}
+                    onRemove={() => {
+                      setDraftAnnotations([])
+                      setExpandedAnnotationId(undefined)
+                    }}
+                  />
+                ) : null}
               </ul>
             </div>
+          ) : null}
+          {visibleComposerRequest ? (
+            <AgentRequestPanel
+              key={visibleComposerRequest.request.id}
+              request={visibleComposerRequest.request}
+              busy={
+                requestFixtureRequest
+                  ? false
+                  : approvalBusy === visibleComposerRequest.request.id
+              }
+              onSubmit={(submission) => {
+                if (requestFixtureRequest) {
+                  resolveRequestUiFixture()
+                  return
+                }
+                void decideAgentRequest(
+                  visibleComposerRequest.request,
+                  visibleComposerRequest.messageId,
+                  submission
+                )
+              }}
+            />
           ) : null}
           <div className="rounded-[24px] border bg-card p-2 shadow-sm focus-within:ring-2 focus-within:ring-ring/40">
             <Textarea
@@ -1439,13 +2044,31 @@ export function ChatWorkspace({
                     setWorkingProjectId(value)
                   }}
                 />
+                {process.env.NODE_ENV !== "production" ? (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-8 px-2 text-xs"
+                    disabled={isRunning && requestFixtureStep === undefined}
+                    onClick={startRequestUiFixture}
+                  >
+                    {requestFixtureStep === undefined
+                      ? "Test requests"
+                      : "Restart test"}
+                  </Button>
+                ) : null}
               </div>
               <Button
                 type="button"
                 size="icon"
                 aria-label={sending ? "Pause response" : "Send message"}
                 className="ml-auto shrink-0 rounded-full bg-brand text-brand-foreground hover:bg-brand/85"
-                disabled={sending ? false : !draft.trim() || isRunning}
+                disabled={
+                  sending
+                    ? false
+                    : (!draft.trim() && !draftAnnotations.length) || isRunning
+                }
                 onClick={sending ? pauseReply : () => void sendMessage()}
               >
                 {sending ? (
@@ -1456,40 +2079,6 @@ export function ChatWorkspace({
               </Button>
             </div>
           </div>
-          {Object.values(streamApprovals).map(({ approval, messageId }) => (
-            <div
-              key={approval.id}
-              className="mt-2 rounded-xl border border-orange-500/40 bg-orange-500/10 px-3 py-2 text-xs"
-            >
-              <p className="font-medium">Approval needed: {approval.method}</p>
-              <p className="mt-1 whitespace-pre-wrap text-muted-foreground">
-                {approval.details}
-              </p>
-              <div className="mt-2 flex gap-2">
-                <Button
-                  type="button"
-                  size="sm"
-                  disabled={approvalBusy === approval.id}
-                  onClick={() =>
-                    void decideApproval(approval, messageId, "approved")
-                  }
-                >
-                  Approve
-                </Button>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  disabled={approvalBusy === approval.id}
-                  onClick={() =>
-                    void decideApproval(approval, messageId, "denied")
-                  }
-                >
-                  Deny
-                </Button>
-              </div>
-            </div>
-          ))}
           <div className="min-h-6 px-3 pt-1.5">
             {uploadingFiles ? (
               <p role="status" className="text-xs text-muted-foreground">
@@ -1603,6 +2192,59 @@ export function ChatWorkspace({
               </Button>
             </DialogFooter>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      <ArchivedChatsDialog
+        open={archivedDialogOpen}
+        archivedChats={archivedChats}
+        onOpenChange={setArchivedDialogOpen}
+        onSelect={(id) => {
+          selectChat(id)
+          setArchivedDialogOpen(false)
+        }}
+        onUnarchive={(id) => toggleChatArchived(id, false)}
+        onDelete={(id) => setDeleteChatId(id)}
+      />
+
+      <Dialog
+        open={deleteChatId !== undefined}
+        onOpenChange={(open) => {
+          if (!open && !deletingChat) setDeleteChatId(undefined)
+        }}
+      >
+        <DialogContent
+          aria-describedby="delete-chat-description"
+          showCloseButton={!deletingChat}
+        >
+          <DialogHeader>
+            <DialogTitle>Delete chat?</DialogTitle>
+            <DialogDescription id="delete-chat-description">
+              {deleteTarget
+                ? `This permanently deletes “${deleteTarget.title}” and its messages. This cannot be undone.`
+                : "This permanently deletes this chat and its messages. This cannot be undone."}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              className="h-11"
+              disabled={deletingChat}
+              onClick={() => setDeleteChatId(undefined)}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              className="h-11"
+              disabled={deletingChat}
+              onClick={() => void confirmDeleteChat()}
+            >
+              {deletingChat ? "Deleting…" : "Delete chat"}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 
@@ -1752,5 +2394,204 @@ function AttachmentChip({
         </button>
       ) : null}
     </li>
+  )
+}
+
+/**
+ * Renders a composer attachment chip showing the number of draft annotations.
+ *
+ * Clicking the chip opens a popover listing all draft annotations with quotes and notes,
+ * allowing the user to select one to jump/expand its edit card on the reply, or clear them all.
+ *
+ * @param annotations - Array of active draft annotations attached to the current composer turn.
+ * @param onSelect - Callback when an annotation in the popover list is clicked to focus or expand it.
+ * @param onRemove - Callback to remove/clear all draft annotations.
+ */
+function AnnotationAttachmentChip({
+  annotations,
+  onSelect,
+  onRemove,
+}: {
+  annotations: FloatingAnnotation[]
+  onSelect?: (id: string) => void
+  onRemove?: () => void
+}) {
+  const [open, setOpen] = useState(false)
+  const count = annotations.length
+  const label = `${count} ${count === 1 ? "annotation" : "annotations"}`
+
+  return (
+    <li className="group relative flex h-7 max-w-full min-w-0 items-center gap-1.5 rounded-full border border-brand/40 bg-brand/10 px-2.5 text-xs text-foreground backdrop-blur-xs transition-colors hover:border-brand/60 hover:bg-brand/15">
+      <Popover open={open} onOpenChange={setOpen}>
+        <PopoverTrigger asChild>
+          <button
+            type="button"
+            className="flex items-center gap-1.5 text-xs font-medium text-brand outline-none hover:underline"
+          >
+            <HugeiconsIcon
+              icon={QuoteUpIcon}
+              size={14}
+              strokeWidth={1.8}
+              className="shrink-0 text-brand"
+              aria-hidden="true"
+            />
+            <span className="truncate">{label}</span>
+          </button>
+        </PopoverTrigger>
+        <PopoverContent
+          align="start"
+          side="top"
+          className="max-h-72 w-80 space-y-2.5 overflow-y-auto p-3 text-xs"
+        >
+          <div className="flex items-center justify-between border-b border-border/50 pb-1 font-medium text-muted-foreground">
+            <span>{label}</span>
+            {onRemove ? (
+              <button
+                type="button"
+                className="text-[11px] text-destructive hover:underline"
+                onClick={() => {
+                  setOpen(false)
+                  onRemove()
+                }}
+              >
+                Clear all
+              </button>
+            ) : null}
+          </div>
+          <div className="space-y-2">
+            {annotations.map((ann, idx) => {
+              const num = ann.number ?? idx + 1
+              return (
+                <div
+                  key={ann.id}
+                  role="button"
+                  tabIndex={0}
+                  className="cursor-pointer rounded-lg border border-border/60 bg-muted/40 p-2 text-left transition-colors hover:border-border hover:bg-muted/80"
+                  onClick={() => {
+                    onSelect?.(ann.id)
+                    setOpen(false)
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault()
+                      onSelect?.(ann.id)
+                      setOpen(false)
+                    }
+                  }}
+                >
+                  <div className="flex items-center gap-1.5 font-medium text-brand">
+                    <span className="rounded bg-brand/20 px-1 py-0.5 text-[10px] font-bold">
+                      [{num}]
+                    </span>
+                    <span className="truncate font-normal text-foreground/80 italic">
+                      &ldquo;{ann.selectedText}&rdquo;
+                    </span>
+                  </div>
+                  {ann.note ? (
+                    <p className="mt-1 line-clamp-2 text-foreground/90">
+                      {ann.note}
+                    </p>
+                  ) : (
+                    <p className="mt-1 text-muted-foreground italic">
+                      No note added
+                    </p>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        </PopoverContent>
+      </Popover>
+      {onRemove ? (
+        <button
+          type="button"
+          aria-label={`Remove ${label}`}
+          className="pointer-events-none absolute top-1/2 right-1 z-10 flex size-5 -translate-y-1/2 items-center justify-center rounded-full border border-border/70 bg-secondary text-muted-foreground opacity-0 shadow-xs transition-opacity duration-150 group-focus-within:pointer-events-auto group-focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100 hover:border-border hover:bg-card hover:text-foreground focus-visible:pointer-events-auto focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none [@media(pointer:coarse)]:pointer-events-auto [@media(pointer:coarse)]:opacity-100"
+          onClick={(event) => {
+            event.stopPropagation()
+            onRemove()
+          }}
+        >
+          <CancelIcon className="size-3" />
+        </button>
+      ) : null}
+    </li>
+  )
+}
+
+/**
+ * Renders a read-only badge on sent user messages showing attached annotations in an interactive popover.
+ *
+ * Once a turn is submitted, annotations become strictly read-only. This badge informs the reader that
+ * annotations were included with the message and allows reviewing the quoted text and attached notes.
+ *
+ * @param annotations - Array of persisted read-only annotations attached to the user message.
+ */
+function UserMessageAnnotationsBadge({
+  annotations,
+}: {
+  annotations: FloatingAnnotation[]
+}) {
+  const count = annotations.length
+  if (!count) return null
+  const label = `${count} ${count === 1 ? "annotation" : "annotations"}`
+
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          aria-label={`View ${label}`}
+          className="inline-flex items-center gap-1 rounded-full border border-brand-foreground/30 bg-brand-foreground/10 px-2 py-0.5 text-[11px] font-medium text-brand-foreground transition-colors hover:bg-brand-foreground/20"
+        >
+          <HugeiconsIcon
+            icon={QuoteUpIcon}
+            size={12}
+            strokeWidth={2}
+            className="shrink-0 text-brand-foreground/90"
+            aria-hidden="true"
+          />
+          <span>{label}</span>
+        </button>
+      </PopoverTrigger>
+      <PopoverContent
+        align="end"
+        side="top"
+        className="max-h-72 w-80 space-y-2 overflow-y-auto p-3 text-xs text-foreground"
+      >
+        <div className="border-b border-border/50 pb-1 font-medium text-muted-foreground">
+          Attached {label}
+        </div>
+        <div className="space-y-2">
+          {annotations.map((ann, idx) => {
+            const num = ann.number ?? idx + 1
+            return (
+              <div
+                key={ann.id}
+                className="rounded-lg border border-border/60 bg-muted/40 p-2 text-left"
+              >
+                <div className="flex items-center gap-1.5 font-medium text-brand">
+                  <span className="rounded bg-brand/20 px-1 py-0.5 text-[10px] font-bold">
+                    [{num}]
+                  </span>
+                  <span className="truncate font-normal text-foreground/80 italic">
+                    &ldquo;{ann.selectedText}&rdquo;
+                  </span>
+                </div>
+                {ann.note ? (
+                  <p className="mt-1 whitespace-pre-wrap text-foreground/90">
+                    {ann.note}
+                  </p>
+                ) : (
+                  <p className="mt-1 text-muted-foreground italic">
+                    No note added
+                  </p>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      </PopoverContent>
+    </Popover>
   )
 }
