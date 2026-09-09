@@ -23,6 +23,8 @@ type AgentRequestPanelProps = {
   request: AgentRequest
   /** Whether the server is saving the current response. */
   busy?: boolean
+  /** Renders a completed interaction as transcript history without controls. */
+  readOnly?: boolean
   /** Receives a validated browser submission for the request. */
   onSubmit: (submission: AgentRequestSubmission) => void
 }
@@ -54,10 +56,10 @@ function QuestionControl({
   onOtherChange,
 }: {
   question: AgentRequestQuestion
-  answer?: string
+  answer?: string | string[]
   otherValue?: string
   disabled: boolean
-  onChange: (value: string) => void
+  onChange: (value: string | string[]) => void
   onOtherChange: (value: string) => void
 }) {
   const options = question.options ?? []
@@ -79,18 +81,30 @@ function QuestionControl({
                 key={value}
                 className={cn(
                   "flex cursor-pointer items-start gap-2 rounded-lg border border-border/70 px-3 py-2 transition-colors hover:bg-muted/50",
-                  answer === value && "border-brand/50 bg-brand/5",
+                  (question.multiSelect
+                    ? Array.isArray(answer) && answer.includes(value)
+                    : answer === value) && "border-brand/50 bg-brand/5",
                   disabled && "cursor-not-allowed opacity-60"
                 )}
               >
                 <input
-                  type="radio"
+                  type={question.multiSelect ? "checkbox" : "radio"}
                   name={`agent-request-${question.id}`}
                   value={value}
-                  checked={answer === value}
+                  checked={question.multiSelect ? Array.isArray(answer) && answer.includes(value) : answer === value}
                   disabled={disabled}
                   className="mt-0.5 size-4 accent-[var(--brand)]"
-                  onChange={() => onChange(value)}
+                  onChange={() =>
+                    question.multiSelect
+                      ? onChange(
+                          Array.isArray(answer)
+                            ? answer.includes(value)
+                              ? answer.filter((item) => item !== value)
+                              : [...answer, value]
+                            : [value]
+                        )
+                      : onChange(value)
+                  }
                 />
                 <span className="min-w-0 text-sm">
                   <span className="block text-foreground">{option.label}</span>
@@ -248,6 +262,7 @@ function FormFieldControl({
 export function AgentRequestPanel({
   request,
   busy = false,
+  readOnly = false,
   onSubmit,
 }: AgentRequestPanelProps) {
   const input = useMemo(
@@ -255,12 +270,19 @@ export function AgentRequestPanel({
     [request.input]
   )
   const [now, setNow] = useState(() => Date.now())
-  const [answers, setAnswers] = useState<Record<string, string>>({})
+  const [answers, setAnswers] = useState<
+    Record<string, string | string[]>
+  >({})
+  const [approvalOption, setApprovalOption] = useState("")
   const [otherAnswers, setOtherAnswers] = useState<Record<string, string>>({})
   const [freeform, setFreeform] = useState("")
   const expired = request.expiresAt <= now
   const questions = useMemo(() => input.questions ?? [], [input.questions])
   const fields = useMemo(() => input.fields ?? [], [input.fields])
+  const approvalOptions = useMemo(
+    () => input.approvalOptions ?? [],
+    [input.approvalOptions]
+  )
   const [formValues, setFormValues] = useState<Record<string, unknown>>(() =>
     Object.fromEntries(
       fields.map((field) => [
@@ -287,11 +309,12 @@ export function AgentRequestPanel({
       questions.map((question) => [
         question.id,
         {
-          answers: [
+          answers:
             answers[question.id] === "__other__"
-              ? (otherAnswers[question.id] ?? "")
-              : (answers[question.id] ?? ""),
-          ],
+              ? [otherAnswers[question.id] ?? ""]
+              : Array.isArray(answers[question.id])
+                ? answers[question.id]
+                : [answers[question.id] ?? ""],
         },
       ])
     )
@@ -322,13 +345,91 @@ export function AgentRequestPanel({
 
   const questionsReady = questions.every((question) => {
     const answer = answers[question.id]
+    const hasAnswer = Array.isArray(answer) ? answer.length > 0 : Boolean(answer)
     return Boolean(
-      answer && (answer !== "__other__" || otherAnswers[question.id]?.trim())
+      hasAnswer &&
+        (answer !== "__other__" || otherAnswers[question.id]?.trim())
     )
   })
   const formReady = fields.every(
     (field) => !field.required || hasValue(formValues[field.id])
   )
+  if (readOnly) {
+    const stateLabel =
+      request.status === "approved"
+        ? request.kind === "question"
+          ? "Answered"
+          : "Approved"
+        : request.status === "denied"
+          ? "Declined"
+          : request.status === "expired"
+            ? "Expired"
+            : request.status === "cancelled"
+              ? "Cancelled"
+              : "Pending"
+    return (
+      <section
+        aria-label={`Blitz request result: ${request.title}`}
+        className="mt-2 rounded-xl border border-border/70 bg-muted/20 p-3 text-sm"
+      >
+        <div className="flex items-center justify-between gap-3">
+          <h3 className="font-medium text-foreground">{request.title}</h3>
+          <span className="text-xs text-muted-foreground">{stateLabel}</span>
+        </div>
+        {request.prompt ? (
+          <p className="mt-1 text-xs leading-5 text-muted-foreground">
+            {request.prompt}
+          </p>
+        ) : null}
+        {input.validationError ? (
+          <p className="mt-2 text-xs text-destructive">{input.validationError}</p>
+        ) : request.kind === "question" && request.response ? (
+          <div className="mt-2 space-y-2 text-xs text-muted-foreground">
+            {(() => {
+              let parsed: { answers?: Record<string, { answers?: string[] }> } = {}
+              try {
+                parsed = JSON.parse(request.response) as typeof parsed
+              } catch {
+                return <p>The submitted answer could not be displayed.</p>
+              }
+              return questions.map((question) => {
+                const selected = parsed.answers?.[question.id]?.answers ?? []
+                const labels = selected.map(
+                  (value) =>
+                    question.options?.find(
+                      (option) => (option.value ?? option.label) === value
+                    )?.label ?? value
+                )
+                return (
+                  <div key={question.id}>
+                    <p className="font-medium text-foreground">{question.question}</p>
+                    <p>{labels.length ? `Selected: ${labels.join(", ")}` : "No answer"}</p>
+                    {question.options?.length ? (
+                      <ul className="mt-1 list-disc pl-4">
+                        {question.options.map((option) => {
+                          const value = option.value ?? option.label
+                          return (
+                            <li key={value} className={selected.includes(value) ? "font-medium text-foreground" : undefined}>
+                              {option.label}
+                              {selected.includes(value) ? " (selected)" : ""}
+                            </li>
+                          )
+                        })}
+                      </ul>
+                    ) : null}
+                  </div>
+                )
+              })
+            })()}
+          </div>
+        ) : request.response ? (
+          <pre className="mt-2 max-h-40 overflow-auto rounded-lg bg-background/70 p-2 text-[11px] leading-5 whitespace-pre-wrap text-muted-foreground">
+            {request.response}
+          </pre>
+        ) : null}
+      </section>
+    )
+  }
   const isConfirmation =
     request.kind === "approval" && request.method === "item/tool/call"
   const submitLabel =
@@ -372,6 +473,30 @@ export function AgentRequestPanel({
         <pre className="mt-2 max-h-48 overflow-auto rounded-lg border border-border/70 bg-background/70 px-3 py-2 text-[11px] leading-5 whitespace-pre-wrap text-muted-foreground">
           {request.details}
         </pre>
+      ) : null}
+
+      {request.kind === "approval" && approvalOptions.length ? (
+        <fieldset className="mt-2 space-y-1.5">
+          <legend className="text-xs font-medium text-foreground">
+            Choose an option
+          </legend>
+          {approvalOptions.map((option) => {
+            const value = option.value ?? option.label
+            return (
+              <label key={value} className="flex items-start gap-2 text-sm">
+                <input
+                  type="radio"
+                  name={`agent-approval-${request.id}`}
+                  value={value}
+                  checked={approvalOption === value}
+                  disabled={busy || expired}
+                  onChange={() => setApprovalOption(value)}
+                />
+                <span>{option.label}</span>
+              </label>
+            )
+          })}
+        </fieldset>
       ) : null}
 
       {request.kind === "question" ? (
@@ -469,14 +594,24 @@ export function AgentRequestPanel({
           size="sm"
           disabled={
             busy ||
+            Boolean(input.validationError) ||
             expired ||
             (request.kind === "question" && !questionsReady) ||
-            (request.kind === "form" && !formReady)
+            (request.kind === "form" && !formReady) ||
+            (request.kind === "approval" &&
+              approvalOptions.length > 0 &&
+              !approvalOption)
           }
           onClick={() => {
             if (request.kind === "question") submitQuestions()
             else if (request.kind === "form") submitForm()
-            else onSubmit({ decision: "approved" })
+            else
+              onSubmit({
+                decision: "approved",
+                ...(approvalOption
+                  ? { response: JSON.stringify({ optionId: approvalOption }) }
+                  : {}),
+              })
           }}
         >
           {busy ? "Saving…" : submitLabel}

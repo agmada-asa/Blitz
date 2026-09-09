@@ -866,6 +866,9 @@ export const branch = mutation({
         ...(message.providerEvents
           ? { providerEvents: message.providerEvents }
           : {}),
+        ...(message.agentRequests
+          ? { agentRequests: message.agentRequests.filter((request) => request.status !== "pending") }
+          : {}),
         ...(message.durationMs !== undefined
           ? { durationMs: message.durationMs }
           : {}),

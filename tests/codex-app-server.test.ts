@@ -291,7 +291,7 @@ test("starts and interrupts a turn using server-issued identifiers", async () =>
   }
 })
 
-test("allows bounded native image payloads above the inbound line limit", async () => {
+test("accepts bounded native images and their echoed user-message events", async () => {
   const process = new FakeProcess()
   const client = await CodexAppServerClient.connect({
     workspaceDirectory: "/tmp/blitz-owned-workspace",
@@ -310,7 +310,7 @@ test("allows bounded native image payloads above the inbound line limit", async 
     assert.ok(JSON.stringify(request).length > 1_000_000)
     process.respond({
       id: request?.id,
-      result: { turn: { id: "turn_image", status: "inProgress" } },
+      result: { turn: { id: "turn_image", status: "inProgress", items: [{ type: "userMessage", id: "user_image", content: [{ type: "image", url: `data:image/png;base64,${imageData}` }] }] } },
     })
     assert.equal((await turnPromise).turn.id, "turn_image")
   } finally {

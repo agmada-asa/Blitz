@@ -187,6 +187,7 @@ export function createChatAgentSession(options: {
 
   /** Serializes native provider requests through the same single-use chat approval panel. */
   function approveProvider(request: {
+    requestId?: string | number
     method: string
     params: unknown
     signal?: AbortSignal

@@ -5,7 +5,12 @@ import { memo, type ReactNode } from "react"
 import type { Token, Tokens } from "marked"
 import { QuoteUpIcon } from "@hugeicons/core-free-icons"
 import { HugeiconsIcon } from "@hugeicons/react"
-import { markdownHref, markdownText, parseMarkdown } from "@/lib/markdown"
+import {
+  markdownHref,
+  markdownImageSrc,
+  markdownText,
+  parseMarkdown,
+} from "@/lib/markdown"
 import { resolveCitation, type ChatCitation } from "@/lib/citations"
 import { Button } from "@/components/ui/button"
 import {
@@ -99,6 +104,23 @@ function inline(tokens: Token[], options: CitationOptions): ReactNode {
         return <code key={key}>{token.text}</code>
       case "br":
         return <br key={key} />
+      case "image": {
+        const src = markdownImageSrc(token.href)
+        return src ? (
+          <img
+            key={key}
+            src={src}
+            alt={markdownText(token.text)}
+            title={token.title ? markdownText(token.title) : undefined}
+            loading="lazy"
+            decoding="async"
+            referrerPolicy="no-referrer"
+            className="max-w-full rounded-md"
+          />
+        ) : (
+          <span key={key}>{children}</span>
+        )
+      }
       case "link": {
         const annotationMatch = /^annotation:(.+)$/.exec(token.href)
         if (annotationMatch) {

@@ -27,11 +27,14 @@ import {
 import { HugeiconsIcon } from "@hugeicons/react"
 import { useMutation, useQuery } from "convex/react"
 import Link from "next/link"
+import Image from "next/image"
 import {
   useCallback,
   useEffect,
   useRef,
   useState,
+  type ClipboardEvent,
+  type DragEvent,
   type KeyboardEvent,
 } from "react"
 
@@ -54,8 +57,10 @@ import {
   writeCachedAgentAutonomy,
 } from "@/components/chat/chat-agent-controls"
 import { AnnotatedAssistantMessage } from "@/components/chat/annotated-assistant-message"
+import { ProviderActivity } from "@/components/chat/provider-activity"
 import { type FloatingAnnotation } from "@/components/chat/floating-annotation-chip"
 import { ReplyModelPicker } from "@/components/chat/reply-model-picker"
+import { Markdown } from "@/components/ui/markdown"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -91,6 +96,12 @@ import {
   type AgentRequestSubmission,
 } from "@/lib/agent-request"
 import { cn } from "@/lib/utils"
+import type { ProviderActivityEvent } from "@/lib/provider-activity"
+import {
+  clipboardImageFiles,
+  droppedFiles,
+  limitComposerFiles,
+} from "@/lib/client/chat-composer-input"
 
 /** Maximum context items accepted with one message. */
 const MAX_ATTACHMENTS = 8
@@ -104,13 +115,29 @@ const MAX_INLINE_CONTEXT = 96_000
 /** One unsent card, project, file, or public link shown above the composer. */
 type DraftAttachment = {
   documentId?: Id<"chatDocuments">
+  ownerToken?: string
   id: string
   kind: "card" | "project" | "file" | "link"
   label: string
   projectId?: Id<"projects">
   itemId?: Id<"learningItems">
+  mimeType?: string
+  previewUrl?: string
   text?: string
   url?: string
+}
+
+/** MIME types that can be previewed and delivered as native provider images. */
+const IMAGE_MIME_TYPES = new Set([
+  "image/png",
+  "image/jpeg",
+  "image/webp",
+  "image/gif",
+])
+
+/** Returns whether a browser file is a supported native image attachment. */
+function isImageFile(file: File): boolean {
+  return IMAGE_MIME_TYPES.has(file.type.toLowerCase())
 }
 
 /** Narrow event shapes returned by the workspace chat stream. */
@@ -118,6 +145,7 @@ type ChatEvent =
   | { type: "started"; chatId: Id<"workspaceChats"> }
   | { type: "delta"; text: string }
   | { type: "thought-delta"; text: string }
+  | { type: "activity"; event: ProviderActivityEvent }
   | {
       type: "complete"
       chatId: Id<"workspaceChats">
@@ -185,9 +213,9 @@ function agentRequestFromValue(value: unknown): AgentRequest | undefined {
     typeof candidate.method !== "string" ||
     typeof candidate.details !== "string" ||
     typeof candidate.expiresAt !== "number" ||
-    (candidate.status !== "pending" &&
-      candidate.status !== "approved" &&
-      candidate.status !== "denied")
+    !["pending", "approved", "denied", "expired", "cancelled"].includes(
+      String(candidate.status)
+    )
   )
     return undefined
   const kind =
@@ -202,6 +230,9 @@ function agentRequestFromValue(value: unknown): AgentRequest | undefined {
       : "Review needed"
   return {
     id: candidate.id,
+    ...(typeof candidate.providerRequestId === "string"
+      ? { providerRequestId: candidate.providerRequestId }
+      : {}),
     method: candidate.method,
     kind,
     title,
@@ -211,7 +242,7 @@ function agentRequestFromValue(value: unknown): AgentRequest | undefined {
       : {}),
     ...(typeof candidate.input === "string" ? { input: candidate.input } : {}),
     expiresAt: candidate.expiresAt,
-    status: candidate.status,
+    status: candidate.status as AgentRequest["status"],
     ...(typeof candidate.response === "string"
       ? { response: candidate.response }
       : {}),
@@ -378,6 +409,35 @@ function parseChatEvent(value: unknown): ChatEvent {
   if (event.type === "thought-delta" && typeof event.text === "string")
     return { type: "thought-delta", text: event.text }
   if (
+    event.type === "activity" &&
+    event.event &&
+    typeof event.event === "object" &&
+    !Array.isArray(event.event)
+  ) {
+    const activity = event.event as Record<string, unknown>
+    if (
+      typeof activity.id === "string" &&
+      activity.type === "tool" &&
+      typeof activity.title === "string" &&
+      (activity.status === "running" ||
+        activity.status === "completed" ||
+        activity.status === "failed") &&
+      (activity.detail === undefined || typeof activity.detail === "string")
+    )
+      return {
+        type: "activity",
+        event: {
+          id: activity.id,
+          type: "tool",
+          title: activity.title,
+          status: activity.status,
+          ...(typeof activity.detail === "string"
+            ? { detail: activity.detail }
+            : {}),
+        },
+      }
+  }
+  if (
     event.type === "complete" &&
     typeof event.chatId === "string" &&
     typeof event.threadId === "string"
@@ -530,6 +590,7 @@ export function ChatWorkspace({
   const [error, setError] = useState("")
   const [historyOpen, setHistoryOpen] = useState(false)
   const [uploadingFiles, setUploadingFiles] = useState(false)
+  const [draggingFiles, setDraggingFiles] = useState(false)
   const [sourceSelection, setSourceSelection] = useState<{
     chatId: Id<"workspaceChats">
     messageId: Id<"workspaceChatMessages">
@@ -554,6 +615,9 @@ export function ChatWorkspace({
   const [streamAgentRequests, setStreamAgentRequests] = useState<
     Record<string, { request: AgentRequest; messageId: string }>
   >({})
+  const [streamProviderEvents, setStreamProviderEvents] = useState<
+    ProviderActivityEvent[]
+  >([])
   const [requestFixtureRequests, setRequestFixtureRequests] = useState<
     AgentRequest[]
   >([])
@@ -780,6 +844,7 @@ export function ChatWorkspace({
   const selectChat = (chatId: Id<"workspaceChats">): void => {
     setSourceSelection(undefined)
     setActiveChatId(chatId)
+    revokeDraftPreviews()
     setAttachments([])
     setDraftAnnotations([])
     setExpandedAnnotationId(undefined)
@@ -787,6 +852,7 @@ export function ChatWorkspace({
     setEditingMessageId(undefined)
     setEditDraft("")
     setStreamAgentRequests({})
+    setStreamProviderEvents([])
     setRequestFixtureStep(undefined)
     setAgentAutonomy(undefined)
     setAgentSettingsTouched(false)
@@ -803,6 +869,7 @@ export function ChatWorkspace({
     if (isRunning) return
     setSourceSelection(undefined)
     setActiveChatId(undefined)
+    revokeDraftPreviews()
     setAttachments([])
     setDraft("")
     setDraftAnnotations([])
@@ -815,6 +882,7 @@ export function ChatWorkspace({
     setWorkingProjectId(undefined)
     setNewChatProjectId(undefined)
     setStreamAgentRequests({})
+    setStreamProviderEvents([])
     setRequestFixtureStep(undefined)
     setAgentSettingsTouched(false)
     setHistoryOpen(false)
@@ -959,22 +1027,22 @@ export function ChatWorkspace({
     })
   }
 
+  /** Releases browser object URLs owned by unsent image previews. */
+  const revokeDraftPreviews = (): void => {
+    for (const attachment of attachments)
+      if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl)
+  }
+
   /** Saves selected originals before allowing a message to use them as source context. */
   const chooseFiles = async (files: File[]): Promise<void> => {
     if (uploadingFiles) return
-    const projectId =
-      activeChat?.projectId ?? newChatProjectId ?? selectedProject?.projectId
-    if (!projectId) {
-      setError("Attach a project to this chat before uploading files.")
-      setProjectDialogOpen(true)
-      return
-    }
     setUploadingFiles(true)
     setError("")
-    const selected = files.slice(
-      0,
-      Math.max(0, MAX_ATTACHMENTS - attachments.length)
+    const selected = limitComposerFiles(
+      files,
+      MAX_ATTACHMENTS - attachments.length
     )
+    const uploadProjectId = activeChat?.projectId ?? newChatProjectId ?? selectedProject?.projectId
     for (const file of selected) {
       try {
         if (file.size > 50_000_000)
@@ -982,7 +1050,7 @@ export function ChatWorkspace({
         const response = await fetch("/api/chat/files", {
           method: "POST",
           headers: {
-            "x-blitz-project-id": projectId,
+            ...(uploadProjectId ? { "x-blitz-project-id": uploadProjectId } : {}),
             "x-blitz-filename": encodeURIComponent(file.name),
             "content-type": file.type || "application/octet-stream",
           },
@@ -991,6 +1059,8 @@ export function ChatWorkspace({
         const source = (await response.json()) as {
           documentId: Id<"chatDocuments">
           filename: string
+          mimeType?: string
+          ownerToken?: string
           error?: string
         }
         if (!response.ok)
@@ -1000,6 +1070,13 @@ export function ChatWorkspace({
           kind: "file",
           label: source.filename,
           documentId: source.documentId,
+          ...(source.ownerToken ? { ownerToken: source.ownerToken } : {}),
+          ...(isImageFile(file)
+            ? {
+                mimeType: source.mimeType ?? file.type,
+                previewUrl: URL.createObjectURL(file),
+              }
+            : {}),
         })
       } catch (fileError) {
         setError(messageForError(fileError, `Could not read ${file.name}.`))
@@ -1007,6 +1084,27 @@ export function ChatWorkspace({
     }
     if (fileInputRef.current) fileInputRef.current.value = ""
     setUploadingFiles(false)
+  }
+
+  /** Handles files dropped onto the composer while preserving ordinary text drops. */
+  const handleComposerDrop = (event: DragEvent<HTMLDivElement>): void => {
+    const files = droppedFiles(Array.from(event.dataTransfer.files))
+    if (!files.length) return
+    event.preventDefault()
+    setDraggingFiles(false)
+    if (!isRunning && canAttach) void chooseFiles(files)
+  }
+
+  /** Handles clipboard screenshots without changing ordinary multiline text paste. */
+  const handleComposerPaste = (
+    event: ClipboardEvent<HTMLTextAreaElement>
+  ): void => {
+    const files = Array.from(event.clipboardData.files)
+    if (!files.length || isRunning || !canAttach) return
+    const images = clipboardImageFiles(files)
+    if (!images.length) return
+    event.preventDefault()
+    void chooseFiles(images)
   }
 
   /** Fetches a public source through the protected route and attaches extracted text. */
@@ -1040,13 +1138,14 @@ export function ChatWorkspace({
       if (remainingCharacters <= 0)
         throw new Error("Remove a file or link before adding another.")
       let documentId: Id<"chatDocuments"> | undefined
+      let ownerToken: string | undefined
       const projectId =
         activeChat?.projectId ?? newChatProjectId ?? selectedProject?.projectId
-      if (projectId && /\.(pdf|pptx)$/i.test(source.filename)) {
+      if (/\.(pdf|pptx)$/i.test(source.filename)) {
         const saved = await fetch("/api/chat/files", {
           method: "POST",
           headers: {
-            "x-blitz-project-id": projectId,
+            ...(projectId ? { "x-blitz-project-id": projectId } : {}),
             "x-blitz-filename": encodeURIComponent(source.filename),
             "content-type":
               originalResponse.headers.get("content-type") ||
@@ -1056,6 +1155,7 @@ export function ChatWorkspace({
         })
         const payload = (await saved.json()) as {
           documentId?: Id<"chatDocuments">
+          ownerToken?: string
           error?: string
         }
         if (!saved.ok)
@@ -1063,11 +1163,13 @@ export function ChatWorkspace({
             payload.error || "The original file could not be saved."
           )
         documentId = payload.documentId
+        ownerToken = payload.ownerToken
       }
       addAttachment({
         id: crypto.randomUUID(),
         kind: "link",
         ...(documentId ? { documentId } : {}),
+        ...(ownerToken ? { ownerToken } : {}),
         label: source.filename,
         text: source.text.slice(
           0,
@@ -1120,6 +1222,7 @@ export function ChatWorkspace({
       setExpandedAnnotationId(undefined)
     }
     setError("")
+    setStreamProviderEvents([])
     setSending(true)
     pausedByUserRef.current = false
     const controller = new AbortController()
@@ -1164,6 +1267,12 @@ export function ChatWorkspace({
                     ...(attachment.documentId
                       ? { documentId: attachment.documentId }
                       : {}),
+                    ...(attachment.ownerToken
+                      ? { ownerToken: attachment.ownerToken }
+                      : {}),
+                    ...(attachment.mimeType
+                      ? { mimeType: attachment.mimeType }
+                      : {}),
                     ...(attachment.url ? { url: attachment.url } : {}),
                   },
                 ]
@@ -1198,11 +1307,23 @@ export function ChatWorkspace({
         if (event.type === "error") throw new Error(event.message)
         if (event.type === "started") {
           started = true
+          revokeDraftPreviews()
           setAttachments([])
           setDraftAnnotations([])
           setExpandedAnnotationId(undefined)
           selectChat(event.chatId)
+          setStreamProviderEvents([])
         }
+        if (event.type === "activity")
+          setStreamProviderEvents((current) => {
+            const index = current.findIndex((item) => item.id === event.event.id)
+            if (index >= 0) {
+              const next = [...current]
+              next[index] = event.event
+              return next
+            }
+            return [...current, event.event].slice(-64)
+          })
         if (event.type === "agent-request") {
           setStreamAgentRequests((current) => ({
             ...current,
@@ -1312,11 +1433,33 @@ export function ChatWorkspace({
     }
   }
 
-  /** Aborts the browser-owned request so the saved partial response can continue later. */
+  /** Requests exact server cancellation, then stops local delivery even after a reload. */
   const pauseReply = (): void => {
-    if (!requestControllerRef.current) return
+    const runningMessage = [...messages]
+      .reverse()
+      .find(
+        (message) =>
+          message.role === "assistant" && message.status === "running"
+      )
+    if (!activeChatId || !runningMessage) return
     pausedByUserRef.current = true
-    requestControllerRef.current.abort()
+    void fetch("/api/chat/pause", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chatId: activeChatId,
+        messageId: runningMessage.id,
+      }),
+    })
+      .then((response) => {
+        if (!response.ok)
+          throw new Error("This reply could not be paused. Its provider session may have ended; reload the chat to check its status.")
+        requestControllerRef.current?.abort()
+      })
+      .catch((pauseError: unknown) => {
+        pausedByUserRef.current = false
+        setError(messageForError(pauseError, "The reply could not be paused. Try again."))
+      })
   }
 
   /** Resolves a pending agent request for the current chat message. */
@@ -1622,6 +1765,11 @@ export function ChatWorkspace({
                     .filter((a) => a.messageId === message.id)
                     .map((a) => ({ ...a, isDraft: true })),
                 ]
+                const persistedProviderEvents =
+                  "providerEvents" in message &&
+                  Array.isArray(message.providerEvents)
+                    ? (message.providerEvents as ProviderActivityEvent[])
+                    : []
                 return (
                   <article
                     key={message.id}
@@ -1641,6 +1789,11 @@ export function ChatWorkspace({
                     >
                       {message.role === "assistant" ? (
                         <>
+                          {message.status === "running" && streamProviderEvents.length ? (
+                            <ProviderActivity events={streamProviderEvents} />
+                          ) : persistedProviderEvents.length ? (
+                            <ProviderActivity events={persistedProviderEvents} />
+                          ) : null}
                           {message.thought ? (
                             <ThoughtTrace
                               thought={message.thought}
@@ -1737,9 +1890,7 @@ export function ChatWorkspace({
                       ) : (
                         <div>
                           {message.content ? (
-                            <p className="whitespace-pre-wrap">
-                              {message.content}
-                            </p>
+                            <Markdown text={message.content} />
                           ) : null}
                           {"annotations" in message &&
                           Array.isArray(message.annotations) &&
@@ -1835,9 +1986,27 @@ export function ChatWorkspace({
                                 </Button>
                               </>
                             ) : null}
+                            {"agentRequests" in message &&
+                            Array.isArray(message.agentRequests)
+                              ? message.agentRequests
+                                  .map((value) => agentRequestFromValue(value))
+                                  .filter(
+                                    (request): request is AgentRequest =>
+                                      request !== undefined &&
+                                      request.status !== "pending"
+                                  )
+                                  .map((request) => (
+                                    <AgentRequestPanel
+                                      key={`history-${request.id}`}
+                                      request={request}
+                                      readOnly
+                                      onSubmit={() => undefined}
+                                    />
+                                  ))
+                              : null}
                             {latest &&
                             message.status === "running" &&
-                            sending ? (
+                            (sending || activeChat?.status === "running") ? (
                               <Button
                                 type="button"
                                 variant="ghost"
@@ -1904,6 +2073,12 @@ export function ChatWorkspace({
                     key={attachment.id}
                     kind={attachment.kind}
                     label={attachment.label}
+                    previewUrl={
+                      attachment.documentId &&
+                      attachment.mimeType?.startsWith("image/")
+                        ? `/api/chat/files?documentId=${encodeURIComponent(attachment.documentId)}&${attachment.projectId ? `projectId=${encodeURIComponent(attachment.projectId)}` : `chatId=${encodeURIComponent(activeChatId ?? "")}`}`
+                        : undefined
+                    }
                   />
                 ))}
                 {attachments.map((attachment) => (
@@ -1911,7 +2086,10 @@ export function ChatWorkspace({
                     key={attachment.id}
                     kind={attachment.kind}
                     label={attachment.label}
+                    previewUrl={attachment.previewUrl}
                     onRemove={() => {
+                      if (attachment.previewUrl)
+                        URL.revokeObjectURL(attachment.previewUrl)
                       setAttachments((current) =>
                         current.filter((item) => item.id !== attachment.id)
                       )
@@ -1959,7 +2137,25 @@ export function ChatWorkspace({
               }}
             />
           ) : null}
-          <div className="rounded-[24px] border bg-card p-2 shadow-sm focus-within:ring-2 focus-within:ring-ring/40">
+          <div
+            className={cn(
+              "rounded-[24px] border bg-card p-2 shadow-sm focus-within:ring-2 focus-within:ring-ring/40",
+              draggingFiles && "border-brand bg-brand/5 ring-2 ring-brand/30"
+            )}
+            onDragEnter={(event) => {
+              event.preventDefault()
+              if (!isRunning && event.dataTransfer.types.includes("Files"))
+                setDraggingFiles(true)
+            }}
+            onDragOver={(event) => {
+              event.preventDefault()
+              event.dataTransfer.dropEffect = "copy"
+            }}
+            onDragLeave={(event) => {
+              if (event.currentTarget === event.target) setDraggingFiles(false)
+            }}
+            onDrop={handleComposerDrop}
+          >
             <Textarea
               aria-label="Message Blitz"
               value={draft}
@@ -1969,6 +2165,7 @@ export function ChatWorkspace({
               placeholder="Ask Blitz about your material…"
               className="max-h-40 min-h-16 resize-none border-0 bg-transparent px-3 py-2 shadow-none focus-visible:ring-0"
               onChange={(event) => setDraft(event.target.value)}
+              onPaste={handleComposerPaste}
               onKeyDown={handleComposerKeyDown}
             />
             <div className="flex items-center justify-between gap-2 pt-1">
@@ -1978,7 +2175,7 @@ export function ChatWorkspace({
                   className="sr-only"
                   type="file"
                   multiple
-                  accept=".pdf,.md,.markdown,.txt,.pptx,application/pdf,text/plain,text/markdown,application/vnd.openxmlformats-officedocument.presentationml.presentation"
+                  accept=".pdf,.md,.markdown,.txt,.pptx,.png,.jpg,.jpeg,.webp,.gif,application/pdf,text/plain,text/markdown,application/vnd.openxmlformats-officedocument.presentationml.presentation,image/png,image/jpeg,image/webp,image/gif"
                   onChange={(event) =>
                     void chooseFiles(Array.from(event.target.files ?? []))
                   }
@@ -2356,29 +2553,42 @@ export function ChatWorkspace({
 function AttachmentChip({
   kind,
   label,
+  previewUrl,
   onRemove,
 }: {
   kind: "card" | "project" | "file" | "link"
   label: string
+  previewUrl?: string
   onRemove?: () => void
 }) {
   return (
     <li className="group relative flex h-7 max-w-full min-w-0 items-center gap-1.5 rounded-full border border-border/70 bg-muted/30 px-2.5 text-xs text-foreground backdrop-blur-xs transition-colors hover:border-border hover:bg-muted/60">
-      <HugeiconsIcon
-        icon={
-          kind === "card"
-            ? BookTextIcon
-            : kind === "project"
-              ? Folder01Icon
-              : kind === "link"
-                ? Link02Icon
-                : File01Icon
-        }
-        size={14}
-        strokeWidth={1.8}
-        className="shrink-0 text-muted-foreground"
-        aria-hidden="true"
-      />
+      {previewUrl ? (
+        <Image
+          src={previewUrl}
+          alt=""
+          width={20}
+          height={20}
+          unoptimized
+          className="size-5 shrink-0 rounded object-cover"
+        />
+      ) : (
+        <HugeiconsIcon
+          icon={
+            kind === "card"
+              ? BookTextIcon
+              : kind === "project"
+                ? Folder01Icon
+                : kind === "link"
+                  ? Link02Icon
+                  : File01Icon
+          }
+          size={14}
+          strokeWidth={1.8}
+          className="shrink-0 text-muted-foreground"
+          aria-hidden="true"
+        />
+      )}
       <span className="max-w-52 truncate">{label}</span>
       {onRemove ? (
         <button

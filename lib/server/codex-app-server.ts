@@ -10,7 +10,8 @@ import { isAbsolute } from "node:path"
 import { StringDecoder } from "node:string_decoder"
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000
-const DEFAULT_MAX_LINE_BYTES = 1_000_000
+/** Native user-message events may echo bounded image inputs. */
+const DEFAULT_MAX_LINE_BYTES = 30_000_000
 const DEFAULT_MAX_PENDING_REQUESTS = 64
 /** Outbound JSONL messages allow native multimodal payloads while staying bounded. */
 const DEFAULT_MAX_REQUEST_BYTES = 30_000_000
