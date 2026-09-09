@@ -5,7 +5,7 @@ import { mutation, query, type QueryCtx } from "./_generated/server"
 import type { Id } from "./_generated/dataModel"
 import { v } from "convex/values"
 import { sourceImportFingerprint } from "../lib/source-fingerprint"
-import { resolveQueuedAiSelection } from "./ai-provider-settings"
+import { resolveQueuedAiSelection } from "./ai_provider_settings"
 
 /** Validator for source formats accepted by the extraction interface. */
 const sourceKind = v.union(

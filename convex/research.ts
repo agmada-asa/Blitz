@@ -8,7 +8,7 @@ import {
   researchImportPartMatchesSource,
   validateResearchImportPartSequence,
 } from "../lib/research-import-checkpoint"
-import { resolveQueuedAiSelection } from "./ai-provider-settings"
+import { resolveQueuedAiSelection } from "./ai_provider_settings"
 
 /** Maximum request text retained for one proposal. */
 export const MAX_RESEARCH_REQUEST_LENGTH = 2_000

@@ -7,7 +7,7 @@ import {
   DEFAULT_AI_MODEL_SETTINGS,
   isAiProviderId,
 } from "../lib/ai-model-settings"
-import { resolveQueuedAiSelection } from "./ai-provider-settings"
+import { resolveQueuedAiSelection } from "./ai_provider_settings"
 
 /** Maximum size accepted for a learner question. */
 export const MAX_CHAT_QUESTION_LENGTH = 2_000

@@ -14,7 +14,7 @@ import {
   validateLearningGeneration,
   type LearningGenerationBatch,
 } from "../lib/learning/generation"
-import { resolveQueuedAiSelection } from "./ai-provider-settings"
+import { resolveQueuedAiSelection } from "./ai_provider_settings"
 
 /** Maximum UTF-8 bytes in a source snapshot, bounded below Convex document limits. */
 export const MAX_PREPARATION_SOURCE_LENGTH = 500_000
