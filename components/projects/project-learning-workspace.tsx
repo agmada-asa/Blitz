@@ -538,7 +538,7 @@ export function ProjectLearningWorkspace({
               <Link
                 href={`/chat?cardProjectId=${encodeURIComponent(String(projectId))}&cardId=${encodeURIComponent(currentItem.id)}`}
               >
-                <HelpIcon size={17} /> Ask Codex
+                <HelpIcon size={17} /> Ask Blitz
               </Link>
             </Button>
           ) : null}

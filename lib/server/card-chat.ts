@@ -84,6 +84,8 @@ export interface CardChatRequest {
 
 /** Generic bounded text-turn input reusable by server-side generation jobs. */
 export interface CodexTextTurnRequest {
+  /** Approval policy enforced for new and resumed provider threads. */
+  readonly approvalPolicy?: "untrusted" | "on-request" | "never"
   /** Explicit absolute Blitz-owned workspace for local Codex. */
   readonly workspaceDirectory: string
   /** Already prepared, bounded prompt text. */
@@ -401,7 +403,7 @@ export async function runCodexTextTurn(
   if (!request.prompt.trim()) {
     throw new CardChatError(
       "invalid-input",
-      "Codex text turn prompt must not be empty"
+      "Blitz text turn prompt must not be empty"
     )
   }
   const timeoutMs = request.timeoutMs ?? DEFAULT_CARD_CHAT_TIMEOUT_MS
@@ -466,7 +468,7 @@ export async function runCodexTextTurn(
     if (status !== "completed") {
       const reason =
         status === "interrupted" ? "turn-interrupted" : "turn-failed"
-      cancel(new CardChatError(reason, `Codex turn ${status}`))
+      cancel(new CardChatError(reason, `Blitz turn ${status}`))
       return
     }
     const authoritativeText = completedTurn
@@ -477,7 +479,7 @@ export async function runCodexTextTurn(
         cancel(
           new CardChatError(
             "transport",
-            "Codex assistant output exceeded the configured limit"
+            "Blitz assistant output exceeded the configured limit"
           )
         )
         return
@@ -488,7 +490,7 @@ export async function runCodexTextTurn(
       cancel(
         new CardChatError(
           "turn-failed",
-          "Codex completed without assistant text"
+          "Blitz completed without assistant text"
         )
       )
       return
@@ -510,7 +512,7 @@ export async function runCodexTextTurn(
         cancel(
           new CardChatError(
             "transport",
-            "Codex assistant output exceeded the configured limit"
+            "Blitz assistant output exceeded the configured limit"
           )
         )
         return
@@ -548,7 +550,7 @@ export async function runCodexTextTurn(
             cancel(
               new CardChatError(
                 "transport",
-                "Codex assistant output exceeded the configured limit"
+                "Blitz assistant output exceeded the configured limit"
               )
             )
             return
@@ -570,7 +572,7 @@ export async function runCodexTextTurn(
               cancel(
                 new CardChatError(
                   "transport",
-                  "Codex assistant output exceeded the configured limit"
+                  "Blitz assistant output exceeded the configured limit"
                 )
               )
             }
@@ -593,7 +595,7 @@ export async function runCodexTextTurn(
             cancel(
               new CardChatError(
                 "transport",
-                "Codex emitted too many raced turn completions"
+                "Blitz emitted too many raced turn completions"
               )
             )
             return
@@ -608,7 +610,7 @@ export async function runCodexTextTurn(
       return
     }
     if (event.type === "process-closed") {
-      cancel(new CardChatError("transport", "Codex app-server process closed"))
+      cancel(new CardChatError("transport", "Blitz provider process closed"))
       return
     }
     if (event.type === "server-request") {
@@ -656,7 +658,7 @@ export async function runCodexTextTurn(
     if (cancelReason) throw cancelReason
     unsubscribe = client.onEvent(handleTransportEvent)
     const threadOptions: CodexStartThreadOptions = {
-      approvalPolicy: "on-request",
+      approvalPolicy: request.approvalPolicy ?? "on-request",
       sandbox: "read-only",
       ...(request.ephemeral === undefined
         ? {}
@@ -664,7 +666,7 @@ export async function runCodexTextTurn(
       ...(request.model === undefined ? {} : { model: request.model }),
     }
     const resumeOptions: CodexResumeThreadOptions = {
-      approvalPolicy: "on-request",
+      approvalPolicy: request.approvalPolicy ?? "on-request",
       sandbox: "read-only",
       ...(request.model === undefined ? {} : { model: request.model }),
     }

@@ -14,6 +14,7 @@ import {
   validateLearningGeneration,
   type LearningGenerationBatch,
 } from "../lib/learning/generation"
+import { resolveQueuedAiSelection } from "./ai-provider-settings"
 
 /** Maximum UTF-8 bytes in a source snapshot, bounded below Convex document limits. */
 export const MAX_PREPARATION_SOURCE_LENGTH = 500_000
@@ -179,6 +180,7 @@ export const enqueue = mutation({
         status: existing.status,
         alreadyQueued: true,
       }
+    const selection = await resolveQueuedAiSelection(ctx, "cardGeneration")
     const now = Date.now()
     const jobId = await ctx.db.insert("preparationJobs", {
       projectId: args.projectId,
@@ -188,6 +190,9 @@ export const enqueue = mutation({
       sourceKind: source.kind,
       status: "queued",
       nextChunkOrdinal: 0,
+      providerId: selection.providerId,
+      generationModel: selection.model,
+      generationEffort: selection.effort,
       generatedItemCount: 0,
       attemptCount: 0,
       createdAt: now,
@@ -220,6 +225,18 @@ export const claimNext = mutation({
         leaseToken,
         nextChunk: { ordinal: activeOwned.nextChunkOrdinal },
         totalChunks: activeOwned.totalChunks ?? null,
+        ...(activeOwned.providerId
+          ? { providerId: activeOwned.providerId }
+          : {}),
+        ...(activeOwned.providerInstanceId
+          ? { providerInstanceId: activeOwned.providerInstanceId }
+          : {}),
+        ...(activeOwned.generationModel
+          ? { generationModel: activeOwned.generationModel }
+          : {}),
+        ...(activeOwned.generationEffort
+          ? { generationEffort: activeOwned.generationEffort }
+          : {}),
         ...(activeOwned.learningScope
           ? { learningScope: activeOwned.learningScope }
           : {}),
@@ -262,6 +279,16 @@ export const claimNext = mutation({
       leaseToken,
       nextChunk: { ordinal: candidate.nextChunkOrdinal },
       totalChunks: candidate.totalChunks ?? null,
+      ...(candidate.providerId ? { providerId: candidate.providerId } : {}),
+      ...(candidate.providerInstanceId
+        ? { providerInstanceId: candidate.providerInstanceId }
+        : {}),
+      ...(candidate.generationModel
+        ? { generationModel: candidate.generationModel }
+        : {}),
+      ...(candidate.generationEffort
+        ? { generationEffort: candidate.generationEffort }
+        : {}),
       ...(candidate.learningScope
         ? { learningScope: candidate.learningScope }
         : {}),

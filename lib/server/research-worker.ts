@@ -1,11 +1,10 @@
 /** Runs approval-first research planning jobs on the local Mac through Codex. */
 
 import { randomUUID } from "node:crypto"
-import {
-  runCodexTextTurn,
-  type CardChatEvent,
-  type CardChatResult,
-} from "./card-chat.ts"
+import { type CardChatEvent, type CardChatResult } from "./card-chat.ts"
+import { runProviderTextTurn } from "./providers/run-text-turn.ts"
+import { getProviderDefinition } from "./providers/registry.ts"
+import type { AiProviderId } from "../ai-model-settings.ts"
 import {
   buildResearchProposalPrompt,
   parseResearchProposal,
@@ -28,6 +27,14 @@ export interface ResearchProposalClaim {
   requestId: string
   /** Learner's bounded request. */
   request: string
+  /** Provider snapshot copied when the proposal was queued. */
+  providerId?: AiProviderId
+  /** Provider instance snapshot copied when the proposal was queued. */
+  providerInstanceId?: string
+  /** Model snapshot copied when the proposal was queued. */
+  researchModel?: string
+  /** Reasoning snapshot copied when the proposal was queued. */
+  researchEffort?: string
   /** Capability token for the current lease. */
   leaseToken: string
 }
@@ -64,6 +71,10 @@ export interface ResearchProposalWorkerOptions {
   workerId: string
   workspaceDirectory?: string
   signal?: AbortSignal
+  /** Provider selected when the proposal was queued. */
+  providerId?: AiProviderId
+  /** Optional local account or profile selected with the provider. */
+  providerInstanceId?: string
   model?: string
   effort?: string
   queue: ResearchProposalQueue
@@ -130,6 +141,20 @@ export async function runResearchProposalStep(
   const activityWrites: Promise<unknown>[] = []
   try {
     options.signal?.throwIfAborted()
+    const providerId = claim.providerId ?? options.providerId ?? "codex"
+    const providerInstanceId =
+      claim.providerInstanceId ?? options.providerInstanceId
+    const model =
+      claim.researchModel ??
+      options.model ??
+      process.env.BLITZ_CODEX_MODEL ??
+      "gpt-5.6-luna"
+    const effort = claim.researchEffort ?? options.effort
+    if (
+      !options.runTurn &&
+      !getProviderDefinition(providerId).capabilities.webSearch
+    )
+      throw new Error("The selected provider does not support web search")
     /** Persists and forwards one safe lifecycle event without blocking the turn. */
     const emitActivity = (
       event: Omit<ResearchActivityEvent, "occurredAt" | "elapsedMs">
@@ -158,17 +183,20 @@ export async function runResearchProposalStep(
     const runTurn =
       options.runTurn ??
       (async (turnPrompt, turnOptions) =>
-        runCodexTextTurn(
+        runProviderTextTurn(
           {
+            providerId,
+            ...(providerInstanceId ? { providerInstanceId } : {}),
             workspaceDirectory,
             prompt: turnPrompt,
             signal: turnOptions.signal,
             timeoutMs: 120_000,
             ephemeral: true,
             webSearchMode: "live",
-            model:
-              options.model ?? process.env.BLITZ_CODEX_MODEL ?? "gpt-5.6-luna",
-            ...(options.effort === undefined ? {} : { effort: options.effort }),
+            sandbox: "read-only",
+            approvalPolicy: "never",
+            model,
+            ...(effort === undefined ? {} : { effort }),
           },
           { onEvent: turnOptions.onEvent }
         ))

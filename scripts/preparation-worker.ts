@@ -13,12 +13,9 @@ import {
   runPreparationStep,
   type PreparationQueue,
 } from "../lib/server/preparation-worker.ts"
-import { runCodexTextTurn } from "../lib/server/card-chat.ts"
+import { runProviderTextTurn } from "../lib/server/providers/run-text-turn.ts"
 import { loadSavedAiModelSettings } from "../lib/server/ai-model-settings.ts"
-import {
-  resolveAiModel,
-  resolveAiReasoningEffort,
-} from "../lib/ai-model-settings.ts"
+import { resolveAiTaskSelection } from "../lib/ai-model-settings.ts"
 
 /** Loads local configuration without overwriting variables supplied by the launcher. */
 function loadLocalEnvironment(): void {
@@ -74,31 +71,50 @@ async function main(): Promise<void> {
       try {
         const result = await runPreparationStep(
           queue,
-          async (prompt, signal) => {
+          async (prompt, signal, queuedSelection) => {
             // Keep imported material away from the repository and unrelated files.
             const workspaceDirectory = await mkdtemp(
               join(tmpdir(), "blitz-learning-")
             )
             try {
               const settings = await loadSavedAiModelSettings(client)
-              const turn = await runCodexTextTurn({
+              const fallbackSelection = resolveAiTaskSelection(
+                settings,
+                "cardGeneration",
+                {
+                  providerEnvironmentFallback:
+                    process.env.BLITZ_CARD_GENERATION_PROVIDER,
+                  modelEnvironmentFallback: process.env.BLITZ_CODEX_MODEL,
+                  effortEnvironmentFallback: process.env.BLITZ_CODEX_EFFORT,
+                }
+              )
+              const selection = {
+                providerId:
+                  queuedSelection?.providerId ?? fallbackSelection.providerId,
+                model: queuedSelection?.model ?? fallbackSelection.model,
+                effort: queuedSelection?.effort ?? fallbackSelection.effort,
+                ...(queuedSelection?.providerInstanceId
+                  ? { providerInstanceId: queuedSelection.providerInstanceId }
+                  : {}),
+              }
+              const turn = await runProviderTextTurn({
+                providerId: selection.providerId,
+                ...(selection.providerInstanceId
+                  ? { providerInstanceId: selection.providerInstanceId }
+                  : {}),
+                ...(selection.effort === undefined
+                  ? {}
+                  : { effort: selection.effort }),
+                model: selection.model,
                 workspaceDirectory,
                 prompt,
                 signal,
                 timeoutMs: 120_000,
                 ephemeral: true,
+                sandbox: "read-only",
+                approvalPolicy: "never",
                 // Preparation must stay grounded in the uploaded source section.
                 webSearchMode: "disabled",
-                model: resolveAiModel(
-                  settings,
-                  "cardGenerationModel",
-                  process.env.BLITZ_CODEX_MODEL
-                ),
-                effort: resolveAiReasoningEffort(
-                  settings,
-                  "cardGenerationEffort",
-                  process.env.BLITZ_CODEX_EFFORT
-                ),
               })
               return turn.text
             } finally {

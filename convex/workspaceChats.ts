@@ -1,8 +1,9 @@
-/** Persists general Codex chats, messages, attachments, and streaming progress. */
+/** Persists general Blitz chats, messages, attachments, and streaming progress. */
 
 import { mutation, query, type MutationCtx } from "./_generated/server"
 import type { Doc, Id } from "./_generated/dataModel"
 import { v } from "convex/values"
+import { AI_PROVIDER_IDS } from "../lib/ai-model-settings"
 
 /** Maximum idle time before a stranded running turn can be replaced. */
 const STALE_TURN_MS = 2 * 60 * 1_000
@@ -20,6 +21,25 @@ const MAX_REPLAY_ATTACHMENT_CHARACTERS = 96_000
 const MAX_BRANCH_MESSAGES = 200
 /** Maximum attachments copied into a user-created chat branch. */
 const MAX_BRANCH_ATTACHMENTS = 100
+
+/** Validates a requested provider without trusting the client to name arbitrary commands. */
+function providerSelection(value: string | undefined): string | undefined {
+  if (value === undefined) return undefined
+  const provider = boundedText(value, "Provider", 80)
+  if (!AI_PROVIDER_IDS.includes(provider as (typeof AI_PROVIDER_IDS)[number]))
+    throw new Error("Provider is not supported")
+  return provider
+}
+
+/** Resolves the provider already bound to a chat, including legacy Codex sessions. */
+function persistedChatProvider(
+  chat: Pick<Doc<"workspaceChats">, "providerId" | "codexThreadId">
+): string | undefined {
+  return (
+    providerSelection(chat.providerId) ??
+    (chat.codexThreadId ? "codex" : undefined)
+  )
+}
 
 /** Validator shared by card, file, link, and project context records. */
 const attachmentInput = v.object({
@@ -171,6 +191,9 @@ export const list = query({
       id: chat._id,
       projectId: chat.projectId,
       title: chat.title,
+      providerId: chat.providerId ?? "codex",
+      providerInstanceId: chat.providerInstanceId ?? null,
+      providerSessionId: chat.providerSessionId ?? chat.codexThreadId ?? null,
       status: chat.status,
       isUnread: chat.isUnread ?? false,
       isPinned: chat.isPinned ?? false,
@@ -230,6 +253,9 @@ export const get = query({
       id: chat._id,
       projectId: chat.projectId,
       title: chat.title,
+      providerId: chat.providerId ?? "codex",
+      providerInstanceId: chat.providerInstanceId ?? null,
+      providerSessionId: chat.providerSessionId ?? chat.codexThreadId ?? null,
       status: chat.status,
       agentAutonomy: chat.agentAutonomy ?? "approval",
       agentInstructions: chat.agentInstructions ?? "",
@@ -289,6 +315,10 @@ export const startTurn = mutation({
     chatId: v.optional(v.id("workspaceChats")),
     projectId: v.optional(v.id("projects")),
     continuationOf: v.optional(v.id("workspaceChatMessages")),
+    providerId: v.optional(v.string()),
+    providerInstanceId: v.optional(v.string()),
+    providerModel: v.optional(v.string()),
+    providerEffort: v.optional(v.string()),
     clientMessageId: v.string(),
     message: v.string(),
     attachments: v.array(attachmentInput),
@@ -320,6 +350,16 @@ export const startTurn = mutation({
     )
       throw new Error("This message was already sent")
     const now = Date.now()
+    const requestedProvider = providerSelection(args.providerId)
+    const requestedInstance = args.providerInstanceId
+      ? boundedText(args.providerInstanceId, "Provider instance", 200)
+      : undefined
+    const requestedModel = args.providerModel
+      ? boundedText(args.providerModel, "Provider model", 200)
+      : undefined
+    const requestedEffort = args.providerEffort
+      ? boundedText(args.providerEffort, "Provider reasoning", 80)
+      : undefined
     let chat: Doc<"workspaceChats"> | null = args.chatId
       ? await ctx.db.get(args.chatId)
       : null
@@ -334,6 +374,21 @@ export const startTurn = mutation({
       throw new Error("Continuing a response requires a chat")
     if (chat) await recoverStaleTurn(ctx, chat, now)
     if (chat) chat = await ctx.db.get(chat._id)
+    const storedProvider = chat ? persistedChatProvider(chat) : undefined
+    if (
+      storedProvider &&
+      requestedProvider !== undefined &&
+      storedProvider !== requestedProvider
+    )
+      throw new Error("Start a new chat to change its provider")
+    const selectedProvider = storedProvider ?? requestedProvider ?? "codex"
+    if (chat?.codexThreadId && selectedProvider !== "codex")
+      throw new Error(
+        "This saved Codex chat cannot resume through another provider"
+      )
+    const selectedInstance = chat?.providerInstanceId ?? requestedInstance
+    const selectedModel = chat?.providerModel ?? requestedModel
+    const selectedEffort = chat?.providerEffort ?? requestedEffort
     if (chat?.status === "running")
       throw new Error("Wait for the active reply to finish")
     const priorMessages = chat
@@ -373,15 +428,31 @@ export const startTurn = mutation({
       await ctx.db.patch(chat._id, {
         status: "running",
         activeMessageId: continuation._id,
+        ...(chat.providerId ? {} : { providerId: selectedProvider }),
+        ...(chat.providerInstanceId || !selectedInstance
+          ? {}
+          : { providerInstanceId: selectedInstance }),
+        ...(chat.providerModel || !selectedModel
+          ? {}
+          : { providerModel: selectedModel }),
+        ...(chat.providerEffort || !selectedEffort
+          ? {}
+          : { providerEffort: selectedEffort }),
         lastError: undefined,
         updatedAt: now,
       })
       return {
         chatId: chat._id,
         assistantMessageId: continuation._id,
+        providerId: selectedProvider,
+        ...(selectedInstance ? { providerInstanceId: selectedInstance } : {}),
+        ...(selectedModel ? { providerModel: selectedModel } : {}),
+        ...(selectedEffort ? { providerEffort: selectedEffort } : {}),
+        providerSessionId: chat.providerSessionId ?? chat.codexThreadId ?? null,
         codexThreadId: chat.codexThreadId ?? null,
         shouldReplayContext:
-          !chat.codexThreadId || chat.codexContextReady !== true,
+          !(chat.providerSessionId ?? chat.codexThreadId) ||
+          chat.codexContextReady !== true,
         replyPrefix: continuation.content,
         replayContext: {
           messages: replayMessages(priorMessages),
@@ -398,6 +469,10 @@ export const startTurn = mutation({
         isUnread: false,
         isPinned: false,
         status: "idle",
+        providerId: selectedProvider,
+        ...(selectedInstance ? { providerInstanceId: selectedInstance } : {}),
+        ...(selectedModel ? { providerModel: selectedModel } : {}),
+        ...(selectedEffort ? { providerEffort: selectedEffort } : {}),
         createdAt: now,
         updatedAt: now,
       })
@@ -465,16 +540,32 @@ export const startTurn = mutation({
     await ctx.db.patch(chatId, {
       status: "running",
       activeMessageId: assistantMessageId,
+      ...(chat?.providerId ? {} : { providerId: selectedProvider }),
+      ...(chat?.providerInstanceId || !selectedInstance
+        ? {}
+        : { providerInstanceId: selectedInstance }),
+      ...(chat?.providerModel || !selectedModel
+        ? {}
+        : { providerModel: selectedModel }),
+      ...(chat?.providerEffort || !selectedEffort
+        ? {}
+        : { providerEffort: selectedEffort }),
       lastError: undefined,
       updatedAt: now,
     })
     return {
       chatId,
       assistantMessageId,
+      providerId: selectedProvider,
+      ...(selectedInstance ? { providerInstanceId: selectedInstance } : {}),
+      ...(selectedModel ? { providerModel: selectedModel } : {}),
+      ...(selectedEffort ? { providerEffort: selectedEffort } : {}),
+      providerSessionId: chat?.providerSessionId ?? chat?.codexThreadId ?? null,
       codexThreadId: chat?.codexThreadId ?? null,
       shouldReplayContext:
         Boolean(chat) &&
-        (!chat?.codexThreadId || chat.codexContextReady !== true),
+        (!(chat?.providerSessionId ?? chat?.codexThreadId) ||
+          chat?.codexContextReady !== true),
       replyPrefix: "",
       replayContext: {
         messages: replayMessages(priorMessages),
@@ -549,6 +640,12 @@ export const branch = mutation({
       isPinned: false,
       branchedFromChatId: chat._id,
       branchedFromMessageId: target._id,
+      ...(chat.providerId ? { providerId: chat.providerId } : {}),
+      ...(chat.providerInstanceId
+        ? { providerInstanceId: chat.providerInstanceId }
+        : {}),
+      ...(chat.providerModel ? { providerModel: chat.providerModel } : {}),
+      ...(chat.providerEffort ? { providerEffort: chat.providerEffort } : {}),
       codexContextReady: false,
       status: "idle",
       createdAt: now,
@@ -597,26 +694,67 @@ export const branch = mutation({
   },
 })
 
-/** Persists accepted Codex identifiers before streaming or completion can fail. */
+/** Persists accepted provider identifiers before streaming or completion can fail. */
 export const bindTurn = mutation({
   args: {
     chatId: v.id("workspaceChats"),
     messageId: v.id("workspaceChatMessages"),
-    codexThreadId: v.string(),
-    codexTurnId: v.string(),
+    providerId: v.optional(v.string()),
+    providerInstanceId: v.optional(v.string()),
+    providerSessionId: v.optional(v.string()),
+    providerTurnId: v.optional(v.string()),
+    codexThreadId: v.optional(v.string()),
+    codexTurnId: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const chat = await ctx.db.get(args.chatId)
     const message = await ctx.db.get(args.messageId)
     if (!chat || !message || chat.activeMessageId !== message._id)
       throw new Error("Chat turn is no longer active")
+    const storedProvider = persistedChatProvider(chat)
+    const providerId =
+      providerSelection(args.providerId) ?? storedProvider ?? "codex"
+    if (storedProvider && providerId !== storedProvider)
+      throw new Error("A chat turn cannot change its provider")
+    const providerSessionId = boundedText(
+      args.providerSessionId ?? args.codexThreadId ?? "",
+      "Provider session ID",
+      200
+    )
+    const providerTurnId = boundedText(
+      args.providerTurnId ?? args.codexTurnId ?? "",
+      "Provider turn ID",
+      200
+    )
     const now = Date.now()
     await ctx.db.patch(message._id, {
-      codexTurnId: boundedText(args.codexTurnId, "Codex turn ID", 200),
+      providerTurnId,
+      ...(args.codexTurnId
+        ? { codexTurnId: boundedText(args.codexTurnId, "Codex turn ID", 200) }
+        : {}),
       updatedAt: now,
     })
     await ctx.db.patch(chat._id, {
-      codexThreadId: boundedText(args.codexThreadId, "Codex thread ID", 200),
+      providerId,
+      ...(args.providerInstanceId
+        ? {
+            providerInstanceId: boundedText(
+              args.providerInstanceId,
+              "Provider instance",
+              200
+            ),
+          }
+        : {}),
+      providerSessionId,
+      ...(args.codexThreadId
+        ? {
+            codexThreadId: boundedText(
+              args.codexThreadId,
+              "Codex thread ID",
+              200
+            ),
+          }
+        : {}),
       codexContextReady: true,
       updatedAt: now,
     })
@@ -650,13 +788,17 @@ export const progress = mutation({
   },
 })
 
-/** Completes the active turn and stores the Codex identifiers needed to resume it. */
+/** Completes the active turn and stores the provider identifiers needed to resume it. */
 export const complete = mutation({
   args: {
     chatId: v.id("workspaceChats"),
     messageId: v.id("workspaceChatMessages"),
-    codexThreadId: v.string(),
-    codexTurnId: v.string(),
+    providerId: v.optional(v.string()),
+    providerInstanceId: v.optional(v.string()),
+    providerSessionId: v.optional(v.string()),
+    providerTurnId: v.optional(v.string()),
+    codexThreadId: v.optional(v.string()),
+    codexTurnId: v.optional(v.string()),
     reply: v.string(),
   },
   handler: async (ctx, args) => {
@@ -665,15 +807,52 @@ export const complete = mutation({
     const message = await ctx.db.get(args.messageId)
     if (!chat || !message || chat.activeMessageId !== message._id)
       throw new Error("Chat turn is no longer active")
+    const storedProvider = persistedChatProvider(chat)
+    const providerId =
+      providerSelection(args.providerId) ?? storedProvider ?? "codex"
+    if (storedProvider && providerId !== storedProvider)
+      throw new Error("A chat turn cannot change its provider")
+    const providerSessionId = boundedText(
+      args.providerSessionId ?? args.codexThreadId ?? "",
+      "Provider session ID",
+      200
+    )
+    const providerTurnId = boundedText(
+      args.providerTurnId ?? args.codexTurnId ?? "",
+      "Provider turn ID",
+      200
+    )
     const now = Date.now()
     await ctx.db.patch(message._id, {
       content: reply,
       status: "completed",
-      codexTurnId: boundedText(args.codexTurnId, "Codex turn ID", 200),
+      providerTurnId,
+      ...(args.codexTurnId
+        ? { codexTurnId: boundedText(args.codexTurnId, "Codex turn ID", 200) }
+        : {}),
       updatedAt: now,
     })
     await ctx.db.patch(chat._id, {
-      codexThreadId: boundedText(args.codexThreadId, "Codex thread ID", 200),
+      providerId,
+      ...(args.providerInstanceId
+        ? {
+            providerInstanceId: boundedText(
+              args.providerInstanceId,
+              "Provider instance",
+              200
+            ),
+          }
+        : {}),
+      providerSessionId,
+      ...(args.codexThreadId
+        ? {
+            codexThreadId: boundedText(
+              args.codexThreadId,
+              "Codex thread ID",
+              200
+            ),
+          }
+        : {}),
       codexContextReady: true,
       status: "idle",
       activeMessageId: undefined,

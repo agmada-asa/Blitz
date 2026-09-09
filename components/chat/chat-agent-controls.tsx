@@ -19,7 +19,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { CheckIcon, FolderIcon, ShieldCheckIcon, ZapIcon } from "@/components/ui/icon"
+import {
+  CheckIcon,
+  FolderIcon,
+  ShieldCheckIcon,
+  ZapIcon,
+} from "@/components/ui/icon"
 import { cn } from "@/lib/utils"
 import type { Id } from "@/convex/_generated/dataModel"
 
@@ -61,9 +66,9 @@ type AutonomyLevelConfig = {
 /** Mapping of runtime autonomy authority levels to their indicators and descriptions. */
 const AUTONOMY_CONFIG: Record<ChatAgentAutonomy, AutonomyLevelConfig> = {
   approval: {
-    label: "Require approval",
+    label: "Provider policy",
     description:
-      "The runtime asks before edits and untrusted commands; safe reads may run.",
+      "Uses this provider’s saved access policy, including full access if selected in settings.",
     color: "text-emerald-600 dark:text-emerald-400",
     icon: ShieldCheckIcon,
   },
@@ -124,7 +129,7 @@ export function ChatAgentControls({
             disabled={disabled}
             className={cn(
               "relative size-8 rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground sm:hidden",
-              hasActiveOverride && "text-foreground font-medium"
+              hasActiveOverride && "font-medium text-foreground"
             )}
             aria-label={`Agent settings: ${current.label}${currentProject ? `, ${currentProject.title}` : ""}`}
             title={`Agent settings: ${current.label}${currentProject ? `, ${currentProject.title}` : ""}`}
@@ -154,7 +159,7 @@ export function ChatAgentControls({
               Agent controls
             </h3>
             <p className="text-[11px] text-muted-foreground">
-              Choose Codex permissions and active workspace
+              Choose what Blitz can do and where it works
             </p>
           </div>
 
@@ -181,7 +186,7 @@ export function ChatAgentControls({
                       onAutonomyChange(key)
                     }}
                     className={cn(
-                      "flex w-full flex-col gap-1 rounded-xl p-2.5 text-left transition-colors hover:bg-muted/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                      "flex w-full flex-col gap-1 rounded-xl p-2.5 text-left transition-colors hover:bg-muted/70 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none",
                       isSelected && "bg-muted/80"
                     )}
                   >

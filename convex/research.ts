@@ -8,6 +8,7 @@ import {
   researchImportPartMatchesSource,
   validateResearchImportPartSequence,
 } from "../lib/research-import-checkpoint"
+import { resolveQueuedAiSelection } from "./ai-provider-settings"
 
 /** Maximum request text retained for one proposal. */
 export const MAX_RESEARCH_REQUEST_LENGTH = 2_000
@@ -215,11 +216,15 @@ export const enqueue = mutation({
         throw new Error("Request id payload conflicts with stored proposal")
       return { ...proposalForClient(existing), alreadyQueued: true }
     }
+    const selection = await resolveQueuedAiSelection(ctx, "research")
     const now = Date.now()
     const proposalId = await ctx.db.insert("researchProposals", {
       projectId: args.projectId,
       requestId,
       request,
+      providerId: selection.providerId,
+      researchModel: selection.model,
+      researchEffort: selection.effort,
       status: "queued",
       scope: "",
       topics: [],
@@ -326,6 +331,16 @@ export const claimNext = mutation({
       projectId: candidate.projectId,
       requestId: candidate.requestId,
       request: candidate.request,
+      ...(candidate.providerId ? { providerId: candidate.providerId } : {}),
+      ...(candidate.providerInstanceId
+        ? { providerInstanceId: candidate.providerInstanceId }
+        : {}),
+      ...(candidate.researchModel
+        ? { researchModel: candidate.researchModel }
+        : {}),
+      ...(candidate.researchEffort
+        ? { researchEffort: candidate.researchEffort }
+        : {}),
       leaseToken,
     }
   },
@@ -748,6 +763,7 @@ export const completeImport = mutation({
         preparationJobId: existingPartJobIds[partNumber - 1],
       }
     }
+    const selection = await resolveQueuedAiSelection(ctx, "cardGeneration")
     const now = Date.now()
     const sourceId = await ctx.db.insert("sources", {
       projectId: row.projectId,
@@ -767,6 +783,9 @@ export const completeImport = mutation({
       status: "queued",
       nextChunkOrdinal: 0,
       learningScope: proposal.scope,
+      providerId: selection.providerId,
+      generationModel: selection.model,
+      generationEffort: selection.effort,
       generatedItemCount: 0,
       attemptCount: 0,
       createdAt: now,

@@ -1,4 +1,4 @@
-/** Streams general workspace chat turns from the local Codex app-server. */
+/** Streams general workspace chat turns through the selected Blitz provider. */
 
 import { api } from "@/convex/_generated/api"
 import { citationPrompt } from "@/lib/citations"
@@ -14,12 +14,14 @@ import { homedir } from "node:os"
 import { isAbsolute, join } from "node:path"
 import type { Id } from "@/convex/_generated/dataModel"
 import {
-  resolveAiModel,
-  resolveAiReasoningEffort,
+  resolveAiTaskSelection,
+  resolveProviderApprovalPolicy,
+  type AiProviderId,
 } from "@/lib/ai-model-settings"
-import { CardChatError, runCodexTextTurn } from "@/lib/server/card-chat"
+import { CardChatError } from "@/lib/server/card-chat"
 import { createChatProgress } from "@/lib/server/chat-progress"
 import { loadSavedAiModelSettings } from "@/lib/server/ai-model-settings"
+import { runProviderTextTurn } from "@/lib/server/providers/run-text-turn"
 import { isTrustedBlitzOrigin } from "@/lib/server/request-origin"
 import {
   buildWorkspaceChatPrompt,
@@ -31,7 +33,7 @@ import {
   type WorkspaceChatProjectContext,
 } from "@/lib/server/workspace-chat"
 
-/** Uses Node.js because each turn starts the local Codex process. */
+/** Uses Node.js because each turn starts the selected local provider process. */
 export const runtime = "nodejs"
 /** Leaves cleanup time beyond the workspace chat's ten-minute turn and approval deadline. */
 export const maxDuration = 620
@@ -68,6 +70,10 @@ const startWorkspaceTurn = makeFunctionReference<
     chatId?: Id<"workspaceChats">
     projectId?: Id<"projects">
     continuationOf?: Id<"workspaceChatMessages">
+    providerId?: string
+    providerInstanceId?: string
+    providerModel?: string
+    providerEffort?: string
     clientMessageId: string
     message: string
     attachments: PersistedAttachment[]
@@ -75,6 +81,11 @@ const startWorkspaceTurn = makeFunctionReference<
   {
     chatId: Id<"workspaceChats">
     assistantMessageId: Id<"workspaceChatMessages">
+    providerId: AiProviderId
+    providerInstanceId?: string
+    providerModel?: string
+    providerEffort?: string
+    providerSessionId: string | null
     codexThreadId: string | null
     shouldReplayContext: boolean
     replyPrefix: string
@@ -87,8 +98,12 @@ const bindWorkspaceTurn = makeFunctionReference<
   {
     chatId: Id<"workspaceChats">
     messageId: Id<"workspaceChatMessages">
-    codexThreadId: string
-    codexTurnId: string
+    providerId?: string
+    providerInstanceId?: string
+    providerSessionId?: string
+    providerTurnId?: string
+    codexThreadId?: string
+    codexTurnId?: string
   },
   null
 >("workspaceChats:bindTurn")
@@ -108,8 +123,12 @@ const completeWorkspaceTurn = makeFunctionReference<
   {
     chatId: Id<"workspaceChats">
     messageId: Id<"workspaceChatMessages">
-    codexThreadId: string
-    codexTurnId: string
+    providerId?: string
+    providerInstanceId?: string
+    providerSessionId?: string
+    providerTurnId?: string
+    codexThreadId?: string
+    codexTurnId?: string
     reply: string
   },
   null
@@ -191,11 +210,11 @@ function workspaceChatFailure(
     }
   return {
     reason: error instanceof CardChatError ? error.reason : "unknown",
-    message: `Codex could not finish that reply. ${recovery}`,
+    message: `Blitz could not finish that reply. ${recovery}`,
   }
 }
 
-/** Starts or resumes one read-only Codex conversation with optional source context. */
+/** Starts or resumes one read-only Blitz conversation with optional source context. */
 export async function POST(request: Request): Promise<Response> {
   let input
   try {
@@ -301,9 +320,22 @@ export async function POST(request: Request): Promise<Response> {
           })),
           ...input.attachments,
         ]
+        const modelSettings = await loadSavedAiModelSettings(client)
+        const configuredSelection = resolveAiTaskSelection(
+          modelSettings,
+          "reply",
+          {
+            providerEnvironmentFallback: process.env.BLITZ_REPLY_PROVIDER,
+            modelEnvironmentFallback: process.env.BLITZ_CODEX_MODEL,
+            effortEnvironmentFallback: process.env.BLITZ_CODEX_EFFORT,
+          }
+        )
         const turn = await client.mutation(startWorkspaceTurn, {
           ...(input.chatId ? { chatId: input.chatId } : {}),
           ...(input.projectId ? { projectId: input.projectId } : {}),
+          providerId: configuredSelection.providerId,
+          providerModel: configuredSelection.model,
+          providerEffort: configuredSelection.effort,
           ...(input.continuationOf
             ? { continuationOf: input.continuationOf }
             : {}),
@@ -354,17 +386,36 @@ export async function POST(request: Request): Promise<Response> {
           ? (await prepareProjectAgentWorkspace(workingProjectId))
               .projectDirectory
           : await chatWorkspaceDirectory(turn.chatId)
-        agentSession = createChatAgentSession({
-          client,
-          chatId: turn.chatId,
-          messageId: turn.assistantMessageId,
-          workspaceDirectory,
-          autonomy,
-          additionalInstructions,
-          signal: turnSignal,
-          send,
-        })
-        const modelSettings = await loadSavedAiModelSettings(client)
+        const selection = {
+          providerId: turn.providerId,
+          model: turn.providerModel ?? configuredSelection.model,
+          effort: turn.providerEffort ?? configuredSelection.effort,
+        }
+        const approvalPolicy =
+          autonomy === "approval"
+            ? resolveProviderApprovalPolicy(modelSettings, selection.providerId)
+            : autonomy === "full"
+              ? "full-access"
+              : "never"
+        {
+          agentSession = createChatAgentSession({
+            client,
+            chatId: turn.chatId,
+            messageId: turn.assistantMessageId,
+            workspaceDirectory,
+            autonomy: approvalPolicy === "full-access" ? "full" : autonomy,
+            additionalInstructions,
+            approvalPolicy,
+            signal: turnSignal,
+            send,
+          })
+        }
+        if (selection.providerId !== "codex" && autonomy === "project") {
+          throw new CardChatError(
+            "transport",
+            "This provider has no workspace-only OS sandbox. Choose approval mode or full access."
+          )
+        }
         let replayPrompt: Promise<string> | undefined
         /** Rebuilds prior dialogue and attachments only when thread continuity is uncertain. */
         const promptWithReplay = (): Promise<string> => {
@@ -419,28 +470,28 @@ export async function POST(request: Request): Promise<Response> {
         const runTurn = async (
           prompt: string,
           threadId?: string
-        ): ReturnType<typeof runCodexTextTurn> => {
+        ): ReturnType<typeof runProviderTextTurn> => {
           turnAccepted = false
-          return runCodexTextTurn(
+          return runProviderTextTurn(
             {
+              providerId: selection.providerId,
               workspaceDirectory,
               prompt,
               ...(threadId ? { threadId } : {}),
-              model: resolveAiModel(
-                modelSettings,
-                "replyModel",
-                process.env.BLITZ_CODEX_MODEL
-              ),
-              effort: resolveAiReasoningEffort(
-                modelSettings,
-                "replyEffort",
-                process.env.BLITZ_CODEX_EFFORT
-              ),
+              model: selection.model,
+              effort: selection.effort,
+              sandbox:
+                selection.providerId === "codex" ? "read-only" : undefined,
+              approvalPolicy,
               signal: turnSignal,
               timeoutMs: WORKSPACE_CHAT_TIMEOUT_MS,
             },
             {
-              createTransport: agentSession!.createTransport,
+              createCodexTransport:
+                selection.providerId === "codex"
+                  ? agentSession?.createTransport
+                  : undefined,
+              approvalHandler: agentSession?.approveProvider,
               onEvent: (event) => {
                 agentSession?.observe(event)
                 if (event.type === "turn-started") {
@@ -449,16 +500,26 @@ export async function POST(request: Request): Promise<Response> {
                     .mutation(bindWorkspaceTurn, {
                       chatId: turn.chatId,
                       messageId: turn.assistantMessageId,
-                      codexThreadId: event.threadId,
-                      codexTurnId: event.turnId,
+                      providerId: selection.providerId,
+                      providerSessionId: event.threadId,
+                      providerTurnId: event.turnId,
+                      ...(selection.providerId === "codex"
+                        ? {
+                            codexThreadId: event.threadId,
+                            codexTurnId: event.turnId,
+                          }
+                        : {}),
                     })
                     .catch((bindingError: unknown) => {
-                      console.error("Workspace chat could not save Codex IDs", {
-                        message:
-                          bindingError instanceof Error
-                            ? bindingError.message
-                            : "Unknown persistence error",
-                      })
+                      console.error(
+                        "Workspace chat could not save provider IDs",
+                        {
+                          message:
+                            bindingError instanceof Error
+                              ? bindingError.message
+                              : "Unknown persistence error",
+                        }
+                      )
                     })
                   return
                 }
@@ -528,18 +589,18 @@ export async function POST(request: Request): Promise<Response> {
         try {
           result = await runTurn(
             `${initialPrompt}\n\n${citationContext}`,
-            resetContext ? undefined : (turn.codexThreadId ?? undefined)
+            resetContext ? undefined : (turn.providerSessionId ?? undefined)
           )
         } catch (error) {
           if (
-            !turn.codexThreadId ||
+            !turn.providerSessionId ||
             turnAccepted ||
             !(error instanceof CardChatError) ||
             error.reason !== "transport"
           )
             throw error
           console.warn(
-            "Workspace chat could not resume its saved Codex thread",
+            "Workspace chat could not resume its saved provider session",
             {
               reason: error instanceof CardChatError ? error.reason : "unknown",
             }
@@ -563,8 +624,15 @@ export async function POST(request: Request): Promise<Response> {
         await client.mutation(completeWorkspaceTurn, {
           chatId: turn.chatId,
           messageId: turn.assistantMessageId,
-          codexThreadId: result.threadId,
-          codexTurnId: result.turnId,
+          providerId: selection.providerId,
+          providerSessionId: result.threadId,
+          providerTurnId: result.turnId,
+          ...(selection.providerId === "codex"
+            ? {
+                codexThreadId: result.threadId,
+                codexTurnId: result.turnId,
+              }
+            : {}),
           reply,
         })
         send({

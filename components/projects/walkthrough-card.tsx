@@ -377,7 +377,7 @@ export function WalkthroughCard({
           className="min-h-11 rounded-full px-4"
         >
           <Link href={chatHref}>
-            <ZapIcon aria-hidden="true" /> Ask Codex
+            <ZapIcon aria-hidden="true" /> Ask Blitz
           </Link>
         </Button>
         <div className="flex flex-wrap items-center justify-end gap-2">

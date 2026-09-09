@@ -9,8 +9,11 @@ import { ModelReasoningPicker } from "@/components/settings/model-reasoning-pick
 import { api } from "@/convex/_generated/api"
 import {
   DEFAULT_AI_MODEL_SETTINGS,
+  getDefaultAiModelOption,
+  resolveAiProvider,
   validateAiModelSettings,
   type AiModelSettings,
+  type AiProviderId,
   type AiReasoningEffort,
 } from "@/lib/ai-model-settings"
 
@@ -91,15 +94,29 @@ function ReplyModelPickerEditor({
     void persist({ ...draft, replyModel: model, replyEffort: effort })
   }
 
+  /** Switches the reply provider and chooses its first curated model. */
+  const selectProvider = (provider: AiProviderId): void => {
+    const option = getDefaultAiModelOption(provider)
+    void persist({
+      ...draft,
+      replyProvider: provider,
+      replyModel: option.id,
+      replyEffort: option.reasoningEfforts[0] ?? "medium",
+    })
+  }
+
   const isDisabled = disabled || isSaving
 
   return (
     <div className="flex min-w-0 items-center">
       <ModelReasoningPicker
+        task="reply"
+        provider={resolveAiProvider(draft, "replyProvider")}
         model={draft.replyModel}
         reasoning={draft.replyEffort}
         disabled={isDisabled}
         labelPrefix="Reply model"
+        onProviderChange={selectProvider}
         onChange={selectModelAndReasoning}
       />
       <span aria-live="polite" className="sr-only">

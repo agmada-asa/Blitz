@@ -1,6 +1,6 @@
 "use client"
 
-/** Owns persisted Codex chat selection, streaming, and mixed-context attachments. */
+/** Owns persisted Blitz chat selection, streaming, and mixed-context attachments. */
 
 import {
   BookTextIcon,
@@ -176,7 +176,7 @@ async function writeClipboardText(text: string): Promise<void> {
 /** Parses one server event and rejects malformed stream data. */
 function parseChatEvent(value: unknown): ChatEvent {
   if (!value || typeof value !== "object" || Array.isArray(value))
-    throw new Error("Codex returned an invalid response.")
+    throw new Error("Blitz returned an invalid response.")
   const event = value as Record<string, unknown>
   if (event.type === "started" && typeof event.chatId === "string")
     return { type: "started", chatId: event.chatId as Id<"workspaceChats"> }
@@ -221,7 +221,7 @@ function parseChatEvent(value: unknown): ChatEvent {
     return { type: "approval-resolved", approvalId: event.approvalId }
   if (event.type === "error" && typeof event.message === "string")
     return { type: "error", message: event.message }
-  throw new Error("Codex returned an invalid response.")
+  throw new Error("Blitz returned an invalid response.")
 }
 
 /** Reads newline-delimited events without assuming network chunk boundaries. */
@@ -748,7 +748,7 @@ export function ChatWorkspace({
         const result = (await response.json().catch(() => null)) as {
           error?: string
         } | null
-        throw new Error(result?.error || "Codex could not start that reply.")
+        throw new Error(result?.error || "Blitz could not start that reply.")
       }
       await readChatEvents(response.body, (event) => {
         if (event.type === "error") throw new Error(event.message)
@@ -775,7 +775,7 @@ export function ChatWorkspace({
         }
       })
       if (!started && !targetChatId)
-        throw new Error("Codex ended the reply early.")
+        throw new Error("Blitz ended the reply early.")
       completed = true
     } catch (sendError) {
       const paused = controller.signal.aborted && pausedByUserRef.current
@@ -783,7 +783,7 @@ export function ChatWorkspace({
         setError(
           messageForError(
             sendError,
-            "Codex could not finish that reply. Try again."
+            "Blitz could not finish that reply. Try again."
           )
         )
       if (!started && !options.continuationOf) setDraft(message)
@@ -1041,7 +1041,7 @@ export function ChatWorkspace({
                 )}
               </h2>
               <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-muted-foreground">
-                Attach a project, PDF, notes, PowerPoint, or public link. Codex
+                Attach a project, PDF, notes, PowerPoint, or public link. Blitz
                 will use that material as context for the conversation.
               </p>
             </div>
@@ -1092,12 +1092,12 @@ export function ChatWorkspace({
                         ) : message.status === "running" ? (
                           <span className="flex items-center gap-2 text-muted-foreground">
                             <LoadingIcon className="size-4 animate-spin motion-reduce:animate-none" />
-                            Codex is reading your context…
+                            Blitz is reading your context…
                           </span>
                         ) : (
                           <p>
                             {activeChat?.lastError ||
-                              "Codex could not finish this reply."}
+                              "Blitz could not finish this reply."}
                           </p>
                         )
                       ) : editing ? (
@@ -1356,12 +1356,12 @@ export function ChatWorkspace({
           ) : null}
           <div className="rounded-[24px] border bg-card p-2 shadow-sm focus-within:ring-2 focus-within:ring-ring/40">
             <Textarea
-              aria-label="Message Codex"
+              aria-label="Message Blitz"
               value={draft}
               maxLength={4_000}
               rows={2}
               disabled={isRunning}
-              placeholder="Ask Codex about your material…"
+              placeholder="Ask Blitz about your material…"
               className="max-h-40 min-h-16 resize-none border-0 bg-transparent px-3 py-2 shadow-none focus-visible:ring-0"
               onChange={(event) => setDraft(event.target.value)}
               onKeyDown={handleComposerKeyDown}
@@ -1502,7 +1502,7 @@ export function ChatWorkspace({
               </p>
             ) : (
               <p className="text-center text-[11px] text-muted-foreground">
-                Codex can make mistakes. Check important details against your
+                Blitz can make mistakes. Check important details against your
                 sources.
               </p>
             )}
@@ -1611,7 +1611,7 @@ export function ChatWorkspace({
           <DialogHeader>
             <DialogTitle>Attach a project</DialogTitle>
             <DialogDescription id="project-chat-description">
-              Codex will read up to eight ready sources from the project.
+              Blitz will read up to eight ready sources from the project.
             </DialogDescription>
           </DialogHeader>
           <div className="-mx-1 max-h-72 space-y-1 overflow-y-auto p-1">

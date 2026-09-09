@@ -2,11 +2,11 @@
 
 ![Blitz](app/icon.svg)
 
-Blitz turns source material into a scrolling learning feed for Android and the web. A local Mac worker prepares explanations and questions through Codex App Server using your existing Codex sign-in.
+Blitz turns source material into a scrolling learning feed for Android and the web. Local Mac workers prepare explanations, questions, and replies through the provider selected in Blitz settings.
 
 ## Run locally
 
-Use Node.js 22.13 or newer, with Codex CLI installed and signed in. Development has been verified with Node.js 24 on macOS.
+Use Node.js 22.13 or newer, with at least one supported local provider installed and signed in. Codex is the default provider. Claude Code 2.1.248 or newer can run replies and card generation with tools disabled. OpenCode v1.18.21 or newer within v1 supports native tool permissions. Google Antigravity ACP supports interactive workspace chat. Development has been verified with Node.js 24 on macOS.
 
 ```bash
 npm ci
@@ -28,6 +28,29 @@ npm run worker:research
 
 The workers load `.env.local`. `BLITZ_CONVEX_URL` can point them at a loopback address while `NEXT_PUBLIC_CONVEX_URL` points browser clients at the LAN address. No cloud deployment or API key is required for this local setup.
 
+## Provider controls
+
+Settings checks installed runtimes before enabling a provider and again before saving. This checks executable setup, not account authentication. Sign in through the provider locally. Claude Code uses the documented `sonnet`, `opus`, and `haiku` aliases; older saved `claude-*` aliases are translated when a turn starts.
+
+Provider access is saved separately for each provider. Chat's **Provider policy** option uses that setting; explicit **Full access** uses the provider's native bypass mode. **Project access** remains Codex-only because the other adapters do not supply an equivalent workspace-only OS sandbox. Provider-native tool rules are not an OS sandbox, and administrator policies still apply.
+
+| Provider | Deny requests | Ask when needed | Full access |
+| --- | --- | --- | --- |
+| Codex | Read-only sandbox, approvals `never` | `on-request`, or `untrusted` | `danger-full-access`, approvals `never` |
+| Claude Code | Restricted mode with all tools disabled | Explicit tool ask rules and the SDK's stdin approval protocol | `bypassPermissions` |
+| OpenCode | Dedicated agent with `permission["*"] = "deny"` | Dedicated agent with `permission["*"] = "ask"` | Dedicated agent with `permission["*"] = "allow"` |
+| Antigravity ACP | Native `default` mode; Blitz denies permission requests | Native `default` mode; Blitz reviews permission requests | Native `yolo` mode |
+
+Claude and ACP requests use the existing chat approval panel. Decisions grant one operation only; Blitz never sends persistent permission updates or ACP `allow_always`. Missing handlers, oversized requests, cancellation, and failed reviews deny the request. Modes are reasserted on resumed sessions. Claude disables local customizations and MCP servers. OpenCode uses `--pure`, disables project configuration, and creates a distinct agent per process so saved agents cannot override its selected policy. Agent delegation and mode switching tools stay disabled in OpenCode.
+
+Background card preparation and card replies always use restricted policies regardless of saved full access. Claude removes all tools; OpenCode denies all native tools. Antigravity is unavailable for these background tasks: its ACP default mode allows reads, and there is no advertised tool-off mode. The installed `agy` CLI's `--prompt`/`--print` selects one-shot output, not tool isolation. A local CLI 1.1.22 probe with a custom agent declaring `tools: []` still advertised shell, file, browser, and network tools. The adapter does not treat that as a security boundary.
+
+For Antigravity, install **Google Antigravity** from the [official ACP registry](https://github.com/agentclientprotocol/registry/blob/main/antigravity-acp/agent.json), sign in using an ACP client, and set `BLITZ_ANTIGRAVITY_ACP_COMMAND` to the downloaded `agy_acp_server.par` executable. The separate `agy` CLI is not an ACP server. Its existing CLI login does not automatically select authentication for ACP. Blitz does not change global provider settings or start an interactive sign-in flow.
+
+Claude passes supported reasoning selections with `--effort`. Haiku and ACP expose only the provider default. Legacy unsupported effort selections are normalized to that default. Native permission references: [Claude CLI](https://code.claude.com/docs/en/cli-reference), [Claude SDK approvals](https://code.claude.com/docs/en/agent-sdk/user-input), [OpenCode permissions](https://opencode.ai/docs/permissions/), [Antigravity CLI headless behavior](https://antigravity.google/docs/cli/headless/). Antigravity ACP modes were verified against Google's official `agy_acp_server_1.1.1` distribution; its defaults differ from CLI print mode.
+
+The ACP client negotiates `session/load` and `session/resume`. If neither is supported, it fails before accepting a turn so workspace chat can rebuild its saved history in a new session. Historical load notifications are excluded from the new answer. Both adapters bound stdout and assistant output, decode split UTF-8 safely, and terminate on transport failures or deadlines.
+
 ## Learn
 
 Create a project in Library and add files, pasted notes, or a public link. Preparation runs in the background and can resume from a saved section. The home feed mixes projects; Filter narrows it to a project or topic.
@@ -40,7 +63,7 @@ Questions use single choice, multiple answers, or true/false. Answers receive se
 
 Imports accept text PDFs, Markdown, plain text, and PowerPoint `.pptx` files. Public links can return those formats or HTML. Source URLs and page/slide markers are retained. Scanned PDFs need OCR elsewhere, and each extracted source is currently limited to 120,000 characters.
 
-Use `Find sources` within a project to ask Codex for a proposed learning scope and references discovered through web search. Review the links before selecting which to import. Imported sources join the same preparation queue. Proposed note outlines are previews only.
+Use `Find sources` within a project to ask Blitz for a proposed learning scope and references discovered through web search. Review the links before selecting which to import. Imported sources join the same preparation queue. Proposed note outlines are previews only.
 
 ## Android
 

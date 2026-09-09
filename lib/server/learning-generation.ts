@@ -8,6 +8,7 @@ import {
   MAX_ITEMS_PER_CHUNK,
 } from "../learning/generation.ts"
 import type { SourceChunk } from "./source-ingestion/types.ts"
+import type { AiProviderId } from "../ai-model-settings.ts"
 
 export {
   learningGenerationSchema,
@@ -43,10 +44,23 @@ export const MAX_GENERATED_OUTPUT_BYTES = 250_000
 /** Maximum validation detail echoed into one bounded repair prompt. */
 const MAX_REPAIR_MESSAGE_LENGTH = 2_000
 
+/** Immutable provider snapshot handed to one generation request. */
+export interface LearningProviderSelection {
+  /** Provider integration selected when the preparation job was queued. */
+  readonly providerId: AiProviderId
+  /** Provider profile selected by the local runtime, when applicable. */
+  readonly providerInstanceId?: string
+  /** Provider-specific model snapshot. */
+  readonly model?: string
+  /** Provider-neutral reasoning snapshot. */
+  readonly effort?: string
+}
+
 /** Result of the injected model boundary used by per-chunk generation. */
 export type LearningTextGenerator = (
   prompt: string,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  selection?: LearningProviderSelection
 ) => Promise<string>
 
 /** Error raised when model output cannot be accepted as persisted learning data. */
@@ -208,6 +222,7 @@ export async function generateLearningForChunk(
     signal?: AbortSignal
     learningScope?: string
     existingTopicTitles?: readonly string[]
+    providerSelection?: LearningProviderSelection
   } = {}
 ): Promise<LearningGenerationBatch> {
   if (!chunk.id || !chunk.sourceId || !chunk.text.trim()) {
@@ -229,7 +244,11 @@ export async function generateLearningForChunk(
   })
   let raw: string
   try {
-    raw = await generate(sourcePrompt, options.signal)
+    raw = await generate(
+      sourcePrompt,
+      options.signal,
+      options.providerSelection
+    )
   } catch (error) {
     if (options.signal?.aborted) throwIfAborted(options.signal)
     throw error
@@ -247,7 +266,11 @@ export async function generateLearningForChunk(
     const repairPrompt = buildRepairPrompt(sourcePrompt, error.message)
     let repairedRaw: string
     try {
-      repairedRaw = await generate(repairPrompt, options.signal)
+      repairedRaw = await generate(
+        repairPrompt,
+        options.signal,
+        options.providerSelection
+      )
     } catch (repairError) {
       if (options.signal?.aborted) throwIfAborted(options.signal)
       throw repairError

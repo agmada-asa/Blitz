@@ -1,4 +1,4 @@
-/** Stores global task-specific Codex model and reasoning choices for Blitz's local workers. */
+/** Stores global task-specific provider, model, and reasoning choices for Blitz's local workers. */
 
 import { mutation, query } from "./_generated/server"
 import { v } from "convex/values"
@@ -6,6 +6,7 @@ import { v } from "convex/values"
 import {
   DEFAULT_AI_REASONING_EFFORTS,
   validateAiModelSettings,
+  validateAiTaskProviders,
   type AiModelSettings,
 } from "../lib/ai-model-settings"
 
@@ -24,6 +25,10 @@ export const get = query({
       .unique()
     if (!settings) return null
     return validateAiModelSettings({
+      providerApprovalPolicies: settings.providerApprovalPolicies,
+      researchProvider: settings.researchProvider,
+      replyProvider: settings.replyProvider,
+      cardGenerationProvider: settings.cardGenerationProvider,
       researchModel: settings.researchModel,
       replyModel: settings.replyModel,
       cardGenerationModel: settings.cardGenerationModel,
@@ -41,6 +46,10 @@ export const get = query({
 /** Validates and saves all AI choices together so workers never observe a partial configuration. */
 export const save = mutation({
   args: {
+    providerApprovalPolicies: v.optional(v.record(v.string(), v.string())),
+    researchProvider: v.optional(v.string()),
+    replyProvider: v.optional(v.string()),
+    cardGenerationProvider: v.optional(v.string()),
     researchModel: v.string(),
     replyModel: v.string(),
     cardGenerationModel: v.string(),
@@ -50,6 +59,7 @@ export const save = mutation({
   },
   handler: async (ctx, args): Promise<AiModelSettings> => {
     const settings = validateAiModelSettings(args)
+    validateAiTaskProviders(settings)
     const existing = await ctx.db
       .query("aiModelSettings")
       .withIndex("by_scope", (index) =>

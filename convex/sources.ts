@@ -5,6 +5,7 @@ import { mutation, query, type QueryCtx } from "./_generated/server"
 import type { Id } from "./_generated/dataModel"
 import { v } from "convex/values"
 import { sourceImportFingerprint } from "../lib/source-fingerprint"
+import { resolveQueuedAiSelection } from "./ai-provider-settings"
 
 /** Validator for source formats accepted by the extraction interface. */
 const sourceKind = v.union(
@@ -214,6 +215,7 @@ export const createAndEnqueue = mutation({
         status: existingJob.status,
         alreadyQueued: true,
       }
+    const selection = await resolveQueuedAiSelection(ctx, "cardGeneration")
     const now = Date.now()
     const jobId = await ctx.db.insert("preparationJobs", {
       projectId: args.projectId,
@@ -223,6 +225,9 @@ export const createAndEnqueue = mutation({
       sourceKind: args.kind,
       status: "queued",
       nextChunkOrdinal: 0,
+      providerId: selection.providerId,
+      generationModel: selection.model,
+      generationEffort: selection.effort,
       generatedItemCount: 0,
       attemptCount: 0,
       createdAt: now,
@@ -438,7 +443,8 @@ export const completeOriginalIngestion = mutation({
           q.eq("projectId", source.projectId).eq("sourceId", source._id)
         )
         .first()
-      if (!existing)
+      if (!existing) {
+        const selection = await resolveQueuedAiSelection(ctx, "cardGeneration")
         await ctx.db.insert("preparationJobs", {
           projectId: source.projectId,
           sourceId: source._id,
@@ -447,11 +453,15 @@ export const completeOriginalIngestion = mutation({
           sourceKind: source.kind,
           status: "queued",
           nextChunkOrdinal: 0,
+          providerId: selection.providerId,
+          generationModel: selection.model,
+          generationEffort: selection.effort,
           generatedItemCount: 0,
           attemptCount: 0,
           createdAt: Date.now(),
           updatedAt: Date.now(),
         })
+      }
     }
     await ctx.db.patch(source._id, {
       extractedText: args.extractedText,
