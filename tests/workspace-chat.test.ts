@@ -215,18 +215,17 @@ test("buildWorkspaceChatPrompt gives an attached card its source context", () =>
   assert.match(prompt, /CARD SOURCE CONTEXT:/)
   assert.match(prompt, /Detailed explanation: Selective permeability/)
   assert.match(prompt, /selectively permeable/)
-  assert.match(prompt, /primary context/)
+  assert.match(prompt, /primary evidence/)
 })
 
-test("new workspace chats require an owning project", () => {
-  assert.throws(
-    () =>
-      parseWorkspaceChatRequest({
-        message: "Start without a project",
-        clientMessageId: "message-no-project",
-        projectIds: [],
-        attachments: [],
-      }),
-    /Choose a project before starting a chat/
-  )
+test("new workspace chats do not require an owning project", () => {
+  const result = parseWorkspaceChatRequest({
+    message: "Start without a project",
+    clientMessageId: "message-no-project",
+    projectIds: [],
+    attachments: [],
+  })
+
+  assert.equal(result.message, "Start without a project")
+  assert.equal(result.projectId, undefined)
 })

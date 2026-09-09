@@ -99,3 +99,21 @@ test("continued progress appends to the saved partial response", async () => {
 
   assert.deepEqual(snapshots, ["Partial answer."])
 })
+
+test("progress persists cumulative thoughts independently from answer text", async () => {
+  const snapshots: Array<{ reply: string; thought?: string }> = []
+  const writer = createChatProgress(async (reply, thought) => {
+    snapshots.push({ reply, thought })
+  })
+
+  writer.appendThought("Checking the source")
+  writer.appendThought(" for supporting evidence.")
+  await writer.finish()
+
+  assert.deepEqual(snapshots, [
+    {
+      reply: "",
+      thought: "Checking the source for supporting evidence.",
+    },
+  ])
+})

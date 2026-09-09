@@ -186,6 +186,28 @@ test("forwards a process-scoped hosted web-search mode to the executable", async
   ])
 })
 
+test("advertises the experimental API capability when dynamic tools are enabled", async () => {
+  const process = new FakeProcess()
+  const client = await CodexAppServerClient.connect({
+    workspaceDirectory: "/tmp/blitz-owned-workspace",
+    experimentalApi: true,
+    spawnProcess: () => {
+      queueMicrotask(() => initialize(process))
+      return process
+    },
+  })
+  try {
+    const initializeRequest = messages(process)[0]
+    assert.deepEqual(
+      (initializeRequest?.params as Record<string, unknown> | undefined)
+        ?.capabilities,
+      { experimentalApi: true, requestAttestation: false }
+    )
+  } finally {
+    await client.close()
+  }
+})
+
 test("preserves UTF-8 characters split across stdout chunks", async () => {
   const process = new FakeProcess()
   const client = await CodexAppServerClient.connect({
@@ -268,6 +290,128 @@ test("declines approval requests by default and surfaces them to observers", asy
     assert.deepEqual(events, ["item/commandExecution/requestApproval"])
   } finally {
     await client.close()
+  }
+})
+
+test("routes structured questions and MCP forms through the request handler", async () => {
+  const process = new FakeProcess()
+  const handled: string[] = []
+  const client = await CodexAppServerClient.connect({
+    workspaceDirectory: "/tmp/blitz-owned-workspace",
+    requestHandler: async (request) => {
+      handled.push(request.method)
+      if (request.method === "item/tool/requestUserInput")
+        return { answers: { audience: { answers: ["Beginners"] } } }
+      return { action: "accept", content: { email: "learner@example.com" } }
+    },
+    spawnProcess: () => {
+      queueMicrotask(() => initialize(process))
+      return process
+    },
+  })
+  try {
+    process.respond({
+      id: "question-1",
+      method: "item/tool/requestUserInput",
+      params: { questions: [] },
+    })
+    process.respond({
+      id: "form-1",
+      method: "mcpServer/elicitation/request",
+      params: { mode: "form" },
+    })
+    await new Promise<void>((resolve) => setTimeout(resolve, 0))
+    const written = messages(process)
+    assert.deepEqual(
+      written.find((message) => message.id === "question-1"),
+      {
+        id: "question-1",
+        result: { answers: { audience: { answers: ["Beginners"] } } },
+      }
+    )
+    assert.deepEqual(
+      written.find((message) => message.id === "form-1"),
+      {
+        id: "form-1",
+        result: { action: "accept", content: { email: "learner@example.com" } },
+      }
+    )
+    assert.deepEqual(handled, [
+      "item/tool/requestUserInput",
+      "mcpServer/elicitation/request",
+    ])
+  } finally {
+    await client.close()
+  }
+})
+
+test("routes app-owned dynamic tool calls and safely rejects them without a handler", async () => {
+  const process = new FakeProcess()
+  const handled: string[] = []
+  const client = await CodexAppServerClient.connect({
+    workspaceDirectory: "/tmp/blitz-owned-workspace",
+    requestHandler: async (request) => {
+      handled.push(request.method)
+      return {
+        contentItems: [
+          { type: "inputText", text: JSON.stringify({ accepted: true }) },
+        ],
+        success: true,
+      }
+    },
+    spawnProcess: () => {
+      queueMicrotask(() => initialize(process))
+      return process
+    },
+  })
+  try {
+    process.respond({
+      id: "tool-1",
+      method: "item/tool/call",
+      params: { tool: "blitz_request_approval", arguments: {} },
+    })
+    await new Promise<void>((resolve) => setTimeout(resolve, 0))
+    assert.deepEqual(
+      messages(process).find((message) => message.id === "tool-1"),
+      {
+        id: "tool-1",
+        result: {
+          contentItems: [
+            { type: "inputText", text: JSON.stringify({ accepted: true }) },
+          ],
+          success: true,
+        },
+      }
+    )
+    assert.deepEqual(handled, ["item/tool/call"])
+  } finally {
+    await client.close()
+  }
+
+  const defaultProcess = new FakeProcess()
+  const defaultClient = await CodexAppServerClient.connect({
+    workspaceDirectory: "/tmp/blitz-owned-workspace",
+    spawnProcess: () => {
+      queueMicrotask(() => initialize(defaultProcess))
+      return defaultProcess
+    },
+  })
+  try {
+    defaultProcess.respond({
+      id: "tool-2",
+      method: "item/tool/call",
+      params: { tool: "blitz_request_approval", arguments: {} },
+    })
+    await new Promise<void>((resolve) => setTimeout(resolve, 0))
+    const response = messages(defaultProcess).find(
+      (message) => message.id === "tool-2"
+    )
+    assert.equal(
+      (response?.result as { success?: boolean } | undefined)?.success,
+      false
+    )
+  } finally {
+    await defaultClient.close()
   }
 })
 

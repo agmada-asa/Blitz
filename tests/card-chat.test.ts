@@ -272,11 +272,10 @@ test("returns IDs and handles completion racing the turn/start response", async 
       onEvent: (event) => events.push(event),
     }
   )
-  assert.deepEqual(result, {
-    threadId: "thr_new",
-    turnId: "turn_1",
-    text: "A clear answer.",
-  })
+  assert.equal(result.threadId, "thr_new")
+  assert.equal(result.turnId, "turn_1")
+  assert.equal(result.text, "A clear answer.")
+  assert.ok(typeof result.durationMs === "number")
   assert.equal(events.filter((event) => event.type === "text-delta").length, 1)
   assert.deepEqual(
     events.find((event) => event.type === "turn-started"),

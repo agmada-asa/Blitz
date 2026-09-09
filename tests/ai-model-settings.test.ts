@@ -13,6 +13,7 @@ import {
   getDefaultAiModelOption,
   getAiProviderOptionsForTask,
   getSupportedAiReasoningEfforts,
+  isLegacyAiModelOption,
   groupCodexModelOptions,
   resolveAiTaskSelection,
   resolveAiModel,
@@ -252,6 +253,20 @@ test("groups models by major and minor generation with dividers", () => {
   ])
   assert.equal(customGroups[0]?.generation, "OTHER")
   assert.equal(customGroups[0]?.options[0]?.id, "custom-worker")
+})
+
+/** Confirms Antigravity keeps only the newest reported Gemini generation above the fold. */
+test("classifies older Antigravity generations as legacy", () => {
+  const options = [
+    { id: "gemini-3.8-flash-high", label: "Gemini 3.8 Flash (High)" },
+    { id: "gemini-3.8-flash-low", label: "Gemini 3.8 Flash (Low)" },
+    { id: "gemini-3.7-flash-high", label: "Gemini 3.7 Flash (High)" },
+    { id: "gemini-pro-agent", label: "Gemini 3.1 Pro (High)" },
+  ]
+  assert.equal(isLegacyAiModelOption("antigravity", options[0], options), false)
+  assert.equal(isLegacyAiModelOption("antigravity", options[1], options), false)
+  assert.equal(isLegacyAiModelOption("antigravity", options[2], options), true)
+  assert.equal(isLegacyAiModelOption("antigravity", options[3], options), true)
 })
 
 /** Confirms unsupported reasoning settings become explicit provider defaults. */

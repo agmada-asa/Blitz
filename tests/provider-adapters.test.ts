@@ -6,6 +6,7 @@ import test from "node:test"
 
 import {
   inspectAcpAuthentication,
+  parseAcpModelOptions,
   runAcpTextTurn,
   type AcpChildProcess,
 } from "../lib/server/providers/acp.ts"
@@ -37,6 +38,12 @@ class FakeAcpProcess extends EventEmitter {
   splitBytes = false
   overflowLine = false
   repeat = 1
+  sessionResult: Record<string, unknown> = { sessionId: "acp-session-1" }
+  configSelections: Array<{
+    sessionId?: string
+    configId?: string
+    value?: string
+  }> = []
 
   readonly stdout = new EventEmitter()
   readonly stderr = new EventEmitter()
@@ -45,6 +52,7 @@ class FakeAcpProcess extends EventEmitter {
       const message = JSON.parse(chunk) as {
         id?: number
         method?: string
+        params?: { sessionId?: string; configId?: string; value?: string }
       }
       queueMicrotask(() => this.respond(message))
       return true
@@ -55,7 +63,11 @@ class FakeAcpProcess extends EventEmitter {
   killed = false
 
   /** Replies to initialization and a single prompt while streaming one text chunk. */
-  protected respond(message: { id?: number; method?: string }): void {
+  protected respond(message: {
+    id?: number
+    method?: string
+    params?: { sessionId?: string; configId?: string; value?: string }
+  }): void {
     if (message.method) this.methods.push(message.method)
     if (message.method === "initialize") {
       this.send({
@@ -88,8 +100,13 @@ class FakeAcpProcess extends EventEmitter {
       this.send({
         jsonrpc: "2.0",
         id: message.id,
-        result: { sessionId: "acp-session-1" },
+        result: this.sessionResult,
       })
+      return
+    }
+    if (message.method === "session/set_config_option") {
+      this.configSelections.push(message.params ?? {})
+      this.send({ jsonrpc: "2.0", id: message.id, result: {} })
       return
     }
     if (message.method === "session/set_mode") {
@@ -160,6 +177,72 @@ test("inspects ACP authentication methods without starting a model turn", async 
   ])
 })
 
+/** Confirms nested Antigravity choices retain native IDs and recognizable reasoning tiers. */
+test("extracts Antigravity models from ACP session configuration", () => {
+  assert.deepEqual(
+    parseAcpModelOptions({
+      configOptions: [
+        {
+          id: "model",
+          category: "model",
+          type: "select",
+          options: [
+            {
+              group: "Current",
+              options: [
+                { value: "gemini-flash-low", name: "Gemini Flash (Low)" },
+                { value: "gemini-flash-high", name: "Gemini Flash (High)" },
+              ],
+            },
+          ],
+        },
+      ],
+    }),
+    [
+      {
+        id: "gemini-flash-low",
+        label: "Gemini Flash (Low)",
+        reasoningEffort: "low",
+      },
+      {
+        id: "gemini-flash-high",
+        label: "Gemini Flash (High)",
+        reasoningEffort: "high",
+      },
+    ]
+  )
+})
+
+/** Confirms an explicit Antigravity variant is applied through its native model selector. */
+test("applies an Antigravity model and encoded reasoning choice", async () => {
+  const child = new FakeAcpProcess()
+  await runAcpTextTurn(
+    {
+      selection: {
+        providerId: "antigravity",
+        model: "gemini-flash-high",
+        effort: "high",
+      },
+      workspaceDirectory: "/tmp/blitz-provider-test",
+      prompt: "Answer briefly.",
+      sandbox: "danger-full-access",
+      webSearchMode: "live",
+    },
+    {
+      command: { executable: "fake-antigravity", args: [] },
+      providerInstanceId: "local",
+      spawnProcess: () => child,
+    }
+  )
+  assert.deepEqual(child.configSelections, [
+    {
+      sessionId: "acp-session-1",
+      configId: "model",
+      value: "gemini-flash-high",
+    },
+  ])
+})
+
 /** Confirms Claude stream-json deltas are normalized without duplicating the final result. */
 test("normalizes Claude Code streaming output", async () => {
   const child = new FakeClaudeProcess()
@@ -213,6 +296,73 @@ test("normalizes Claude Code streaming output", async () => {
     ).length,
     1
   )
+})
+
+/** Confirms Claude stream-json thinking deltas are emitted and thought is returned. */
+test("normalizes Claude Code thinking deltas", async () => {
+  const child = new FakeClaudeProcess()
+  const events: unknown[] = []
+  const resultPromise = runClaudeCodeTextTurn(
+    {
+      selection: {
+        providerId: "claude-code",
+        model: "claude-sonnet",
+      },
+      workspaceDirectory: "/tmp/blitz-provider-test",
+      prompt: "Answer briefly.",
+    },
+    {
+      command: { executable: "claude", args: [] },
+      providerInstanceId: "local",
+      spawnProcess: () => child as unknown as ClaudeCodeChildProcess,
+      onEvent: (event) => events.push(event),
+    }
+  )
+  child.stdout.emit(
+    "data",
+    `${JSON.stringify({
+      type: "stream_event",
+      session_id: "claude-session-1",
+      event: {
+        type: "content_block_delta",
+        delta: { type: "thinking_delta", thinking: "Pondering the query..." },
+      },
+    })}\n`
+  )
+  child.stdout.emit(
+    "data",
+    `${JSON.stringify({
+      type: "stream_event",
+      session_id: "claude-session-1",
+      event: {
+        type: "content_block_delta",
+        delta: { text: "Claude answer" },
+      },
+    })}\n`
+  )
+  child.stdout.emit(
+    "data",
+    `${JSON.stringify({
+      type: "result",
+      session_id: "claude-session-1",
+      result: "Claude answer",
+    })}\n`
+  )
+  child.emit("close", 0)
+  const result = await resultPromise
+  assert.equal(result.threadId, "claude-session-1")
+  assert.equal(result.text, "Claude answer")
+  assert.equal(result.thought, "Pondering the query...")
+  assert.ok(typeof result.durationMs === "number")
+  const thoughtEvents = events.filter(
+    (event): event is { type: string; delta: string } =>
+      typeof event === "object" &&
+      event !== null &&
+      "type" in event &&
+      event.type === "thought-delta"
+  )
+  assert.equal(thoughtEvents.length, 1)
+  assert.equal(thoughtEvents[0].delta, "Pondering the query...")
 })
 
 /** Confirms ACP session startup, streamed text, and normalized turn identity. */

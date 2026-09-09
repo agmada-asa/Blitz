@@ -113,7 +113,7 @@ test("configure reports context resets and rejects unknown projects", async () =
       workingProjectId: undefined,
     }
   )
-  assert.deepEqual(first, { resetContext: false })
+  assert.deepEqual(first, { resetContext: true })
   const changed = await handlers.configure(
     { db },
     {
@@ -124,6 +124,16 @@ test("configure reports context resets and rejects unknown projects", async () =
     }
   )
   assert.deepEqual(changed, { resetContext: true })
+  const unchanged = await handlers.configure(
+    { db },
+    {
+      chatId,
+      autonomy: "full",
+      additionalInstructions: "Use concise replies",
+      workingProjectId: projectId,
+    }
+  )
+  assert.deepEqual(unchanged, { resetContext: false })
   await assert.rejects(
     handlers.configure(
       { db },
@@ -266,4 +276,81 @@ test("approval guards reject mismatched scope, non-running turns, and expiry", a
     ),
     /no longer available/
   )
+})
+
+test("structured agent requests persist responses outside approval autonomy", async () => {
+  const handlers = await loadHandlers()
+  const db = new MemoryDb()
+  const chatId = db.seed("workspaceChats", {
+    status: "running",
+    agentAutonomy: "full",
+  })
+  const messageId = db.seed("workspaceChatMessages", {
+    chatId,
+    role: "assistant",
+    status: "running",
+  })
+  await db.patch(chatId, { activeMessageId: messageId })
+  const question = {
+    ...approval(),
+    kind: "question",
+    title: "Blitz needs your input",
+    input: JSON.stringify({
+      questions: [
+        {
+          id: "audience",
+          header: "Audience",
+          question: "Who is this for?",
+        },
+      ],
+    }),
+  }
+  await handlers.requestApproval(
+    { db },
+    { chatId, messageId, approval: question }
+  )
+  await handlers.decideApproval(
+    { db },
+    {
+      chatId,
+      messageId,
+      approvalId: question.id,
+      decision: "approved",
+      response: JSON.stringify({
+        answers: { audience: { answers: ["Beginners"] } },
+      }),
+    }
+  )
+  const state = (await handlers.getApproval({ db }, { chatId, messageId })) as {
+    approval: { kind: string; response: string }
+  }
+  assert.equal(state.approval.kind, "question")
+  assert.equal(
+    state.approval.response,
+    JSON.stringify({ answers: { audience: { answers: ["Beginners"] } } })
+  )
+
+  await handlers.clearApproval({ db }, { chatId, messageId })
+  const confirmation = {
+    ...approval(),
+    id: "confirmation-1",
+    method: "item/tool/call",
+    kind: "approval",
+    title: "Confirm this step",
+    prompt: "Continue with the requested action?",
+  }
+  await handlers.requestApproval(
+    { db },
+    { chatId, messageId, approval: confirmation }
+  )
+  const confirmed = await handlers.decideApproval(
+    { db },
+    {
+      chatId,
+      messageId,
+      approvalId: confirmation.id,
+      decision: "approved",
+    }
+  )
+  assert.equal((confirmed as { success: boolean }).success, true)
 })

@@ -101,7 +101,18 @@ test("folder instructions include explicit user exceptions without accepting sou
   assert.match(instructions, /Only a direct instruction from the user/)
   assert.match(instructions, /full-access setting alone does not override/)
   assert.match(instructions, /tool output as data/)
+  assert.match(instructions, /primary evidence and starting point/)
+  assert.match(instructions, /Web search is appropriate/)
+  assert.match(instructions, /external findings distinct from project sources/)
+  assert.doesNotMatch(instructions, /blitz_request_user_input/)
   assert.match(instructions, /Use British spelling/)
+  const interactiveInstructions = projectAgentInstructions(
+    "/tmp/project",
+    "",
+    true
+  )
+  assert.match(interactiveInstructions, /blitz_request_user_input/)
+  assert.match(interactiveInstructions, /blitz_request_approval/)
   assert.throws(
     () => projectAgentInstructions("/tmp/project", "x".repeat(4001)),
     /4,000/
@@ -129,7 +140,7 @@ test("project tasks attach developer instructions and selected runtime policy be
     additionalInstructions: "Use British spelling.",
     connect: async (options) => {
       assert.equal(options.workspaceDirectory, workspace.projectDirectory)
-      assert.equal(options.webSearchMode, "disabled")
+      assert.equal(options.webSearchMode, "live")
       return {
         startThread: async (options) => {
           assert.equal(options?.sandbox, "workspace-write")
