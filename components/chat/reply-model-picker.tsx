@@ -14,7 +14,6 @@ import { ModelReasoningPicker } from "@/components/settings/model-reasoning-pick
 import { api } from "@/convex/_generated/api"
 import {
   DEFAULT_AI_MODEL_SETTINGS,
-  getDefaultAiModelOption,
   resolveAiProvider,
   resolveProviderApprovalPolicy,
   validateAiModelSettings,
@@ -100,22 +99,17 @@ function ReplyModelPickerEditor({
     }
   }
 
-  /** Saves a model and its reasoning choice as one reply configuration. */
+  /** Saves a provider, model, and reasoning choice as one reply configuration. */
   const selectModelAndReasoning = (
     model: string,
-    effort: AiReasoningEffort
+    effort: AiReasoningEffort,
+    provider: AiProviderId
   ): void => {
-    void persist({ ...draft, replyModel: model, replyEffort: effort })
-  }
-
-  /** Switches the reply provider and chooses its first curated model. */
-  const selectProvider = (provider: AiProviderId): void => {
-    const option = getDefaultAiModelOption(provider)
     void persist({
       ...draft,
       replyProvider: provider,
-      replyModel: option.id,
-      replyEffort: option.reasoningEfforts[0] ?? "medium",
+      replyModel: model,
+      replyEffort: effort,
     })
   }
 
@@ -150,7 +144,6 @@ function ReplyModelPickerEditor({
         showAccessPolicy={true}
         disabled={isDisabled}
         labelPrefix="Reply model"
-        onProviderChange={selectProvider}
         onChange={selectModelAndReasoning}
       />
       <span aria-live="polite" className="sr-only">

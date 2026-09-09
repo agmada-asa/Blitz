@@ -87,9 +87,28 @@ export interface CodexPermissionApprovalResponse {
   scope?: "turn" | "session"
 }
 
+/** One application-provided function exposed to Codex for the lifetime of a thread. */
+export interface CodexDynamicToolSpec {
+  /** Discriminator required by the app-server dynamic tool protocol. */
+  type: "function"
+  /** Stable tool name presented to the model. */
+  name: string
+  /** Plain-language guidance that tells the model when to call the tool. */
+  description: string
+  /** JSON Schema used to validate the model-supplied arguments. */
+  inputSchema: Record<string, unknown>
+  /** Whether Codex may defer loading the tool definition until it is relevant. */
+  deferLoading?: boolean
+}
+
 /** Response payload supplied for an approval request. */
 export type CodexApprovalResponse =
   { decision: CodexApprovalDecision } | CodexPermissionApprovalResponse
+
+/** Response payload supplied for any server request that Blitz can handle. */
+export type CodexServerRequestHandler = (
+  request: CodexServerRequest
+) => unknown | Promise<unknown>
 
 /** Event delivered to observers without exposing raw process internals. */
 export type CodexAppServerEvent =
@@ -148,6 +167,8 @@ export interface CodexAppServerOptions {
     title?: string
     version?: string
   }
+  /** Advertises support for experimental requests required by dynamic tools. */
+  experimentalApi?: boolean
   /** Per-request response deadline. */
   requestTimeoutMs?: number
   /** Maximum UTF-8 bytes accepted in one inbound JSONL line. */
@@ -156,8 +177,10 @@ export interface CodexAppServerOptions {
   maxPendingRequests?: number
   /** Maximum UTF-8 bytes written for one outbound JSON-RPC message. */
   maxRequestBytes?: number
-  /** Optional approval handler; absent handlers explicitly decline approvals. */
+  /** Optional legacy approval handler; absent handlers explicitly decline approvals. */
   approvalHandler?: CodexApprovalHandler
+  /** Optional handler for approvals, questions, and MCP elicitation requests. */
+  requestHandler?: CodexServerRequestHandler
   /** Injectable process factory for tests; production uses `codex app-server`. */
   spawnProcess?: (
     workspaceDirectory: string,
@@ -232,6 +255,8 @@ export interface CodexStartThreadOptions {
   approvalPolicy?: "untrusted" | "on-request" | "never"
   /** Optional sandbox mode; defaults to the safe read-only mode. */
   sandbox?: CodexSandboxMode
+  /** Application-owned tools available to the model in ordinary chat mode. */
+  dynamicTools?: CodexDynamicToolSpec[]
 }
 
 /** Explicit policy overrides accepted when resuming a stored thread. */
@@ -374,12 +399,38 @@ function asIdentifiedObject(
   return record as CodexThread | CodexTurn
 }
 
-/** Emits approval-safe decline payloads matching the installed v2 protocol. */
-function defaultApprovalResponse(method: string): CodexApprovalResponse {
+/** Returns the safe response used when a supported request has no human handler. */
+function defaultServerRequestResponse(method: string): unknown {
   if (method === "item/permissions/requestApproval") {
     return { permissions: { fileSystem: null, network: null }, scope: "turn" }
   }
+  if (method === "item/tool/requestUserInput") return { answers: {} }
+  if (method === "mcpServer/elicitation/request") return { action: "cancel" }
+  if (method === "item/tool/call") {
+    return {
+      contentItems: [
+        {
+          type: "inputText",
+          text: JSON.stringify({
+            accepted: false,
+            reason: "Blitz could not handle this tool request.",
+          }),
+        },
+      ],
+      success: false,
+    }
+  }
   return { decision: "decline" }
+}
+
+/** Identifies server requests that need an explicit user-facing response. */
+function isInteractiveServerRequest(method: string): boolean {
+  return (
+    method.endsWith("requestApproval") ||
+    method === "item/tool/requestUserInput" ||
+    method === "mcpServer/elicitation/request" ||
+    method === "item/tool/call"
+  )
 }
 
 /** Local JSONL client with bounded memory, correlation, and process cleanup. */
@@ -391,6 +442,7 @@ export class CodexAppServerClient {
   private readonly maxPendingRequests: number
   private readonly maxRequestBytes: number
   private readonly approvalHandler?: CodexApprovalHandler
+  private readonly requestHandler?: CodexServerRequestHandler
   private readonly decoder = new StringDecoder("utf8")
   private readonly listeners = new Set<(event: CodexAppServerEvent) => void>()
   private readonly pending = new Map<CodexRequestId, PendingRequest>()
@@ -427,7 +479,7 @@ export class CodexAppServerClient {
         )
     const client = new CodexAppServerClient(child, options)
     try {
-      await client.initialize(options.clientInfo)
+      await client.initialize(options.clientInfo, options.experimentalApi)
       return client
     } catch (error) {
       await client.close()
@@ -451,6 +503,7 @@ export class CodexAppServerClient {
       options.maxPendingRequests ?? DEFAULT_MAX_PENDING_REQUESTS
     this.maxRequestBytes = options.maxRequestBytes ?? DEFAULT_MAX_REQUEST_BYTES
     this.approvalHandler = options.approvalHandler
+    this.requestHandler = options.requestHandler
 
     if (
       !Number.isInteger(this.requestTimeoutMs) ||
@@ -489,13 +542,18 @@ export class CodexAppServerClient {
 
   /** Sends initialize, waits for its response, then acknowledges initialized. */
   private async initialize(
-    clientInfo?: CodexAppServerOptions["clientInfo"]
+    clientInfo?: CodexAppServerOptions["clientInfo"],
+    experimentalApi = false
   ): Promise<void> {
     const result = await this.request("initialize", {
       clientInfo: {
         name: clientInfo?.name ?? "blitz",
         title: clientInfo?.title ?? "Blitz",
         version: clientInfo?.version ?? "0.0.1",
+      },
+      capabilities: {
+        experimentalApi,
+        requestAttestation: false,
       },
     })
     asRecord(result, "initialize response")
@@ -706,17 +764,23 @@ export class CodexAppServerClient {
     pending.resolve(response.result)
   }
 
-  /** Surfaces every server request and handles approvals without silent grants. */
+  /** Surfaces supported server requests and waits for an explicit response. */
   private async handleServerRequest(request: JsonRpcRequest): Promise<void> {
     const publicRequest: CodexServerRequest = request
     this.emit({ type: "server-request", request: publicRequest })
-    if (request.method.endsWith("requestApproval")) {
-      let response = defaultApprovalResponse(request.method)
-      if (this.approvalHandler) {
+    if (isInteractiveServerRequest(request.method)) {
+      let response = defaultServerRequestResponse(request.method)
+      const handler =
+        this.requestHandler ??
+        (request.method.endsWith("requestApproval")
+          ? this.approvalHandler
+          : undefined)
+      if (handler) {
         try {
-          response = await this.approvalHandler(publicRequest)
+          const handled = await handler(publicRequest)
+          if (handled !== undefined) response = handled
         } catch {
-          response = defaultApprovalResponse(request.method)
+          response = defaultServerRequestResponse(request.method)
         }
       }
       if (!this.closed) {
@@ -727,7 +791,7 @@ export class CodexAppServerClient {
             error instanceof Error
               ? error
               : new CodexAppServerError(
-                  "Codex approval response could not be written"
+                  "Codex server request response could not be written"
                 )
           )
         }

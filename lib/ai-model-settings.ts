@@ -353,10 +353,13 @@ export function getAiProviderOptionsForTask(
 /** Returns the provider's curated model choices while preserving saved custom IDs. */
 export function getAiModelPickerOptions(
   provider: AiProviderId,
-  model: string
+  model: string,
+  runtimeOptions?: readonly AiProviderModelOption[]
 ): readonly AiProviderModelOption[] {
   if (provider === "codex") return getCodexModelPickerOptions(model)
-  const options = AI_PROVIDER_MODEL_OPTIONS[provider]
+  const options = runtimeOptions?.length
+    ? runtimeOptions
+    : AI_PROVIDER_MODEL_OPTIONS[provider]
   if (!model || !model.trim() || options.some((option) => option.id === model))
     return options
   return [
@@ -367,6 +370,55 @@ export function getAiModelPickerOptions(
     },
     ...options,
   ]
+}
+
+/** Returns whether a picker model belongs in its provider's legacy section. */
+export function isLegacyAiModelOption(
+  provider: AiProviderId,
+  option: Pick<AiProviderModelOption, "id" | "label">,
+  options: readonly Pick<AiProviderModelOption, "id" | "label">[]
+): boolean {
+  if (provider === "codex")
+    return (
+      option.id.startsWith("gpt-5.5") ||
+      option.id.startsWith("gpt-5.4") ||
+      option.id.startsWith("gpt-5.3") ||
+      option.id.startsWith("gpt-4")
+    )
+  if (provider !== "antigravity") return false
+
+  /** Reads a Gemini major and minor generation from a provider label or ID. */
+  const generation = (
+    candidate: Pick<AiProviderModelOption, "id" | "label">
+  ): readonly [number, number] | undefined => {
+    const match = `${candidate.label} ${candidate.id}`.match(
+      /gemini(?:[\s_-]+)(\d+)(?:[.\-_](\d+))?/i
+    )
+    if (!match?.[1]) return undefined
+    return [Number(match[1]), Number(match[2] ?? 0)]
+  }
+
+  const current = generation(option)
+  if (!current) return false
+  const newest = options.reduce<readonly [number, number] | undefined>(
+    (latest, candidate) => {
+      const next = generation(candidate)
+      if (!next) return latest
+      if (
+        !latest ||
+        next[0] > latest[0] ||
+        (next[0] === latest[0] && next[1] > latest[1])
+      )
+        return next
+      return latest
+    },
+    undefined
+  )
+  return Boolean(
+    newest &&
+    (current[0] < newest[0] ||
+      (current[0] === newest[0] && current[1] < newest[1]))
+  )
 }
 
 /** Returns the curated default model for a provider when a task changes providers. */
@@ -409,15 +461,18 @@ export function getSupportedAiReasoningEfforts(
 /** Returns reasoning levels supported by a selected provider and model. */
 export function getSupportedAiReasoningEffortsForProvider(
   provider: AiProviderId,
-  model: string
+  model: string,
+  runtimeOptions?: readonly AiProviderModelOption[]
 ): readonly AiReasoningEffort[] {
-  if (provider === "opencode" || provider === "antigravity") return ["default"]
+  if (provider === "opencode") return ["default"]
+  if (provider === "antigravity" && !runtimeOptions?.length)
+    return model === "antigravity/default" ? ["default"] : AI_REASONING_EFFORTS
   const normalizedModel =
     provider === "claude-code"
       ? model.replace(/^claude-(sonnet|opus|haiku)$/, "$1")
       : model
   return (
-    getAiModelPickerOptions(provider, normalizedModel).find(
+    getAiModelPickerOptions(provider, normalizedModel, runtimeOptions).find(
       (option) => option.id === normalizedModel
     )?.reasoningEfforts ?? AI_REASONING_EFFORTS
   )
@@ -660,4 +715,94 @@ export function validateAiTaskProviders(settings: AiModelSettings): void {
     throw new Error(
       "Antigravity supports interactive workspace chat only. Choose another provider for card generation."
     )
+}
+
+/**
+ * Relative cost rank assigned to known models (lower number is cheaper).
+ * Used when selecting the most cost-effective model for lightweight tasks such as chat title generation.
+ */
+export const AI_MODEL_COST_RANKS: Readonly<Record<string, number>> = {
+  // Codex / OpenAI models: Spark is the ultra-lightweight tier, Mini is next, then full models
+  "gpt-5.3-codex-spark": 1,
+  "gpt-5.4-mini": 2,
+  "gpt-5.5": 3,
+  "gpt-5.6-luna": 4,
+  "gpt-5.6-terra": 5,
+  "gpt-5.6-sol": 6,
+  "gpt-6-astra": 7,
+  // Claude Code models: Haiku is fastest and lowest cost, then Sonnet, then Opus
+  haiku: 1,
+  sonnet: 2,
+  opus: 3,
+  // OpenCode
+  "opencode/big-pickle": 1,
+  // Antigravity
+  "antigravity/default": 1,
+}
+
+/**
+ * Resolves the cheapest model and lowest reasoning effort for a given provider.
+ *
+ * Checks configured models, finds the one with the lowest cost tier, and selects
+ * "default" (no reasoning) if supported, or "low" if reasoning is required.
+ *
+ * @param providerId - The provider to pick the cheapest model for.
+ * @param options - Optional environment variable overrides for model and reasoning effort.
+ * @returns The provider, resolved cheapest model name, and lowest reasoning effort.
+ */
+export function resolveCheapestAiModelSelection(
+  providerId: AiProviderId,
+  options: {
+    modelEnvironmentFallback?: string
+    effortEnvironmentFallback?: string
+  } = {}
+): {
+  providerId: AiProviderId
+  model: string
+  effort: AiReasoningEffort
+} {
+  const modelFallback = options.modelEnvironmentFallback?.trim()
+  let model: string
+  if (modelFallback) {
+    model = modelFallback
+  } else if (providerId === "codex") {
+    // Pick the lowest ranked Codex model from known options
+    const sorted = [...CODEX_MODEL_OPTIONS].sort(
+      (a, b) =>
+        (AI_MODEL_COST_RANKS[a.id] ?? 99) - (AI_MODEL_COST_RANKS[b.id] ?? 99)
+    )
+    model = sorted[0]?.id ?? "gpt-5.3-codex-spark"
+  } else {
+    const optionsForProvider = AI_PROVIDER_MODEL_OPTIONS[providerId]
+    const sorted = [...optionsForProvider].sort(
+      (a, b) =>
+        (AI_MODEL_COST_RANKS[a.id] ?? 99) - (AI_MODEL_COST_RANKS[b.id] ?? 99)
+    )
+    model = sorted[0]?.id ?? getDefaultAiModelOption(providerId).id
+  }
+
+  const effortFallback = options.effortEnvironmentFallback?.trim()
+  let effort: AiReasoningEffort
+  if (effortFallback) {
+    effort = effortFallback as AiReasoningEffort
+  } else {
+    const supportedEfforts = getSupportedAiReasoningEffortsForProvider(
+      providerId,
+      model
+    )
+    // Lowest / no reasoning: prefer "default" (no reasoning), then "low", then first available
+    if (supportedEfforts.includes("default")) {
+      effort = "default"
+    } else if (supportedEfforts.includes("low")) {
+      effort = "low"
+    } else {
+      effort = supportedEfforts[0] ?? "default"
+    }
+  }
+
+  return {
+    providerId,
+    model,
+    effort,
+  }
 }

@@ -237,7 +237,7 @@ async function providerAuthentication(
 ): Promise<
   Pick<
     ProviderAvailability,
-    "authenticated" | "authMethods" | "accounts" | "canDisconnect"
+    "authenticated" | "authMethods" | "accounts" | "canDisconnect" | "models"
   >
 > {
   const command = providerCommand(providerId)

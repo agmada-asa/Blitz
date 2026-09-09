@@ -12,6 +12,7 @@ import type {
   ProviderApprovalHandler,
   ProviderCommand,
   ProviderEvent,
+  ProviderModelOption,
   ProviderTextTurnRequest,
   ProviderTextTurnResult,
 } from "./types.ts"
@@ -90,6 +91,60 @@ function stringField(
 ): string | undefined {
   const field = value?.[key]
   return typeof field === "string" && field.trim() ? field : undefined
+}
+
+/** Maps a provider model label or ID to Blitz's reasoning vocabulary when it is explicit. */
+function parseReasoningEffort(
+  id: string,
+  label: string
+): ProviderModelOption["reasoningEffort"] {
+  const match = `${label} ${id}`.match(
+    /(?:^|[\s(_-])(extra[\s_-]?high|xhigh|ultra|max(?:imum)?|high|medium|low)(?:[\s)_-]|$)/i
+  )
+  const value = match?.[1]?.toLowerCase().replace(/[\s_-]/g, "")
+  if (value === "extrahigh" || value === "xhigh") return "xhigh"
+  if (value === "maximum" || value === "max") return "max"
+  if (value === "ultra") return "ultra"
+  if (value === "high" || value === "medium" || value === "low") return value
+  return undefined
+}
+
+/** Extracts the authenticated provider's model selector from an ACP session response. */
+export function parseAcpModelOptions(
+  value: unknown
+): readonly ProviderModelOption[] {
+  const setup = record(value)
+  const configOptions = Array.isArray(setup?.configOptions)
+    ? setup.configOptions
+    : []
+  const config = configOptions
+    .map(record)
+    .find(
+      (option) =>
+        option?.type === "select" &&
+        (option.id === "model" || option.category === "model")
+    )
+  const rawOptions = Array.isArray(config?.options) ? config.options : []
+  const entries = rawOptions.flatMap((entry): Record<string, unknown>[] => {
+    const option = record(entry)
+    if (!option) return []
+    if (typeof option.value === "string") return [option]
+    return Array.isArray(option.options)
+      ? (option.options.map(record).filter(Boolean) as Record<
+          string,
+          unknown
+        >[])
+      : []
+  })
+  const seen = new Set<string>()
+  return entries.flatMap((entry): ProviderModelOption[] => {
+    const id = stringField(entry, "value")
+    if (!id || seen.has(id)) return []
+    seen.add(id)
+    const label = stringField(entry, "name") ?? id
+    const reasoningEffort = parseReasoningEffort(id, label)
+    return [{ id, label, ...(reasoningEffort ? { reasoningEffort } : {}) }]
+  })
 }
 
 /** Creates a bounded child process for one ACP session. */
@@ -238,7 +293,7 @@ class AcpJsonRpcClient {
   async startSession(
     workspaceDirectory: string,
     model?: string
-  ): Promise<string> {
+  ): Promise<{ sessionId: string; models: readonly ProviderModelOption[] }> {
     const result = record(
       await this.request("session/new", {
         cwd: workspaceDirectory,
@@ -249,7 +304,7 @@ class AcpJsonRpcClient {
     if (!sessionId)
       throw new AcpProviderError("protocol", "ACP did not return a session ID")
     await this.trySelectModel(sessionId, model)
-    return sessionId
+    return { sessionId, models: parseAcpModelOptions(result) }
   }
 
   /** Loads a provider-owned session when the ACP runtime supports resuming it. */
@@ -520,6 +575,26 @@ class AcpJsonRpcClient {
       })
       return
     }
+    if (
+      update?.sessionUpdate === "agent_thought_chunk" &&
+      (content?.type === "text" || content?.type === "thought") &&
+      typeof content.text === "string" &&
+      content.text.length > 0
+    ) {
+      this.outputBytes += Buffer.byteLength(content.text)
+      if (this.outputBytes > MAX_OUTPUT_BYTES)
+        throw new AcpProviderError(
+          "transport",
+          "ACP assistant output exceeded the configured limit"
+        )
+      this.emit({
+        type: "thought-delta",
+        threadId: sessionId,
+        turnId: "pending",
+        delta: content.text,
+      })
+      return
+    }
     this.emit({ type: "activity", method, params })
   }
 
@@ -562,6 +637,7 @@ export async function inspectAcpAuthentication(
   authenticated: boolean | null
   authMethods: readonly ProviderAuthMethod[]
   canDisconnect: boolean
+  models?: readonly ProviderModelOption[]
 }> {
   const child = options.spawnProcess
     ? options.spawnProcess(command, workspaceDirectory)
@@ -571,8 +647,8 @@ export async function inspectAcpAuthentication(
     const initialized = await client.initialize()
     if (!options.verifySession) return { authenticated: null, ...initialized }
     try {
-      await client.startSession(workspaceDirectory)
-      return { authenticated: true, ...initialized }
+      const session = await client.startSession(workspaceDirectory)
+      return { authenticated: true, models: session.models, ...initialized }
     } catch (error) {
       if (
         error instanceof Error &&
@@ -652,7 +728,11 @@ export async function runAcpTextTurn(
       "invalid-input",
       "This provider cannot enforce a workspace-only OS sandbox. Choose approval mode or full access."
     )
-  if (request.selection.effort && request.selection.effort !== "default")
+  if (
+    provider !== "antigravity" &&
+    request.selection.effort &&
+    request.selection.effort !== "default"
+  )
     throw new AcpProviderError(
       "invalid-input",
       "ACP reasoning selection is unsupported"
@@ -697,7 +777,9 @@ export async function runAcpTextTurn(
   const signal = request.signal
   let sessionId: string | undefined
   const turnId = randomUUID()
+  const startTime = Date.now()
   let text = ""
+  let thought = ""
   let settled = false
   let prompting = false
   const emit = (event: ProviderEvent): void => {
@@ -705,6 +787,11 @@ export async function runAcpTextTurn(
       if (!prompting || event.threadId !== sessionId) return
       const normalized = { ...event, turnId }
       text += normalized.delta
+      options.onEvent?.(normalized)
+    } else if (event.type === "thought-delta") {
+      if (!prompting || event.threadId !== sessionId) return
+      const normalized = { ...event, turnId }
+      thought += normalized.delta
       options.onEvent?.(normalized)
     } else options.onEvent?.(event)
   }
@@ -740,10 +827,12 @@ export async function runAcpTextTurn(
             request.session.providerSessionId,
             request.selection.model
           )
-        : await client.startSession(
-            request.workspaceDirectory,
-            request.selection.model
-          )
+        : (
+            await client.startSession(
+              request.workspaceDirectory,
+              request.selection.model
+            )
+          ).sessionId
       await client.selectMode(sessionId, modeId)
       const activeSessionId = sessionId
       options.onEvent?.({
@@ -767,6 +856,8 @@ export async function runAcpTextTurn(
         threadId: activeSessionId,
         turnId,
         text,
+        ...(thought.trim() ? { thought } : {}),
+        durationMs: Date.now() - startTime,
       }
     })()
     return await Promise.race([operation, interruption])

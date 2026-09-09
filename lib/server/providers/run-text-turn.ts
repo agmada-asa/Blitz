@@ -77,6 +77,8 @@ function productEvent(event: ProviderEvent): CardChatEvent | undefined {
       return event
     case "text-delta":
       return event
+    case "thought-delta":
+      return event
     case "activity":
       return {
         type: "activity",
@@ -230,6 +232,10 @@ export async function runProviderTextTurn(
       threadId: result.threadId,
       turnId: result.turnId,
       text: result.text,
+      ...(result.thought ? { thought: result.thought } : {}),
+      ...(result.durationMs !== undefined
+        ? { durationMs: result.durationMs }
+        : {}),
     }
   } catch (error) {
     void getProviderDefinition(request.providerId)

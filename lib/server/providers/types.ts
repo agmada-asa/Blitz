@@ -52,6 +52,8 @@ export interface ProviderAvailability {
   readonly accounts?: readonly string[]
   /** Whether Blitz can ask the provider to clear its current credentials. */
   readonly canDisconnect?: boolean
+  /** Models reported by the provider's authenticated runtime session. */
+  readonly models?: readonly ProviderModelOption[]
   /** Safe reason shown in setup or recovery UI. */
   readonly reason?:
     | "ready"
@@ -61,6 +63,16 @@ export interface ProviderAvailability {
     | "probe-failed"
   /** User-safe setup detail without command output or credentials. */
   readonly message: string
+}
+
+/** One provider-owned model choice, including reasoning encoded in its native ID. */
+export interface ProviderModelOption {
+  /** Opaque value sent back through the provider's session configuration. */
+  readonly id: string
+  /** Human-readable name supplied by the provider. */
+  readonly label: string
+  /** Reasoning level represented by this exact provider choice, when recognizable. */
+  readonly reasoningEffort?: AiReasoningEffort
 }
 
 /** One provider-owned authentication choice displayed without credential data. */
@@ -137,6 +149,12 @@ export type ProviderEvent =
       readonly delta: string
     }
   | {
+      readonly type: "thought-delta"
+      readonly threadId: string
+      readonly turnId: string
+      readonly delta: string
+    }
+  | {
       readonly type: "activity"
       readonly method: string
       readonly params?: unknown
@@ -160,6 +178,10 @@ export interface ProviderTextTurnResult {
   readonly turnId: string
   /** Complete assistant text. */
   readonly text: string
+  /** Cumulative thought, reasoning, or commentary trace for the turn. */
+  readonly thought?: string
+  /** Elapsed turn duration in milliseconds. */
+  readonly durationMs?: number
 }
 
 /** Input required to check a provider before showing it as available. */

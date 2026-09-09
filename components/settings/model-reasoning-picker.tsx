@@ -10,7 +10,7 @@
  * - An optional Access level trigger with lock icon that opens a dropdown for approval policies.
  */
 
-import { useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 
 import {
   ChevronDownIcon,
@@ -41,7 +41,9 @@ import {
   getAiModelPickerOptions,
   getAiProviderOptionsForTask,
   getSupportedAiReasoningEffortsForProvider,
+  isLegacyAiModelOption,
   type AiApprovalPolicy,
+  type AiProviderModelOption,
   type AiProviderId,
   type AiReasoningEffort,
   type AiTask,
@@ -63,10 +65,12 @@ export type ModelReasoningPickerProps = {
   accessPolicy?: AiApprovalPolicy
   /** Prevents opening or changing the picker while the owner is busy. */
   disabled?: boolean
-  /** Receives a complete model and reasoning pair after a model choice. */
-  onChange: (model: string, reasoning: AiReasoningEffort) => void
-  /** Receives an explicit provider change before the parent updates its model. */
-  onProviderChange?: (provider: AiProviderId) => void
+  /** Receives the provider, model, and reasoning choice as one update. */
+  onChange: (
+    model: string,
+    reasoning: AiReasoningEffort,
+    provider: AiProviderId
+  ) => void
   /** Receives an approval/access policy change when access level is shown. */
   onAccessPolicyChange?: (policy: AiApprovalPolicy) => void
   /** Whether to show the access policy selector (defaults to true when accessPolicy is provided). */
@@ -126,16 +130,6 @@ export function accessPolicyDescription(
   }
 }
 
-/** Returns whether a model is considered a legacy model generation. */
-function isLegacyModel(modelId: string): boolean {
-  return (
-    modelId.startsWith("gpt-5.5") ||
-    modelId.startsWith("gpt-5.4") ||
-    modelId.startsWith("gpt-5.3") ||
-    modelId.startsWith("gpt-4")
-  )
-}
-
 /**
  * Renders the t3 code-styled segmented control bar with model popover, reasoning dropdown, and access policy.
  *
@@ -150,7 +144,6 @@ export function ModelReasoningPicker({
   accessPolicy,
   disabled = false,
   onChange,
-  onProviderChange,
   onAccessPolicyChange,
   showAccessPolicy = Boolean(accessPolicy && onAccessPolicyChange),
   labelPrefix = "Model",
@@ -161,7 +154,7 @@ export function ModelReasoningPicker({
   const [modelPickerOpen, setModelPickerOpen] = useState(false)
   const [selectedRailTab, setSelectedRailTab] = useState<string>(provider)
   const [searchQuery, setSearchQuery] = useState("")
-  const [legacyExpanded, setLegacyExpanded] = useState(isLegacyModel(model))
+  const [legacyExpanded, setLegacyExpanded] = useState(false)
   const [availability, setAvailability] = useState<ProviderAvailability[]>([])
   const [availabilityError, setAvailabilityError] = useState(false)
   const [probe, setProbe] = useState(0)
@@ -175,7 +168,7 @@ export function ModelReasoningPicker({
       setSelectedRailTab(provider)
       setProbe((v) => v + 1)
       setSearchQuery("")
-      setLegacyExpanded(isLegacyModel(model))
+      setLegacyExpanded(false)
     }
   }
 
@@ -201,9 +194,27 @@ export function ModelReasoningPicker({
     ? getAiProviderOptionsForTask(task)
     : AI_PROVIDER_OPTIONS
 
+  /** Converts the latest provider probe into the shared picker option shape. */
+  const runtimeModelOptions = useCallback(
+    (
+      providerId: AiProviderId
+    ): readonly AiProviderModelOption[] | undefined => {
+      const models = availability.find(
+        (item) => item.providerId === providerId
+      )?.models
+      return models?.map((option) => ({
+        id: option.id,
+        label: option.label,
+        reasoningEfforts: [option.reasoningEffort ?? "default"],
+      }))
+    },
+    [availability]
+  )
+
   const modelOptions = useMemo(
-    () => getAiModelPickerOptions(provider, model),
-    [provider, model]
+    () =>
+      getAiModelPickerOptions(provider, model, runtimeModelOptions(provider)),
+    [provider, model, runtimeModelOptions]
   )
 
   const selectedModel = modelOptions.find((option) => option.id === model)
@@ -213,8 +224,13 @@ export function ModelReasoningPicker({
     provider
 
   const supportedReasoningEfforts = useMemo(
-    () => getSupportedAiReasoningEffortsForProvider(provider, model),
-    [provider, model]
+    () =>
+      getSupportedAiReasoningEffortsForProvider(
+        provider,
+        model,
+        runtimeModelOptions(provider)
+      ),
+    [provider, model, runtimeModelOptions]
   )
 
   const selectedReasoningLabel = reasoningLabel(reasoning)
@@ -223,25 +239,22 @@ export function ModelReasoningPicker({
     return AI_PROVIDER_APPROVAL_POLICIES[provider] ?? ["never"]
   }, [provider])
 
-  /** Handles selecting a model from the list, switching provider and updating reasoning if necessary. */
+  /** Commits a model, its provider, and a compatible reasoning level as one selection. */
   const handleSelectModel = (
     chosenProvider: AiProviderId,
     chosenModelId: string
   ): void => {
     if (disabled) return
-    if (chosenProvider !== provider && onProviderChange) {
-      onProviderChange(chosenProvider)
-    }
-
     const nextEfforts = getSupportedAiReasoningEffortsForProvider(
       chosenProvider,
-      chosenModelId
+      chosenModelId,
+      runtimeModelOptions(chosenProvider)
     )
     const nextReasoning = nextEfforts.includes(reasoning)
       ? reasoning
       : (nextEfforts[0] ?? "medium")
 
-    onChange(chosenModelId, nextReasoning)
+    onChange(chosenModelId, nextReasoning, chosenProvider)
     setModelPickerOpen(false)
   }
 
@@ -263,18 +276,24 @@ export function ModelReasoningPicker({
       for (const p of providerOptions) {
         // Only pass the active model to its owning provider so foreign providers do not inherit it as a saved model
         const activeModelForProvider = p.id === provider ? model : ""
-        const opts = getAiModelPickerOptions(p.id, activeModelForProvider)
+        const opts = getAiModelPickerOptions(
+          p.id,
+          activeModelForProvider,
+          runtimeModelOptions(p.id)
+        )
         for (const opt of opts) {
           if (
             favorites.includes(opt.id) &&
-            !all.some((existing) => existing.id === opt.id && existing.provider === p.id)
+            !all.some(
+              (existing) => existing.id === opt.id && existing.provider === p.id
+            )
           ) {
             all.push({
               id: opt.id,
               label: opt.label,
               provider: p.id,
               providerLabel: p.label,
-              isLegacy: isLegacyModel(opt.id),
+              isLegacy: isLegacyAiModelOption(p.id, opt, opts),
             })
           }
         }
@@ -291,13 +310,17 @@ export function ModelReasoningPicker({
     // Provider-specific view
     const pId = selectedRailTab as AiProviderId
     const pOpt = AI_PROVIDER_OPTIONS.find((o) => o.id === pId)
-    const opts = getAiModelPickerOptions(pId, pId === provider ? model : "")
+    const opts = getAiModelPickerOptions(
+      pId,
+      pId === provider ? model : "",
+      runtimeModelOptions(pId)
+    )
     const enriched = opts.map((opt) => ({
       id: opt.id,
       label: opt.label,
       provider: pId,
       providerLabel: pOpt?.label ?? pId,
-      isLegacy: isLegacyModel(opt.id),
+      isLegacy: isLegacyAiModelOption(pId, opt, opts),
     }))
 
     if (!query) return enriched
@@ -306,7 +329,15 @@ export function ModelReasoningPicker({
         m.label.toLowerCase().includes(query) ||
         m.id.toLowerCase().includes(query)
     )
-  }, [selectedRailTab, providerOptions, provider, model, favorites, searchQuery])
+  }, [
+    selectedRailTab,
+    providerOptions,
+    provider,
+    model,
+    favorites,
+    searchQuery,
+    runtimeModelOptions,
+  ])
 
   const modernModels = useMemo(
     () => displayedModels.filter((m) => !m.isLegacy),
@@ -318,6 +349,11 @@ export function ModelReasoningPicker({
     [displayedModels]
   )
 
+  const selectedModelIsLegacy = legacyModels.some(
+    (item) => item.id === model && item.provider === provider
+  )
+  const showLegacyModels = legacyExpanded || selectedModelIsLegacy
+
   const accessibleLabel = `${labelPrefix} ${selectedProviderLabel}, ${selectedModelLabel}, ${selectedReasoningLabel} reasoning${
     accessPolicy ? `, ${accessPolicyLabel(accessPolicy)} access` : ""
   }`
@@ -327,8 +363,8 @@ export function ModelReasoningPicker({
       aria-label={ariaLabel ?? accessibleLabel}
       aria-describedby={ariaDescribedBy}
       className={cn(
-        "inline-flex items-center rounded-lg border border-border/70 bg-card/80 dark:bg-zinc-900/85 text-xs text-foreground shadow-xs select-none backdrop-blur-xs",
-        disabled && "opacity-60 pointer-events-none",
+        "inline-flex items-center rounded-lg border border-border/70 bg-card/80 text-xs text-foreground shadow-xs backdrop-blur-xs select-none dark:bg-zinc-900/85",
+        disabled && "pointer-events-none opacity-60",
         className
       )}
     >
@@ -338,24 +374,24 @@ export function ModelReasoningPicker({
           <button
             type="button"
             disabled={disabled}
-            className="flex items-center gap-2 px-2.5 py-1.5 hover:bg-muted/70 transition-colors rounded-l-lg min-w-0"
+            className="flex min-w-0 items-center gap-2 rounded-l-lg px-2.5 py-1.5 transition-colors hover:bg-muted/70"
             title={`${selectedProviderLabel}: ${selectedModelLabel}`}
           >
             <ProviderIcon provider={provider} className="size-4 shrink-0" />
-            <span className="font-medium truncate max-w-[120px] sm:max-w-[150px]">
+            <span className="max-w-[120px] truncate font-medium sm:max-w-[150px]">
               {selectedModelLabel}
             </span>
-            <ChevronDownIcon className="size-3 text-muted-foreground shrink-0" />
+            <ChevronDownIcon className="size-3 shrink-0 text-muted-foreground" />
           </button>
         </PopoverTrigger>
         <PopoverContent
           align="start"
           sideOffset={6}
-          className="w-[360px] p-0 overflow-hidden border border-border/80 bg-popover text-popover-foreground shadow-2xl rounded-xl"
+          className="w-[360px] overflow-hidden rounded-xl border border-border/80 bg-popover p-0 text-popover-foreground shadow-2xl"
         >
           <div className="flex h-[380px]">
             {/* Left Rail */}
-            <div className="w-12 shrink-0 border-r border-border/50 bg-muted/20 py-2.5 flex flex-col items-center gap-1">
+            <div className="flex w-12 shrink-0 flex-col items-center gap-1 border-r border-border/50 bg-muted/20 py-2.5">
               {/* Favorites Tab */}
               <button
                 type="button"
@@ -363,19 +399,19 @@ export function ModelReasoningPicker({
                 title="Favorites"
                 aria-label="Favorites tab"
                 className={cn(
-                  "relative w-9 h-9 rounded-md flex items-center justify-center transition-colors",
+                  "relative flex h-9 w-9 items-center justify-center rounded-md transition-colors",
                   selectedRailTab === "favorites"
-                    ? "text-amber-400 bg-accent/50"
-                    : "text-muted-foreground hover:text-foreground hover:bg-muted/60"
+                    ? "bg-accent/50 text-amber-400"
+                    : "text-muted-foreground hover:bg-muted/60 hover:text-foreground"
                 )}
               >
                 <StarFilledIcon className="size-4" />
                 {selectedRailTab === "favorites" ? (
-                  <span className="absolute right-0 top-1/2 -translate-y-1/2 w-0.5 h-4.5 bg-blue-500 rounded-l-full" />
+                  <span className="absolute top-1/2 right-0 h-4.5 w-0.5 -translate-y-1/2 rounded-l-full bg-blue-500" />
                 ) : null}
               </button>
 
-              <div className="w-6 h-px bg-border/40 my-1" />
+              <div className="my-1 h-px w-6 bg-border/40" />
 
               {/* Provider Tabs */}
               {providerOptions.map((opt) => {
@@ -393,24 +429,21 @@ export function ModelReasoningPicker({
                     type="button"
                     onClick={() => {
                       setSelectedRailTab(opt.id)
-                      if (onProviderChange && opt.id !== provider) {
-                        onProviderChange(opt.id)
-                      }
                     }}
                     title={opt.label}
                     aria-label={`${opt.label} models`}
                     disabled={!isAvailable}
                     className={cn(
-                      "relative w-9 h-9 rounded-md flex items-center justify-center transition-colors",
-                      !isAvailable && "opacity-40 cursor-not-allowed",
+                      "relative flex h-9 w-9 items-center justify-center rounded-md transition-colors",
+                      !isAvailable && "cursor-not-allowed opacity-40",
                       isSelected
-                        ? "text-foreground bg-accent/50"
-                        : "text-muted-foreground hover:text-foreground hover:bg-muted/60"
+                        ? "bg-accent/50 text-foreground"
+                        : "text-muted-foreground hover:bg-muted/60 hover:text-foreground"
                     )}
                   >
                     <ProviderIcon provider={opt.id} className="size-4" />
                     {isSelected ? (
-                      <span className="absolute right-0 top-1/2 -translate-y-1/2 w-0.5 h-4.5 bg-blue-500 rounded-l-full" />
+                      <span className="absolute top-1/2 right-0 h-4.5 w-0.5 -translate-y-1/2 rounded-l-full bg-blue-500" />
                     ) : null}
                   </button>
                 )
@@ -418,10 +451,10 @@ export function ModelReasoningPicker({
             </div>
 
             {/* Right Main Content */}
-            <div className="flex-1 flex flex-col min-w-0">
+            <div className="flex min-w-0 flex-1 flex-col">
               {/* Search Bar */}
-              <div className="flex items-center gap-2 px-3 py-2.5 border-b border-border/50">
-                <SearchIcon className="size-3.5 text-muted-foreground shrink-0" />
+              <div className="flex items-center gap-2 border-b border-border/50 px-3 py-2.5">
+                <SearchIcon className="size-3.5 shrink-0 text-muted-foreground" />
                 <input
                   type="text"
                   placeholder="Search models..."
@@ -434,7 +467,7 @@ export function ModelReasoningPicker({
                   <button
                     type="button"
                     onClick={() => setSearchQuery("")}
-                    className="text-muted-foreground hover:text-foreground text-xs p-0.5"
+                    className="p-0.5 text-xs text-muted-foreground hover:text-foreground"
                     title="Clear search"
                   >
                     ✕
@@ -443,22 +476,22 @@ export function ModelReasoningPicker({
               </div>
 
               {/* Models List */}
-              <div className="flex-1 overflow-y-auto p-1.5 space-y-1">
+              <div className="flex-1 space-y-1 overflow-y-auto p-1.5">
                 {displayedModels.length === 0 ? (
-                  <div className="py-12 px-4 text-center">
+                  <div className="px-4 py-12 text-center">
                     {selectedRailTab === "favorites" ? (
                       <>
-                        <StarOutlineIcon className="size-7 text-muted-foreground/40 mx-auto mb-2" />
+                        <StarOutlineIcon className="mx-auto mb-2 size-7 text-muted-foreground/40" />
                         <p className="text-xs font-medium text-foreground">
                           No favorite models
                         </p>
-                        <p className="text-[11px] text-muted-foreground mt-1">
+                        <p className="mt-1 text-[11px] text-muted-foreground">
                           Star any model to quickly access it from this tab.
                         </p>
                       </>
                     ) : (
                       <>
-                        <SearchIcon className="size-7 text-muted-foreground/40 mx-auto mb-2" />
+                        <SearchIcon className="mx-auto mb-2 size-7 text-muted-foreground/40" />
                         <p className="text-xs font-medium text-foreground">
                           No models match &ldquo;{searchQuery}&rdquo;
                         </p>
@@ -485,15 +518,15 @@ export function ModelReasoningPicker({
                             }
                           }}
                           className={cn(
-                            "group flex items-center justify-between px-2.5 py-1.5 rounded-lg cursor-pointer transition-colors text-xs select-none",
+                            "group flex cursor-pointer items-center justify-between rounded-lg px-2.5 py-1.5 text-xs transition-colors select-none",
                             isSelected
-                              ? "bg-accent/80 text-accent-foreground font-medium"
-                              : "hover:bg-muted/70 text-foreground"
+                              ? "bg-accent/80 font-medium text-accent-foreground"
+                              : "text-foreground hover:bg-muted/70"
                           )}
                         >
                           <div className="min-w-0 flex-1 pr-2">
                             <p className="truncate font-medium">{item.label}</p>
-                            <div className="flex items-center gap-1.5 mt-0.5 text-[11px] text-muted-foreground">
+                            <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-muted-foreground">
                               <ProviderIcon
                                 provider={item.provider}
                                 className="size-3 shrink-0"
@@ -509,7 +542,7 @@ export function ModelReasoningPicker({
                               e.stopPropagation()
                               toggleFavorite(item.id)
                             }}
-                            className="p-1 rounded hover:bg-background/80 text-muted-foreground hover:text-foreground transition-colors shrink-0"
+                            className="shrink-0 rounded p-1 text-muted-foreground transition-colors hover:bg-background/80 hover:text-foreground"
                             title={
                               isFavorite(item.id)
                                 ? "Remove from favorites"
@@ -522,7 +555,7 @@ export function ModelReasoningPicker({
                             }
                           >
                             {isFavorite(item.id) ? (
-                              <StarFilledIcon className="size-3.5 text-amber-400 fill-amber-400" />
+                              <StarFilledIcon className="size-3.5 fill-amber-400 text-amber-400" />
                             ) : (
                               <StarOutlineIcon className="size-3.5 opacity-60 group-hover:opacity-100" />
                             )}
@@ -552,17 +585,17 @@ export function ModelReasoningPicker({
                                   }
                                 }}
                                 className={cn(
-                                  "group flex items-center justify-between px-2.5 py-1.5 rounded-lg cursor-pointer transition-colors text-xs select-none",
+                                  "group flex cursor-pointer items-center justify-between rounded-lg px-2.5 py-1.5 text-xs transition-colors select-none",
                                   isSelected
-                                    ? "bg-accent/80 text-accent-foreground font-medium"
-                                    : "hover:bg-muted/70 text-foreground"
+                                    ? "bg-accent/80 font-medium text-accent-foreground"
+                                    : "text-foreground hover:bg-muted/70"
                                 )}
                               >
                                 <div className="min-w-0 flex-1 pr-2">
                                   <p className="truncate font-medium">
                                     {item.label}
                                   </p>
-                                  <div className="flex items-center gap-1.5 mt-0.5 text-[11px] text-muted-foreground">
+                                  <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-muted-foreground">
                                     <ProviderIcon
                                       provider={item.provider}
                                       className="size-3 shrink-0"
@@ -578,7 +611,7 @@ export function ModelReasoningPicker({
                                     e.stopPropagation()
                                     toggleFavorite(item.id)
                                   }}
-                                  className="p-1 rounded hover:bg-background/80 text-muted-foreground hover:text-foreground transition-colors shrink-0"
+                                  className="shrink-0 rounded p-1 text-muted-foreground transition-colors hover:bg-background/80 hover:text-foreground"
                                   title={
                                     isFavorite(item.id)
                                       ? "Remove from favorites"
@@ -591,7 +624,7 @@ export function ModelReasoningPicker({
                                   }
                                 >
                                   {isFavorite(item.id) ? (
-                                    <StarFilledIcon className="size-3.5 text-amber-400 fill-amber-400" />
+                                    <StarFilledIcon className="size-3.5 fill-amber-400 text-amber-400" />
                                   ) : (
                                     <StarOutlineIcon className="size-3.5 opacity-60 group-hover:opacity-100" />
                                   )}
@@ -604,7 +637,7 @@ export function ModelReasoningPicker({
                             <button
                               type="button"
                               onClick={() => setLegacyExpanded((v) => !v)}
-                              className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg hover:bg-muted/50 transition-colors text-xs text-left"
+                              className="flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-left text-xs transition-colors hover:bg-muted/50"
                             >
                               <div>
                                 <p className="font-medium text-foreground">
@@ -617,12 +650,12 @@ export function ModelReasoningPicker({
                               <ChevronRightIcon
                                 className={cn(
                                   "size-3.5 text-muted-foreground transition-transform",
-                                  legacyExpanded && "rotate-90"
+                                  showLegacyModels && "rotate-90"
                                 )}
                               />
                             </button>
-                            {legacyExpanded ? (
-                              <div className="space-y-0.5 pl-1.5 border-l border-border/40 ml-2 mt-1">
+                            {showLegacyModels ? (
+                              <div className="mt-1 ml-2 space-y-0.5 border-l border-border/40 pl-1.5">
                                 {legacyModels.map((item) => {
                                   const isSelected =
                                     item.id === model &&
@@ -650,17 +683,17 @@ export function ModelReasoningPicker({
                                         }
                                       }}
                                       className={cn(
-                                        "group flex items-center justify-between px-2.5 py-1.5 rounded-lg cursor-pointer transition-colors text-xs select-none",
+                                        "group flex cursor-pointer items-center justify-between rounded-lg px-2.5 py-1.5 text-xs transition-colors select-none",
                                         isSelected
-                                          ? "bg-accent/80 text-accent-foreground font-medium"
-                                          : "hover:bg-muted/70 text-foreground"
+                                          ? "bg-accent/80 font-medium text-accent-foreground"
+                                          : "text-foreground hover:bg-muted/70"
                                       )}
                                     >
                                       <div className="min-w-0 flex-1 pr-2">
                                         <p className="truncate font-medium">
                                           {item.label}
                                         </p>
-                                        <div className="flex items-center gap-1.5 mt-0.5 text-[11px] text-muted-foreground">
+                                        <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-muted-foreground">
                                           <ProviderIcon
                                             provider={item.provider}
                                             className="size-3 shrink-0"
@@ -676,7 +709,7 @@ export function ModelReasoningPicker({
                                           e.stopPropagation()
                                           toggleFavorite(item.id)
                                         }}
-                                        className="p-1 rounded hover:bg-background/80 text-muted-foreground hover:text-foreground transition-colors shrink-0"
+                                        className="shrink-0 rounded p-1 text-muted-foreground transition-colors hover:bg-background/80 hover:text-foreground"
                                         title={
                                           isFavorite(item.id)
                                             ? "Remove from favorites"
@@ -689,7 +722,7 @@ export function ModelReasoningPicker({
                                         }
                                       >
                                         {isFavorite(item.id) ? (
-                                          <StarFilledIcon className="size-3.5 text-amber-400 fill-amber-400" />
+                                          <StarFilledIcon className="size-3.5 fill-amber-400 text-amber-400" />
                                         ) : (
                                           <StarOutlineIcon className="size-3.5 opacity-60 group-hover:opacity-100" />
                                         )}
@@ -712,7 +745,7 @@ export function ModelReasoningPicker({
       </Popover>
 
       {/* Segment Divider */}
-      <div className="h-4 w-px bg-border/60 shrink-0" />
+      <div className="h-4 w-px shrink-0 bg-border/60" />
 
       {/* 2. Reasoning Effort Trigger & Dropdown */}
       <DropdownMenu>
@@ -720,14 +753,14 @@ export function ModelReasoningPicker({
           <button
             type="button"
             disabled={disabled || supportedReasoningEfforts.length <= 1}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 hover:bg-muted/70 transition-colors text-muted-foreground hover:text-foreground shrink-0"
+            className="flex shrink-0 items-center gap-1.5 px-2.5 py-1.5 text-muted-foreground transition-colors hover:bg-muted/70 hover:text-foreground"
             title={`Reasoning: ${selectedReasoningLabel}`}
           >
             <span className="truncate font-normal">
               {selectedReasoningLabel}
             </span>
             {supportedReasoningEfforts.length > 1 ? (
-              <ChevronDownIcon className="size-3 text-muted-foreground shrink-0" />
+              <ChevronDownIcon className="size-3 shrink-0 text-muted-foreground" />
             ) : null}
           </button>
         </DropdownMenuTrigger>
@@ -736,7 +769,7 @@ export function ModelReasoningPicker({
           {supportedReasoningEfforts.map((effort) => (
             <DropdownMenuItem
               key={effort}
-              onSelect={() => onChange(model, effort)}
+              onSelect={() => onChange(model, effort, provider)}
               className="justify-between text-xs"
             >
               <span>{reasoningLabel(effort)}</span>
@@ -751,21 +784,21 @@ export function ModelReasoningPicker({
       {/* 3. Access Level Trigger & Dropdown (When shown) */}
       {showAccessPolicy && accessPolicy && onAccessPolicyChange ? (
         <>
-          <div className="h-4 w-px bg-border/60 shrink-0" />
+          <div className="h-4 w-px shrink-0 bg-border/60" />
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <button
                 type="button"
                 disabled={disabled || supportedAccessPolicies.length <= 1}
-                className="flex items-center gap-1.5 px-2.5 py-1.5 hover:bg-muted/70 transition-colors text-muted-foreground hover:text-foreground rounded-r-lg shrink-0"
+                className="flex shrink-0 items-center gap-1.5 rounded-r-lg px-2.5 py-1.5 text-muted-foreground transition-colors hover:bg-muted/70 hover:text-foreground"
                 title={`Access level: ${accessPolicyLabel(accessPolicy)}`}
               >
-                <LockIcon className="size-3.5 text-muted-foreground shrink-0" />
+                <LockIcon className="size-3.5 shrink-0 text-muted-foreground" />
                 <span className="truncate font-normal">
                   {accessPolicyLabel(accessPolicy)}
                 </span>
                 {supportedAccessPolicies.length > 1 ? (
-                  <ChevronDownIcon className="size-3 text-muted-foreground shrink-0" />
+                  <ChevronDownIcon className="size-3 shrink-0 text-muted-foreground" />
                 ) : null}
               </button>
             </DropdownMenuTrigger>
@@ -775,18 +808,18 @@ export function ModelReasoningPicker({
                 <DropdownMenuItem
                   key={policy}
                   onSelect={() => onAccessPolicyChange(policy)}
-                  className="justify-between text-xs py-1.5"
+                  className="justify-between py-1.5 text-xs"
                 >
                   <div className="min-w-0 pr-2">
                     <p className="font-medium">{accessPolicyLabel(policy)}</p>
-                    <p className="text-[11px] text-muted-foreground mt-0.5 leading-snug">
+                    <p className="mt-0.5 text-[11px] leading-snug text-muted-foreground">
                       {accessPolicyDescription(policy, provider)}
                     </p>
                   </div>
                   {policy === accessPolicy ? (
                     <CheckIcon
                       aria-hidden="true"
-                      className="size-3.5 text-brand shrink-0"
+                      className="size-3.5 shrink-0 text-brand"
                     />
                   ) : null}
                 </DropdownMenuItem>

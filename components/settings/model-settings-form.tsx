@@ -31,7 +31,6 @@ import {
   resolveProviderApprovalPolicy,
   type AiApprovalPolicy,
   DEFAULT_AI_MODEL_SETTINGS,
-  getDefaultAiModelOption,
   resolveAiProvider,
   validateAiModelSettings,
   validateAiTaskProviders,
@@ -114,36 +113,20 @@ function ModelSettingsEditor({
     setFeedback(null)
   }
 
-  /** Updates one task's local model and reasoning pair without saving yet. */
+  /** Updates one task's provider, model, and reasoning choice without saving yet. */
   const updateSelection = (
     providerField: AiProviderField,
     modelField: AiModelField,
     effortField: AiReasoningField,
     model: string,
-    reasoning: AiReasoningEffort
-  ): void => {
-    setDraft((current) => ({
-      ...current,
-      [providerField]: resolveAiProvider(current, providerField),
-      [modelField]: model,
-      [effortField]: reasoning,
-    }))
-    markDirty()
-  }
-
-  /** Switches provider and selects its first safe model and reasoning level. */
-  const updateProvider = (
-    providerField: AiProviderField,
-    modelField: AiModelField,
-    effortField: AiReasoningField,
+    reasoning: AiReasoningEffort,
     provider: AiProviderId
   ): void => {
-    const option = getDefaultAiModelOption(provider)
     setDraft((current) => ({
       ...current,
       [providerField]: provider,
-      [modelField]: option.id,
-      [effortField]: option.reasoningEfforts[0] ?? "medium",
+      [modelField]: model,
+      [effortField]: reasoning,
     }))
     markDirty()
   }
@@ -278,21 +261,14 @@ function ModelSettingsEditor({
                         labelPrefix={label}
                         aria-describedby={descriptionId}
                         className="h-9 w-fit"
-                        onProviderChange={(provider) =>
-                          updateProvider(
-                            providerField,
-                            modelField,
-                            effortField,
-                            provider
-                          )
-                        }
-                        onChange={(model, reasoning) =>
+                        onChange={(model, reasoning, provider) =>
                           updateSelection(
                             providerField,
                             modelField,
                             effortField,
                             model,
-                            reasoning
+                            reasoning,
+                            provider
                           )
                         }
                       />

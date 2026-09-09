@@ -95,6 +95,38 @@ function textFromEvent(value: unknown): string | undefined {
   return undefined
 }
 
+/** Extracts one thought fragment from the known Claude stream-json event shapes. */
+function thoughtFromEvent(value: unknown): string | undefined {
+  const event = record(value)
+  if (!event) return undefined
+  const nested = record(event.event)
+  const delta = record(nested?.delta)
+  if (
+    nested?.type === "content_block_delta" &&
+    typeof delta?.thinking === "string"
+  )
+    return delta.thinking
+  if (
+    event.type === "content_block_delta" &&
+    typeof event.thinking === "string"
+  )
+    return event.thinking
+  const message = record(event.message)
+  if (Array.isArray(message?.content)) {
+    return (
+      message.content
+        .map((block) => {
+          const item = record(block)
+          return item?.type === "thinking" && typeof item.thinking === "string"
+            ? item.thinking
+            : ""
+        })
+        .join("") || undefined
+    )
+  }
+  return undefined
+}
+
 /** Extracts a provider session identifier from one Claude event. */
 function sessionIdFromEvent(value: unknown): string | undefined {
   const event = record(value)
@@ -268,8 +300,10 @@ export async function runClaudeCodeTextTurn(
     ? options.spawnProcess(options.command, request)
     : spawnClaude(options.command, request)
   const decoder = new StringDecoder("utf8")
+  const startedAt = Date.now()
   let inputBuffer = ""
   let text = ""
+  let thought = ""
   let outputBytes = 0
   let sessionId = request.session?.providerSessionId ?? randomUUID()
   let exitCode: number | null = null
@@ -399,6 +433,17 @@ export async function runClaudeCodeTextTurn(
         )
     }
     sessionId = sessionIdFromEvent(event) ?? sessionId
+    const thoughtFragment = thoughtFromEvent(event)
+    if (thoughtFragment) {
+      emitStarted()
+      thought += thoughtFragment
+      options.onEvent?.({
+        type: "thought-delta",
+        threadId: sessionId,
+        turnId,
+        delta: thoughtFragment,
+      })
+    }
     const fragment = textFromEvent(event)
     if (!fragment) return
     const eventRecord = record(event)
@@ -529,12 +574,15 @@ export async function runClaudeCodeTextTurn(
         "transport",
         "Claude Code completed without assistant text"
       )
+    const durationMs = Math.max(0, Date.now() - startedAt)
     return {
       providerId: request.selection.providerId,
       providerInstanceId: options.providerInstanceId,
       threadId: sessionId,
       turnId,
       text,
+      thought: thought.trim() ? thought : undefined,
+      durationMs,
     }
   } catch (error) {
     if (request.signal?.aborted)
