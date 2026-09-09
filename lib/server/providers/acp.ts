@@ -5,7 +5,10 @@ import { spawn } from "node:child_process"
 import { isAbsolute } from "node:path"
 import { StringDecoder } from "node:string_decoder"
 
+import { openCodeEnvironment } from "./opencode-policy.ts"
+
 import type {
+  ProviderApprovalHandler,
   ProviderCommand,
   ProviderEvent,
   ProviderTextTurnRequest,
@@ -91,10 +94,12 @@ function stringField(
 /** Creates a bounded child process for one ACP session. */
 function spawnAcpProcess(
   command: ProviderCommand,
-  workspaceDirectory: string
+  workspaceDirectory: string,
+  env?: NodeJS.ProcessEnv
 ): AcpChildProcess {
   return spawn(command.executable, command.args, {
     cwd: workspaceDirectory,
+    env,
     stdio: ["pipe", "pipe", "pipe"],
   }) as unknown as AcpChildProcess
 }
@@ -115,13 +120,20 @@ class AcpJsonRpcClient {
   private resumeSupported = false
   private streamBytes = 0
   private outputBytes = 0
+  private activeSessionId?: string
+  private readonly approvalHandler?: ProviderApprovalHandler
 
   /** Attaches readers and lifecycle handlers to a new ACP process. */
   constructor(
     child: AcpChildProcess,
-    options: { requestTimeoutMs?: number; maxLineBytes?: number } = {}
+    options: {
+      requestTimeoutMs?: number
+      maxLineBytes?: number
+      approvalHandler?: ProviderApprovalHandler
+    } = {}
   ) {
     this.child = child
+    this.approvalHandler = options.approvalHandler
     this.requestTimeoutMs =
       options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS
     this.maxLineBytes = options.maxLineBytes ?? DEFAULT_LINE_BYTES
@@ -226,6 +238,12 @@ class AcpJsonRpcClient {
     return loadedId
   }
 
+  /** Reasserts the native mode before every prompt, including resumed sessions. */
+  async selectMode(sessionId: string, modeId: string): Promise<void> {
+    await this.request("session/set_mode", { sessionId, modeId })
+    this.activeSessionId = sessionId
+  }
+
   /** Sends one prompt and waits for the ACP request response. */
   async prompt(sessionId: string, prompt: string): Promise<void> {
     await this.request("session/prompt", {
@@ -261,7 +279,12 @@ class AcpJsonRpcClient {
     sessionId: string,
     model: string | undefined
   ): Promise<void> {
-    if (!model?.trim() || model === "default") return
+    if (
+      !model?.trim() ||
+      model === "default" ||
+      model === "antigravity/default"
+    )
+      return
     await this.request("session/set_config_option", {
       sessionId,
       configId: "model",
@@ -350,7 +373,8 @@ class AcpJsonRpcClient {
     const id = message.id
     if (
       (typeof id === "number" || typeof id === "string") &&
-      this.pending.has(id)
+      this.pending.has(id) &&
+      !message.method
     ) {
       const pending = this.pending.get(id)!
       this.pending.delete(id)
@@ -374,6 +398,12 @@ class AcpJsonRpcClient {
       (typeof id === "number" || typeof id === "string") &&
       method !== "session/update"
     ) {
+      if (method === "session/request_permission") {
+        void this.respondPermission(id, params).catch((error: unknown) =>
+          this.closeWithError("ACP approval failed", error)
+        )
+        return
+      }
       this.write({
         jsonrpc: "2.0",
         id,
@@ -383,6 +413,42 @@ class AcpJsonRpcClient {
       return
     }
     this.emitAcpNotification(method, params)
+  }
+
+  /** Returns only allow-once or cancellation, never a persistent provider grant. */
+  private async respondPermission(
+    id: JsonRpcId,
+    params: unknown
+  ): Promise<void> {
+    const input = record(params)
+    const choices = Array.isArray(input?.options)
+      ? input.options.map(record)
+      : []
+    const once = choices.find(
+      (choice) =>
+        choice?.kind === "allow_once" && typeof choice.optionId === "string"
+    )
+    const valid =
+      input?.sessionId === this.activeSessionId &&
+      record(input?.toolCall) &&
+      Buffer.byteLength(JSON.stringify(params)) <= 20_000
+    const approved =
+      valid && once && this.approvalHandler
+        ? await this.approvalHandler({
+            method: "session/request_permission",
+            params,
+          }).catch(() => false)
+        : false
+    if (this.closed) return
+    this.write({
+      jsonrpc: "2.0",
+      id,
+      result: {
+        outcome: approved
+          ? { outcome: "selected", optionId: once!.optionId }
+          : { outcome: "cancelled" },
+      },
+    })
   }
 
   /** Converts ACP notifications into the provider event vocabulary. */
@@ -449,17 +515,26 @@ export async function runAcpTextTurn(
       workspaceDirectory: string
     ) => AcpChildProcess
     onEvent?: (event: ProviderEvent) => void
+    approvalHandler?: ProviderApprovalHandler
   }
 ): Promise<ProviderTextTurnResult> {
-  // ACP client fs/terminal capabilities do not constrain the agent's own tools.
+  const provider = request.selection.providerId
+  // Antigravity's native default mode allows workspace reads. It has no tool-off
+  // session mode, so it cannot run isolated background source processing.
   if (
-    request.sandbox ||
-    request.approvalPolicy ||
-    request.webSearchMode === "disabled"
+    provider === "antigravity" &&
+    (request.ephemeral ||
+      request.sandbox === "read-only" ||
+      request.webSearchMode === "disabled")
   )
     throw new AcpProviderError(
       "invalid-input",
-      "ACP cannot enforce Blitz's sandbox policy"
+      "Antigravity has no tool-free ACP mode for background generation. Use it for interactive chat."
+    )
+  if (request.sandbox === "workspace-write")
+    throw new AcpProviderError(
+      "invalid-input",
+      "This provider cannot enforce a workspace-only OS sandbox. Choose approval mode or full access."
     )
   if (request.selection.effort && request.selection.effort !== "default")
     throw new AcpProviderError(
@@ -477,10 +552,32 @@ export async function runAcpTextTurn(
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0)
     throw new AcpProviderError("invalid-input", "Provider timeout is invalid")
   request.signal?.throwIfAborted()
+  const modeId =
+    provider === "opencode"
+      ? `blitz-${randomUUID()}`
+      : request.approvalPolicy === "full-access"
+        ? "yolo"
+        : "default"
   const child = options.spawnProcess
     ? options.spawnProcess(options.command, request.workspaceDirectory)
-    : spawnAcpProcess(options.command, request.workspaceDirectory)
-  const client = new AcpJsonRpcClient(child)
+    : spawnAcpProcess(
+        options.command,
+        request.workspaceDirectory,
+        provider === "opencode"
+          ? openCodeEnvironment(request, modeId)
+          : undefined
+      )
+  const client = new AcpJsonRpcClient(child, {
+    requestTimeoutMs: timeoutMs,
+    approvalHandler:
+      !request.ephemeral &&
+      request.sandbox !== "read-only" &&
+      request.webSearchMode !== "disabled" &&
+      (request.approvalPolicy === "on-request" ||
+        request.approvalPolicy === "untrusted")
+        ? options.approvalHandler
+        : undefined,
+  })
   const signal = request.signal
   let sessionId: string | undefined
   const turnId = randomUUID()
@@ -531,6 +628,7 @@ export async function runAcpTextTurn(
             request.workspaceDirectory,
             request.selection.model
           )
+      await client.selectMode(sessionId, modeId)
       const activeSessionId = sessionId
       options.onEvent?.({
         type: "turn-started",

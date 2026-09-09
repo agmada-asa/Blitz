@@ -96,7 +96,7 @@ export interface ProviderTextTurnRequest {
   /** Safe sandbox policy for interactive providers. */
   readonly sandbox?: "read-only" | "workspace-write" | "danger-full-access"
   /** Whether the provider may ask the user for an approval. */
-  readonly approvalPolicy?: "untrusted" | "on-request" | "never"
+  readonly approvalPolicy?: "untrusted" | "on-request" | "never" | "full-access"
   /** Cancellation signal owned by the route or worker. */
   readonly signal?: AbortSignal
   /** Wall-clock deadline for the complete provider turn. */
@@ -167,3 +167,11 @@ export interface ProviderAdapterDefinition {
     options: ProviderHealthOptions
   ) => Promise<ProviderAvailability>
 }
+
+/** Reviews one bounded provider operation; true grants only this invocation. */
+export type ProviderApprovalHandler = (request: {
+  readonly method: string
+  readonly params: unknown
+  /** Cancels this review independently of the surrounding turn. */
+  readonly signal?: AbortSignal
+}) => Promise<boolean>

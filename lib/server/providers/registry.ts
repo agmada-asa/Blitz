@@ -35,9 +35,9 @@ const CAPABILITIES: Readonly<Record<AiProviderId, ProviderCapabilities>> = {
     streaming: true,
     resumableSessions: true,
     structuredOutput: true,
-    approvals: false,
+    approvals: true,
     webSearch: false,
-    workspaceWrites: false,
+    workspaceWrites: true,
     sessionModelSwitch: false,
     promptlessTurnContinuation: false,
     conversationRollback: false,
@@ -46,9 +46,9 @@ const CAPABILITIES: Readonly<Record<AiProviderId, ProviderCapabilities>> = {
     streaming: true,
     resumableSessions: true,
     structuredOutput: true,
-    approvals: false,
+    approvals: true,
     webSearch: false,
-    workspaceWrites: false,
+    workspaceWrites: true,
     sessionModelSwitch: false,
     promptlessTurnContinuation: false,
     conversationRollback: false,
@@ -57,9 +57,9 @@ const CAPABILITIES: Readonly<Record<AiProviderId, ProviderCapabilities>> = {
     streaming: true,
     resumableSessions: true,
     structuredOutput: true,
-    approvals: false,
+    approvals: true,
     webSearch: false,
-    workspaceWrites: false,
+    workspaceWrites: true,
     sessionModelSwitch: false,
     promptlessTurnContinuation: false,
     conversationRollback: false,
@@ -82,13 +82,13 @@ export function providerCommand(providerId: AiProviderId): ProviderCommand {
     case "opencode":
       return {
         executable: process.env.BLITZ_OPENCODE_COMMAND?.trim() || "opencode",
-        args: ["acp"],
+        args: ["acp", "--pure"],
       }
     case "antigravity":
       return {
         executable:
           process.env.BLITZ_ANTIGRAVITY_ACP_COMMAND?.trim() ||
-          "antigravity-acp",
+          "agy_acp_server.par",
         args: [],
       }
   }
@@ -105,7 +105,7 @@ export function providerInstanceId(providerId: AiProviderId): string {
 /** Probes whether an executable starts successfully without logging its output. */
 async function probeCommand(
   command: ProviderCommand,
-  requireRestrictedClaude = false
+  providerId?: AiProviderId
 ): Promise<
   | { available: true }
   | {
@@ -159,7 +159,7 @@ async function probeCommand(
       }
       const version = versionOutput.match(/\b(\d+)\.(\d+)\.(\d+)\b/)
       if (
-        requireRestrictedClaude &&
+        providerId === "claude-code" &&
         (!version ||
           !(
             Number(version[1]) > 2 ||
@@ -167,6 +167,16 @@ async function probeCommand(
               (Number(version[2]) > 1 ||
                 (Number(version[2]) === 1 && Number(version[3]) >= 248)))
           ))
+      ) {
+        finish({ available: false, reason: "unsupported" })
+        return
+      }
+      if (
+        providerId === "opencode" &&
+        (!version ||
+          Number(version[1]) !== 1 ||
+          Number(version[2]) < 18 ||
+          (Number(version[2]) === 18 && Number(version[3]) < 21))
       ) {
         finish({ available: false, reason: "unsupported" })
         return
@@ -181,23 +191,9 @@ export async function checkProviderAvailability(
   providerId: AiProviderId,
   options: ProviderHealthOptions
 ): Promise<ProviderAvailability> {
-  if (providerId === "opencode" || providerId === "antigravity") {
-    return {
-      providerId,
-      providerInstanceId:
-        options.providerInstanceId ?? providerInstanceId(providerId),
-      available: false,
-      reason: "unsupported",
-      message:
-        "Unavailable for source-based tasks. Choose Codex or Claude Code.",
-    }
-  }
   const instanceId =
     options.providerInstanceId ?? providerInstanceId(providerId)
-  const result = await probeCommand(
-    providerCommand(providerId),
-    providerId === "claude-code"
-  )
+  const result = await probeCommand(providerCommand(providerId), providerId)
   return result.available
     ? {
         providerId,
@@ -213,9 +209,13 @@ export async function checkProviderAvailability(
         reason: result.reason,
         message:
           result.reason === "unsupported"
-            ? "Update Claude Code to version 2.1.248 or newer for restricted turns."
+            ? providerId === "opencode"
+              ? "Install OpenCode 1.18.21 or newer within v1 for native permissions."
+              : "Update Claude Code to version 2.1.248 or newer for restricted turns."
             : result.reason === "missing-executable"
-              ? "Install this provider and sign in locally before selecting it."
+              ? providerId === "antigravity"
+                ? "Install Google Antigravity from the ACP registry, set BLITZ_ANTIGRAVITY_ACP_COMMAND to agy_acp_server.par, and sign in through an ACP client. The agy CLI is separate."
+                : "Install this provider and sign in locally before selecting it."
               : `${providerId} did not pass its local runtime check.`,
       }
 }

@@ -394,23 +394,26 @@ export async function POST(request: Request): Promise<Response> {
         const approvalPolicy =
           autonomy === "approval"
             ? resolveProviderApprovalPolicy(modelSettings, selection.providerId)
-            : "never"
-        if (selection.providerId === "codex") {
+            : autonomy === "full"
+              ? "full-access"
+              : "never"
+        {
           agentSession = createChatAgentSession({
             client,
             chatId: turn.chatId,
             messageId: turn.assistantMessageId,
             workspaceDirectory,
-            autonomy,
+            autonomy: approvalPolicy === "full-access" ? "full" : autonomy,
             additionalInstructions,
             approvalPolicy,
             signal: turnSignal,
             send,
           })
-        } else if (autonomy !== "approval") {
+        }
+        if (selection.providerId !== "codex" && autonomy === "project") {
           throw new CardChatError(
             "transport",
-            "This provider is available for replies in read-only chats. Choose approval mode to continue."
+            "This provider has no workspace-only OS sandbox. Choose approval mode or full access."
           )
         }
         let replayPrompt: Promise<string> | undefined
@@ -477,13 +480,18 @@ export async function POST(request: Request): Promise<Response> {
               ...(threadId ? { threadId } : {}),
               model: selection.model,
               effort: selection.effort,
-              sandbox: "read-only",
+              sandbox:
+                selection.providerId === "codex" ? "read-only" : undefined,
               approvalPolicy,
               signal: turnSignal,
               timeoutMs: WORKSPACE_CHAT_TIMEOUT_MS,
             },
             {
-              createCodexTransport: agentSession?.createTransport,
+              createCodexTransport:
+                selection.providerId === "codex"
+                  ? agentSession?.createTransport
+                  : undefined,
+              approvalHandler: agentSession?.approveProvider,
               onEvent: (event) => {
                 agentSession?.observe(event)
                 if (event.type === "turn-started") {

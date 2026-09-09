@@ -8,6 +8,7 @@ import { StringDecoder } from "node:string_decoder"
 import { getSupportedAiReasoningEffortsForProvider } from "../../ai-model-settings.ts"
 
 import type {
+  ProviderApprovalHandler,
   ProviderCommand,
   ProviderEvent,
   ProviderTextTurnRequest,
@@ -19,6 +20,12 @@ const MAX_OUTPUT_BYTES = 250_000
 
 /** Child-process surface needed by the Claude Code stream parser. */
 export interface ClaudeCodeChildProcess {
+  /** Bidirectional control channel used for interactive tool approvals. */
+  readonly stdin?: {
+    write(chunk: string): boolean
+    end(): void
+    on(event: "error", listener: (...args: unknown[]) => void): void
+  }
   /** Standard output carrying JSONL events. */
   readonly stdout: {
     on(event: "data" | "end", listener: (...args: unknown[]) => void): void
@@ -102,10 +109,16 @@ export function claudeArgs(request: ProviderTextTurnRequest): string[] {
   // Claude Code requires verbose mode for stream-json print output.
   const args = [
     "-p",
-    request.prompt,
+    ...(request.approvalPolicy === "on-request" &&
+    request.sandbox !== "read-only" &&
+    request.webSearchMode !== "disabled" &&
+    !request.ephemeral
+      ? []
+      : [request.prompt]),
     "--output-format",
     "stream-json",
     "--verbose",
+    "--include-partial-messages",
   ]
   if (request.session?.providerSessionId)
     args.push("--resume", request.session.providerSessionId)
@@ -127,23 +140,70 @@ export function claudeArgs(request: ProviderTextTurnRequest): string[] {
       )
     args.push("--effort", effort)
   }
-  // These turns already contain their source context. Remove all model tools and
-  // local customizations so imported text cannot trigger filesystem or network work.
+  const isolated =
+    request.sandbox === "read-only" ||
+    request.ephemeral ||
+    !request.approvalPolicy ||
+    request.approvalPolicy === "never" ||
+    request.webSearchMode === "disabled"
+  const toolNames = [
+    "Read",
+    "Glob",
+    "Grep",
+    "Edit",
+    "Write",
+    "Bash",
+    "WebFetch",
+    "WebSearch",
+  ]
   args.push(
-    "--restricted",
     "--safe-mode",
-    "--tools",
+    "--setting-sources",
     "",
-    "--disallowedTools",
-    "*",
     "--strict-mcp-config",
     "--mcp-config",
-    '{"mcpServers":{}}',
-    "--settings",
-    '{"disableAllHooks":true}',
-    "--permission-mode",
-    "dontAsk"
+    '{"mcpServers":{}}'
   )
+  if (isolated) {
+    args.push(
+      "--restricted",
+      "--tools",
+      "",
+      "--disallowedTools",
+      "*",
+      "--settings",
+      '{"disableAllHooks":true}',
+      "--permission-mode",
+      "dontAsk"
+    )
+  } else if (request.approvalPolicy === "full-access") {
+    args.push(
+      "--tools",
+      toolNames.join(","),
+      "--settings",
+      '{"disableAllHooks":true}',
+      "--permission-mode",
+      "bypassPermissions",
+      "--dangerously-skip-permissions"
+    )
+  } else {
+    args.push(
+      "--restricted",
+      "--tools",
+      toolNames.join(","),
+      "--settings",
+      JSON.stringify({
+        disableAllHooks: true,
+        permissions: { ask: toolNames },
+      }),
+      "--permission-mode",
+      "default",
+      "--input-format",
+      "stream-json",
+      "--permission-prompt-tool",
+      "stdio"
+    )
+  }
   if (request.ephemeral) args.push("--no-session-persistence")
   return args
 }
@@ -159,7 +219,7 @@ function spawnClaude(
   return spawn(command.executable, [...command.args, ...claudeArgs(request)], {
     env,
     cwd: request.workspaceDirectory,
-    stdio: ["ignore", "pipe", "pipe"],
+    stdio: ["pipe", "pipe", "pipe"],
   }) as unknown as ClaudeCodeChildProcess
 }
 
@@ -174,12 +234,18 @@ export async function runClaudeCodeTextTurn(
       request: ProviderTextTurnRequest
     ) => ClaudeCodeChildProcess
     onEvent?: (event: ProviderEvent) => void
+    approvalHandler?: ProviderApprovalHandler
   }
 ): Promise<ProviderTextTurnResult> {
-  if (request.approvalPolicy && request.approvalPolicy !== "never")
+  if (request.approvalPolicy === "untrusted")
     throw new ClaudeCodeProviderError(
       "invalid-input",
-      "Claude Code only supports never-approve turns in Blitz"
+      "Claude Code supports on-request approvals, not Codex untrusted mode"
+    )
+  if (request.sandbox === "workspace-write")
+    throw new ClaudeCodeProviderError(
+      "invalid-input",
+      "Claude Code cannot enforce Blitz's workspace-only OS sandbox. Choose approval mode or full access."
     )
   if (!isAbsolute(request.workspaceDirectory))
     throw new ClaudeCodeProviderError(
@@ -214,6 +280,65 @@ export async function runClaudeCodeTextTurn(
   let failStream: (error: unknown) => void = () => undefined
   const turnId = randomUUID()
   let emittedStarted = false
+  const interactive =
+    request.approvalPolicy === "on-request" &&
+    request.sandbox !== "read-only" &&
+    request.webSearchMode !== "disabled" &&
+    !request.ephemeral
+  const permissionControllers = new Map<string, AbortController>()
+  const initializeId = randomUUID()
+  let initialized = false
+
+  /** Writes control frames without invoking a shell or accepting persistent grants. */
+  const writeControl = (value: unknown): void => {
+    if (!child.stdin)
+      throw new ClaudeCodeProviderError(
+        "transport",
+        "Claude approval input is unavailable"
+      )
+    child.stdin.write(`${JSON.stringify(value)}\n`)
+  }
+
+  /** Handles SDK permission callbacks; unavailable, oversized, or cancelled reviews deny. */
+  const approveTool = async (event: Record<string, unknown>): Promise<void> => {
+    const control = record(event.request)
+    const id = event.request_id
+    if (typeof id !== "string") return
+    const approvalAbort = new AbortController()
+    permissionControllers.set(id, approvalAbort)
+    const allowed =
+      control?.subtype === "can_use_tool" &&
+      typeof control.tool_name === "string" &&
+      record(control.input) &&
+      JSON.stringify(control).length <= 20_000 &&
+      options.approvalHandler
+        ? await options
+            .approvalHandler({
+              method: "claude/can_use_tool",
+              params: control,
+              signal: approvalAbort.signal,
+            })
+            .catch(() => false)
+        : false
+    permissionControllers.delete(id)
+    if (
+      ended ||
+      streamFailed ||
+      request.signal?.aborted ||
+      approvalAbort.signal.aborted
+    )
+      return
+    writeControl({
+      type: "control_response",
+      response: {
+        subtype: "success",
+        request_id: id,
+        response: allowed
+          ? { behavior: "allow", updatedInput: control!.input }
+          : { behavior: "deny", message: "Blitz denied this operation" },
+      },
+    })
+  }
 
   /** Emits a turn-started event once a stable local session identity exists. */
   const emitStarted = (): void => {
@@ -231,6 +356,47 @@ export async function runClaudeCodeTextTurn(
     } catch {
       // Claude may print a human diagnostic when the installed version lacks stream-json.
       return
+    }
+    const frame = record(event)
+    if (
+      interactive &&
+      frame?.type === "control_response" &&
+      record(frame.response)?.request_id === initializeId
+    ) {
+      if (record(frame.response)?.subtype !== "success")
+        throw new ClaudeCodeProviderError(
+          "transport",
+          "Claude approval initialization failed"
+        )
+      if (!initialized) {
+        initialized = true
+        writeControl({
+          type: "user",
+          session_id: "",
+          message: { role: "user", content: request.prompt },
+          parent_tool_use_id: null,
+        })
+      }
+      return
+    }
+    if (interactive && frame?.type === "control_request") {
+      void approveTool(frame).catch(failStream)
+      return
+    }
+    if (
+      frame?.type === "control_cancel_request" &&
+      typeof frame.request_id === "string"
+    ) {
+      permissionControllers.get(frame.request_id)?.abort()
+      return
+    }
+    if (frame?.type === "result") {
+      if (interactive) child.stdin?.end()
+      if (frame.is_error === true)
+        throw new ClaudeCodeProviderError(
+          "transport",
+          "Claude Code could not complete the turn"
+        )
     }
     sessionId = sessionIdFromEvent(event) ?? sessionId
     const fragment = textFromEvent(event)
@@ -312,6 +478,18 @@ export async function runClaudeCodeTextTurn(
       resolve()
     })
   })
+  child.stdin?.on("error", failStream)
+  if (interactive) {
+    try {
+      writeControl({
+        type: "control_request",
+        request_id: initializeId,
+        request: { subtype: "initialize", hooks: null },
+      })
+    } catch (error) {
+      failStream(error)
+    }
+  } else child.stdin?.end()
   let timeoutHandle: ReturnType<typeof setTimeout> | undefined
   let abortHandler: (() => void) | undefined
   try {
@@ -372,6 +550,8 @@ export async function runClaudeCodeTextTurn(
       error
     )
   } finally {
+    streamFailed = true
+    for (const controller of permissionControllers.values()) controller.abort()
     if (timeoutHandle) clearTimeout(timeoutHandle)
     if (abortHandler) request.signal?.removeEventListener("abort", abortHandler)
     if (!ended) child.kill("SIGKILL")

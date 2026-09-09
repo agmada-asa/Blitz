@@ -47,13 +47,23 @@ test("reports missing and obsolete Claude runtimes before a turn starts", async 
   }
 })
 
-/** ACP remains disabled even when an executable is configured because it cannot enforce isolation. */
-test("keeps ACP providers unavailable until sandbox enforcement exists", async () => {
-  for (const provider of ["opencode", "antigravity"] as const) {
-    const result = await checkProviderAvailability(provider, {
-      workspaceDirectory: tmpdir(),
-    })
-    assert.equal(result.available, false)
-    assert.equal(result.reason, "unsupported")
+/** Native ACP availability depends on installation instead of a blanket provider ban. */
+test("reports missing ACP executables with actionable setup guidance", async () => {
+  for (const [provider, key] of [
+    ["opencode", "BLITZ_OPENCODE_COMMAND"],
+    ["antigravity", "BLITZ_ANTIGRAVITY_ACP_COMMAND"],
+  ] as const) {
+    const original = process.env[key]
+    try {
+      process.env[key] = "/nonexistent/blitz/provider"
+      const result = await checkProviderAvailability(provider, {
+        workspaceDirectory: tmpdir(),
+      })
+      assert.equal(result.available, false)
+      assert.equal(result.reason, "missing-executable")
+    } finally {
+      if (original === undefined) delete process.env[key]
+      else process.env[key] = original
+    }
   }
 })

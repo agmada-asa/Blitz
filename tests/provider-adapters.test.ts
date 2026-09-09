@@ -86,6 +86,10 @@ class FakeAcpProcess extends EventEmitter {
       })
       return
     }
+    if (message.method === "session/set_mode") {
+      this.send({ jsonrpc: "2.0", id: message.id, result: {} })
+      return
+    }
     if (message.method === "session/prompt") {
       if (this.overflowLine) {
         this.stdout.emit("data", Buffer.alloc(1_000_001, 32))
@@ -278,12 +282,12 @@ test("ACP without resume capabilities fails before accepting a turn so chat can 
   assert.deepEqual(child.methods, ["initialize"])
 })
 
-test("ACP refuses restricted source work before spawning", async () => {
+test("Antigravity refuses restricted source work before spawning", async () => {
   let spawned = false
   await assert.rejects(
     runAcpTextTurn(
       {
-        selection: { providerId: "opencode", model: "default" },
+        selection: { providerId: "antigravity", model: "default" },
         workspaceDirectory: "/tmp/blitz-provider-test",
         prompt: "Untrusted source",
         sandbox: "read-only",
@@ -298,7 +302,7 @@ test("ACP refuses restricted source work before spawning", async () => {
         },
       }
     ),
-    /cannot enforce/
+    /no tool-free ACP mode/
   )
   assert.equal(spawned, false)
 })
@@ -383,27 +387,270 @@ test("Claude flushes the final JSON line and preserves split UTF-8", async () =>
   assert.equal((await result).text, answer)
 })
 
-/** Unsupported approval policies fail before any process can consume source material. */
-test("Claude rejects interactive approval policies without spawning", async () => {
-  let spawned = false
-  await assert.rejects(
-    runClaudeCodeTextTurn(
+/** Pauses the prompt until the client resolves a provider permission request. */
+class PermissionAcpProcess extends FakeAcpProcess {
+  replies: unknown[] = []
+  private promptMessage?: { id?: number; method?: string }
+  options = [
+    { optionId: "once", kind: "allow_once" },
+    { optionId: "always", kind: "allow_always" },
+  ]
+  sessionId = "acp-session-1"
+
+  /** Reuses the active prompt ID to verify independent JSON-RPC request namespaces. */
+  protected override respond(message: {
+    id?: number
+    method?: string
+    result?: unknown
+  }): void {
+    if (message.method === "session/prompt") {
+      this.promptMessage = message
+      this.send({
+        jsonrpc: "2.0",
+        id: message.id,
+        method: "session/request_permission",
+        params: {
+          sessionId: this.sessionId,
+          toolCall: {
+            toolCallId: "tool-1",
+            title: "Write a file",
+            rawInput: { path: "answer.txt", content: "review me" },
+          },
+          options: this.options,
+        },
+      })
+    } else if (!message.method && message.result) {
+      this.replies.push(message.result)
+      super.respond(this.promptMessage!)
+    } else super.respond(message)
+  }
+}
+
+/** Exercises permission decisions without a real model or filesystem action. */
+test("ACP permissions grant only a reviewed invocation and deny missing or invalid reviews", async () => {
+  for (const choice of [
+    "approve",
+    "deny",
+    "missing",
+    "throws",
+    "wrong-session",
+    "persistent-only",
+  ] as const) {
+    const child = new PermissionAcpProcess()
+    if (choice === "wrong-session") child.sessionId = "another-session"
+    if (choice === "persistent-only")
+      child.options = [{ optionId: "always", kind: "allow_always" }]
+    let reviews = 0
+    await runAcpTextTurn(
       {
-        selection: { providerId: "claude-code", model: "sonnet" },
-        workspaceDirectory: "/tmp/blitz-provider-test",
-        prompt: "Source",
+        selection: { providerId: "opencode", model: "default" },
+        workspaceDirectory: "/tmp/blitz-test",
+        prompt: "Question",
         approvalPolicy: "on-request",
       },
       {
-        command: { executable: "claude", args: [] },
+        command: { executable: "fixture", args: [] },
         providerInstanceId: "local",
-        spawnProcess: () => {
-          spawned = true
-          return new FakeClaudeProcess()
+        spawnProcess: () => child,
+        approvalHandler:
+          choice === "missing"
+            ? undefined
+            : async () => {
+                reviews++
+                if (choice === "throws") throw new Error("review failed")
+                return choice === "approve"
+              },
+      }
+    )
+    assert.deepEqual(child.replies, [
+      {
+        outcome:
+          choice === "approve"
+            ? { outcome: "selected", optionId: "once" }
+            : { outcome: "cancelled" },
+      },
+    ])
+    if (choice === "wrong-session" || choice === "persistent-only")
+      assert.equal(reviews, 0)
+  }
+})
+
+/** Provides the bidirectional Claude SDK control protocol in memory. */
+class PermissionClaudeProcess extends FakeClaudeProcess {
+  responses: Record<string, unknown>[] = []
+  readonly stdin = {
+    write: (line: string): boolean => {
+      const frame = JSON.parse(line)
+      queueMicrotask(() => {
+        if (frame.type === "control_request")
+          this.stdout.emit(
+            "data",
+            JSON.stringify({
+              type: "control_response",
+              response: {
+                subtype: "success",
+                request_id: frame.request_id,
+                response: {},
+              },
+            }) + "\n"
+          )
+        if (frame.type === "user")
+          this.stdout.emit(
+            "data",
+            JSON.stringify({
+              type: "control_request",
+              request_id: "permission-1",
+              request: {
+                subtype: "can_use_tool",
+                tool_name: "Bash",
+                input: { command: "echo reviewed" },
+              },
+            }) + "\n"
+          )
+        if (frame.type === "control_response") {
+          this.responses.push(frame.response.response)
+          this.stdout.emit(
+            "data",
+            JSON.stringify({
+              type: "result",
+              result: "Done",
+              session_id: "claude-session",
+            }) + "\n"
+          )
+          this.emit("close", 0)
+        }
+      })
+      return true
+    },
+    end: (): void => undefined,
+    on: (): void => undefined,
+  }
+}
+
+/** Confirms the CLI waits for explicit approval and never receives a saved permission update. */
+test("Claude bridges one-time tool approval and denial through its control channel", async () => {
+  for (const allowed of [true, false]) {
+    const child = new PermissionClaudeProcess()
+    const result = await runClaudeCodeTextTurn(
+      {
+        selection: { providerId: "claude-code", model: "sonnet" },
+        workspaceDirectory: "/tmp/blitz-test",
+        prompt: "Question",
+        approvalPolicy: "on-request",
+      },
+      {
+        command: { executable: "fixture", args: [] },
+        providerInstanceId: "local",
+        spawnProcess: () => child,
+        approvalHandler: async (request) => {
+          assert.equal(request.method, "claude/can_use_tool")
+          return allowed
         },
       }
-    ),
-    /only supports never-approve/
+    )
+    assert.equal(result.text, "Done")
+    assert.deepEqual(child.responses, [
+      allowed
+        ? { behavior: "allow", updatedInput: { command: "echo reviewed" } }
+        : { behavior: "deny", message: "Blitz denied this operation" },
+    ])
+  }
+})
+
+/** Background restrictions override saved full access, and interactive modes select real native flags. */
+test("Claude maps access policies without weakening background turns", () => {
+  const base = {
+    selection: { providerId: "claude-code" as const, model: "sonnet" },
+    workspaceDirectory: "/tmp/blitz-test",
+    prompt: "Question",
+  }
+  const full = claudeArgs({ ...base, approvalPolicy: "full-access" })
+  assert.ok(full.includes("--dangerously-skip-permissions"))
+  assert.ok(!full.includes("--restricted"))
+  const ask = claudeArgs({ ...base, approvalPolicy: "on-request" })
+  assert.ok(ask.includes("--permission-prompt-tool"))
+  assert.ok(!ask.includes("--dangerously-skip-permissions"))
+  const background = claudeArgs({
+    ...base,
+    approvalPolicy: "full-access",
+    ephemeral: true,
+  })
+  assert.equal(background[background.indexOf("--tools") + 1], "")
+  assert.ok(!background.includes("--dangerously-skip-permissions"))
+})
+
+/** A pending review cannot grant a tool after the turn's deadline. */
+test("Claude ignores approval resolutions that arrive after timeout", async () => {
+  const child = new PermissionClaudeProcess()
+  let resolveApproval: ((allowed: boolean) => void) | undefined
+  const turn = runClaudeCodeTextTurn(
+    {
+      selection: { providerId: "claude-code", model: "sonnet" },
+      workspaceDirectory: "/tmp/blitz-test",
+      prompt: "Question",
+      approvalPolicy: "on-request",
+      timeoutMs: 20,
+    },
+    {
+      command: { executable: "fixture", args: [] },
+      providerInstanceId: "local",
+      spawnProcess: () => child,
+      approvalHandler: () =>
+        new Promise<boolean>((resolve) => {
+          resolveApproval = resolve
+        }),
+    }
   )
-  assert.equal(spawned, false)
+  await assert.rejects(turn, /timed out/)
+  assert.ok(resolveApproval)
+  resolveApproval(true)
+  await new Promise<void>((resolve) => setImmediate(resolve))
+  assert.deepEqual(child.responses, [])
+  assert.equal(child.killed, true)
+})
+
+/** Provider-side cancellation removes the pending review without issuing a late grant. */
+test("Claude cancels the individual approval signal", async () => {
+  const child = new PermissionClaudeProcess()
+  let reviewSignal: AbortSignal | undefined
+  const turn = runClaudeCodeTextTurn(
+    {
+      selection: { providerId: "claude-code", model: "sonnet" },
+      workspaceDirectory: "/tmp/blitz-test",
+      prompt: "Question",
+      approvalPolicy: "on-request",
+      timeoutMs: 1000,
+    },
+    {
+      command: { executable: "fixture", args: [] },
+      providerInstanceId: "local",
+      spawnProcess: () => child,
+      approvalHandler: (request) => {
+        reviewSignal = request.signal
+        queueMicrotask(() => {
+          child.stdout.emit(
+            "data",
+            JSON.stringify({
+              type: "control_cancel_request",
+              request_id: "permission-1",
+            }) + "\n"
+          )
+          child.stdout.emit(
+            "data",
+            JSON.stringify({ type: "result", result: "Cancelled the tool" }) +
+              "\n"
+          )
+          child.emit("close", 0)
+        })
+        return new Promise<boolean>((resolve) =>
+          request.signal!.addEventListener("abort", () => resolve(false), {
+            once: true,
+          })
+        )
+      },
+    }
+  )
+  assert.equal((await turn).text, "Cancelled the tool")
+  assert.equal(reviewSignal?.aborted, true)
+  assert.deepEqual(child.responses, [])
 })

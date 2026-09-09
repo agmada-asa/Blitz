@@ -1,4 +1,5 @@
 /** Routes one text turn through the selected provider and normalizes its events. */
+import type { ProviderApprovalHandler } from "./types.ts"
 
 import {
   CardChatError,
@@ -52,7 +53,7 @@ export interface RunProviderTextTurnRequest {
   /** Sandbox policy for the selected provider. */
   readonly sandbox?: "read-only" | "workspace-write" | "danger-full-access"
   /** Provider approval policy. */
-  readonly approvalPolicy?: "untrusted" | "on-request" | "never"
+  readonly approvalPolicy?: "untrusted" | "on-request" | "never" | "full-access"
   /** Caller cancellation signal. */
   readonly signal?: AbortSignal
   /** Wall-clock turn deadline. */
@@ -63,6 +64,8 @@ export interface RunProviderTextTurnRequest {
 export type ProviderTextTurnOptions = {
   /** Receives normalized product events. */
   readonly onEvent?: (event: CardChatEvent) => void
+  /** Resolves one interactive native tool request. Omission denies it. */
+  readonly approvalHandler?: ProviderApprovalHandler
   /** Codex-only transport factory retained for existing tests and approval bridges. */
   readonly createCodexTransport?: CardChatTransportFactory
 }
@@ -165,7 +168,10 @@ export async function runProviderTextTurn(
     if (request.providerId === "codex") {
       return await runCodexTextTurn(
         {
-          approvalPolicy: request.approvalPolicy,
+          approvalPolicy:
+            request.approvalPolicy === "full-access"
+              ? "never"
+              : request.approvalPolicy,
           workspaceDirectory: request.workspaceDirectory,
           prompt: request.prompt,
           ...(request.threadId ? { threadId: request.threadId } : {}),
@@ -210,12 +216,14 @@ export async function runProviderTextTurn(
         command: providerCommand(request.providerId),
         providerInstanceId: instanceId,
         onEvent,
+        approvalHandler: options.approvalHandler,
       })
     } else {
       result = await runAcpTextTurn(providerRequest, {
         command: providerCommand(request.providerId),
         providerInstanceId: instanceId,
         onEvent,
+        approvalHandler: options.approvalHandler,
       })
     }
     return {

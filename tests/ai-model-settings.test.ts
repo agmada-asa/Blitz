@@ -18,6 +18,7 @@ import {
   resolveAiModel,
   resolveAiReasoningEffort,
   validateAiModelSettings,
+  validateAiTaskProviders,
   type AiModelSettings,
 } from "../lib/ai-model-settings.ts"
 
@@ -279,11 +280,39 @@ test("validates and resolves provider approval policies", () => {
     )
   }
   assert.throws(
-    () => validateProviderApprovalPolicies({ "claude-code": "on-request" }),
+    () => validateProviderApprovalPolicies({ "claude-code": "untrusted" }),
     /not supported/
   )
   assert.throws(
     () => validateProviderApprovalPolicies({ opencode: "bypassPermissions" }),
     /not supported/
+  )
+})
+
+/** All providers expose native access choices while unsupported background assignments remain unsavable. */
+test("validates native provider access choices and task restrictions", () => {
+  for (const provider of [
+    "codex",
+    "claude-code",
+    "opencode",
+    "antigravity",
+  ] as const) {
+    for (const policy of ["never", "on-request", "full-access"] as const) {
+      assert.equal(
+        validateProviderApprovalPolicies({ [provider]: policy })[provider],
+        policy
+      )
+    }
+  }
+  const legacy = validateAiModelSettings({
+    ...DEFAULT_AI_MODEL_SETTINGS,
+    cardGenerationProvider: "antigravity",
+    cardGenerationModel: "antigravity/default",
+  })
+  assert.throws(() => validateAiTaskProviders(legacy), /workspace chat only/)
+  assert.ok(
+    !getAiProviderOptionsForTask("cardGeneration").some(
+      (provider) => provider.id === "antigravity"
+    )
   )
 })

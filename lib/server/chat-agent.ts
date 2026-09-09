@@ -45,7 +45,10 @@ export function createChatAgentSession(options: {
     options.workspaceDirectory
   )
   if (options.autonomy === "approval" && options.approvalPolicy)
-    runtime.thread.approvalPolicy = options.approvalPolicy
+    runtime.thread.approvalPolicy =
+      options.approvalPolicy === "full-access"
+        ? "never"
+        : options.approvalPolicy
   const instructions = projectAgentInstructions(
     options.workspaceDirectory,
     options.additionalInstructions
@@ -71,43 +74,76 @@ export function createChatAgentSession(options: {
       // File changes must include reviewable diffs; an opaque grantRoot is insufficient.
       if (request.method === "item/fileChange/requestApproval" && !item)
         return projectApprovalResponse(request, false)
-      const approval = {
-        id: randomUUID(),
-        method: request.method,
-        details: projectApprovalDetails(request, item),
-        expiresAt: Date.now() + 300_000,
+      return projectApprovalResponse(
+        request,
+        await review(request.method, projectApprovalDetails(request, item))
+      )
+    })
+    queue = operation.catch(() => undefined)
+    return operation
+  }
+
+  /** Persists one review and clears it on approval, rejection, timeout, or cancellation. */
+  async function review(
+    method: string,
+    details: string,
+    reviewSignal = signal
+  ): Promise<boolean> {
+    const approval = {
+      id: randomUUID(),
+      method,
+      details,
+      expiresAt: Date.now() + 300_000,
+    }
+    await options.client.mutation(api.chatAgents.requestApproval, {
+      ...identity,
+      approval,
+    })
+    options.send({
+      type: "approval",
+      ...identity,
+      approval: { ...approval, status: "pending" },
+    })
+    try {
+      while (!reviewSignal.aborted && Date.now() < approval.expiresAt) {
+        const state = await options.client.query(
+          api.chatAgents.getApproval,
+          identity
+        )
+        if (!state.active || state.approval?.id !== approval.id) return false
+        if (state.approval.status !== "pending")
+          return state.approval.status === "approved"
+        await delay(500, undefined, { signal: reviewSignal })
       }
-      await options.client.mutation(api.chatAgents.requestApproval, {
-        ...identity,
-        approval,
-      })
-      options.send({
-        type: "approval",
-        ...identity,
-        approval: { ...approval, status: "pending" },
-      })
-      try {
-        while (!signal.aborted && Date.now() < approval.expiresAt) {
-          const state = await options.client.query(
-            api.chatAgents.getApproval,
-            identity
-          )
-          if (!state.active || state.approval?.id !== approval.id)
-            return projectApprovalResponse(request, false)
-          if (state.approval.status !== "pending")
-            return projectApprovalResponse(
-              request,
-              state.approval.status === "approved"
-            )
-          await delay(500, undefined, { signal })
-        }
-        return projectApprovalResponse(request, false)
-      } finally {
-        await options.client
-          .mutation(api.chatAgents.clearApproval, identity)
-          .catch(() => undefined)
-        options.send({ type: "approval-resolved", approvalId: approval.id })
-      }
+      return false
+    } finally {
+      await options.client
+        .mutation(api.chatAgents.clearApproval, identity)
+        .catch(() => undefined)
+      options.send({ type: "approval-resolved", approvalId: approval.id })
+    }
+  }
+
+  /** Serializes native provider requests through the same single-use chat approval panel. */
+  function approveProvider(request: {
+    method: string
+    params: unknown
+    signal?: AbortSignal
+  }): Promise<boolean> {
+    const operation = queue.then(async () => {
+      if (
+        signal.aborted ||
+        request.signal?.aborted ||
+        options.approvalPolicy === "never"
+      )
+        return false
+      const details = JSON.stringify(request.params, null, 2)
+      if (!details || details.length > 20_000) return false
+      return review(
+        request.method,
+        details,
+        request.signal ? AbortSignal.any([signal, request.signal]) : signal
+      )
     })
     queue = operation.catch(() => undefined)
     return operation
@@ -164,5 +200,5 @@ export function createChatAgentSession(options: {
       .mutation(api.chatAgents.clearApproval, identity)
       .catch(() => undefined)
   }
-  return { createTransport, observe, close }
+  return { createTransport, observe, approveProvider, close }
 }

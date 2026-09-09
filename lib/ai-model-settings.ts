@@ -12,16 +12,17 @@ export const AI_PROVIDER_IDS = [
 export type AiProviderId = (typeof AI_PROVIDER_IDS)[number]
 
 /** Approval modes that the local adapters can enforce. `never` denies approval requests; it does not bypass checks. */
-export type AiApprovalPolicy = "untrusted" | "on-request" | "never"
+export type AiApprovalPolicy =
+  "untrusted" | "on-request" | "never" | "full-access"
 
-/** Per-provider approval choices. Text-only and ACP adapters cannot collect interactive approvals. */
+/** Per-provider native access choices. Full access applies only to interactive chat. */
 export const AI_PROVIDER_APPROVAL_POLICIES: Readonly<
   Record<AiProviderId, readonly AiApprovalPolicy[]>
 > = {
-  codex: ["untrusted", "on-request", "never"],
-  "claude-code": ["never"],
-  opencode: ["never"],
-  antigravity: ["never"],
+  codex: ["untrusted", "on-request", "never", "full-access"],
+  "claude-code": ["never", "on-request", "full-access"],
+  opencode: ["never", "on-request", "full-access"],
+  antigravity: ["never", "on-request", "full-access"],
 }
 
 /** Validates persisted policies and fills legacy records with conservative defaults. */
@@ -113,7 +114,7 @@ export const AI_PROVIDER_TASKS: Readonly<
   codex: ["research", "reply", "cardGeneration"],
   "claude-code": ["reply", "cardGeneration"],
   opencode: ["reply", "cardGeneration"],
-  antigravity: ["reply", "cardGeneration"],
+  antigravity: ["reply"],
 }
 
 /** Names the persisted model field used for each kind of AI work. */
@@ -645,4 +646,16 @@ export function resolveAiTaskSelection(
       options.effortEnvironmentFallback
     ) as AiReasoningEffort,
   }
+}
+
+/** Rejects newly saved task assignments that require unavailable source isolation. Legacy records remain readable. */
+export function validateAiTaskProviders(settings: AiModelSettings): void {
+  if (
+    !AI_PROVIDER_TASKS[settings.cardGenerationProvider ?? "codex"].includes(
+      "cardGeneration"
+    )
+  )
+    throw new Error(
+      "Antigravity supports interactive workspace chat only. Choose another provider for card generation."
+    )
 }
