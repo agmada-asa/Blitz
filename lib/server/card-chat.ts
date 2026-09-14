@@ -9,6 +9,7 @@ import { isAbsolute } from "node:path"
 import {
   CodexAppServerClient,
   type CodexAppServerEvent,
+  type CodexApprovalHandler,
   type CodexNotification,
   type CodexResumeThreadOptions,
   type CodexServerRequest,
@@ -18,6 +19,7 @@ import {
   type CodexTurn,
   type CodexTurnResponse,
   type CodexWebSearchMode,
+  type CodexSandboxMode,
 } from "./codex-app-server.ts"
 
 /** Maximum question size accepted by the card chat boundary. */
@@ -84,6 +86,14 @@ export interface CardChatRequest {
 
 /** Generic bounded text-turn input reusable by server-side generation jobs. */
 export interface CodexTextTurnRequest {
+  /** Approval policy enforced for new and resumed provider threads. */
+  readonly approvalPolicy?: "untrusted" | "on-request" | "never"
+  /** Explicit sandbox mode reasserted on both thread and turn requests. */
+  readonly sandbox?: CodexSandboxMode
+  /** Application-owned instructions sent through Codex's developer channel. */
+  readonly developerInstructions?: string
+  /** Optional native image inputs appended to the user text item. */
+  readonly images?: readonly { type: "image"; url: string }[]
   /** Explicit absolute Blitz-owned workspace for local Codex. */
   readonly workspaceDirectory: string
   /** Already prepared, bounded prompt text. */
@@ -113,6 +123,18 @@ export interface CardChatTextDeltaEvent {
   /** Server-issued turn identifier. */
   readonly turnId: string
   /** Incremental assistant text. */
+  readonly delta: string
+}
+
+/** Typed thought or reasoning text streamed from the provider. */
+export interface CardChatThoughtDeltaEvent {
+  /** Discriminator for thought streaming. */
+  readonly type: "thought-delta"
+  /** Server-issued thread identifier. */
+  readonly threadId: string
+  /** Server-issued turn identifier. */
+  readonly turnId: string
+  /** Incremental thought text. */
   readonly delta: string
 }
 
@@ -154,6 +176,10 @@ export interface CardChatCompletionEvent {
   readonly status: "completed"
   /** Complete text observed from streamed deltas. */
   readonly text: string
+  /** Complete accumulated thought or reasoning trace. */
+  readonly thought?: string
+  /** Elapsed turn duration in milliseconds. */
+  readonly durationMs?: number
 }
 
 /** Reasons a card conversation can fail before producing a completion. */
@@ -177,6 +203,7 @@ export interface CardChatErrorEvent {
 export type CardChatEvent =
   | CardChatTurnStartedEvent
   | CardChatTextDeltaEvent
+  | CardChatThoughtDeltaEvent
   | CardChatActivityEvent
   | CardChatServerRequestEvent
   | CardChatCompletionEvent
@@ -190,6 +217,10 @@ export interface CardChatResult {
   readonly turnId: string
   /** Complete text observed from streamed deltas. */
   readonly text: string
+  /** Complete accumulated thought or reasoning trace. */
+  readonly thought?: string
+  /** Elapsed turn duration in milliseconds. */
+  readonly durationMs?: number
 }
 
 /** Stable error for invalid input, cancellation, timeout, or turn failure. */
@@ -243,6 +274,8 @@ export interface CardChatRunOptions {
   readonly onEvent?: (event: CardChatEvent) => void
   /** Injectable app-server client factory. */
   readonly createTransport?: CardChatTransportFactory
+  /** Resolves one native Codex request for the current turn. */
+  readonly approvalHandler?: CodexApprovalHandler
 }
 
 /** Returns a string truncated with an explicit marker under a hard character bound. */
@@ -334,11 +367,20 @@ function record(value: unknown): Record<string, unknown> | undefined {
   return value as Record<string, unknown>
 }
 
-/** Parses the installed agent-message delta notification shape. */
+/** Parses text or thought delta from Codex agentMessage, reasoning, or summary notifications. */
 function parseDelta(
-  notification: CodexNotification
-): { threadId: string; turnId: string; delta: string } | undefined {
-  if (notification.method !== "item/agentMessage/delta") return undefined
+  notification: CodexNotification,
+  itemsById?: Map<string, { type: string; phase?: string }>
+):
+  | { threadId: string; turnId: string; delta: string; isThought: boolean }
+  | undefined {
+  const method = notification.method
+  const isReasoningMethod =
+    method === "item/reasoning/textDelta" ||
+    method === "item/reasoning/summaryTextDelta"
+  const isAgentMessageDelta = method === "item/agentMessage/delta"
+  if (!isReasoningMethod && !isAgentMessageDelta) return undefined
+
   const params = record(notification.params)
   if (
     typeof params?.threadId !== "string" ||
@@ -347,10 +389,18 @@ function parseDelta(
   ) {
     return undefined
   }
+  const itemId = typeof params.itemId === "string" ? params.itemId : undefined
+  const item = itemId && itemsById ? itemsById.get(itemId) : undefined
+  const isThought =
+    isReasoningMethod ||
+    item?.phase === "commentary" ||
+    item?.type === "reasoning"
+
   return {
     threadId: params.threadId,
     turnId: params.turnId,
     delta: params.delta,
+    isThought: Boolean(isThought),
   }
 }
 
@@ -374,6 +424,17 @@ function parseCompletion(
 /** Extracts authoritative assistant text from completed turn items when present. */
 function extractTurnText(turn: CodexTurn): string | undefined {
   if (!Array.isArray(turn.items)) return undefined
+  const finalAnswers = turn.items
+    .map((item) => record(item))
+    .filter(
+      (item): item is Record<string, unknown> =>
+        item?.type === "agentMessage" &&
+        item.phase !== "commentary" &&
+        typeof item.text === "string"
+    )
+    .map((item) => item.text as string)
+  if (finalAnswers.length > 0) return finalAnswers.join("\n")
+
   const messages = turn.items
     .map((item) => record(item))
     .filter(
@@ -382,6 +443,46 @@ function extractTurnText(turn: CodexTurn): string | undefined {
     )
     .map((item) => item.text as string)
   return messages.length > 0 ? messages.join("\n") : undefined
+}
+
+/** Extracts authoritative assistant thoughts or commentary from completed turn items. */
+function extractTurnThoughts(turn: CodexTurn): string | undefined {
+  if (!Array.isArray(turn.items)) return undefined
+  const thoughts: string[] = []
+  for (const raw of turn.items) {
+    const item = record(raw)
+    if (!item) continue
+    if (
+      item.type === "agentMessage" &&
+      item.phase === "commentary" &&
+      typeof item.text === "string" &&
+      item.text.trim()
+    ) {
+      thoughts.push(item.text.trim())
+    }
+    if (item.type === "reasoning") {
+      if (Array.isArray(item.summary)) {
+        for (const s of item.summary) {
+          if (typeof s === "string" && s.trim()) thoughts.push(s.trim())
+        }
+      }
+      if (Array.isArray(item.content)) {
+        for (const c of item.content) {
+          if (typeof c === "string" && c.trim()) thoughts.push(c.trim())
+          else if (
+            typeof c === "object" &&
+            c &&
+            "text" in c &&
+            typeof (c as { text: unknown }).text === "string"
+          ) {
+            const t = (c as { text: string }).text.trim()
+            if (t) thoughts.push(t)
+          }
+        }
+      }
+    }
+  }
+  return thoughts.length > 0 ? thoughts.join("\n\n") : undefined
 }
 
 /** Runs one bounded text turn and streams its typed lifecycle events. */
@@ -401,7 +502,7 @@ export async function runCodexTextTurn(
   if (!request.prompt.trim()) {
     throw new CardChatError(
       "invalid-input",
-      "Codex text turn prompt must not be empty"
+      "Blitz text turn prompt must not be empty"
     )
   }
   const timeoutMs = request.timeoutMs ?? DEFAULT_CARD_CHAT_TIMEOUT_MS
@@ -417,6 +518,7 @@ export async function runCodexTextTurn(
     ((transportOptions) =>
       CodexAppServerClient.connect({
         workspaceDirectory: transportOptions.workspaceDirectory,
+        approvalHandler: options.approvalHandler,
         ...(transportOptions.webSearchMode === undefined
           ? {}
           : { webSearchMode: transportOptions.webSearchMode }),
@@ -428,6 +530,9 @@ export async function runCodexTextTurn(
   let threadId: string | undefined
   let turnId: string | undefined
   let text = ""
+  let thought = ""
+  const startTime = Date.now()
+  const itemsById = new Map<string, { type: string; phase?: string }>()
   let finished = false
   let cancelReason: CardChatError | undefined
   let resolveCancellation: ((error: CardChatError) => void) | undefined
@@ -436,7 +541,10 @@ export async function runCodexTextTurn(
   })
   void cancellation.catch(() => undefined)
   const completionByTurn = new Map<string, CodexTurn>()
-  const deltasByTurn = new Map<string, string[]>()
+  const deltasByTurn = new Map<
+    string,
+    Array<{ delta: string; isThought: boolean }>
+  >()
   let bufferedTextLength = 0
   let bufferedDeltaCount = 0
   let resolveCompletion: ((result: CardChatResult) => void) | undefined
@@ -466,7 +574,7 @@ export async function runCodexTextTurn(
     if (status !== "completed") {
       const reason =
         status === "interrupted" ? "turn-interrupted" : "turn-failed"
-      cancel(new CardChatError(reason, `Codex turn ${status}`))
+      cancel(new CardChatError(reason, `Blitz turn ${status}`))
       return
     }
     const authoritativeText = completedTurn
@@ -477,7 +585,7 @@ export async function runCodexTextTurn(
         cancel(
           new CardChatError(
             "transport",
-            "Codex assistant output exceeded the configured limit"
+            "Blitz assistant output exceeded the configured limit"
           )
         )
         return
@@ -488,13 +596,29 @@ export async function runCodexTextTurn(
       cancel(
         new CardChatError(
           "turn-failed",
-          "Codex completed without assistant text"
+          "Blitz completed without assistant text"
         )
       )
       return
     }
+    const authoritativeThoughts = completedTurn
+      ? extractTurnThoughts(completedTurn)
+      : undefined
+    const finalThought =
+      authoritativeThoughts || (thought.trim() ? thought : undefined)
+    const durationMs =
+      typeof completedTurn?.durationMs === "number" &&
+      completedTurn.durationMs >= 0
+        ? completedTurn.durationMs
+        : Date.now() - startTime
     finished = true
-    const result = { threadId, turnId, text }
+    const result: CardChatResult = {
+      threadId,
+      turnId,
+      text,
+      ...(finalThought ? { thought: finalThought } : {}),
+      durationMs,
+    }
     emitEvent({ ...result, type: "completed", status: "completed" })
     resolveCompletion?.(result)
   }
@@ -503,20 +627,38 @@ export async function runCodexTextTurn(
   const flushTurn = (): void => {
     if (!threadId || !turnId) return
     const key = `${threadId}\0${turnId}`
-    for (const delta of deltasByTurn.get(key) ?? []) {
-      bufferedTextLength -= delta.length
+    for (const item of deltasByTurn.get(key) ?? []) {
+      bufferedTextLength -= item.delta.length
       bufferedDeltaCount -= 1
-      if (text.length + delta.length > MAX_CARD_CHAT_STREAM_TEXT_LENGTH) {
-        cancel(
-          new CardChatError(
-            "transport",
-            "Codex assistant output exceeded the configured limit"
+      if (item.isThought) {
+        if (
+          thought.length + item.delta.length <=
+          MAX_CARD_CHAT_STREAM_TEXT_LENGTH
+        ) {
+          thought += item.delta
+          emitEvent({
+            type: "thought-delta",
+            threadId,
+            turnId,
+            delta: item.delta,
+          })
+        }
+      } else {
+        if (
+          text.length + item.delta.length >
+          MAX_CARD_CHAT_STREAM_TEXT_LENGTH
+        ) {
+          cancel(
+            new CardChatError(
+              "transport",
+              "Blitz assistant output exceeded the configured limit"
+            )
           )
-        )
-        return
+          return
+        }
+        text += item.delta
+        emitEvent({ type: "text-delta", threadId, turnId, delta: item.delta })
       }
-      text += delta
-      emitEvent({ type: "text-delta", threadId, turnId, delta })
     }
     deltasByTurn.delete(key)
     const completedTurn = completionByTurn.get(key)
@@ -537,24 +679,53 @@ export async function runCodexTextTurn(
       if (threadId && notificationThreadId && notificationThreadId !== threadId)
         return
       emitEvent({ type: "activity", notification: event.notification })
-      const delta = parseDelta(event.notification)
+      if (event.notification.method === "item/started") {
+        const item = record(notificationParams?.item)
+        if (typeof item?.id === "string" && typeof item.type === "string") {
+          itemsById.set(item.id, {
+            type: item.type,
+            phase: typeof item.phase === "string" ? item.phase : undefined,
+          })
+        }
+      }
+      const delta = parseDelta(event.notification, itemsById)
       if (delta) {
         const key = `${delta.threadId}\0${delta.turnId}`
         if (threadId === delta.threadId && turnId === delta.turnId) {
-          if (
-            text.length + delta.delta.length >
-            MAX_CARD_CHAT_STREAM_TEXT_LENGTH
-          ) {
-            cancel(
-              new CardChatError(
-                "transport",
-                "Codex assistant output exceeded the configured limit"
+          if (delta.isThought) {
+            if (
+              thought.length + delta.delta.length <=
+              MAX_CARD_CHAT_STREAM_TEXT_LENGTH
+            ) {
+              thought += delta.delta
+              emitEvent({
+                type: "thought-delta",
+                threadId: delta.threadId,
+                turnId: delta.turnId,
+                delta: delta.delta,
+              })
+            }
+          } else {
+            if (
+              text.length + delta.delta.length >
+              MAX_CARD_CHAT_STREAM_TEXT_LENGTH
+            ) {
+              cancel(
+                new CardChatError(
+                  "transport",
+                  "Blitz assistant output exceeded the configured limit"
+                )
               )
-            )
-            return
+              return
+            }
+            text += delta.delta
+            emitEvent({
+              type: "text-delta",
+              threadId: delta.threadId,
+              turnId: delta.turnId,
+              delta: delta.delta,
+            })
           }
-          text += delta.delta
-          emitEvent({ type: "text-delta", ...delta })
         } else {
           if (
             delta.delta.length === 0 ||
@@ -570,14 +741,14 @@ export async function runCodexTextTurn(
               cancel(
                 new CardChatError(
                   "transport",
-                  "Codex assistant output exceeded the configured limit"
+                  "Blitz assistant output exceeded the configured limit"
                 )
               )
             }
             return
           }
           const pending = deltasByTurn.get(key) ?? []
-          pending.push(delta.delta)
+          pending.push({ delta: delta.delta, isThought: delta.isThought })
           deltasByTurn.set(key, pending)
           bufferedTextLength += delta.delta.length
           bufferedDeltaCount += 1
@@ -593,7 +764,7 @@ export async function runCodexTextTurn(
             cancel(
               new CardChatError(
                 "transport",
-                "Codex emitted too many raced turn completions"
+                "Blitz emitted too many raced turn completions"
               )
             )
             return
@@ -608,7 +779,7 @@ export async function runCodexTextTurn(
       return
     }
     if (event.type === "process-closed") {
-      cancel(new CardChatError("transport", "Codex app-server process closed"))
+      cancel(new CardChatError("transport", "Blitz provider process closed"))
       return
     }
     if (event.type === "server-request") {
@@ -656,16 +827,22 @@ export async function runCodexTextTurn(
     if (cancelReason) throw cancelReason
     unsubscribe = client.onEvent(handleTransportEvent)
     const threadOptions: CodexStartThreadOptions = {
-      approvalPolicy: "on-request",
-      sandbox: "read-only",
+      approvalPolicy: request.approvalPolicy ?? "on-request",
+      sandbox: request.sandbox ?? "read-only",
+      ...(request.developerInstructions
+        ? { developerInstructions: request.developerInstructions }
+        : {}),
       ...(request.ephemeral === undefined
         ? {}
         : { ephemeral: request.ephemeral }),
       ...(request.model === undefined ? {} : { model: request.model }),
     }
     const resumeOptions: CodexResumeThreadOptions = {
-      approvalPolicy: "on-request",
-      sandbox: "read-only",
+      approvalPolicy: request.approvalPolicy ?? "on-request",
+      sandbox: request.sandbox ?? "read-only",
+      ...(request.developerInstructions
+        ? { developerInstructions: request.developerInstructions }
+        : {}),
       ...(request.model === undefined ? {} : { model: request.model }),
     }
     const thread = request.threadId
@@ -677,6 +854,20 @@ export async function runCodexTextTurn(
     const turn = await raceCancellation(
       client.startTurn(threadId, {
         text: request.prompt,
+        approvalPolicy: request.approvalPolicy ?? "on-request",
+        sandboxPolicy:
+          request.sandbox === "danger-full-access"
+            ? { type: "dangerFullAccess" }
+            : request.sandbox === "workspace-write"
+              ? {
+                  type: "workspaceWrite",
+                  writableRoots: [request.workspaceDirectory],
+                  networkAccess: false,
+                  excludeSlashTmp: true,
+                  excludeTmpdirEnvVar: true,
+                }
+              : { type: "readOnly", networkAccess: false },
+        ...(request.images?.length ? { images: request.images } : {}),
         ...(request.model === undefined ? {} : { model: request.model }),
         ...(request.effort === undefined ? {} : { effort: request.effort }),
       })

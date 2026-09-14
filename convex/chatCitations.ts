@@ -12,7 +12,8 @@ import { retrieveProjectContext } from "./sourceRetrieval"
 /** Registers an extracted upload in its project without enqueueing study generation. */
 export const createDocument = mutation({
   args: {
-    projectId: v.id("projects"),
+    projectId: v.optional(v.id("projects")),
+    ownerToken: v.optional(v.string()),
     filename: v.string(),
     relativeKey: v.string(),
     mimeType: v.string(),
@@ -20,10 +21,17 @@ export const createDocument = mutation({
     sizeBytes: v.number(),
   },
   handler: async (ctx, args) => {
-    if (!(await ctx.db.get(args.projectId)))
+    if (!args.projectId && !args.ownerToken)
+      throw new Error("Chat document owner is required")
+    if (args.ownerToken && !/^[A-Za-z0-9_-]{32,256}$/.test(args.ownerToken))
+      throw new Error("Chat upload token is invalid")
+    if (args.projectId && !(await ctx.db.get(args.projectId)))
       throw new Error("Project not found")
     if (
-      !/^Sources\/[a-f0-9]{64}-[^/\\]+$/.test(args.relativeKey) ||
+      !(
+        /^Sources\/[a-f0-9]{64}-[^/\\]+$/.test(args.relativeKey) ||
+        /^Uploads\/[a-f0-9]{64}-[^/\\]+$/.test(args.relativeKey)
+      ) ||
       !args.text.trim() ||
       new TextEncoder().encode(args.text).length > 500_000 ||
       args.filename.length > 255 ||
@@ -36,23 +44,38 @@ export const createDocument = mutation({
   },
 })
 
-/** Resolves an uploaded document only in its owning project. */
+/** Resolves an uploaded document through its project, chat, or pre-chat token owner. */
 export const getDocument = query({
-  args: { projectId: v.id("projects"), documentId: v.id("chatDocuments") },
+  args: {
+    projectId: v.optional(v.id("projects")),
+    chatId: v.optional(v.id("workspaceChats")),
+    ownerToken: v.optional(v.string()),
+    documentId: v.id("chatDocuments"),
+  },
   handler: async (ctx, args) => {
     const document = await ctx.db.get(args.documentId)
-    return document?.projectId === args.projectId ? document : null
+    if (!document) return null
+    if (args.projectId && document.projectId !== args.projectId) return null
+    if (args.chatId && document.chatId !== args.chatId) return null
+    if (args.ownerToken && document.ownerToken !== args.ownerToken) return null
+    if (args.ownerToken && document.chatId && document.chatId !== args.chatId)
+      return null
+    if (!args.projectId && !args.chatId && !args.ownerToken) return null
+    return document
   },
 })
 
 /** Retrieves project passages once per question, with their source identity intact. */
 export const projectPassages = query({
   args: { projectId: v.id("projects"), question: v.string() },
-  handler: async (ctx, args) =>
-    retrieveProjectContext(ctx, args.projectId, args.question.slice(0, 500), {
+  handler: async (ctx, args) => {
+    const question = args.question.trim()
+    if (!question) return { results: [], characterCount: 0 }
+    return retrieveProjectContext(ctx, args.projectId, question.slice(0, 500), {
       maxChars: 16_000,
       neighborRadius: 1,
-    }),
+    })
+  },
 })
 
 /** Creates the citation manifest from persisted attachments and verified retrieved chunk IDs. */
@@ -110,10 +133,14 @@ export const prepare = mutation({
     for (const attachment of attachments) {
       if (attachment.documentId) {
         const document = await ctx.db.get(attachment.documentId)
-        if (document && document.projectId === chat.projectId)
+        if (
+          document &&
+          ((chat.projectId && document.projectId === chat.projectId) ||
+            document.chatId === chat._id)
+        )
           add(document.text, {
             filename: document.filename,
-            projectId: document.projectId,
+            ...(document.projectId ? { projectId: document.projectId } : {}),
             documentId: document._id,
           })
       } else if (attachment.kind === "card" && attachment.itemId) {
@@ -236,6 +263,15 @@ export const read = query({
         text = document.text
         mimeType = document.mimeType
         fileUrl = `/api/chat/files?projectId=${encodeURIComponent(document.projectId)}&documentId=${encodeURIComponent(document._id)}`
+      }
+    } else if (citation.documentId) {
+      const document = await ctx.db.get(
+        citation.documentId as Id<"chatDocuments">
+      )
+      if (document?.chatId === args.chatId) {
+        text = document.text
+        mimeType = document.mimeType
+        fileUrl = `/api/chat/files?chatId=${encodeURIComponent(args.chatId)}&ownerToken=${encodeURIComponent(document.ownerToken ?? "")}&documentId=${encodeURIComponent(document._id)}`
       }
     } else if (citation.sourceId && citation.projectId) {
       const source = await ctx.db.get(citation.sourceId as Id<"sources">)

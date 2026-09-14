@@ -162,6 +162,8 @@ export default defineSchema({
     type: learningItemType,
     title: v.string(),
     body: v.string(),
+    /** Optional longer explanation for the walkthrough card's back face. */
+    deepExplanation: v.optional(v.string()),
     question: v.optional(v.string()),
     options: v.optional(v.array(learningOption)),
     correctOptionId: v.optional(v.string()),
@@ -251,6 +253,11 @@ export default defineSchema({
     totalChunks: v.optional(v.number()),
     /** Approved research topic filter copied into the immutable job snapshot. */
     learningScope: v.optional(v.string()),
+    /** Provider selection copied into the immutable generation snapshot. */
+    providerId: v.optional(v.string()),
+    providerInstanceId: v.optional(v.string()),
+    generationModel: v.optional(v.string()),
+    generationEffort: v.optional(v.string()),
     /** Number of generated learning items committed so far; absent on legacy jobs. */
     generatedItemCount: v.optional(v.number()),
     workerId: v.optional(v.string()),
@@ -387,9 +394,14 @@ export default defineSchema({
     updatedAt: v.number(),
   }).index("by_project_updatedAt", ["projectId", "updatedAt"]),
 
-  /** One global record for the model and reasoning level used by each AI task in this personal deployment. */
+  /** One global record for the provider, model, and reasoning choices used by each AI task. */
   aiModelSettings: defineTable({
+    /** Per-provider interactive chat approval policy; omitted on legacy records. */
+    providerApprovalPolicies: v.optional(v.record(v.string(), v.string())),
     scope: v.literal("global"),
+    researchProvider: v.optional(v.string()),
+    replyProvider: v.optional(v.string()),
+    cardGenerationProvider: v.optional(v.string()),
     researchModel: v.string(),
     replyModel: v.string(),
     cardGenerationModel: v.string(),
@@ -399,9 +411,9 @@ export default defineSchema({
     updatedAt: v.number(),
   }).index("by_scope", ["scope"]),
 
-  /** General Codex threads opened from the top-level Chat tab. */
+  /** General Blitz sessions opened from the top-level Chat tab. */
   workspaceChats: defineTable({
-    /** Owning project. Optional only for chats created before project ownership. */
+    /** Optional owning project. Chats can exist independently of projects. */
     projectId: v.optional(v.id("projects")),
     title: v.string(),
     /** Optional chat agent policy; legacy chats use approval with no extra instructions. */
@@ -410,11 +422,21 @@ export default defineSchema({
     ),
     agentInstructions: v.optional(v.string()),
     workingProjectId: v.optional(v.id("projects")),
+    /** Version of the app-owned interactive tool set attached to the provider session. */
+    agentRequestToolsVersion: v.optional(v.number()),
     /** Manual history state. Optional keeps chats created before this feature readable. */
     isUnread: v.optional(v.boolean()),
     isPinned: v.optional(v.boolean()),
+    isArchived: v.optional(v.boolean()),
+    archivedAt: v.optional(v.number()),
     branchedFromChatId: v.optional(v.id("workspaceChats")),
     branchedFromMessageId: v.optional(v.id("workspaceChatMessages")),
+    /** Provider snapshot for new sessions; absent on legacy Codex chats. */
+    providerId: v.optional(v.string()),
+    providerInstanceId: v.optional(v.string()),
+    providerSessionId: v.optional(v.string()),
+    providerModel: v.optional(v.string()),
+    providerEffort: v.optional(v.string()),
     codexThreadId: v.optional(v.string()),
     codexContextReady: v.optional(v.boolean()),
     status: v.union(
@@ -429,9 +451,10 @@ export default defineSchema({
   })
     .index("by_updatedAt", ["updatedAt"])
     .index("by_project_updatedAt", ["projectId", "updatedAt"])
-    .index("by_pinned_updatedAt", ["isPinned", "updatedAt"]),
+    .index("by_pinned_updatedAt", ["isPinned", "updatedAt"])
+    .index("by_archived_updatedAt", ["isArchived", "updatedAt"]),
 
-  /** User and assistant messages retained for a general Codex thread. */
+  /** User and assistant messages retained for a general Blitz session. */
   workspaceChatMessages: defineTable({
     /** Immutable passages allowed as links in this reply, retained across branches. */
     citations: v.optional(v.array(citationFields)),
@@ -439,25 +462,112 @@ export default defineSchema({
     clientMessageId: v.string(),
     role: v.union(v.literal("user"), v.literal("assistant")),
     content: v.string(),
+    /** Cumulative internal thought, reasoning, or commentary trace for assistant messages. */
+    thought: v.optional(v.string()),
+    /** Bounded provider tool lifecycle records retained for the assistant activity timeline. */
+    providerEvents: v.optional(
+      v.array(
+        v.object({
+          id: v.string(),
+          type: v.literal("tool"),
+          title: v.string(),
+          status: v.union(
+            v.literal("running"),
+            v.literal("completed"),
+            v.literal("failed")
+          ),
+          detail: v.optional(v.string()),
+        })
+      )
+    ),
+    /** Wall-clock duration of the completed turn in milliseconds. */
+    durationMs: v.optional(v.number()),
     status: v.union(
       v.literal("running"),
       v.literal("completed"),
       v.literal("failed")
     ),
+    providerTurnId: v.optional(v.string()),
     codexTurnId: v.optional(v.string()),
-    /** Pending or decided file operation approval attached to this assistant turn. */
+    /** Pending or decided agent request attached to this assistant turn. */
     agentApproval: v.optional(
       v.object({
         id: v.string(),
+        /** Native provider request identifier, when the provider exposes one. */
+        providerRequestId: v.optional(v.string()),
         method: v.string(),
+        /** Composer control family; omitted on legacy approval records. */
+        kind: v.optional(
+          v.union(
+            v.literal("approval"),
+            v.literal("question"),
+            v.literal("form"),
+            v.literal("url")
+          )
+        ),
+        /** Human-readable title shown in the composer request panel. */
+        title: v.optional(v.string()),
+        /** Optional prompt shown above structured controls. */
+        prompt: v.optional(v.string()),
+        /** Serialized bounded questions, form fields, or URL metadata. */
+        input: v.optional(v.string()),
         details: v.string(),
         status: v.union(
           v.literal("pending"),
           v.literal("approved"),
-          v.literal("denied")
+          v.literal("denied"),
+          v.literal("expired"),
+          v.literal("cancelled")
         ),
         expiresAt: v.number(),
+        /** Serialized user response consumed by the waiting provider turn. */
+        response: v.optional(v.string()),
       })
+    ),
+    /** Bounded interaction history retained after each request is consumed. */
+    agentRequests: v.optional(
+      v.array(
+        v.object({
+          id: v.string(),
+          providerRequestId: v.optional(v.string()),
+          method: v.string(),
+          kind: v.optional(
+            v.union(
+              v.literal("approval"),
+              v.literal("question"),
+              v.literal("form"),
+              v.literal("url")
+            )
+          ),
+          title: v.optional(v.string()),
+          prompt: v.optional(v.string()),
+          input: v.optional(v.string()),
+          details: v.string(),
+          status: v.union(
+            v.literal("pending"),
+            v.literal("approved"),
+            v.literal("denied"),
+            v.literal("expired"),
+            v.literal("cancelled")
+          ),
+          expiresAt: v.number(),
+          response: v.optional(v.string()),
+          completedAt: v.optional(v.number()),
+        })
+      )
+    ),
+    /** Immutable user annotations attached to this turn. */
+    annotations: v.optional(
+      v.array(
+        v.object({
+          id: v.string(),
+          number: v.optional(v.number()),
+          messageId: v.string(),
+          selectedText: v.string(),
+          note: v.string(),
+          createdAt: v.number(),
+        })
+      )
     ),
     createdAt: v.number(),
     updatedAt: v.number(),
@@ -477,6 +587,14 @@ export default defineSchema({
       v.literal("link")
     ),
     label: v.string(),
+    mimeType: v.optional(
+      v.union(
+        v.literal("image/png"),
+        v.literal("image/jpeg"),
+        v.literal("image/webp"),
+        v.literal("image/gif")
+      )
+    ),
     projectId: v.optional(v.id("projects")),
     itemId: v.optional(v.id("learningItems")),
     text: v.optional(v.string()),
@@ -486,18 +604,32 @@ export default defineSchema({
 
   /** Ad hoc chat uploads retain originals without entering study generation. */
   chatDocuments: defineTable({
-    projectId: v.id("projects"),
+    /** Project owner for legacy/project-scoped uploads; absent for drafts. */
+    projectId: v.optional(v.id("projects")),
+    /** Opaque server-issued token accepted only until the document is bound. */
+    ownerToken: v.optional(v.string()),
+    /** Chat owner assigned when a draft is first sent. */
+    chatId: v.optional(v.id("workspaceChats")),
     filename: v.string(),
     relativeKey: v.string(),
     mimeType: v.string(),
     text: v.string(),
     sizeBytes: v.number(),
     createdAt: v.number(),
-  }).index("by_project", ["projectId"]),
+  })
+    .index("by_project", ["projectId"])
+    .index("by_ownerToken", ["ownerToken"])
+    .index("by_chat", ["chatId"]),
 
   conversations: defineTable({
     projectId: v.id("projects"),
     itemId: v.id("learningItems"),
+    /** Provider snapshot for this card conversation; absent on legacy Codex chats. */
+    providerId: v.optional(v.string()),
+    providerInstanceId: v.optional(v.string()),
+    providerSessionId: v.optional(v.string()),
+    providerModel: v.optional(v.string()),
+    providerEffort: v.optional(v.string()),
     codexThreadId: v.optional(v.string()),
     status: v.union(
       v.literal("idle"),
@@ -523,6 +655,7 @@ export default defineSchema({
     ),
     reply: v.optional(v.string()),
     error: v.optional(v.string()),
+    providerTurnId: v.optional(v.string()),
     codexTurnId: v.optional(v.string()),
     workerId: v.optional(v.string()),
     leaseToken: v.optional(v.string()),
@@ -542,6 +675,11 @@ export default defineSchema({
     projectId: v.id("projects"),
     requestId: v.string(),
     request: v.string(),
+    /** Provider selection copied into the immutable planning snapshot. */
+    providerId: v.optional(v.string()),
+    providerInstanceId: v.optional(v.string()),
+    researchModel: v.optional(v.string()),
+    researchEffort: v.optional(v.string()),
     status: v.union(
       v.literal("queued"),
       v.literal("running"),

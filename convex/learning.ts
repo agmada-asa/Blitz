@@ -120,6 +120,9 @@ export const getProjectPath = query({
           type: item.type,
           title: item.title,
           ...(item.type === "explain" ? { body: item.body } : {}),
+          ...(item.type === "explain" && item.deepExplanation
+            ? { deepExplanation: item.deepExplanation }
+            : {}),
           ...(item.type !== "explain" ? { question: item.question ?? "" } : {}),
           ...(item.options ? { options: item.options } : {}),
           sourceLabels: item.sourceIds
@@ -194,6 +197,7 @@ const learningItemInput = v.object({
   type: learningItemType,
   title: v.string(),
   body: v.string(),
+  deepExplanation: v.optional(v.string()),
   question: v.optional(v.string()),
   options: v.optional(v.array(option)),
   correctOptionId: v.optional(v.string()),
@@ -287,6 +291,7 @@ function validateLearningItem(item: {
   type: "explain" | "single-choice" | "multiple-answer" | "true-false"
   title: string
   body: string
+  deepExplanation?: string
   question?: string
   options?: readonly { id: string; text: string }[]
   correctOptionId?: string
@@ -296,10 +301,13 @@ function validateLearningItem(item: {
 }): void {
   boundedText(item.title, "Learning item title", 180)
   boundedText(item.body, "Learning item body", 4_000)
+  if (item.deepExplanation !== undefined)
+    boundedText(item.deepExplanation, "Learning item deep explanation", 8_000)
   if (!Number.isSafeInteger(item.order) || item.order < 0)
     throw new Error("Learning item order is invalid")
   if (item.type === "explain") {
     if (
+      item.deepExplanation === undefined ||
       item.question !== undefined ||
       item.options !== undefined ||
       item.correctOptionId !== undefined ||
@@ -309,6 +317,8 @@ function validateLearningItem(item: {
       throw new Error("Explain items cannot contain answer fields")
     return
   }
+  if (item.deepExplanation !== undefined)
+    throw new Error("Question items cannot contain deep explanations")
   boundedText(item.question ?? "", "Question", 500)
   if (item.type === "true-false") {
     if (
@@ -671,6 +681,9 @@ export const insertLearningItems = mutation({
           type: item.type,
           title: item.title.trim(),
           body: item.body.trim(),
+          ...(item.deepExplanation
+            ? { deepExplanation: item.deepExplanation.trim() }
+            : {}),
           ...(item.question ? { question: item.question.trim() } : {}),
           ...(item.options
             ? {

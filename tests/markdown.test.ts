@@ -1,7 +1,12 @@
 /** Exercises Markdown syntax shared by the web and Android renderers. */
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { markdownHref, markdownText, parseMarkdown } from "../lib/markdown.ts"
+import {
+  markdownHref,
+  markdownImageSrc,
+  markdownText,
+  parseMarkdown,
+} from "../lib/markdown.ts"
 
 test("Markdown parses headings, nested lists, tables, and unfinished code fences", () => {
   const tokens = parseMarkdown(
@@ -40,4 +45,35 @@ test("Markdown links reject executable protocols, credentials, and obfuscation",
     "https://example.com/?a=1&b=2"
   )
   assert.equal(markdownText("&lt;script&gt; &amp; &#x1f9e0;"), "<script> & 🧠")
+})
+
+test("Markdown images allow safe remote sources and reject local or executable URLs", () => {
+  assert.equal(
+    markdownImageSrc("https://cdn.example.com/diagram.png?x=1&amp;y=2"),
+    "https://cdn.example.com/diagram.png?x=1&y=2"
+  )
+  for (const source of [
+    "javascript:alert(1)",
+    "data:image/svg+xml,<svg/onload=alert(1)>",
+    "file:///tmp/diagram.png",
+    "//cdn.example.com/diagram.png",
+    "https://user:pass@cdn.example.com/diagram.png",
+  ]) {
+    assert.equal(markdownImageSrc(source), undefined)
+  }
+})
+
+test("Markdown remains tokenizable for every incomplete streamed prefix", () => {
+  const reply =
+    "# Heading\n\nHere is **bold** and [a link](https://example.com).\n\n![diagram](https://cdn.example.com/diagram.png)\n\n```ts\nconst answer = 42\n```"
+  for (let end = 0; end <= reply.length; end++) {
+    assert.doesNotThrow(() => parseMarkdown(reply.slice(0, end)))
+  }
+  const complete = parseMarkdown(reply)
+  const hasImage = complete.some((token) =>
+    "tokens" in token
+      ? token.tokens?.some((nested) => nested.type === "image")
+      : false
+  )
+  assert.equal(hasImage, true)
 })

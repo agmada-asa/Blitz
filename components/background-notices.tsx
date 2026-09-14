@@ -3,6 +3,7 @@
 /** Provides short-lived background-job notices that survive client navigation. */
 
 import Link from "next/link"
+import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import {
   createContext,
@@ -34,6 +35,7 @@ const BackgroundNoticeContext = createContext<NotifyBackgroundNotice | null>(
 /** Renders an eight-second notice tray for background work. */
 export function BackgroundNotices({ children }: { children: ReactNode }) {
   const [notices, setNotices] = useState<BackgroundNotice[]>([])
+  const router = useRouter()
 
   /** Shows one notice with an optional route action, then removes it automatically. */
   const notify = useCallback<NotifyBackgroundNotice>((message, href, label) => {
@@ -61,6 +63,10 @@ export function BackgroundNotices({ children }: { children: ReactNode }) {
             {notice.href && notice.label ? (
               <Link
                 href={notice.href}
+                onClick={(event) => {
+                  event.preventDefault()
+                  router.push(notice.href ?? "/notifications")
+                }}
                 className="inline-flex min-h-11 shrink-0 items-center text-sm font-medium underline-offset-4 hover:underline"
               >
                 {notice.label}

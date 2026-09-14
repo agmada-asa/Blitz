@@ -273,3 +273,12 @@ export async function readProjectFileBytes(
     await handle.close()
   }
 }
+
+/** Removes one previously stored file after a failed ingestion step. */
+export async function removeProjectFile(
+  projectId: string,
+  key: string
+): Promise<void> {
+  const path = await resolveProjectFile(projectId, key)
+  await fs.rm(path, { force: true })
+}

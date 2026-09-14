@@ -90,6 +90,8 @@ test("a resumed worker commits only the next persisted checkpoint", async () => 
             type: "explain",
             title: "Repeating waves",
             body: "A waveform repeats in time.",
+            deepExplanation:
+              "A waveform is a description of how a changing quantity varies over time. In audio, the changing quantity is usually air pressure or an electrical signal representing that pressure. A repeating waveform completes the same pattern over a regular interval, which creates a stable frequency and pitch. The distance between matching points in two cycles is the period. A sine wave is the simplest example, while instrument tones usually combine several partials into a more complex shape. The shape alone does not tell us every perceptual detail, because level, spectrum, and context also affect what we hear. A waveform is therefore a useful view of timing and shape, not a complete description of the listening experience.",
             sourceChunkIds: [chunks[1].id],
           },
         ],

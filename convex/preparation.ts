@@ -14,6 +14,7 @@ import {
   validateLearningGeneration,
   type LearningGenerationBatch,
 } from "../lib/learning/generation"
+import { resolveQueuedAiSelection } from "./ai_provider_settings"
 
 /** Maximum UTF-8 bytes in a source snapshot, bounded below Convex document limits. */
 export const MAX_PREPARATION_SOURCE_LENGTH = 500_000
@@ -179,6 +180,7 @@ export const enqueue = mutation({
         status: existing.status,
         alreadyQueued: true,
       }
+    const selection = await resolveQueuedAiSelection(ctx, "cardGeneration")
     const now = Date.now()
     const jobId = await ctx.db.insert("preparationJobs", {
       projectId: args.projectId,
@@ -188,6 +190,9 @@ export const enqueue = mutation({
       sourceKind: source.kind,
       status: "queued",
       nextChunkOrdinal: 0,
+      providerId: selection.providerId,
+      generationModel: selection.model,
+      generationEffort: selection.effort,
       generatedItemCount: 0,
       attemptCount: 0,
       createdAt: now,
@@ -220,6 +225,18 @@ export const claimNext = mutation({
         leaseToken,
         nextChunk: { ordinal: activeOwned.nextChunkOrdinal },
         totalChunks: activeOwned.totalChunks ?? null,
+        ...(activeOwned.providerId
+          ? { providerId: activeOwned.providerId }
+          : {}),
+        ...(activeOwned.providerInstanceId
+          ? { providerInstanceId: activeOwned.providerInstanceId }
+          : {}),
+        ...(activeOwned.generationModel
+          ? { generationModel: activeOwned.generationModel }
+          : {}),
+        ...(activeOwned.generationEffort
+          ? { generationEffort: activeOwned.generationEffort }
+          : {}),
         ...(activeOwned.learningScope
           ? { learningScope: activeOwned.learningScope }
           : {}),
@@ -262,6 +279,16 @@ export const claimNext = mutation({
       leaseToken,
       nextChunk: { ordinal: candidate.nextChunkOrdinal },
       totalChunks: candidate.totalChunks ?? null,
+      ...(candidate.providerId ? { providerId: candidate.providerId } : {}),
+      ...(candidate.providerInstanceId
+        ? { providerInstanceId: candidate.providerInstanceId }
+        : {}),
+      ...(candidate.generationModel
+        ? { generationModel: candidate.generationModel }
+        : {}),
+      ...(candidate.generationEffort
+        ? { generationEffort: candidate.generationEffort }
+        : {}),
       ...(candidate.learningScope
         ? { learningScope: candidate.learningScope }
         : {}),
@@ -389,6 +416,9 @@ export const commitChunk = mutation({
         type: item.type,
         title: item.title,
         body: item.body,
+        ...(item.deepExplanation
+          ? { deepExplanation: item.deepExplanation }
+          : {}),
         ...(item.question ? { question: item.question } : {}),
         ...(item.options ? { options: item.options } : {}),
         ...(item.correctOptionId
@@ -551,10 +581,12 @@ export const listJobsForProject = query({
         )
       )
     ).filter((job): job is NonNullable<typeof job> => job !== null)
+    const now = Date.now()
     return jobs.map((job) => ({
       ...progressFor(job),
       sourceId: job.sourceId,
       error: job.lastError ?? null,
+      leaseExpired: job.status === "leased" && (job.leaseExpiresAt ?? 0) <= now,
       createdAt: job.createdAt,
       updatedAt: job.updatedAt,
     }))

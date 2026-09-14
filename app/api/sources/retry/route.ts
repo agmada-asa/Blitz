@@ -38,18 +38,56 @@ export async function POST(request: Request): Promise<Response> {
       sourceIds: [body.sourceId as never],
     })
     const preparation = jobs[0]
-    if (preparation?.status === "failed")
+    const preparationCanResume =
+      preparation?.status === "failed" || preparation?.leaseExpired === true
+    if (preparationCanResume)
       return Response.json(
         await convex.mutation(api.preparation.retry, {
           jobId: preparation.jobId,
-        })
+        }),
+        { headers: { "Cache-Control": "no-store" } }
       )
-    if (!source.relativeKey)
+    if (preparation?.status === "queued" || preparation?.status === "leased")
+      return Response.json(
+        {
+          jobId: preparation.jobId,
+          status: preparation.status === "leased" ? "running" : "queued",
+          pending: true,
+        },
+        { status: 202, headers: { "Cache-Control": "no-store" } }
+      )
+    if (preparation?.status === "completed")
+      return Response.json(
+        {
+          jobId: preparation.jobId,
+          status: "completed",
+          alreadyPrepared: true,
+        },
+        { headers: { "Cache-Control": "no-store" } }
+      )
+    if (
+      !source.relativeKey ||
+      source.ingestionStatus === "completed" ||
+      (source.ingestionJobId === undefined && source.hasExtractedText)
+    )
       return Response.json(
         await convex.mutation(api.preparation.enqueue, {
           projectId: body.projectId as never,
           sourceId: body.sourceId as never,
-        })
+        }),
+        { headers: { "Cache-Control": "no-store" } }
+      )
+    if (
+      source.ingestionStatus === "running" &&
+      (source.ingestionLeaseExpiresAt ?? 0) > Date.now()
+    )
+      return Response.json(
+        {
+          sourceId: body.sourceId,
+          status: "running",
+          pending: true,
+        },
+        { status: 202, headers: { "Cache-Control": "no-store" } }
       )
     const fileStream = Readable.toWeb(
       createReadStream(

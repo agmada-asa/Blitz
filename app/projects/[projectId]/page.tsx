@@ -10,6 +10,7 @@ import { ProjectActions } from "@/components/projects/project-actions"
 import { ProjectFiles } from "@/components/projects/project-files"
 import { ProjectLearningWorkspace } from "@/components/projects/project-learning-workspace"
 import { ResearchPanel } from "@/components/projects/research-panel"
+import { SourceOverviewDialog } from "@/components/projects/source-overview-dialog"
 import { SourceUploader } from "@/components/projects/source-uploader"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -47,6 +48,7 @@ export default function ProjectPage({
   const updateSource = useMutation(api.sources.updateSource)
   const enqueue = useMutation(api.preparation.enqueue)
   const [agentWorkspaceDirectory, setAgentWorkspaceDirectory] = useState("")
+  const [overviewSourceId, setOverviewSourceId] = useState<string | null>(null)
   useEffect(() => {
     let active = true
     fetch(`/api/projects/${encodeURIComponent(projectId)}/agent`)
@@ -67,6 +69,10 @@ export default function ProjectPage({
   const ingestion = useQuery(api.projectAgents.listIngestion, {
     projectId: convexProjectId,
   })
+  const preparation = useQuery(api.preparation.listJobsForProject, {
+    projectId: convexProjectId,
+    sourceIds: sources.map((source) => source._id),
+  })
   const artifacts = useQuery(api.projectAgents.listArtifacts, {
     projectId: convexProjectId,
   })
@@ -85,22 +91,6 @@ export default function ProjectPage({
     }
     window.open(
       `/api/projects/${encodeURIComponent(projectId)}/agent/artifacts?key=${encodeURIComponent(artifact.relativeKey)}`,
-      "_blank",
-      "noopener,noreferrer"
-    )
-  }
-
-  /** Opens an original source in the native shell or the bounded browser route. */
-  const openSource = (source: {
-    _id: Id<"sources"> | string
-    relativeKey?: string
-  }) => {
-    if (source.relativeKey && window.blitzDesktop) {
-      void window.blitzDesktop.openFile(projectId, source.relativeKey)
-      return
-    }
-    window.open(
-      `/api/sources/file?projectId=${encodeURIComponent(projectId)}&sourceId=${encodeURIComponent(String(source._id))}`,
       "_blank",
       "noopener,noreferrer"
     )
@@ -136,118 +126,184 @@ export default function ProjectPage({
   if (project === undefined) return <ProjectLoadingState />
   if (project === null) return <ProjectNotFoundState />
 
-  return (
-    <ProjectLearningWorkspace
-      projectId={convexProjectId}
-      projectTitle={project.title}
-      sources={sources.map((source) => ({
-        id: String(source._id),
-        filename: source.filename,
-        status: source.status,
-      }))}
-      onOpenSource={(sourceId) => {
-        const source = sources.find(
-          (candidate) => String(candidate._id) === sourceId
-        )
-        if (source) openSource(source)
-      }}
-      headerActions={
-        <>
-          <Button
-            asChild
-            variant="outline"
-            className="hidden min-h-10 rounded-full sm:inline-flex"
-          >
-            <Link href={`/chat?projectId=${encodeURIComponent(projectId)}`}>
-              Chat
-            </Link>
-          </Button>
-          <div className="hidden sm:block">
-            <ResearchPanel
-              key={projectId}
-              projectId={projectId}
-              initialRequestId={research}
-            />
-          </div>
-          <ProjectActions project={project} returnToLibrary />
-        </>
-      }
-      sourceManager={
-        <div className="pb-4">
-          <SourceUploader
-            projectId={convexProjectId}
-            createSource={createSource}
-            createAndEnqueue={createAndEnqueue}
-            updateSource={updateSource}
-            enqueue={enqueue}
-          />
+  const preparationJobs = preparation?.map((job) => ({
+    jobId: String(job.jobId),
+    sourceId: String(job.sourceId),
+    status: job.status,
+    error: job.error ?? undefined,
+    nextChunkOrdinal: job.nextChunkOrdinal,
+    totalChunks: job.totalChunks ?? undefined,
+    generatedItemCount: job.generatedItemCount ?? undefined,
+    leaseExpired: job.leaseExpired,
+  }))
 
-          {sourceStatus === "LoadingFirstPage" ? (
-            <p className="mt-8 text-sm text-muted-foreground" role="status">
-              Loading files…
-            </p>
-          ) : (
-            <ProjectFiles
-              projectId={convexProjectId}
-              sources={sources}
-              ingestion={ingestion?.map((job) => ({
-                sourceId: String(job.sourceId),
-                status: job.status,
-                error: job.error,
-              }))}
-              artifacts={artifacts?.map((artifact) => ({
-                id: String(artifact._id),
-                relativeKey: artifact.relativeKey,
-                kind: artifact.kind,
-                mimeType: artifact.mimeType,
-                sizeBytes: artifact.sizeBytes,
-                status: artifact.status,
-                updatedAt: artifact.updatedAt,
-              }))}
-              citations={citations?.map((citation) => ({
-                sourceId: String(citation.sourceId),
-                label: citation.label,
-                detail:
-                  "detail" in citation && typeof citation.detail === "string"
-                    ? citation.detail
-                    : undefined,
-              }))}
-              actions={{
-                onOpenArtifact: openArtifact,
-                onAddArtifactToSources: addArtifactToSources,
-                onRetryIngestion: async (sourceId) => {
-                  const response = await fetch("/api/sources/retry", {
-                    method: "POST",
-                    headers: { "content-type": "application/json" },
-                    body: JSON.stringify({ projectId, sourceId }),
-                  })
-                  if (!response.ok) {
-                    const payload = (await response.json()) as {
-                      error?: string
-                    }
-                    throw new Error(payload.error || "Source retry failed.")
-                  }
-                },
-                onOpenSource: openSource,
-                onRevealArtifact: revealArtifact,
-              }}
-            />
-          )}
-          {sourceStatus === "CanLoadMore" || sourceStatus === "LoadingMore" ? (
+  const activeOverviewSource = overviewSourceId
+    ? (sources.find(
+        (candidate) => String(candidate._id) === overviewSourceId
+      ) ?? null)
+    : null
+
+  return (
+    <>
+      <ProjectLearningWorkspace
+        projectId={convexProjectId}
+        projectTitle={project.title}
+        sources={sources.map((source) => ({
+          id: String(source._id),
+          filename: source.filename,
+          status: source.status,
+        }))}
+        onOpenSource={(sourceId) => {
+          setOverviewSourceId(sourceId)
+        }}
+        headerActions={
+          <>
             <Button
+              asChild
               variant="outline"
-              className="mt-4"
-              disabled={sourceStatus === "LoadingMore"}
-              onClick={() => loadMoreSources(20)}
+              className="hidden min-h-10 rounded-full sm:inline-flex"
             >
-              {sourceStatus === "LoadingMore"
-                ? "Loading files…"
-                : "Load more files"}
+              <Link href={`/chat?projectId=${encodeURIComponent(projectId)}`}>
+                Chat
+              </Link>
             </Button>
-          ) : null}
-        </div>
-      }
-    />
+            <div className="hidden sm:block">
+              <ResearchPanel
+                key={projectId}
+                projectId={projectId}
+                initialRequestId={research}
+              />
+            </div>
+            <ProjectActions project={project} returnToLibrary />
+          </>
+        }
+        sourceManager={
+          <div className="pb-4">
+            <SourceUploader
+              projectId={convexProjectId}
+              createSource={createSource}
+              createAndEnqueue={createAndEnqueue}
+              updateSource={updateSource}
+              enqueue={enqueue}
+            />
+
+            {sourceStatus === "LoadingFirstPage" ? (
+              <p className="mt-8 text-sm text-muted-foreground" role="status">
+                Loading files…
+              </p>
+            ) : (
+              <ProjectFiles
+                projectId={convexProjectId}
+                sources={sources}
+                ingestion={ingestion?.map((job) => ({
+                  sourceId: String(job.sourceId),
+                  status: job.status,
+                  error: job.error,
+                }))}
+                preparation={preparationJobs}
+                artifacts={artifacts?.map((artifact) => ({
+                  id: String(artifact._id),
+                  relativeKey: artifact.relativeKey,
+                  kind: artifact.kind,
+                  mimeType: artifact.mimeType,
+                  sizeBytes: artifact.sizeBytes,
+                  status: artifact.status,
+                  updatedAt: artifact.updatedAt,
+                }))}
+                citations={citations?.map((citation) => ({
+                  sourceId: String(citation.sourceId),
+                  label: citation.label,
+                  detail:
+                    "detail" in citation && typeof citation.detail === "string"
+                      ? citation.detail
+                      : undefined,
+                }))}
+                actions={{
+                  onOpenArtifact: openArtifact,
+                  onAddArtifactToSources: addArtifactToSources,
+                  onRetryIngestion: async (sourceId) => {
+                    const response = await fetch("/api/sources/retry", {
+                      method: "POST",
+                      headers: { "content-type": "application/json" },
+                      body: JSON.stringify({ projectId, sourceId }),
+                    })
+                    if (!response.ok) {
+                      const payload = (await response.json()) as {
+                        error?: string
+                      }
+                      throw new Error(payload.error || "Source retry failed.")
+                    }
+                  },
+                  onOpenSource: (source) => {
+                    setOverviewSourceId(String(source._id))
+                  },
+                  onRevealArtifact: revealArtifact,
+                }}
+              />
+            )}
+            {sourceStatus === "CanLoadMore" || sourceStatus === "LoadingMore" ? (
+              <Button
+                variant="outline"
+                className="mt-4"
+                disabled={sourceStatus === "LoadingMore"}
+                onClick={() => loadMoreSources(20)}
+              >
+                {sourceStatus === "LoadingMore"
+                  ? "Loading files…"
+                  : "Load more files"}
+              </Button>
+            ) : null}
+          </div>
+        }
+      />
+
+      <SourceOverviewDialog
+        open={Boolean(overviewSourceId && activeOverviewSource)}
+        onOpenChange={(open) => {
+          if (!open) setOverviewSourceId(null)
+        }}
+        projectId={projectId}
+        source={activeOverviewSource}
+        ingestionJob={ingestion?.find(
+          (job) => String(job.sourceId) === overviewSourceId
+        )}
+        preparationJob={preparationJobs?.find(
+          (job) => job.sourceId === overviewSourceId
+        )}
+        citations={citations?.filter(
+          (citation) => String(citation.sourceId) === overviewSourceId
+        )}
+        onRetryIngestion={async (sourceId) => {
+          const response = await fetch("/api/sources/retry", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ projectId, sourceId }),
+          })
+          if (!response.ok) {
+            const payload = (await response.json()) as {
+              error?: string
+            }
+            throw new Error(payload.error || "Source retry failed.")
+          }
+        }}
+        onOpenDesktopFile={
+          window.blitzDesktop
+            ? (relativeKey) =>
+                void window.blitzDesktop?.openFile(projectId, relativeKey)
+            : undefined
+        }
+        onRevealDesktopFile={
+          window.blitzDesktop
+            ? (relativeKey) => {
+                const absolutePath = agentWorkspaceDirectory
+                  ? `${agentWorkspaceDirectory.replace(/[\\/]$/, "")}/${relativeKey}`
+                  : relativeKey
+                void window.blitzDesktop?.revealFile(projectId, absolutePath)
+              }
+            : undefined
+        }
+      />
+    </>
   )
 }
 

@@ -247,7 +247,11 @@ export const list = query({
       )
     ).filter(
       (message): message is Doc<"workspaceChatMessages"> =>
-        message !== null && message.role === "assistant"
+        message !== null &&
+        message.role === "assistant" &&
+        workspaceChats.some(
+          (chat) => chat._id === message.chatId && chat.isUnread === true
+        )
     )
 
     const rows: NotificationCenterRow[] = []
@@ -454,12 +458,25 @@ export const list = query({
     }
 
     const tasks = rows
-      .filter((row) => row.status === "queued" || row.status === "running")
+      .filter(
+        (row) =>
+          (row.status === "queued" || row.status === "running") &&
+          row.kind !== "card-reply" &&
+          row.kind !== "workspace-reply"
+      )
       .sort((left, right) => right.updatedAt - left.updatedAt)
     const notifications = rows
-      .filter((row) => row.status === "completed" || row.status === "failed")
+      .filter(
+        (row) =>
+          (row.status === "completed" || row.status === "failed") &&
+          row.kind !== "card-reply" &&
+          row.kind !== "workspace-reply"
+      )
       .sort((left, right) => right.updatedAt - left.updatedAt)
       .slice(0, MAX_NOTIFICATIONS)
-    return { tasks, notifications }
+    const chatNotifications = rows.filter(
+      (row) => row.kind === "workspace-reply"
+    )
+    return { tasks, notifications, chatNotifications }
   },
 })

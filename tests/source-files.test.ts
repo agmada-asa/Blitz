@@ -12,6 +12,7 @@ import {
 } from "../lib/server/source-files.ts"
 import {
   getProjectDirectory,
+  readProjectFileBytes,
   resolveProjectFile,
 } from "../lib/server/project-files.ts"
 
@@ -76,6 +77,27 @@ test("allows 1 GB uploads and rejects a stream above its configured boundary", a
     )
     const sourceDir = join(getProjectDirectory("project-b"), "Sources")
     assert.deepEqual(await readdir(sourceDir), [])
+  } finally {
+    if (previous === undefined) delete process.env.BLITZ_DATA_DIR
+    else process.env.BLITZ_DATA_DIR = previous
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("reads stored project file bytes correctly within configured limits", async () => {
+  const root = await mkdtemp(join(tmpdir(), "blitz-source-read-"))
+  const previous = process.env.BLITZ_DATA_DIR
+  process.env.BLITZ_DATA_DIR = root
+  try {
+    const bytes = new TextEncoder().encode("Source overview preview content test")
+    const stored = await storeOriginalSource({
+      projectId: "project-read",
+      filename: "notes.md",
+      mimeType: "text/markdown",
+      body: streamFor(bytes),
+    })
+    const read = await readProjectFileBytes("project-read", stored.key, 50_000_000)
+    assert.deepEqual(read, Buffer.from(bytes))
   } finally {
     if (previous === undefined) delete process.env.BLITZ_DATA_DIR
     else process.env.BLITZ_DATA_DIR = previous

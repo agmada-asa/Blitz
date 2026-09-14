@@ -36,6 +36,8 @@ function validOutput() {
         type: "explain",
         title: "Let the attack through",
         body: "A longer compressor attack preserves the first transient of a kick.",
+        deepExplanation:
+          "A compressor reduces the level of a signal when it crosses a threshold. Attack time controls how quickly that gain reduction begins. With a longer attack, the first part of a kick can pass through before the compressor clamps down, preserving the transient that makes the hit feel sharp. With a short attack, the compressor reacts sooner and can soften that initial edge. The right choice depends on whether the mix needs punch or tighter control. For example, a kick with a strong click may keep more definition with a longer attack, while a harsh or overly spiky recording may benefit from a faster response. Attack time does not make the compressor add a transient by itself. It changes how much of the existing transient survives the gain-reduction envelope.",
         sourceChunkIds: [chunk.id],
       },
       {
@@ -92,8 +94,12 @@ test("generates every supported item format from one chunk", async () => {
   assert.ok(prompt.includes(chunk.text))
   assert.ok(prompt.includes("untrusted study material"))
   assert.ok(prompt.includes("paced walkthrough"))
-  assert.ok(prompt.includes("120-220 words"))
+  assert.ok(prompt.includes("180-320 word lesson"))
+  assert.ok(prompt.includes("deepExplanation"))
   assert.ok(prompt.includes("followed by at least one question item"))
+  assert.ok(prompt.includes("plausible distractors"))
+  assert.ok(prompt.includes("Never generate senseless, comical, absurd"))
+  assert.ok(prompt.includes("plausible, domain-appropriate distractor"))
   assert.ok(batch.items.every((item) => item.sourceChunkIds[0] === chunk.id))
 })
 

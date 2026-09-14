@@ -55,8 +55,7 @@ try {
   console.error("Could not render QR code for terminal:", error)
 }
 
-if (apkPath)
-  console.log(`Android installer: ${lanUrl}/api/android\n`)
+if (apkPath) console.log(`Android installer: ${lanUrl}/api/android\n`)
 
 start("npx", ["convex", "dev", "--tail-logs", "disable"], process.env)
 start(
@@ -75,6 +74,11 @@ start(
 start(
   process.execPath,
   ["--experimental-strip-types", "scripts/preparation-worker.ts"],
+  sharedEnvironment
+)
+start(
+  process.execPath,
+  ["--experimental-strip-types", "scripts/ingestion-worker.ts"],
   sharedEnvironment
 )
 start(

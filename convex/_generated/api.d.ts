@@ -9,6 +9,7 @@
  */
 
 import type * as activity from "../activity.js";
+import type * as ai_provider_settings from "../ai_provider_settings.js";
 import type * as attempts from "../attempts.js";
 import type * as cards from "../cards.js";
 import type * as chatAgents from "../chatAgents.js";
@@ -37,6 +38,7 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   activity: typeof activity;
+  ai_provider_settings: typeof ai_provider_settings;
   attempts: typeof attempts;
   cards: typeof cards;
   chatAgents: typeof chatAgents;

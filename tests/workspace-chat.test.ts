@@ -34,6 +34,24 @@ test("parseWorkspaceChatRequest accepts mixed attachment context", () => {
   assert.equal(result.attachments[0]?.kind, "link")
 })
 
+test("parseWorkspaceChatRequest ignores non-native MIME metadata for text files", () => {
+  const result = parseWorkspaceChatRequest({
+    message: "Read this PDF",
+    clientMessageId: "message-pdf",
+    projectIds: [],
+    attachments: [
+      {
+        kind: "file",
+        label: "notes.pdf",
+        text: "PDF text",
+        mimeType: "application/pdf",
+      },
+    ],
+  })
+
+  assert.equal(result.attachments[0]?.mimeType, undefined)
+})
+
 test("parseWorkspaceChatRequest rejects unsafe attachment URLs", () => {
   assert.throws(
     () =>
@@ -198,6 +216,8 @@ test("buildWorkspaceChatPrompt gives an attached card its source context", () =>
     projectId: "project-1" as Id<"projects">,
     title: "Cell membrane",
     body: "The membrane controls what enters and leaves the cell.",
+    deepExplanation:
+      "Selective permeability lets the membrane regulate movement between the cell and its surroundings.",
     question: "What does the membrane control?",
     options: ["Cell traffic", "Gravity"],
     sourceLabel: "cells.md",
@@ -211,19 +231,19 @@ test("buildWorkspaceChatPrompt gives an attached card its source context", () =>
 
   assert.match(prompt, /CARD: Cell membrane/)
   assert.match(prompt, /CARD SOURCE CONTEXT:/)
+  assert.match(prompt, /Detailed explanation: Selective permeability/)
   assert.match(prompt, /selectively permeable/)
-  assert.match(prompt, /primary context/)
+  assert.match(prompt, /primary evidence/)
 })
 
-test("new workspace chats require an owning project", () => {
-  assert.throws(
-    () =>
-      parseWorkspaceChatRequest({
-        message: "Start without a project",
-        clientMessageId: "message-no-project",
-        projectIds: [],
-        attachments: [],
-      }),
-    /Choose a project before starting a chat/
-  )
+test("new workspace chats do not require an owning project", () => {
+  const result = parseWorkspaceChatRequest({
+    message: "Start without a project",
+    clientMessageId: "message-no-project",
+    projectIds: [],
+    attachments: [],
+  })
+
+  assert.equal(result.message, "Start without a project")
+  assert.equal(result.projectId, undefined)
 })

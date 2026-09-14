@@ -3,7 +3,8 @@
 `npm run desktop` starts the Mac-only Electron shell for Blitz. The shell starts
 the same local services as the LAN launcher on loopback: Convex at `3210`, its
 site server at `3211`, Next at `3001`, and the ingestion, preparation, chat, and research
-workers. The BrowserWindow waits for Next to answer before it loads the app.
+workers. The native shell uses the shared Blitz PNG for the macOS Dock icon and
+window icon. The BrowserWindow waits for Next to answer before it loads the app.
 
 The desktop supervisor owns each process group. Closing the window or quitting
 the app sends `SIGTERM` to every group and escalates to `SIGKILL` after three

@@ -20,8 +20,8 @@ import {
 } from "../lib/server/research-import-worker.ts"
 import { loadSavedAiModelSettings } from "../lib/server/ai-model-settings.ts"
 import {
-  resolveAiModel,
-  resolveAiReasoningEffort,
+  isAiProviderId,
+  resolveAiTaskSelection,
 } from "../lib/ai-model-settings.ts"
 
 /** Loads .env.local without overwriting launcher-provided configuration. */
@@ -58,8 +58,15 @@ async function main(): Promise<void> {
   process.once("SIGINT", stop)
   process.once("SIGTERM", stop)
   const queue: ResearchProposalQueue & ResearchImportQueue = {
-    claimNext: async (args): Promise<ResearchProposalClaim | null> =>
-      client.mutation(api.research.claimNext, args),
+    claimNext: async (args): Promise<ResearchProposalClaim | null> => {
+      const claim = await client.mutation(api.research.claimNext, args)
+      if (!claim) return null
+      const { providerId, ...rest } = claim
+      return {
+        ...rest,
+        ...(isAiProviderId(providerId) ? { providerId } : {}),
+      }
+    },
     complete: (args) =>
       client.mutation(api.research.complete, {
         proposalId: args.proposalId as Id<"researchProposals">,
@@ -127,25 +134,24 @@ async function main(): Promise<void> {
           importResult.status === "idle"
             ? await loadSavedAiModelSettings(client)
             : null
-        const result =
-          importResult.status === "idle"
-            ? await runResearchProposalStep({
-                queue,
-                workerId,
-                workspaceDirectory: defaultChatWorkspaceDirectory(),
-                signal: controller.signal,
-                model: resolveAiModel(
-                  settings,
-                  "researchModel",
-                  process.env.BLITZ_CODEX_MODEL
-                ),
-                effort: resolveAiReasoningEffort(
-                  settings,
-                  "researchEffort",
-                  process.env.BLITZ_CODEX_EFFORT
-                ),
-              })
-            : null
+        let result: Awaited<ReturnType<typeof runResearchProposalStep>> | null =
+          null
+        if (importResult.status === "idle") {
+          const selection = resolveAiTaskSelection(settings, "research", {
+            providerEnvironmentFallback: process.env.BLITZ_RESEARCH_PROVIDER,
+            modelEnvironmentFallback: process.env.BLITZ_CODEX_MODEL,
+            effortEnvironmentFallback: process.env.BLITZ_CODEX_EFFORT,
+          })
+          result = await runResearchProposalStep({
+            queue,
+            workerId,
+            workspaceDirectory: defaultChatWorkspaceDirectory(),
+            signal: controller.signal,
+            providerId: selection.providerId,
+            model: selection.model,
+            effort: selection.effort,
+          })
+        }
         if (importResult.status === "imported")
           console.log(
             `Imported approved research source ${importResult.importId}.`

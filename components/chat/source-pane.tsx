@@ -158,7 +158,8 @@ export function SourceReader({ selection }: { selection: SourceSelection }) {
         </TabsList>
         <TabsContent
           value="passage"
-          className="min-h-0 flex-1 overflow-y-auto px-5 py-5"
+          forceMount
+          className="min-h-0 flex-1 overflow-y-auto px-5 py-5 data-[state=inactive]:hidden"
         >
           {result.snapshotOnly ? (
             <p className="mb-4 text-xs text-muted-foreground">
@@ -180,7 +181,8 @@ export function SourceReader({ selection }: { selection: SourceSelection }) {
         {fileUrl && mimeType === "application/pdf" ? (
           <TabsContent
             value="pdf"
-            className="min-h-0 flex-1 overflow-y-auto px-4 py-4"
+            forceMount
+            className="min-h-0 flex-1 overflow-y-auto px-4 py-4 data-[state=inactive]:hidden"
           >
             <PdfReader
               url={fileUrl}

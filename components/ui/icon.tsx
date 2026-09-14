@@ -2,9 +2,11 @@
 
 import {
   Add01Icon,
+  AiSearch01Icon as AiSearch01Glyph,
   AiSparklesIcon,
   ArrowDown01Icon,
   ArrowLeft01Icon,
+  ArrowRight01Icon,
   ArrowUpRight01Icon,
   BookOpen01Icon,
   BulbIcon,
@@ -23,6 +25,7 @@ import {
   Loading03Icon,
   Moon02Icon,
   PlusIcon as PlusGlyph,
+  Refresh04Icon as Refresh04Glyph,
   RotateLeft01Icon,
   SendIcon as SendGlyph,
   ShieldCheckIcon as ShieldCheckGlyph,
@@ -43,8 +46,12 @@ const makeIcon = (icon: HugeiconsIconProps["icon"]) =>
 
 /** Add action glyph. */
 export const AddIcon = makeIcon(Add01Icon)
+/** AI search and deep dive glyph. */
+export const AiSearch01Icon = makeIcon(AiSearch01Glyph)
 /** Downward direction glyph. */
 export const ArrowDownIcon = makeIcon(ArrowDown01Icon)
+/** Forward direction glyph. */
+export const ArrowRightIcon = makeIcon(ArrowRight01Icon)
 /** Back navigation glyph. */
 export const ArrowLeftIcon = makeIcon(ArrowLeft01Icon)
 /** External or forward navigation glyph. */
@@ -83,6 +90,10 @@ export const LoadingIcon = makeIcon(Loading03Icon)
 export const MoonIcon = makeIcon(Moon02Icon)
 /** Context attachment and plus glyph. */
 export const PlusIcon = makeIcon(PlusGlyph)
+/** Card flip and circular refresh glyph. */
+export const Refresh04Icon = makeIcon(Refresh04Glyph)
+/** Card flip and circular refresh glyph alias. */
+export const RefreshIcon = Refresh04Icon
 /** Retry glyph. */
 export const RotateLeftIcon = makeIcon(RotateLeft01Icon)
 /** Send message action glyph. */

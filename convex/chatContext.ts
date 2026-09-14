@@ -129,6 +129,9 @@ export const getCard = query({
       projectId: args.projectId,
       title: item.title,
       body: item.body,
+      ...(item.deepExplanation
+        ? { deepExplanation: item.deepExplanation }
+        : {}),
       ...(item.question === undefined ? {} : { question: item.question }),
       ...(item.options === undefined
         ? {}

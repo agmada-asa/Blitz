@@ -17,6 +17,8 @@ import type { FunctionReturnType } from "convex/server"
 
 import { useBackgroundNotice } from "@/components/background-notices"
 import { api } from "@/convex/_generated/api"
+import { isNotificationInCurrentChat } from "@/lib/notifications"
+import { usePathname } from "next/navigation"
 
 /** Browser storage key for individual read notification IDs. */
 const READ_IDS_KEY = "blitz-notifications-read-ids-v1"
@@ -95,7 +97,7 @@ function readDeliveredIds(): { ids: Set<string>; initialized: boolean } {
 /** Opens a browser notification destination in the current Blitz window. */
 function openNotificationDestination(href: string): void {
   window.focus()
-  window.location.assign(href)
+  window.location.assign(new URL(href, window.location.origin).toString())
 }
 
 /** Sends one clickable system notification when the browser permits it. */
@@ -117,6 +119,7 @@ function announceInBrowser(item: NotificationRow): void {
 export function NotificationProvider({ children }: { children: ReactNode }) {
   const snapshot = useQuery(api.activity.list)
   const notifyBackground = useBackgroundNotice()
+  const pathname = usePathname()
   const deliveredIds = useRef<Set<string> | null>(null)
   const legacyMigrated = useRef(false)
   const [readIds, setReadIds] = useState<Set<string>>(() => new Set())
@@ -196,7 +199,9 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
       deliveredIds.current = stored.ids
       if (!stored.initialized) {
         deliveredIds.current = new Set(
-          snapshot.notifications.map((item) => item.id)
+          [...snapshot.notifications, ...snapshot.chatNotifications].map(
+            (item) => item.id
+          )
         )
         window.localStorage.setItem(
           DELIVERED_KEY,
@@ -206,21 +211,33 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
       }
     }
 
-    const allUnseen = snapshot.notifications
+    const allUnseen = [...snapshot.notifications, ...snapshot.chatNotifications]
       .filter((item) => !deliveredIds.current!.has(item.id))
       .sort((left, right) => left.updatedAt - right.updatedAt)
     const announced = allUnseen.slice(-5)
     for (const item of announced) {
+      if (
+        (item.kind === "card-reply" || item.kind === "workspace-reply") &&
+        isNotificationInCurrentChat(
+          item.kind,
+          item.href,
+          pathname,
+          window.location.search
+        )
+      ) {
+        continue
+      }
       notifyBackground(item.title, item.href, "Open")
       announceInBrowser(item)
     }
-    for (const item of snapshot.notifications) deliveredIds.current.add(item.id)
+    for (const item of [...snapshot.notifications, ...snapshot.chatNotifications])
+      deliveredIds.current.add(item.id)
     if (allUnseen.length)
       window.localStorage.setItem(
         DELIVERED_KEY,
         JSON.stringify([...deliveredIds.current].slice(-MAX_DELIVERED_IDS))
       )
-  }, [notifyBackground, snapshot])
+  }, [notifyBackground, pathname, snapshot])
 
   /** Marks one notification as read and persists the updated identifiers. */
   const markAsRead = useCallback((id: string) => {
@@ -285,7 +302,9 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
     setBrowserPermission(permission)
     if (permission === "granted" && snapshot) {
       deliveredIds.current = new Set(
-        snapshot.notifications.map((item) => item.id)
+        [...snapshot.notifications, ...snapshot.chatNotifications].map(
+          (item) => item.id
+        )
       )
       window.localStorage.setItem(
         DELIVERED_KEY,
