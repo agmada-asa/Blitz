@@ -283,7 +283,7 @@ test("does not advertise ignored ACP or Haiku reasoning controls", () => {
 
 /** Confirms per-provider approval choices survive validation and unsupported grants fail closed. */
 test("validates and resolves provider approval policies", () => {
-  for (const policy of ["never", "on-request", "untrusted"] as const) {
+  for (const policy of ["on-request", "untrusted", "full-access"] as const) {
     const settings = validateAiModelSettings({
       ...DEFAULT_AI_MODEL_SETTINGS,
       providerApprovalPolicies: { codex: policy },
@@ -306,12 +306,7 @@ test("validates and resolves provider approval policies", () => {
 
 /** All providers expose native access choices while unsupported background assignments remain unsavable. */
 test("validates native provider access choices and task restrictions", () => {
-  for (const provider of [
-    "codex",
-    "claude-code",
-    "opencode",
-    "antigravity",
-  ] as const) {
+  for (const provider of ["claude-code", "opencode"] as const) {
     for (const policy of ["never", "on-request", "full-access"] as const) {
       assert.equal(
         validateProviderApprovalPolicies({ [provider]: policy })[provider],
@@ -331,4 +326,28 @@ test("validates native provider access choices and task restrictions", () => {
       (provider) => provider.id === "antigravity"
     )
   )
+})
+
+/** Keeps access-level menus ordered from least to most dangerous top-to-bottom. */
+test("matches each provider's native access-level options", async () => {
+  const { AI_PROVIDER_APPROVAL_POLICIES } = await import(
+    "../lib/ai-model-settings.ts"
+  )
+
+  assert.deepEqual(AI_PROVIDER_APPROVAL_POLICIES.codex, [
+    "on-request",
+    "untrusted",
+    "full-access",
+  ])
+  for (const provider of ["claude-code", "opencode"] as const) {
+    assert.deepEqual(AI_PROVIDER_APPROVAL_POLICIES[provider], [
+      "never",
+      "on-request",
+      "full-access",
+    ])
+  }
+  assert.deepEqual(AI_PROVIDER_APPROVAL_POLICIES.antigravity, [
+    "on-request",
+    "full-access",
+  ])
 })

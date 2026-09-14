@@ -13,16 +13,26 @@ export type AiProviderId = (typeof AI_PROVIDER_IDS)[number]
 
 /** Approval modes that the local adapters can enforce. `never` denies approval requests; it does not bypass checks. */
 export type AiApprovalPolicy =
-  "untrusted" | "on-request" | "never" | "full-access"
+  | "untrusted"
+  | "on-request"
+  | "never"
+  | "full-access"
 
-/** Per-provider native access choices. Full access applies only to interactive chat. */
+/**
+ * Per-provider native access choices, ordered from least to most dangerous for
+ * the user from top to bottom. `full-access` is an adapter mode, not a Codex
+ * approval policy, and is therefore only exposed where the provider supports
+ * an explicit bypass mode.
+ */
 export const AI_PROVIDER_APPROVAL_POLICIES: Readonly<
   Record<AiProviderId, readonly AiApprovalPolicy[]>
 > = {
-  codex: ["untrusted", "on-request", "never", "full-access"],
+  // The chat-facing Codex access menu combines its sandbox and approval
+  // controls into the three choices users see in the host application.
+  codex: ["on-request", "untrusted", "full-access"],
   "claude-code": ["never", "on-request", "full-access"],
   opencode: ["never", "on-request", "full-access"],
-  antigravity: ["never", "on-request", "full-access"],
+  antigravity: ["on-request", "full-access"],
 }
 
 /** Validates persisted policies and fills legacy records with conservative defaults. */
