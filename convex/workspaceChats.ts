@@ -1159,6 +1159,7 @@ export const complete = mutation({
         : {}),
       codexContextReady: true,
       status: "idle",
+      isUnread: true,
       activeMessageId: undefined,
       lastError: undefined,
       updatedAt: now,
@@ -1182,6 +1183,7 @@ export const fail = mutation({
     await ctx.db.patch(message._id, { status: "failed", updatedAt: now })
     await ctx.db.patch(chat._id, {
       status: "failed",
+      isUnread: true,
       activeMessageId: undefined,
       lastError: error,
       updatedAt: now,

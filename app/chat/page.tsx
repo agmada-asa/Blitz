@@ -101,7 +101,7 @@ export default function ChatPage({
     )
   return (
     <ChatWorkspace
-      key={workingProject?._id ?? "chat"}
+      key={`${workingProject?._id ?? "chat"}:${chatId ?? "new"}`}
       initialChatId={chatIdFromQuery(chatId)}
       initialProject={
         workingProject

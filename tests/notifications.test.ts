@@ -3,6 +3,8 @@
 import assert from "node:assert/strict"
 import { describe, it, beforeEach } from "node:test"
 
+import { isNotificationInCurrentChat } from "../lib/notifications.ts"
+
 /** Browser storage key for individual read notification IDs. */
 const READ_IDS_KEY = "blitz-notifications-read-ids-v1"
 /** Legacy browser storage key for the latest time the notification center was opened. */
@@ -232,5 +234,54 @@ describe("Notification read tracking", () => {
     assert.equal(stored.length, MAX_READ_IDS)
     assert.equal(readIds.has("item:0"), false, "oldest entries evicted")
     assert.equal(readIds.has("item:249"), true, "latest entries preserved")
+  })
+})
+
+describe("Chat notification targeting", () => {
+  it("matches a workspace reply only when its chat is open", () => {
+    const href = "/chat?chatId=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
+    assert.equal(
+      isNotificationInCurrentChat(
+        "workspace-reply",
+        href,
+        "/chat",
+        "?chatId=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      ),
+      true
+    )
+    assert.equal(
+      isNotificationInCurrentChat(
+        "workspace-reply",
+        href,
+        "/chat",
+        "?chatId=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      ),
+      false
+    )
+  })
+
+  it("matches a card reply only inside the same card chat interface", () => {
+    const href =
+      "/chat?projectId=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa&itemId=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+
+    assert.equal(
+      isNotificationInCurrentChat(
+        "card-reply",
+        href,
+        "/chat",
+        "?projectId=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa&itemId=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      ),
+      true
+    )
+    assert.equal(
+      isNotificationInCurrentChat(
+        "card-reply",
+        href,
+        "/notifications",
+        ""
+      ),
+      false
+    )
   })
 })

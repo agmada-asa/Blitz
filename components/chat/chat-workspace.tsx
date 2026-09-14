@@ -812,6 +812,7 @@ export function ChatWorkspace({
     messageEndRef.current?.scrollIntoView({ block: "end" })
   }, [messages.length, lastMessageContent])
 
+  /** Opens the chat addressed by navigation links without remounting the workspace. */
   /** Clears a manual unread marker whenever a saved chat becomes active. */
   useEffect(() => {
     if (!activeChatId || activeChat?.id !== activeChatId) return
