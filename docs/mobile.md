@@ -3,12 +3,12 @@
 The Android client lives in `mobile/` as an independent Expo project. It uses
 Expo SDK 57, React Native 0.86, and React 19.2. The mobile lockfile is kept
 separate from the browser app's root lockfile so native tooling can evolve
-without changing browser dependencies. The current native surface is the
-full-screen prepared learning feed and native project library. The feed now
-uses an icon-only bottom navigation: Home returns to the feed, Library opens
-native projects, and Chat, Activity, and Settings open the matching browser
-routes against the same server. Source imports and detailed source management
-open the selected project's browser page.
+without changing browser dependencies. The native surface mirrors the web
+app's core screens: the prepared learning feed, project library and workspace,
+workspace chat, activity, settings, source management and preview, research
+planning, practice, tests, and written activities. The icon-only bottom
+navigation keeps Home, Library, Chat, Activity, and Settings in the native
+stack; project links from Activity open the matching native destination.
 
 The app identity is configured as `Blitz` with the local Android application
 ID `com.blitz.study`. This is a development identity only; no signing keys,
@@ -61,10 +61,34 @@ app; no private machine address is embedded in the bundle. The feed uses
 vertical full-screen paging, explanation cards, single-choice,
 multiple-answer, and true/false questions, project/topic filters, and an
 `Ask in chat` sheet backed by the server's persisted chat queue. Source imports
-remain in the web library. The native `Library` control opens searchable projects,
-including those with no prepared cards. Select a project to open its native feed;
-its actions include create, rename, confirmed deletion, and `Manage sources in
-browser`. The project API uses the same configured local server as the feed.
+can be uploaded from the Android document picker or added as pasted notes and
+public links. The native `Library` control opens searchable projects, including
+those with no prepared cards. Select a project to open its learning overview,
+study tools, sources, generated files, research summary, and project actions.
+The project API uses the same configured local server as the feed.
+
+## Native screen parity
+
+Native routes are kept in the Expo app so the device does not need to switch to
+the browser for the primary learning workflow:
+
+- `Home` renders the prepared feed, filters, answer feedback, offline queue,
+  and card chat.
+- `Library` renders project search and management, then opens the project
+  learning overview with study tools, sources, generated files, and research.
+- `Chat`, `Activity`, and `Settings` use the same server contracts as the web
+  screens. Chat history is loaded from the server and retained locally for
+  offline continuity.
+- Project study, practice, test, and write activities use the shared session
+  and writing contracts, so scoring and saved answers remain server-owned.
+- Source preview keeps the web overview's metadata, extracted text, citations,
+  status, retry, and original-file actions. Research keeps the web approval
+  boundary: suggested sources are never imported until the learner selects
+  them explicitly.
+
+The native API routes under `app/api/mobile/` return screen-ready, bounded
+payloads. They reuse the existing Convex mutations and source-processing
+workers rather than creating a second data model.
 
 ## Build a debug APK without a device
 

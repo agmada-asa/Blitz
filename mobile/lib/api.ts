@@ -118,7 +118,8 @@ export async function uploadOriginalSource(
     }
   )
   const value = await readJson(response)
-  if (!isRecord(value)) throw new MobileApiError("Server returned an invalid upload response")
+  if (!isRecord(value))
+    throw new MobileApiError("Server returned an invalid upload response")
   return {
     key: requiredString(value.key, "upload key"),
     sha256: requiredString(value.sha256, "upload hash"),

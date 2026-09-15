@@ -1,10 +1,11 @@
 /**
- * Owns the Android learning feed shell: connection, cached content, paging,
- * filters, and delivery of answer/passive events to the browser service.
- * Server responses remain authoritative for correctness and progress.
+ * Owns the Android app shell: connection, cached feed content, native route
+ * selection, project workspace entry, and delivery of learning events. Server
+ * responses remain authoritative for correctness, progress, and persistence.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import * as DocumentPicker from "expo-document-picker"
 import {
   Animated,
   AppState,
@@ -23,11 +24,22 @@ import {
 } from "react-native"
 
 import { FeedBackdrop } from "./components/feed-backdrop"
+import { ActivityScreen } from "./components/activity-screen"
 import {
   BottomNavigation,
   type MobileNavigationKey,
 } from "./components/bottom-navigation"
+import { ChatScreen } from "./components/chat-screen"
 import { ProjectLibrary } from "./components/project-library"
+import { ProjectWorkspace } from "./components/project-workspace"
+import { ResearchScreen } from "./components/research-screen"
+import { SettingsScreen } from "./components/settings-screen"
+import { SourcePreview } from "./components/source-preview"
+import {
+  StudySession,
+  type MobileStudySessionMode,
+} from "./components/study-session"
+import { WrittenActivity } from "./components/written-activity"
 import { useMotionEnabled } from "./lib/use-motion"
 import type { ProjectOperation } from "../lib/project-contracts"
 import { FilterPanel } from "./components/filter-panel"
@@ -44,9 +56,18 @@ import {
 import {
   MobileApiError,
   fetchFeed,
+  uploadOriginalSource,
   submitAnswer,
   submitPassiveEvent,
 } from "./lib/api"
+import {
+  fetchProjectWorkspace,
+  projectArtifactUrl,
+  retryProjectSource,
+  type MobileWorkspacePayload,
+  type MobileWorkspaceItem,
+  type MobileWorkspaceSource,
+} from "./lib/project-workspace-api"
 import type {
   MobileAnswer,
   MobileAnswerFeedback,
@@ -71,11 +92,39 @@ const configuredServerUrl = process.env.EXPO_PUBLIC_BLITZ_URL?.trim()
 /** Describes the visible feed data source for status copy. */
 type FeedStatus = "loading" | "ready" | "offline" | "error"
 
+/** Describes a native route while preserving the web app's primary destinations. */
+type MobileScreen =
+  MobileNavigationKey | "project" | "study" | "write" | "research" | "source"
+
 /** Returns a readable error while avoiding leaking response content. */
 function errorMessage(error: unknown): string {
   return error instanceof MobileApiError
     ? error.message
     : "The learning server is unavailable"
+}
+
+/** Adapts a workspace item to the shared card shape used by native chat. */
+function workspaceItemAsCard(
+  projectId: string,
+  item: MobileWorkspaceItem
+): MobileLearningCard {
+  const base = {
+    id: item.id,
+    projectId,
+    conceptId: item.conceptId,
+    title: item.title,
+    sourceLabel: item.sourceLabels.join(" · ") || "Project source",
+    sourceIds: [],
+  }
+  if (item.type === "explain") {
+    return { ...base, type: "explain", body: item.body ?? "" }
+  }
+  return {
+    ...base,
+    type: item.type,
+    question: item.question ?? item.title,
+    ...(item.options?.length ? { options: item.options } : {}),
+  }
 }
 
 /** Renders the native feed and its small connection and recovery states. */
@@ -84,6 +133,35 @@ export default function App() {
   const motionEnabled = useMotionEnabled()
   const scrollY = useRef(new Animated.Value(0)).current
   const [libraryOpen, setLibraryOpen] = useState(false)
+  const [libraryProjectId, setLibraryProjectId] = useState<string>()
+  const [libraryInitialMode, setLibraryInitialMode] = useState<
+    "actions" | "rename" | "delete"
+  >()
+  const [screen, setScreen] = useState<MobileScreen>("home")
+  const [workspaceProjectId, setWorkspaceProjectId] = useState<string>()
+  const [workspaceData, setWorkspaceData] = useState<MobileWorkspacePayload>()
+  const [workspaceLoading, setWorkspaceLoading] = useState(false)
+  const [workspaceError, setWorkspaceError] = useState("")
+  const [workspaceRefreshToken, setWorkspaceRefreshToken] = useState(0)
+  const [studyRoute, setStudyRoute] = useState<{
+    projectId: string
+    mode: MobileStudySessionMode
+    topicId?: string
+  }>()
+  const [writeRoute, setWriteRoute] = useState<{
+    projectId: string
+    topicId?: string
+  }>()
+  const [researchRoute, setResearchRoute] = useState<{ projectId: string }>()
+  const [sourceRoute, setSourceRoute] = useState<{
+    projectId: string
+    source: MobileWorkspaceSource
+  }>()
+  const [chatInitialProject, setChatInitialProject] = useState<{
+    id: string
+    title: string
+  }>()
+  const [chatInitialId, setChatInitialId] = useState<string>()
   const insets = useSafeAreaInsets()
   const topInset =
     Platform.OS === "android" ? (StatusBar.currentHeight ?? 0) : 0
@@ -352,6 +430,30 @@ export default function App() {
   }, [bootstrapped, refresh, serverUrl])
 
   useEffect(() => {
+    if (screen !== "project" || !workspaceProjectId || !serverUrl) return
+    const controller = new AbortController()
+    setWorkspaceLoading(true)
+    setWorkspaceError("")
+    void fetchProjectWorkspace(serverUrl, workspaceProjectId, controller.signal)
+      .then((next) => {
+        if (!controller.signal.aborted) setWorkspaceData(next)
+      })
+      .catch((cause: unknown) => {
+        if (!controller.signal.aborted) {
+          setWorkspaceError(
+            cause instanceof Error
+              ? cause.message
+              : "The project could not be loaded"
+          )
+        }
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setWorkspaceLoading(false)
+      })
+    return () => controller.abort()
+  }, [screen, serverUrl, workspaceProjectId, workspaceRefreshToken])
+
+  useEffect(() => {
     /** Refreshes the feed and retries queued events when the app foregrounds. */
     const subscription = AppState.addEventListener("change", (nextState) => {
       if (nextState === "active" && serverUrl) void refresh(serverUrl)
@@ -477,6 +579,39 @@ export default function App() {
     [refreshPendingCount, serverUrl]
   )
 
+  /** Scores a project walkthrough answer while preserving the native offline queue. */
+  const recordWorkspaceAnswer = useCallback(
+    async (
+      projectId: string,
+      item: MobileWorkspaceItem,
+      answer: MobileAnswer
+    ): Promise<MobileAnswerFeedback> => {
+      const card = workspaceItemAsCard(projectId, item)
+      const event = await enqueueEvent(
+        card.projectId,
+        card.id,
+        "answer",
+        answer,
+        serverUrl
+      )
+      await refreshPendingCount(serverUrl)
+      if (!serverUrl) {
+        setNotice("Answer saved on this device · waiting for sync")
+        return { status: "pending", isCorrect: false }
+      }
+      try {
+        const result = await submitAnswer(serverUrl, event)
+        await removePendingEvent(event.eventId, serverUrl)
+        await refreshPendingCount(serverUrl)
+        return result
+      } catch {
+        setNotice("Answer saved on this device · waiting for sync")
+        return { status: "pending", isCorrect: false }
+      }
+    },
+    [refreshPendingCount, serverUrl]
+  )
+
   /** Opens the native polling chat sheet for the selected card. */
   const openChat = useCallback(
     (card: MobileLearningCard) => {
@@ -489,12 +624,31 @@ export default function App() {
     [serverUrl]
   )
 
+  /** Opens the existing native card chat for a project walkthrough item. */
+  function openWorkspaceItemChat(
+    projectId: string,
+    item: MobileWorkspaceItem
+  ): void {
+    if (!serverUrl) {
+      setNotice("Connect to Blitz before starting chat")
+      return
+    }
+    setScreen("home")
+    setChatCard(workspaceItemAsCard(projectId, item))
+  }
+
   /** Opens native project management without leaving the learning app. */
-  function openLibrary() {
+  function openLibrary(
+    selectedProjectId?: string,
+    initialMode?: "actions" | "rename" | "delete"
+  ) {
     if (!serverUrl) {
       setNotice("Connect to Blitz to open projects")
       return
     }
+    setLibraryProjectId(selectedProjectId)
+    setLibraryInitialMode(initialMode)
+    setScreen("home")
     setLibraryOpen(true)
   }
 
@@ -511,21 +665,225 @@ export default function App() {
     }
   }
 
-  /** Handles native tab actions without inventing a second navigation stack. */
+  /** Opens the native project workspace and clears stale detail data. */
+  function openProjectWorkspace(id: string) {
+    if (!serverUrl) {
+      setNotice("Connect to Blitz to open projects")
+      return
+    }
+    setWorkspaceProjectId(id)
+    setWorkspaceData(undefined)
+    setWorkspaceError("")
+    setWorkspaceLoading(true)
+    setWorkspaceRefreshToken((current) => current + 1)
+    setLibraryOpen(false)
+    setFilterOpen(false)
+    setChatCard(null)
+    setScreen("project")
+  }
+
+  /** Opens the feed filtered to one project from the project library. */
+  function openProjectFeed(id: string) {
+    pendingSnapTargetRef.current = null
+    requestGenerationRef.current += 1
+    requestControllerRef.current?.abort()
+    feedQueryRef.current = undefined
+    listRef.current?.scrollToOffset({ offset: 0, animated: false })
+    scrollY.setValue(0)
+    setActiveIndex(0)
+    setProjectId(id)
+    setTopicId(undefined)
+    setLibraryOpen(false)
+    setScreen("home")
+    if (projectId === id && !topicId) void refresh(serverUrl, false)
+  }
+
+  /** Starts a native practice or test session for a project or topic. */
+  function openStudy(
+    id: string,
+    mode: MobileStudySessionMode,
+    nextTopicId?: string
+  ) {
+    if (workspaceData?.project.id !== id) setWorkspaceData(undefined)
+    setWorkspaceProjectId(id)
+    setStudyRoute({ projectId: id, mode, topicId: nextTopicId })
+    setScreen("study")
+  }
+
+  /** Starts the native written activity for a project or topic. */
+  function openWriting(id: string, nextTopicId?: string) {
+    if (workspaceData?.project.id !== id) setWorkspaceData(undefined)
+    setWorkspaceProjectId(id)
+    setWriteRoute({ projectId: id, topicId: nextTopicId })
+    setScreen("write")
+  }
+
+  /** Opens the native workspace chat with optional project context. */
+  function openWorkspaceChat(
+    project?: { id: string; title: string },
+    initialId?: string
+  ) {
+    setChatInitialProject(project)
+    setChatInitialId(initialId)
+    setScreen("chat")
+  }
+
+  /** Opens the native research proposal flow for one project. */
+  function openResearch(id: string) {
+    if (workspaceData?.project.id !== id) setWorkspaceData(undefined)
+    setWorkspaceProjectId(id)
+    setResearchRoute({ projectId: id })
+    setScreen("research")
+  }
+
+  /** Routes activity links to native screens whenever an equivalent exists. */
+  function openActivityTarget(href: string) {
+    if (!serverUrl) {
+      setNotice("Connect to Blitz to open that activity")
+      return
+    }
+    try {
+      const target = new URL(href, serverUrl)
+      const parts = target.pathname.split("/").filter(Boolean)
+      const projectIndex = parts.indexOf("projects")
+      const targetProjectId =
+        projectIndex >= 0 ? parts[projectIndex + 1] : undefined
+      const action = targetProjectId ? parts[projectIndex + 2] : undefined
+      if (targetProjectId && action === "practice") {
+        openStudy(
+          targetProjectId,
+          "practice",
+          target.searchParams.get("topicId") ?? undefined
+        )
+        return
+      }
+      if (targetProjectId && action === "test") {
+        openStudy(
+          targetProjectId,
+          "test",
+          target.searchParams.get("topicId") ?? undefined
+        )
+        return
+      }
+      if (targetProjectId && action === "write") {
+        openWriting(
+          targetProjectId,
+          target.searchParams.get("topicId") ?? undefined
+        )
+        return
+      }
+      if (targetProjectId) {
+        if (target.searchParams.has("research")) {
+          openResearch(targetProjectId)
+          return
+        }
+        openProjectWorkspace(targetProjectId)
+        return
+      }
+      if (target.pathname === "/chat") {
+        const targetProjectId =
+          target.searchParams.get("projectId") ?? undefined
+        const cardId = target.searchParams.get("itemId") ?? undefined
+        const card = cardId
+          ? payload?.cards.find((candidate) => candidate.id === cardId)
+          : undefined
+        if (card) {
+          setScreen("home")
+          setChatCard(card)
+          return
+        }
+        const project = targetProjectId
+          ? payload?.projects.find(
+              (candidate) => candidate.id === targetProjectId
+            )
+          : undefined
+        openWorkspaceChat(
+          project ? { id: project.id, title: project.title } : undefined,
+          target.searchParams.get("chatId") ?? undefined
+        )
+        return
+      }
+      void openWebRoute(target.pathname + target.search)
+    } catch {
+      void openWebRoute(href)
+    }
+  }
+
+  /** Handles native tab actions across the complete mobile route set. */
   function handleNavigation(key: MobileNavigationKey) {
     if (key === "home") {
       setLibraryOpen(false)
       setFilterOpen(false)
       setChatCard(null)
+      setScreen("home")
       return
     }
     if (key === "library") {
+      setScreen("home")
       openLibrary()
       return
     }
-    void openWebRoute(
-      key === "chat" ? "/chat" : key === "activity" ? "/activity" : "/settings"
-    )
+    setLibraryOpen(false)
+    setFilterOpen(false)
+    setChatCard(null)
+    if (key === "chat") {
+      openWorkspaceChat()
+      return
+    }
+    setScreen(key)
+  }
+
+  /** Copies selected source files to the server and refreshes the project workspace. */
+  async function uploadFiles(projectId: string) {
+    if (!serverUrl) {
+      setNotice("Connect to Blitz before uploading sources")
+      return
+    }
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: [
+          "application/pdf",
+          "text/markdown",
+          "text/plain",
+          "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        ],
+        multiple: true,
+        copyToCacheDirectory: true,
+      })
+      if (result.canceled) return
+      let uploaded = 0
+      for (const asset of result.assets) {
+        const response = await fetch(asset.uri)
+        if (!response.ok) throw new Error(`Could not read ${asset.name}`)
+        const body = await response.blob()
+        await uploadOriginalSource(serverUrl, {
+          projectId,
+          filename: asset.name,
+          mimeType: asset.mimeType ?? "application/octet-stream",
+          body,
+        })
+        uploaded += 1
+      }
+      if (uploaded) {
+        setNotice(
+          `${uploaded} source${uploaded === 1 ? "" : "s"} queued for preparation`
+        )
+        setWorkspaceRefreshToken((current) => current + 1)
+      }
+    } catch (cause) {
+      setNotice(
+        cause instanceof Error
+          ? cause.message
+          : "The files could not be uploaded"
+      )
+    }
+  }
+
+  /** Opens the native source overview and extracted-text preview. */
+  function openSource(source: MobileWorkspaceSource) {
+    if (!workspaceProjectId) return
+    setSourceRoute({ projectId: workspaceProjectId, source })
+    setScreen("source")
   }
 
   /** Invalidates older feed requests and reconciles the device after a confirmed project change. */
@@ -551,6 +909,7 @@ export default function App() {
         setProjectId(undefined)
         setTopicId(undefined)
       }
+      if (workspaceProjectId === id) setWorkspaceProjectId(undefined)
       listRef.current?.scrollToOffset({ offset: 0, animated: false })
       scrollY.setValue(0)
       setActiveIndex(0)
@@ -571,21 +930,6 @@ export default function App() {
       setPayload(next)
       await saveFeedCache(next, serverUrl)
     }
-  }
-
-  /** Opens a project's native feed and discards stale paging metadata. */
-  function openProject(id: string) {
-    pendingSnapTargetRef.current = null
-    requestGenerationRef.current += 1
-    requestControllerRef.current?.abort()
-    feedQueryRef.current = undefined
-    listRef.current?.scrollToOffset({ offset: 0, animated: false })
-    scrollY.setValue(0)
-    setActiveIndex(0)
-    setProjectId(id)
-    setTopicId(undefined)
-    setLibraryOpen(false)
-    if (projectId === id && !topicId) void refresh(serverUrl, false)
   }
 
   /** Advances to the next card after recording a deliberate skip. */
@@ -720,6 +1064,150 @@ export default function App() {
             style={styles.secondaryButton}
           >
             <Text style={styles.secondaryButtonText}>Try again</Text>
+          </Pressable>
+        ) : null}
+      </View>
+    )
+  }
+
+  if (screen !== "home") {
+    const activeWorkspaceProjectId = workspaceProjectId
+    const nativeContent =
+      screen === "chat" ? (
+        <ChatScreen
+          serverUrl={serverUrl}
+          initialChatId={chatInitialId}
+          initialProject={chatInitialProject}
+          onClose={() => setScreen("home")}
+          onNavigate={() => undefined}
+        />
+      ) : screen === "activity" ? (
+        serverUrl ? (
+          <ActivityScreen serverUrl={serverUrl} onOpen={openActivityTarget} />
+        ) : (
+          renderConnection()
+        )
+      ) : screen === "settings" ? (
+        serverUrl ? (
+          <SettingsScreen
+            serverUrl={serverUrl}
+            onClose={() => setScreen("home")}
+          />
+        ) : (
+          renderConnection()
+        )
+      ) : screen === "research" && researchRoute ? (
+        <ResearchScreen
+          serverUrl={serverUrl ?? ""}
+          projectId={researchRoute.projectId}
+          onClose={() => setScreen("project")}
+          onChanged={() => setWorkspaceRefreshToken((current) => current + 1)}
+        />
+      ) : screen === "source" && sourceRoute ? (
+        <SourcePreview
+          baseUrl={serverUrl ?? ""}
+          projectId={sourceRoute.projectId}
+          source={sourceRoute.source}
+          onClose={() => setScreen("project")}
+          onRetry={async (sourceId) => {
+            await retryProjectSource(
+              serverUrl ?? "",
+              sourceRoute.projectId,
+              sourceId
+            )
+            setWorkspaceRefreshToken((current) => current + 1)
+          }}
+        />
+      ) : screen === "project" ? (
+        serverUrl && activeWorkspaceProjectId ? (
+          <ProjectWorkspace
+            baseUrl={serverUrl}
+            data={workspaceData}
+            loading={workspaceLoading}
+            error={workspaceError}
+            actions={{
+              onBack: () => {
+                setScreen("home")
+                setWorkspaceProjectId(undefined)
+                setLibraryOpen(true)
+              },
+              onStartStudy: () =>
+                openStudy(activeWorkspaceProjectId, "practice"),
+              onStartTest: () => openStudy(activeWorkspaceProjectId, "test"),
+              onStartWrite: () => openWriting(activeWorkspaceProjectId),
+              onStartTopic: (nextTopicId) =>
+                openStudy(activeWorkspaceProjectId, "practice", nextTopicId),
+              onAnswer: (item, answer) =>
+                recordWorkspaceAnswer(activeWorkspaceProjectId, item, answer),
+              onAskItem: (item) =>
+                openWorkspaceItemChat(activeWorkspaceProjectId, item),
+              onOpenChat: () =>
+                openWorkspaceChat(
+                  workspaceData
+                    ? {
+                        id: workspaceData.project.id,
+                        title: workspaceData.project.title,
+                      }
+                    : undefined
+                ),
+              onOpenResearch: () => openResearch(activeWorkspaceProjectId),
+              onOpenSource: openSource,
+              onOpenArtifact: (artifact) =>
+                void Linking.openURL(
+                  projectArtifactUrl(
+                    serverUrl,
+                    activeWorkspaceProjectId,
+                    artifact.relativeKey
+                  )
+                ),
+              onUploadFiles: () => void uploadFiles(activeWorkspaceProjectId),
+              onRefresh: () =>
+                setWorkspaceRefreshToken((current) => current + 1),
+              onRenameProject: () =>
+                openLibrary(activeWorkspaceProjectId, "rename"),
+              onDeleteProject: () =>
+                openLibrary(activeWorkspaceProjectId, "delete"),
+            }}
+          />
+        ) : (
+          renderConnection()
+        )
+      ) : screen === "study" && studyRoute ? (
+        <StudySession
+          serverUrl={serverUrl ?? ""}
+          projectId={studyRoute.projectId}
+          mode={studyRoute.mode}
+          topicId={studyRoute.topicId}
+          onClose={() => setScreen("project")}
+        />
+      ) : screen === "write" && writeRoute ? (
+        <WrittenActivity
+          serverUrl={serverUrl ?? ""}
+          projectId={writeRoute.projectId}
+          topicId={writeRoute.topicId}
+          onClose={() => setScreen("project")}
+        />
+      ) : null
+
+    const activeKey: MobileNavigationKey =
+      screen === "project" ? "library" : (screen as MobileNavigationKey)
+    return (
+      <View style={styles.root}>
+        <StatusBar barStyle="light-content" />
+        {nativeContent}
+        {screen !== "study" &&
+        screen !== "write" &&
+        screen !== "research" &&
+        screen !== "source" ? (
+          <BottomNavigation activeKey={activeKey} onSelect={handleNavigation} />
+        ) : null}
+        {notice ? (
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => setNotice("")}
+            style={[styles.notice, { bottom: 84 + insets.bottom }]}
+          >
+            <Text style={styles.noticeText}>{notice}</Text>
           </Pressable>
         ) : null}
       </View>
@@ -920,11 +1408,16 @@ export default function App() {
       {libraryOpen && serverUrl && (
         <ProjectLibrary
           serverUrl={serverUrl}
+          initialProjectId={libraryProjectId}
+          initialMode={libraryInitialMode}
           onClose={() => {
             setLibraryOpen(false)
+            setLibraryProjectId(undefined)
+            setLibraryInitialMode(undefined)
             void refresh(serverUrl, false)
           }}
-          onOpenProject={openProject}
+          onOpenProject={openProjectWorkspace}
+          onOpenFeed={openProjectFeed}
           onChange={projectChanged}
         />
       )}

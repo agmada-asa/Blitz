@@ -1,10 +1,9 @@
-/** Owns native project search and management; source uploads explicitly open the web project page. */
+/** Owns native project search and management, including entry to each project workspace. */
 
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
-  Linking,
   Modal,
   Platform,
   Pressable,
@@ -26,7 +25,10 @@ type Props = {
   serverUrl: string
   onClose: () => void
   onOpenProject: (id: string) => void
+  onOpenFeed?: (id: string) => void
   onChange: (operation: ProjectOperation, id: string) => Promise<void>
+  initialProjectId?: string
+  initialMode?: "actions" | "rename" | "delete"
 }
 
 /** Renders a full-screen native library with one form at a time and recoverable network errors. */
@@ -34,7 +36,10 @@ export function ProjectLibrary({
   serverUrl,
   onClose,
   onOpenProject,
+  onOpenFeed,
   onChange,
+  initialProjectId,
+  initialMode,
 }: Props) {
   const insets = useSafeAreaInsets()
   const [projects, setProjects] = useState<ProjectSummary[]>()
@@ -48,6 +53,7 @@ export function ProjectLibrary({
   const [error, setError] = useState("")
   const [pending, setPending] = useState(false)
   const [loading, setLoading] = useState(false)
+  const initialActionHandled = useRef(false)
 
   /** Loads current metadata; ignores a response belonging to an unmounted screen. */
   const load = useCallback(
@@ -76,6 +82,18 @@ export function ProjectLibrary({
     void load(controller.signal)
     return () => controller.abort()
   }, [load])
+
+  useEffect(() => {
+    if (initialActionHandled.current || !initialProjectId || !projects) return
+    const initialProject = projects.find(
+      (project) => project.id === initialProjectId
+    )
+    if (!initialProject) return
+    setSelected(initialProject)
+    setTitle(initialProject.title)
+    setMode(initialMode ?? "actions")
+    initialActionHandled.current = true
+  }, [initialMode, initialProjectId, projects])
 
   /** Leaves forms without losing project data; blocks dismissal during an in-flight mutation. */
   function back() {
@@ -124,18 +142,6 @@ export function ProjectLibrary({
       )
     } finally {
       setPending(false)
-    }
-  }
-
-  /** Opens source management in the browser and keeps failures visible in the native library. */
-  async function openSources() {
-    if (!selected) return
-    try {
-      await Linking.openURL(
-        `${serverUrl.replace(/\/+$/, "")}/projects/${encodeURIComponent(selected.id)}`
-      )
-    } catch {
-      setError("Could not open sources in your browser.")
     }
   }
 
@@ -268,13 +274,13 @@ export function ProjectLibrary({
             <>
               <Text style={styles.projectHeading}>{selected.title}</Text>
               <Action
-                label="Open feed"
+                label="Open workspace"
                 onPress={() => onOpenProject(selected.id)}
                 accent
               />
               <Action
-                label="Manage sources in browser"
-                onPress={() => void openSources()}
+                label="Open feed"
+                onPress={() => onOpenFeed?.(selected.id)}
               />
               <Action
                 label="Rename project"
