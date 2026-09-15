@@ -8,7 +8,6 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
-  Text,
   View,
 } from "react-native"
 import { useSafeAreaInsets } from "react-native-safe-area-context"
@@ -22,6 +21,8 @@ import {
   type SessionQuestion,
 } from "../../lib/learning/session-contracts"
 import { fetchStudySession, submitStudyAnswer } from "../lib/study"
+import { Text } from "./native-text"
+import { WebCheckIcon, WebCancelIcon } from "./web-icon"
 
 /** The deliberate session modes offered by the project workspace. */
 export type MobileStudySessionMode = "practice" | "test"
@@ -401,18 +402,20 @@ export function StudySession({
                   pressed && styles.pressed,
                 ]}
               >
-                <Text
+                <View
                   style={[
                     styles.optionMarker,
                     selected && styles.optionMarkerSelected,
                   ]}
                 >
-                  {question.type === "multiple-answer"
-                    ? selected
-                      ? "✓"
-                      : ""
-                    : String.fromCharCode(65 + index)}
-                </Text>
+                  {question.type === "multiple-answer" && selected ? (
+                    <WebCheckIcon size={15} color="#1b0d0a" strokeWidth={2} />
+                  ) : (
+                    <Text style={styles.optionMarkerText}>
+                      {String.fromCharCode(65 + index)}
+                    </Text>
+                  )}
+                </View>
                 <Text style={styles.optionText}>{option.text}</Text>
               </Pressable>
             )
@@ -646,17 +649,30 @@ function TestResults({
                   )
                   const correct = isCorrect(candidate, result, option.id)
                   return (
-                    <Text
-                      key={option.id}
-                      style={[
-                        styles.resultOption,
-                        correct && styles.resultOptionCorrect,
-                        selected && !correct && styles.resultOptionIncorrect,
-                      ]}
-                    >
-                      {correct ? "✓ " : selected ? "× " : ""}
-                      {option.text}
-                    </Text>
+                    <View key={option.id} style={[styles.resultOption]}>
+                      {correct ? (
+                        <WebCheckIcon
+                          size={14}
+                          color="#7ee2a8"
+                          strokeWidth={2}
+                        />
+                      ) : selected ? (
+                        <WebCancelIcon
+                          size={14}
+                          color="#ff9a89"
+                          strokeWidth={2}
+                        />
+                      ) : null}
+                      <Text
+                        style={[
+                          styles.resultOptionText,
+                          correct && styles.resultOptionCorrect,
+                          selected && !correct && styles.resultOptionIncorrect,
+                        ]}
+                      >
+                        {option.text}
+                      </Text>
+                    </View>
                   )
                 })}
               </View>
@@ -711,22 +727,20 @@ const styles = StyleSheet.create({
   optionCorrect: { backgroundColor: "#123b26", borderColor: "#5fd48a" },
   optionIncorrect: { backgroundColor: "#3b1919", borderColor: "#ff756e" },
   optionMarker: {
+    alignItems: "center",
     borderColor: "#454545",
     borderRadius: 9,
     borderWidth: 1,
-    color: "#8e8e8e",
-    fontSize: 12,
     height: 28,
-    lineHeight: 26,
+    justifyContent: "center",
     marginRight: 12,
-    textAlign: "center",
     width: 28,
   },
   optionMarkerSelected: {
     backgroundColor: "#ff8065",
     borderColor: "#ff8065",
-    color: "#1b0d0a",
   },
+  optionMarkerText: { color: "#8e8e8e", fontSize: 12, fontWeight: "600" },
   optionText: { color: "#eeeeee", flex: 1, fontSize: 15, lineHeight: 21 },
   actions: {
     alignItems: "center",
@@ -805,7 +819,8 @@ const styles = StyleSheet.create({
   },
   resultStatus: { color: "#b1b1b1", fontSize: 14, marginTop: 8 },
   resultOptions: { gap: 7, marginTop: 14 },
-  resultOption: { color: "#b1b1b1", fontSize: 14, lineHeight: 20 },
+  resultOption: { alignItems: "center", flexDirection: "row", gap: 7 },
+  resultOptionText: { color: "#b1b1b1", fontSize: 14, lineHeight: 20 },
   resultOptionCorrect: { color: "#7ee2a8" },
   resultOptionIncorrect: { color: "#ff9a89" },
 })

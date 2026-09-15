@@ -3,11 +3,12 @@
  * native feed. It uses a modal so the feed itself keeps the full-screen focus.
  */
 
-import { Modal, Pressable, StyleSheet, Text, View } from "react-native"
+import { Modal, Pressable, StyleSheet, View } from "react-native"
 import { ScrollView } from "react-native"
 import { useSafeAreaInsets } from "react-native-safe-area-context"
 
 import type { MobileProjectChoice, MobileTopicChoice } from "../lib/contracts"
+import { Text } from "./native-text"
 
 /** Props for opening, rendering, and applying the feed filters. */
 export type FilterPanelProps = {

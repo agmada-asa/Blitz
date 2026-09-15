@@ -5,6 +5,13 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import {
+  InstrumentSans_400Regular,
+  InstrumentSans_500Medium,
+  InstrumentSans_600SemiBold,
+  InstrumentSans_700Bold,
+  useFonts,
+} from "@expo-google-fonts/instrument-sans"
 import * as DocumentPicker from "expo-document-picker"
 import {
   Animated,
@@ -17,8 +24,6 @@ import {
   RefreshControl,
   StatusBar,
   StyleSheet,
-  Text,
-  TextInput,
   View,
   useWindowDimensions,
 } from "react-native"
@@ -31,7 +36,7 @@ import {
 } from "./components/bottom-navigation"
 import { ChatScreen } from "./components/chat-screen"
 import { ProjectLibrary } from "./components/project-library"
-import { ProjectWorkspace } from "./components/project-workspace"
+import { ProjectWorkspaceScreen as ProjectWorkspace } from "./components/project-workspace-screen"
 import { ResearchScreen } from "./components/research-screen"
 import { SettingsScreen } from "./components/settings-screen"
 import { SourcePreview } from "./components/source-preview"
@@ -45,6 +50,7 @@ import type { ProjectOperation } from "../lib/project-contracts"
 import { FilterPanel } from "./components/filter-panel"
 import { ChatModal } from "./components/chat-modal"
 import { LearningCard } from "./components/learning-card"
+import { Text, TextInput } from "./components/native-text"
 import { useSafeAreaInsets } from "react-native-safe-area-context"
 import { appendFeedPage, filterCards, mergeFeedMetadata } from "./lib/feed"
 import {
@@ -129,6 +135,12 @@ function workspaceItemAsCard(
 
 /** Renders the native feed and its small connection and recovery states. */
 export default function App() {
+  const [fontsLoaded, fontsError] = useFonts({
+    InstrumentSans_400Regular,
+    InstrumentSans_500Medium,
+    InstrumentSans_600SemiBold,
+    InstrumentSans_700Bold,
+  })
   const { height } = useWindowDimensions()
   const motionEnabled = useMotionEnabled()
   const scrollY = useRef(new Animated.Value(0)).current
@@ -961,6 +973,10 @@ export default function App() {
       passiveHandlerRef.current(visible.item, "exposure")
     }
   ).current
+
+  if (!fontsLoaded && !fontsError) {
+    return <View style={styles.root} />
+  }
 
   /** Renders the no-URL connection screen without claiming a live service exists. */
   function renderConnection() {

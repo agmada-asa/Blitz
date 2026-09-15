@@ -1,22 +1,27 @@
-/** Owns the native feed's Instagram-like icon-only bottom navigation. */
+/** Owns the native bottom navigation using the same glyphs as the web shell. */
 
-import Ionicons from "@expo/vector-icons/Ionicons"
 import { useSafeAreaInsets } from "react-native-safe-area-context"
 import { Pressable, StyleSheet, View } from "react-native"
-import type { ComponentProps } from "react"
+import type { ComponentType } from "react"
+
+import {
+  WebChatIcon,
+  WebFolderIcon,
+  WebHomeIcon,
+  WebNotificationIcon,
+  WebSettingsIcon,
+  type WebIconProps,
+} from "./web-icon"
 
 /** Stable destinations exposed by the native bottom navigation. */
 export type MobileNavigationKey =
   "home" | "library" | "chat" | "activity" | "settings"
 
-type IconName = ComponentProps<typeof Ionicons>["name"]
-
-/** One native navigation item with separate outline and selected glyphs. */
+/** One navigation item with the same single stroke glyph in each state. */
 type NavigationItem = {
   readonly key: MobileNavigationKey
   readonly label: string
-  readonly icon: IconName
-  readonly activeIcon: IconName
+  readonly icon: ComponentType<WebIconProps>
 }
 
 /** Props required to render and activate the native bottom navigation. */
@@ -29,32 +34,27 @@ const navigationItems: readonly NavigationItem[] = [
   {
     key: "home",
     label: "Home",
-    icon: "home-outline",
-    activeIcon: "home",
+    icon: WebHomeIcon,
   },
   {
     key: "library",
     label: "Library",
-    icon: "albums-outline",
-    activeIcon: "albums",
+    icon: WebFolderIcon,
   },
   {
     key: "chat",
     label: "Chat",
-    icon: "chatbubble-ellipses-outline",
-    activeIcon: "chatbubble-ellipses",
+    icon: WebChatIcon,
   },
   {
     key: "activity",
     label: "Activity",
-    icon: "time-outline",
-    activeIcon: "time",
+    icon: WebNotificationIcon,
   },
   {
     key: "settings",
     label: "Settings",
-    icon: "settings-outline",
-    activeIcon: "settings",
+    icon: WebSettingsIcon,
   },
 ]
 
@@ -70,6 +70,7 @@ export function BottomNavigation({
       <View style={[styles.bar, { paddingBottom: Math.max(insets.bottom, 8) }]}>
         {navigationItems.map((item) => {
           const active = activeKey === item.key
+          const Icon = item.icon
           return (
             <Pressable
               key={item.key}
@@ -83,11 +84,11 @@ export function BottomNavigation({
                 pressed && styles.itemPressed,
               ]}
             >
-              <Ionicons
-                accessibilityElementsHidden
-                name={active ? item.activeIcon : item.icon}
+              <Icon
+                accessible={false}
                 size={25}
                 color={active ? "#ff8065" : "#eeeeee"}
+                strokeWidth={active ? 2 : 1.8}
               />
             </Pressable>
           )

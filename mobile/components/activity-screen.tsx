@@ -1,19 +1,30 @@
 /** Renders the native notification center with the web app's bounded activity rows. */
 
-import Ionicons from "@expo/vector-icons/Ionicons"
 import AsyncStorage from "@react-native-async-storage/async-storage"
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useState, type ComponentType } from "react"
 import {
   ActivityIndicator,
   FlatList,
   Pressable,
   RefreshControl,
   StyleSheet,
-  Text,
   View,
 } from "react-native"
 import { useSafeAreaInsets } from "react-native-safe-area-context"
 
+import {
+  WebAiSearchIcon,
+  WebAlertIcon,
+  WebArrowLeftIcon,
+  WebChatIcon,
+  WebCheckCircleIcon,
+  WebDownloadIcon,
+  WebFileIcon,
+  WebLoadingIcon,
+  WebRefreshIcon,
+  type WebIconProps,
+} from "./web-icon"
+import { Text } from "./native-text"
 import {
   AccountApiError,
   fetchActivity,
@@ -54,15 +65,15 @@ function formatTimestamp(timestamp: number): string {
 }
 
 /** Picks a familiar native glyph for one activity kind and status. */
-function iconForRow(row: MobileActivityRow): keyof typeof Ionicons.glyphMap {
-  if (row.status === "failed") return "alert-circle-outline"
-  if (row.status === "completed") return "checkmark-circle-outline"
-  if (row.status === "running") return "reload"
-  if (row.kind === "research") return "search-outline"
-  if (row.kind === "import") return "download-outline"
+function iconForRow(row: MobileActivityRow): ComponentType<WebIconProps> {
+  if (row.status === "failed") return WebAlertIcon
+  if (row.status === "completed") return WebCheckCircleIcon
+  if (row.status === "running") return WebLoadingIcon
+  if (row.kind === "research") return WebAiSearchIcon
+  if (row.kind === "import") return WebDownloadIcon
   if (row.kind === "card-reply" || row.kind === "workspace-reply")
-    return "chatbubble-ellipses-outline"
-  return "document-text-outline"
+    return WebChatIcon
+  return WebFileIcon
 }
 
 /** Reads locally persisted notification read markers. */
@@ -165,6 +176,7 @@ export function ActivityScreen({
       item.status !== "queued" &&
       item.status !== "running"
     const detail = item.error || item.detail
+    const Icon = iconForRow(item)
     return (
       <Pressable
         accessibilityRole="button"
@@ -183,8 +195,7 @@ export function ActivityScreen({
             unread && styles.brandIcon,
           ]}
         >
-          <Ionicons
-            name={iconForRow(item)}
+          <Icon
             size={18}
             color={
               item.status === "failed"
@@ -193,6 +204,7 @@ export function ActivityScreen({
                   ? "#ff8065"
                   : "#aaaaaa"
             }
+            strokeWidth={1.8}
           />
         </View>
         <View style={styles.rowBody}>
@@ -258,7 +270,7 @@ export function ActivityScreen({
               accessibilityLabel="Close activity"
               onPress={onClose}
             >
-              <Ionicons name="arrow-back" size={23} color="#ffffff" />
+              <WebArrowLeftIcon size={23} color="#ffffff" strokeWidth={1.8} />
             </Pressable>
           ) : null}
         </View>
@@ -271,7 +283,7 @@ export function ActivityScreen({
           accessibilityLabel="Refresh activity"
           onPress={() => void load(true)}
         >
-          <Ionicons name="refresh-outline" size={22} color="#aaaaaa" />
+          <WebRefreshIcon size={22} color="#aaaaaa" strokeWidth={1.8} />
         </Pressable>
       </View>
       <FlatList

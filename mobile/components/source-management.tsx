@@ -1,7 +1,7 @@
 /** Renders native source entry points and preparation states for a project workspace. */
 
 import { useMemo, useState } from "react"
-import { Pressable, StyleSheet, Text, TextInput, View } from "react-native"
+import { Pressable, StyleSheet, View } from "react-native"
 
 import {
   createProjectSource,
@@ -11,6 +11,7 @@ import {
   type MobileWorkspacePreparation,
   type MobileWorkspaceSource,
 } from "../lib/project-workspace-api"
+import { Text, TextInput } from "./native-text"
 
 /** Props for the mobile source manager and its parent-owned file fallback. */
 export type SourceManagementProps = {

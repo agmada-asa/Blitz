@@ -9,7 +9,6 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
-  Text,
   View,
 } from "react-native"
 import { useSafeAreaInsets } from "react-native-safe-area-context"
@@ -36,6 +35,13 @@ import {
   saveSettings,
   type MobileProviderAvailability,
 } from "../lib/account-api"
+import { Text } from "./native-text"
+import {
+  WebArrowLeftIcon,
+  WebArrowRightIcon,
+  WebCheckIcon,
+  WebRefreshIcon,
+} from "./web-icon"
 
 /** Props for the isolated native settings screen. */
 export type SettingsScreenProps = {
@@ -477,7 +483,11 @@ export function SettingsScreen({ serverUrl, onClose }: SettingsScreenProps) {
             accessibilityLabel="Close settings"
             onPress={onClose}
           >
-            <Text style={[styles.back, { color: colors.foreground }]}>‹</Text>
+            <WebArrowLeftIcon
+              size={21}
+              color={colors.foreground}
+              strokeWidth={1.8}
+            />
           </Pressable>
         ) : (
           <View />
@@ -490,7 +500,7 @@ export function SettingsScreen({ serverUrl, onClose }: SettingsScreenProps) {
           accessibilityLabel="Reload settings"
           onPress={() => void load()}
         >
-          <Text style={[styles.reload, { color: colors.muted }]}>↻</Text>
+          <WebRefreshIcon size={22} color={colors.muted} strokeWidth={1.8} />
         </Pressable>
       </View>
       <ScrollView
@@ -553,9 +563,9 @@ export function SettingsScreen({ serverUrl, onClose }: SettingsScreenProps) {
                     accent === item.id && styles.selectedSwatch,
                   ]}
                 >
-                  <Text style={styles.swatchMark}>
-                    {accent === item.id ? "✓" : ""}
-                  </Text>
+                  {accent === item.id ? (
+                    <WebCheckIcon size={17} color="#ffffff" strokeWidth={2} />
+                  ) : null}
                 </Pressable>
               ))}
             </View>
@@ -936,7 +946,7 @@ function PickerButton({
       >
         {value}
       </Text>
-      <Text style={[styles.chevron, { color: colors.muted }]}>›</Text>
+      <WebArrowRightIcon size={18} color={colors.muted} strokeWidth={1.8} />
     </Pressable>
   )
 }

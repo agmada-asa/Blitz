@@ -8,12 +8,13 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
-  Text,
   View,
 } from "react-native"
 import { useSafeAreaInsets } from "react-native-safe-area-context"
 
 import { Markdown } from "./markdown"
+import { Text } from "./native-text"
+import { WebArrowLeftIcon, WebCheckIcon } from "./web-icon"
 import type { MobileWorkspaceSource } from "../lib/project-workspace-api"
 import {
   fetchSourceDetail,
@@ -153,7 +154,7 @@ export function SourcePreview({
           onPress={onClose}
           style={styles.back}
         >
-          <Text style={styles.backText}>‹</Text>
+          <WebArrowLeftIcon size={21} color="#f7f7f7" strokeWidth={1.8} />
         </Pressable>
         <View style={styles.headerCopy}>
           <Text numberOfLines={1} style={styles.title}>
@@ -285,13 +286,16 @@ export function SourcePreview({
                 </Text>
                 <View style={styles.details}>
                   {detail.citations.map((citation, index) => (
-                    <Text
+                    <View
                       key={`${citation.label}-${index}`}
-                      style={styles.body}
+                      style={styles.citationRow}
                     >
-                      ✓ {citation.label}
-                      {citation.detail ? ` · ${citation.detail}` : ""}
-                    </Text>
+                      <WebCheckIcon size={15} color="#ff8065" strokeWidth={2} />
+                      <Text style={styles.body}>
+                        {citation.label}
+                        {citation.detail ? ` · ${citation.detail}` : ""}
+                      </Text>
+                    </View>
                   ))}
                 </View>
               </>
@@ -444,6 +448,7 @@ const styles = StyleSheet.create({
     gap: 12,
     padding: 13,
   },
+  citationRow: { alignItems: "flex-start", flexDirection: "row", gap: 8 },
   detail: { gap: 3 },
   detailLabel: { color: "#858585", fontSize: 11 },
   detailValue: { color: "#f1f1f1", fontSize: 13, lineHeight: 18 },

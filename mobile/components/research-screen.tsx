@@ -7,8 +7,6 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
-  Text,
-  TextInput,
   View,
 } from "react-native"
 import { useSafeAreaInsets } from "react-native-safe-area-context"
@@ -23,6 +21,8 @@ import {
   type MobileResearchImport,
   type MobileResearchSnapshot,
 } from "../lib/research"
+import { Text, TextInput } from "./native-text"
+import { WebArrowLeftIcon, WebCheckIcon } from "./web-icon"
 
 /** Props for one project-scoped native research screen. */
 export type ResearchScreenProps = {
@@ -279,7 +279,7 @@ export function ResearchScreen({
           onPress={onClose}
           style={styles.back}
         >
-          <Text style={styles.backText}>‹</Text>
+          <WebArrowLeftIcon size={21} color="#f7f7f7" strokeWidth={1.8} />
         </Pressable>
         <View style={styles.headerCopy}>
           <Text style={styles.title}>Find sources</Text>
@@ -385,9 +385,13 @@ export function ResearchScreen({
                         checked && styles.checkboxChecked,
                       ]}
                     >
-                      <Text style={styles.checkboxText}>
-                        {checked ? "✓" : ""}
-                      </Text>
+                      {checked ? (
+                        <WebCheckIcon
+                          size={15}
+                          color="#1b0d0a"
+                          strokeWidth={2}
+                        />
+                      ) : null}
                     </View>
                     <View style={styles.sourceCopy}>
                       <Text style={styles.sourceTitle}>{source.title}</Text>

@@ -1,6 +1,6 @@
 /** Owns native project search and management, including entry to each project workspace. */
 
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -9,8 +9,6 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
-  Text,
-  TextInput,
   View,
 } from "react-native"
 import { useSafeAreaInsets } from "react-native-safe-area-context"
@@ -19,6 +17,8 @@ import type {
   ProjectSummary,
 } from "../../lib/project-contracts"
 import { fetchProjects, updateProject } from "../lib/projects"
+import { Text, TextInput } from "./native-text"
+import { WebAddIcon, WebMoreIcon } from "./web-icon"
 
 /** Inputs connecting the native library to the active feed and saved cache. */
 type Props = {
@@ -191,7 +191,12 @@ export function ProjectLibrary({
                     : "Project"}
           </Text>
           {mode === "list" ? (
-            <Action label="New project" onPress={() => open("create")} accent />
+            <Action
+              label="New project"
+              onPress={() => open("create")}
+              accent
+              icon={<WebAddIcon size={17} color="#1b0d0a" strokeWidth={1.8} />}
+            />
           ) : (
             <View style={styles.headerSpacer} />
           )}
@@ -264,7 +269,7 @@ export function ProjectLibrary({
                     onPress={() => open("actions", project)}
                     style={styles.more}
                   >
-                    <Text style={styles.moreText}>⋯</Text>
+                    <WebMoreIcon size={20} color="#aaaaaa" strokeWidth={1.8} />
                   </Pressable>
                 </View>
               ))}
@@ -371,12 +376,14 @@ function Action({
   disabled,
   accent,
   destructive,
+  icon,
 }: {
   label: string
   onPress: () => void
   disabled?: boolean
   accent?: boolean
   destructive?: boolean
+  icon?: ReactNode
 }) {
   return (
     <Pressable
@@ -391,15 +398,18 @@ function Action({
         (disabled || pressed) && styles.pressed,
       ]}
     >
-      <Text
-        style={[
-          styles.actionText,
-          accent && styles.accentText,
-          destructive && styles.destructiveText,
-        ]}
-      >
-        {label}
-      </Text>
+      <View style={styles.actionContent}>
+        {icon}
+        <Text
+          style={[
+            styles.actionText,
+            accent && styles.accentText,
+            destructive && styles.destructiveText,
+          ]}
+        >
+          {label}
+        </Text>
+      </View>
     </Pressable>
   )
 }
@@ -480,6 +490,7 @@ const styles = StyleSheet.create({
     borderRadius: 24,
   },
   actionText: { color: "#cccccc", fontSize: 14 },
+  actionContent: { alignItems: "center", flexDirection: "row", gap: 7 },
   accent: { backgroundColor: "#ff8065" },
   accentText: { color: "#1b0d0a", fontWeight: "600" },
   destructive: { backgroundColor: "#3b1919" },

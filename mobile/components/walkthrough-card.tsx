@@ -1,9 +1,19 @@
 /** Renders one project learning-path item with native answer and deep-dive controls. */
 
 import { useEffect, useState, type ReactNode } from "react"
-import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native"
+import { Pressable, ScrollView, StyleSheet, View } from "react-native"
 
 import { Markdown } from "./markdown"
+import {
+  WebAiSearchIcon,
+  WebArrowDownIcon,
+  WebCheckIcon,
+  WebHelpIcon,
+  WebRefreshIcon,
+  WebSparklesIcon,
+  WebZapIcon,
+} from "./web-icon"
+import { Text } from "./native-text"
 import type { AnswerResponse } from "../../lib/learning/client-contracts"
 import type { MobileAnswer, MobileAnswerFeedback } from "../lib/contracts"
 import type { MobileWorkspaceItem } from "../lib/project-workspace-api"
@@ -193,9 +203,16 @@ export function WalkthroughCard({
     return (
       <View style={styles.face}>
         <View style={styles.cardTopline}>
-          <Text style={styles.eyebrow}>
-            {isExplanation ? "✦  Walkthrough" : "?  Quick check"}
-          </Text>
+          <View style={styles.eyebrowRow}>
+            {isExplanation ? (
+              <WebSparklesIcon size={15} color="#ff8065" strokeWidth={1.8} />
+            ) : (
+              <WebHelpIcon size={15} color="#ff8065" strokeWidth={1.8} />
+            )}
+            <Text style={styles.eyebrow}>
+              {isExplanation ? "Walkthrough" : "Quick check"}
+            </Text>
+          </View>
           <Text style={styles.position}>
             {position + 1} of {total}
           </Text>
@@ -220,6 +237,14 @@ export function WalkthroughCard({
               const scored = isScoredFeedback(feedback)
               const correct = scored && optionIsCorrect(option.id)
               const incorrect = scored && isSelected && !correct
+              const showCheck = correct || (isMultipleAnswer && isSelected)
+              const markerColor = correct
+                ? "#5dd598"
+                : incorrect
+                  ? "#ff8c86"
+                  : isSelected
+                    ? "#ff8065"
+                    : "#aaaaaa"
               return (
                 <Pressable
                   key={option.id}
@@ -238,7 +263,7 @@ export function WalkthroughCard({
                     pressed && styles.optionPressed,
                   ]}
                 >
-                  <Text
+                  <View
                     style={[
                       styles.optionMarker,
                       isSelected && styles.optionMarkerSelected,
@@ -246,14 +271,25 @@ export function WalkthroughCard({
                       incorrect && styles.optionMarkerIncorrect,
                     ]}
                   >
-                    {correct
-                      ? "✓"
-                      : isMultipleAnswer && isSelected
-                        ? "✓"
-                        : item.type === "true-false"
+                    {showCheck ? (
+                      <WebCheckIcon
+                        size={15}
+                        color={markerColor}
+                        strokeWidth={2}
+                      />
+                    ) : (
+                      <Text
+                        style={[
+                          styles.optionMarkerText,
+                          { color: markerColor },
+                        ]}
+                      >
+                        {item.type === "true-false"
                           ? option.text.slice(0, 1)
                           : String.fromCharCode(65 + index)}
-                  </Text>
+                      </Text>
+                    )}
+                  </View>
                   <Text style={styles.optionText}>{option.text}</Text>
                 </Pressable>
               )
@@ -292,7 +328,10 @@ export function WalkthroughCard({
               pressed && styles.pressed,
             ]}
           >
-            <Text style={styles.secondaryButtonText}>Ask Blitz</Text>
+            <View style={styles.buttonRow}>
+              <WebZapIcon size={15} color="#f7f7f7" strokeWidth={1.8} />
+              <Text style={styles.secondaryButtonText}>Ask Blitz</Text>
+            </View>
           </Pressable>
           <View style={styles.footerRight}>
             {isExplanation ? (
@@ -304,7 +343,12 @@ export function WalkthroughCard({
                   pressed && styles.pressed,
                 ]}
               >
-                <Text style={styles.secondaryButtonText}>See more detail</Text>
+                <View style={styles.buttonRow}>
+                  <WebRefreshIcon size={15} color="#f7f7f7" strokeWidth={1.8} />
+                  <Text style={styles.secondaryButtonText}>
+                    See more detail
+                  </Text>
+                </View>
               </Pressable>
             ) : null}
             {onNext ? (
@@ -333,7 +377,10 @@ export function WalkthroughCard({
     return (
       <View style={styles.face}>
         <View style={styles.cardTopline}>
-          <Text style={styles.eyebrow}>✦ In-depth explanation</Text>
+          <View style={styles.eyebrowRow}>
+            <WebSparklesIcon size={15} color="#ff8065" strokeWidth={1.8} />
+            <Text style={styles.eyebrow}>In-depth explanation</Text>
+          </View>
           <Text style={styles.position}>
             {position + 1} of {total}
           </Text>
@@ -358,6 +405,14 @@ export function WalkthroughCard({
             <Text style={styles.linkText}>
               {expanded ? "Show less" : "Show more"}
             </Text>
+            <WebArrowDownIcon
+              size={14}
+              color="#ff8065"
+              strokeWidth={1.8}
+              style={
+                expanded ? styles.showMoreIconExpanded : styles.showMoreIcon
+              }
+            />
           </Pressable>
         ) : null}
         <Text style={styles.detailPrompt}>
@@ -370,7 +425,10 @@ export function WalkthroughCard({
             onPress={() => onAsk?.(item)}
             style={styles.secondaryButton}
           >
-            <Text style={styles.secondaryButtonText}>Delve deeper</Text>
+            <View style={styles.buttonRow}>
+              <WebAiSearchIcon size={15} color="#f7f7f7" strokeWidth={1.8} />
+              <Text style={styles.secondaryButtonText}>Delve deeper</Text>
+            </View>
           </Pressable>
           <View style={styles.footerRight}>
             <Pressable
@@ -381,7 +439,10 @@ export function WalkthroughCard({
               }}
               style={styles.secondaryButton}
             >
-              <Text style={styles.secondaryButtonText}>Show front</Text>
+              <View style={styles.buttonRow}>
+                <WebRefreshIcon size={15} color="#f7f7f7" strokeWidth={1.8} />
+                <Text style={styles.secondaryButtonText}>Show front</Text>
+              </View>
             </Pressable>
             {onNext ? (
               <Pressable
@@ -430,6 +491,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
   },
+  eyebrowRow: { alignItems: "center", flexDirection: "row", gap: 7 },
   eyebrow: {
     color: "#ff8065",
     fontSize: 12,
@@ -464,17 +526,14 @@ const styles = StyleSheet.create({
     borderColor: "#4b4b4b",
     borderRadius: 9,
     borderWidth: 1,
-    color: "#aaaaaa",
-    fontSize: 12,
-    fontWeight: "700",
     height: 29,
-    paddingTop: 6,
-    textAlign: "center",
+    justifyContent: "center",
     width: 29,
   },
-  optionMarkerSelected: { borderColor: "#ff8065", color: "#ff8065" },
-  optionMarkerCorrect: { borderColor: "#5dd598", color: "#5dd598" },
-  optionMarkerIncorrect: { borderColor: "#ff8c86", color: "#ff8c86" },
+  optionMarkerSelected: { borderColor: "#ff8065" },
+  optionMarkerCorrect: { borderColor: "#5dd598" },
+  optionMarkerIncorrect: { borderColor: "#ff8c86" },
+  optionMarkerText: { fontSize: 12, fontWeight: "700" },
   optionText: { color: "#e5e5e5", flex: 1, fontSize: 15, lineHeight: 21 },
   feedback: { borderRadius: 14, borderWidth: 1, gap: 4, padding: 13 },
   feedbackCorrect: { backgroundColor: "#1c6b4220", borderColor: "#5dd59866" },
@@ -518,11 +577,20 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
   },
   secondaryButtonText: { color: "#f7f7f7", fontSize: 13, fontWeight: "700" },
+  buttonRow: { alignItems: "center", flexDirection: "row", gap: 7 },
   pressed: { opacity: 0.8 },
   disabledButton: { opacity: 0.45 },
   source: { color: "#858585", fontSize: 12, lineHeight: 18 },
   collapsedExplanation: { maxHeight: 150, overflow: "hidden" },
-  showMore: { alignSelf: "flex-start", paddingVertical: 3 },
+  showMore: {
+    alignItems: "center",
+    alignSelf: "flex-start",
+    flexDirection: "row",
+    gap: 5,
+    paddingVertical: 3,
+  },
+  showMoreIcon: { transform: [{ rotate: "0deg" }] },
+  showMoreIconExpanded: { transform: [{ rotate: "180deg" }] },
   linkText: { color: "#ff8065", fontSize: 13, fontWeight: "700" },
   detailPrompt: { color: "#858585", fontSize: 13, lineHeight: 19 },
 })

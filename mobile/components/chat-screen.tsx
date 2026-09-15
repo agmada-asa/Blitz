@@ -11,14 +11,20 @@ import {
   Platform,
   Pressable,
   StyleSheet,
-  Text,
-  TextInput,
   View,
 } from "react-native"
 import { useSafeAreaInsets } from "react-native-safe-area-context"
 import { randomUUID } from "expo-crypto"
 
 import { Markdown } from "./markdown"
+import { Text, TextInput } from "./native-text"
+import {
+  WebAddIcon,
+  WebCancelIcon,
+  WebMenuIcon,
+  WebPauseIcon,
+  WebSendIcon,
+} from "./web-icon"
 import {
   createWorkspaceChat,
   createWorkspaceChatTransport,
@@ -433,7 +439,7 @@ export function ChatScreen({
           onPress={onClose}
           style={styles.headerButton}
         >
-          <Text style={styles.headerButtonText}>×</Text>
+          <WebCancelIcon size={20} color="#f1f1f1" strokeWidth={1.8} />
         </Pressable>
         <View style={styles.headerCopy}>
           <Text style={styles.title}>Chat</Text>
@@ -447,7 +453,7 @@ export function ChatScreen({
           onPress={() => setHistoryOpen(true)}
           style={styles.headerButton}
         >
-          <Text style={styles.headerButtonText}>☰</Text>
+          <WebMenuIcon size={20} color="#f1f1f1" strokeWidth={1.8} />
         </Pressable>
       </View>
       <View style={styles.contextBar}>
@@ -527,7 +533,11 @@ export function ChatScreen({
                 styles.disabledButton,
             ]}
           >
-            <Text style={styles.sendText}>{sending ? "■" : "↑"}</Text>
+            {sending ? (
+              <WebPauseIcon size={18} color="#1b0d0a" strokeWidth={2} />
+            ) : (
+              <WebSendIcon size={18} color="#1b0d0a" strokeWidth={2} />
+            )}
           </Pressable>
         </View>
         {error ? (
@@ -547,7 +557,10 @@ export function ChatScreen({
             <View style={styles.historyHeader}>
               <Text style={styles.historyTitle}>Chats</Text>
               <Pressable onPress={startNewChat}>
-                <Text style={styles.newText}>＋ New chat</Text>
+                <View style={styles.newChatContent}>
+                  <WebAddIcon size={16} color="#ff8065" strokeWidth={1.8} />
+                  <Text style={styles.newText}>New chat</Text>
+                </View>
               </Pressable>
             </View>
             {chats.length ? (
@@ -706,6 +719,7 @@ const styles = StyleSheet.create({
   },
   historyTitle: { color: "#f1f1f1", fontSize: 18, fontWeight: "700" },
   newText: { color: "#ff8065", fontSize: 14, fontWeight: "600" },
+  newChatContent: { alignItems: "center", flexDirection: "row", gap: 5 },
   historyRow: {
     paddingVertical: 13,
     paddingHorizontal: 10,

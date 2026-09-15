@@ -8,8 +8,6 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
-  Text,
-  TextInput,
   View,
 } from "react-native"
 import { useSafeAreaInsets } from "react-native-safe-area-context"
@@ -20,6 +18,7 @@ import {
   startWritingActivity,
   type MobileWritingActivity,
 } from "../lib/writing"
+import { Text, TextInput } from "./native-text"
 
 /** Props required for one project-scoped native written activity. */
 export type WrittenActivityProps = {
