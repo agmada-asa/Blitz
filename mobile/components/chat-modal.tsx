@@ -11,8 +11,6 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
-  Text,
-  TextInput,
   View,
 } from "react-native"
 
@@ -24,6 +22,8 @@ import {
   type MobileChatResponse,
 } from "../lib/chat"
 import { Markdown } from "./markdown"
+import { Text, TextInput } from "./native-text"
+import { WebCancelIcon } from "./web-icon"
 import type { MobileLearningCard } from "../lib/contracts"
 
 /** Props required to attach chat to one feed card. */
@@ -253,7 +253,7 @@ export function ChatModal({
               onPress={close}
               style={styles.closeButton}
             >
-              <Text style={styles.closeText}>×</Text>
+              <WebCancelIcon size={20} color="#aaaaaa" strokeWidth={1.8} />
             </Pressable>
           </View>
 

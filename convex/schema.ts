@@ -477,6 +477,8 @@ export default defineSchema({
             v.literal("failed")
           ),
           detail: v.optional(v.string()),
+          startedAt: v.optional(v.number()),
+          completedAt: v.optional(v.number()),
         })
       )
     ),
@@ -522,6 +524,7 @@ export default defineSchema({
         expiresAt: v.number(),
         /** Serialized user response consumed by the waiting provider turn. */
         response: v.optional(v.string()),
+        createdAt: v.optional(v.number()),
       })
     ),
     /** Bounded interaction history retained after each request is consumed. */
@@ -553,6 +556,7 @@ export default defineSchema({
           expiresAt: v.number(),
           response: v.optional(v.string()),
           completedAt: v.optional(v.number()),
+          createdAt: v.optional(v.number()),
         })
       )
     ),
@@ -566,6 +570,15 @@ export default defineSchema({
           selectedText: v.string(),
           note: v.string(),
           createdAt: v.number(),
+        })
+      )
+    ),
+    /** Bounded steering notes provided by the user to guide an interrupted continuation. */
+    steeringNotes: v.optional(
+      v.array(
+        v.object({
+          text: v.string(),
+          steeredAt: v.number(),
         })
       )
     ),

@@ -71,6 +71,14 @@ class MemoryDb {
               matching.sort((a, b) => Number(b.updatedAt ?? 0) - Number(a.updatedAt ?? 0))
               return matching.slice(0, limit)
             },
+            collect: async () => {
+              let matching = this.rows.filter((row) => row.table === table)
+              if (filterField !== null) {
+                matching = matching.filter((row) => row[filterField!] === filterValue)
+              }
+              matching.sort((a, b) => Number(a.createdAt ?? 0) - Number(b.createdAt ?? 0))
+              return matching
+            },
           }),
           take: async (limit: number) => {
             let matching = this.rows.filter((row) => row.table === table)
@@ -334,5 +342,43 @@ test("list supports chats without an owning project", async () => {
   assert.equal(chats[0]?.title, "General discussion")
   assert.equal(chats[0]?.projectId, undefined)
   assert.equal(chats[0]?.projectTitle, null)
+})
+
+test("get returns transcript messages and attachments with clientMessageId", async () => {
+  const { get } = await loadHandlers()
+  const db = new MemoryDb()
+  const chatId = db.seed("workspaceChats", {
+    title: "Attachment chat",
+    status: "idle",
+  })
+  const clientMsgId = "client-msg-123"
+  db.seed("workspaceChatMessages", {
+    chatId,
+    clientMessageId: clientMsgId,
+    role: "user",
+    content: "Please check this attached document",
+    status: "completed",
+    createdAt: 1000,
+  })
+  db.seed("workspaceChatAttachments", {
+    chatId,
+    clientMessageId: clientMsgId,
+    kind: "file",
+    label: "notes.pdf",
+    mimeType: "application/pdf",
+    createdAt: 1000,
+  })
+
+  const result = (await get({ db }, { chatId })) as {
+    messages: Array<{ id: string; clientMessageId: string | null; role: string; content: string }>
+    attachments: Array<{ id: string; clientMessageId: string | null; kind: string; label: string }>
+  }
+
+  assert.ok(result)
+  assert.equal(result.messages.length, 1)
+  assert.equal(result.messages[0]?.clientMessageId, clientMsgId)
+  assert.equal(result.attachments.length, 1)
+  assert.equal(result.attachments[0]?.clientMessageId, clientMsgId)
+  assert.equal(result.attachments[0]?.label, "notes.pdf")
 })
 

@@ -18,7 +18,9 @@ import type {
 export type MobileCardType = FeedCard["type"]
 
 /** A selectable option without server-owned correctness metadata. */
-export type MobileOption = NonNullable<Extract<FeedCard, { type: "single-choice" }>["options"]>[number]
+export type MobileOption = NonNullable<
+  Extract<FeedCard, { type: "single-choice" }>["options"]
+>[number]
 
 /** A source reference reduced to the label available in the feed contract. */
 export type MobileSourceReference = { readonly label: string }
@@ -35,8 +37,10 @@ export type MobileProjectChoice = FeedProject
 /** Topic filter choice with its owning project identity. */
 export type MobileTopicChoice = FeedTopic
 
-/** The exact feed response returned by GET /api/learning/feed. */
-export type MobileFeedPayload = FeedResponse
+/** The feed payload after the native parser accepts explanatory cards too. */
+export type MobileFeedPayload = Omit<FeedResponse, "cards"> & {
+  readonly cards: MobileLearningCard[]
+}
 
 /** The answer values accepted by POST /api/learning/answer. */
 export type MobileAnswer = LearningAnswer
@@ -64,8 +68,7 @@ export type MobileAnswerResult = AnswerResponse
 
 /** Card feedback shown after a server response or while a request is queued. */
 export type MobileAnswerFeedback =
-  | AnswerResponse
-  | { readonly status: "pending"; readonly isCorrect?: false }
+  AnswerResponse | { readonly status: "pending"; readonly isCorrect?: false }
 
 /** Keeps the shared event payload type reachable for transport adapters. */
 export type MobileEventRequest = EventRequest

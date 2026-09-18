@@ -1,17 +1,14 @@
-/** Owns native project search and management; source uploads explicitly open the web project page. */
+/** Owns native project search and management, including entry to each project workspace. */
 
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
-  Linking,
   Modal,
   Platform,
   Pressable,
   ScrollView,
   StyleSheet,
-  Text,
-  TextInput,
   View,
 } from "react-native"
 import { useSafeAreaInsets } from "react-native-safe-area-context"
@@ -20,13 +17,18 @@ import type {
   ProjectSummary,
 } from "../../lib/project-contracts"
 import { fetchProjects, updateProject } from "../lib/projects"
+import { Text, TextInput } from "./native-text"
+import { WebAddIcon, WebMoreIcon } from "./web-icon"
 
 /** Inputs connecting the native library to the active feed and saved cache. */
 type Props = {
   serverUrl: string
   onClose: () => void
   onOpenProject: (id: string) => void
+  onOpenFeed?: (id: string) => void
   onChange: (operation: ProjectOperation, id: string) => Promise<void>
+  initialProjectId?: string
+  initialMode?: "actions" | "rename" | "delete"
 }
 
 /** Renders a full-screen native library with one form at a time and recoverable network errors. */
@@ -34,7 +36,10 @@ export function ProjectLibrary({
   serverUrl,
   onClose,
   onOpenProject,
+  onOpenFeed,
   onChange,
+  initialProjectId,
+  initialMode,
 }: Props) {
   const insets = useSafeAreaInsets()
   const [projects, setProjects] = useState<ProjectSummary[]>()
@@ -48,6 +53,7 @@ export function ProjectLibrary({
   const [error, setError] = useState("")
   const [pending, setPending] = useState(false)
   const [loading, setLoading] = useState(false)
+  const initialActionHandled = useRef(false)
 
   /** Loads current metadata; ignores a response belonging to an unmounted screen. */
   const load = useCallback(
@@ -76,6 +82,18 @@ export function ProjectLibrary({
     void load(controller.signal)
     return () => controller.abort()
   }, [load])
+
+  useEffect(() => {
+    if (initialActionHandled.current || !initialProjectId || !projects) return
+    const initialProject = projects.find(
+      (project) => project.id === initialProjectId
+    )
+    if (!initialProject) return
+    setSelected(initialProject)
+    setTitle(initialProject.title)
+    setMode(initialMode ?? "actions")
+    initialActionHandled.current = true
+  }, [initialMode, initialProjectId, projects])
 
   /** Leaves forms without losing project data; blocks dismissal during an in-flight mutation. */
   function back() {
@@ -127,18 +145,6 @@ export function ProjectLibrary({
     }
   }
 
-  /** Opens source management in the browser and keeps failures visible in the native library. */
-  async function openSources() {
-    if (!selected) return
-    try {
-      await Linking.openURL(
-        `${serverUrl.replace(/\/+$/, "")}/projects/${encodeURIComponent(selected.id)}`
-      )
-    } catch {
-      setError("Could not open sources in your browser.")
-    }
-  }
-
   const filtered = projects
     ?.filter((project) =>
       project.title
@@ -185,7 +191,12 @@ export function ProjectLibrary({
                     : "Project"}
           </Text>
           {mode === "list" ? (
-            <Action label="New project" onPress={() => open("create")} accent />
+            <Action
+              label="New project"
+              onPress={() => open("create")}
+              accent
+              icon={<WebAddIcon size={17} color="#1b0d0a" strokeWidth={1.8} />}
+            />
           ) : (
             <View style={styles.headerSpacer} />
           )}
@@ -258,7 +269,7 @@ export function ProjectLibrary({
                     onPress={() => open("actions", project)}
                     style={styles.more}
                   >
-                    <Text style={styles.moreText}>⋯</Text>
+                    <WebMoreIcon size={20} color="#aaaaaa" strokeWidth={1.8} />
                   </Pressable>
                 </View>
               ))}
@@ -268,13 +279,13 @@ export function ProjectLibrary({
             <>
               <Text style={styles.projectHeading}>{selected.title}</Text>
               <Action
-                label="Open feed"
+                label="Open workspace"
                 onPress={() => onOpenProject(selected.id)}
                 accent
               />
               <Action
-                label="Manage sources in browser"
-                onPress={() => void openSources()}
+                label="Open feed"
+                onPress={() => onOpenFeed?.(selected.id)}
               />
               <Action
                 label="Rename project"
@@ -365,12 +376,14 @@ function Action({
   disabled,
   accent,
   destructive,
+  icon,
 }: {
   label: string
   onPress: () => void
   disabled?: boolean
   accent?: boolean
   destructive?: boolean
+  icon?: ReactNode
 }) {
   return (
     <Pressable
@@ -385,15 +398,18 @@ function Action({
         (disabled || pressed) && styles.pressed,
       ]}
     >
-      <Text
-        style={[
-          styles.actionText,
-          accent && styles.accentText,
-          destructive && styles.destructiveText,
-        ]}
-      >
-        {label}
-      </Text>
+      <View style={styles.actionContent}>
+        {icon}
+        <Text
+          style={[
+            styles.actionText,
+            accent && styles.accentText,
+            destructive && styles.destructiveText,
+          ]}
+        >
+          {label}
+        </Text>
+      </View>
     </Pressable>
   )
 }
@@ -474,6 +490,7 @@ const styles = StyleSheet.create({
     borderRadius: 24,
   },
   actionText: { color: "#cccccc", fontSize: 14 },
+  actionContent: { alignItems: "center", flexDirection: "row", gap: 7 },
   accent: { backgroundColor: "#ff8065" },
   accentText: { color: "#1b0d0a", fontWeight: "600" },
   destructive: { backgroundColor: "#3b1919" },

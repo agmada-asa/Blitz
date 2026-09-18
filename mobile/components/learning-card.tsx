@@ -5,13 +5,14 @@
 
 import { useEffect, useState } from "react"
 import { useSafeAreaInsets } from "react-native-safe-area-context"
-import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native"
+import { Pressable, ScrollView, StyleSheet, View } from "react-native"
 
 import type {
   MobileAnswer,
   MobileAnswerFeedback,
   MobileLearningCard,
 } from "../lib/contracts"
+import { Text } from "./native-text"
 
 /** Props required to render and submit one card's answer. */
 export type LearningCardProps = {

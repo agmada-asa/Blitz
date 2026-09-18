@@ -94,6 +94,10 @@ export type AgentRequest = {
   status: "pending" | "approved" | "denied" | "expired" | "cancelled"
   /** Serialized user response retained only until the agent consumes it. */
   response?: string
+  /** Timestamp when the request was initiated. */
+  createdAt?: number
+  /** Timestamp when the request was resolved or completed. */
+  completedAt?: number
 }
 
 /** Browser payload sent when a learner resolves one composer request. */
@@ -248,3 +252,55 @@ export function parseAgentRequestInput(value?: string): AgentRequestInput {
     return invalid
   }
 }
+
+/**
+ * Extracts a readable command string from serialized approval details.
+ *
+ * Checks common structures such as `{ request: { command: "..." } }`,
+ * `{ command: "..." }`, or `{ proposedExecpolicyAmendment: [...] }`.
+ *
+ * @param details - Raw serialized JSON details string from an approval request.
+ * @returns The command string to display, or undefined if no command was found.
+ */
+export function extractApprovalCommand(details?: string): string | undefined {
+  if (!details || !details.trim()) return undefined
+  try {
+    const data = JSON.parse(details) as unknown
+    if (!data || typeof data !== "object" || Array.isArray(data)) return undefined
+    const record = data as Record<string, unknown>
+    const candidates = [
+      record,
+      record.request,
+      (record.request as Record<string, unknown> | undefined)?.params,
+      record.params,
+      record.proposedChange,
+      (record.request as Record<string, unknown> | undefined)?.item,
+    ]
+    for (const candidate of candidates) {
+      if (!candidate || typeof candidate !== "object" || Array.isArray(candidate))
+        continue
+      const obj = candidate as Record<string, unknown>
+      if (typeof obj.command === "string" && obj.command.trim()) {
+        return obj.command.trim()
+      }
+      if (
+        Array.isArray(obj.proposedExecpolicyAmendment) &&
+        obj.proposedExecpolicyAmendment.length > 0 &&
+        obj.proposedExecpolicyAmendment.every((item) => typeof item === "string")
+      ) {
+        return obj.proposedExecpolicyAmendment.join(" ")
+      }
+    }
+    if (
+      Array.isArray(record.proposedExecpolicyAmendment) &&
+      record.proposedExecpolicyAmendment.length > 0 &&
+      record.proposedExecpolicyAmendment.every((item) => typeof item === "string")
+    ) {
+      return record.proposedExecpolicyAmendment.join(" ")
+    }
+  } catch {
+    // Non-JSON details return undefined
+  }
+  return undefined
+}
+

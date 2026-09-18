@@ -41,10 +41,12 @@ function historyEntry(
     input?: string
     details: string
     expiresAt: number
+    createdAt?: number
   },
   status: "pending" | "approved" | "denied" | "expired" | "cancelled",
   response?: string,
-  completedAt?: number
+  completedAt?: number,
+  createdAt?: number
 ) {
   return {
     ...approval,
@@ -55,6 +57,11 @@ function historyEntry(
     status,
     ...(response === undefined ? {} : { response }),
     ...(completedAt === undefined ? {} : { completedAt }),
+    ...(createdAt !== undefined
+      ? { createdAt }
+      : approval.createdAt !== undefined
+        ? { createdAt: approval.createdAt }
+        : {}),
   }
 }
 
@@ -237,10 +244,11 @@ export const requestApproval = mutation({
       ...args.approval,
       kind: args.approval.kind ?? "approval",
       status: "pending" as const,
+      createdAt: now,
     }
     const history = [
       ...(message.agentRequests ?? []),
-      historyEntry(args.approval, "pending"),
+      historyEntry(args.approval, "pending", undefined, undefined, now),
     ].slice(-20)
     await ctx.db.patch(args.messageId, {
       agentApproval: approval,

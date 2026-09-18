@@ -2,8 +2,7 @@
 
 The Chat tab starts a general Codex conversation inside a project without
 requiring a study card. A learner can attach up to eight context items. Supported context includes
-study cards, Blitz projects, public links, PDFs, Markdown, plain text, and
-PowerPoint files.
+study cards, Blitz projects, public links, and arbitrary files (with text previews for code/documents, descriptors for binaries, and automatic staging into the agent's working directory under `attachments/`).
 
 `components/chat/chat-workspace.tsx` extracts selected files in the browser and
 uses the existing protected source-fetch route for public links. It sends only
@@ -30,10 +29,17 @@ message rebuilds a fresh Codex session from that branch so it keeps the selected
 history without reusing later turns from the original conversation.
 
 While a reply is streaming, the send control and the latest assistant message
-offer `Pause`. Pausing closes the browser request and keeps any generated text
-as an interrupted response. `Continue response` resumes into the same message;
-if no text arrived before the pause, the recovery action is labeled `Retry
-response`. A continuation cannot add a new user message or attachment.
+offer `Pause`. Typing notes into the composer while streaming allows in-flight
+hot steering: submitting these notes pauses the active turn and immediately
+continues with the learner's guidance. Pausing closes the browser request and
+keeps any generated text as an interrupted response. The composer docks to the
+paused reply with the prompt `Add notes before continuing, or press Play to resume`.
+The learner can click `Play` to resume generation as-is, or submit steering
+notes to guide the continuation. `Continue response` directly on the assistant
+message also resumes into the same message; if no text arrived before the pause,
+the recovery action is labeled `Retry response`. A continuation cannot add new
+context attachments. If the learner prefers to start a fresh turn instead of
+continuing, they can dismiss the continuation dock.
 
 When the provider asks for a decision or structured input, the active assistant
 turn stores one short-lived request envelope. The composer shows the request in
@@ -54,12 +60,6 @@ confirmation checkpoints remain available in every access mode because they do
 not grant filesystem, command, or network access. Existing
 chats refresh their provider context once when this tool set is first enabled,
 replaying the bounded saved transcript into the replacement session.
-
-In development, the composer also exposes **Test requests**. It runs a local,
-provider-independent fixture through approval, question, form, and URL states
-so the request UI can be tested even when the selected provider cannot emit
-structured user input. The fixture does not start a provider turn or write a
-chat message.
 
 `app/api/chat/route.ts` validates a bounded request, loads selected project
 context through `convex/chatContext.ts`, resolves a card and its prepared source

@@ -219,3 +219,49 @@ test("preserves exact native approval option IDs for the composer", () => {
     { value: "deny_7", label: "Deny" },
   ])
 })
+
+test("extractApprovalCommand extracts clean command from various approval details payloads", async () => {
+  const { extractApprovalCommand } = await import("../lib/agent-request.ts")
+
+  // Codex commandExecution payload matching the user's screenshot
+  const codexDetails = JSON.stringify({
+    request: {
+      type: "unknown",
+      command: "rm -- /Users/agmad/Downloads/codility-desktop-darwin-arm64.dmg",
+    },
+    proposedExecpolicyAmendment: [
+      "rm",
+      "--",
+      "/Users/agmad/Downloads/codility-desktop-darwin-arm64.dmg",
+    ],
+  })
+  assert.equal(
+    extractApprovalCommand(codexDetails),
+    "rm -- /Users/agmad/Downloads/codility-desktop-darwin-arm64.dmg"
+  )
+
+  // Direct command field
+  assert.equal(
+    extractApprovalCommand(JSON.stringify({ command: "touch coursework.md" })),
+    "touch coursework.md"
+  )
+
+  // Array amendment fallback
+  assert.equal(
+    extractApprovalCommand(
+      JSON.stringify({ proposedExecpolicyAmendment: ["git", "status"] })
+    ),
+    "git status"
+  )
+
+  // Non-command details returns undefined
+  assert.equal(
+    extractApprovalCommand(
+      JSON.stringify({ permissions: { fileSystem: { write: ["/tmp"] } } })
+    ),
+    undefined
+  )
+  assert.equal(extractApprovalCommand(""), undefined)
+  assert.equal(extractApprovalCommand(undefined), undefined)
+})
+

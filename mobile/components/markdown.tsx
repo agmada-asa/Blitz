@@ -6,11 +6,11 @@ import {
   Platform,
   ScrollView,
   StyleSheet,
-  Text,
   View,
 } from "react-native"
 import type { Token, Tokens } from "marked"
 import { markdownHref, markdownText, parseMarkdown } from "../../lib/markdown"
+import { Text } from "./native-text"
 
 /** Opens only validated web/email links and reports unavailable handlers. */
 function openLink(href: string) {

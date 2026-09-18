@@ -160,6 +160,14 @@ function toolActivityEvents(
       continue
     if (item.type === "tool_use") {
       const input = record(item.input)
+      const safeInput: Record<string, unknown> = {}
+      if (typeof input?.command === "string") safeInput.command = input.command
+      if (typeof input?.file_path === "string")
+        safeInput.file_path = input.file_path
+      if (typeof input?.path === "string") safeInput.path = input.path
+      if (typeof input?.pattern === "string") safeInput.pattern = input.pattern
+      if (typeof input?.query === "string") safeInput.query = input.query
+      if (typeof input?.url === "string") safeInput.url = input.url
       activities.push({
         method: "claude/tool_use",
         params: {
@@ -167,9 +175,7 @@ function toolActivityEvents(
             type: "tool_use",
             id: item.id,
             name: item.name,
-            ...(typeof input?.command === "string"
-              ? { input: { command: input.command } }
-              : {}),
+            input: safeInput,
           },
         },
       })
