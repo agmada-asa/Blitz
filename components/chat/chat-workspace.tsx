@@ -2457,45 +2457,23 @@ export function ChatWorkspace({
                     void chooseFiles(Array.from(event.target.files ?? []))
                   }
                 />
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      className="rounded-full"
-                      disabled={
-                        isRunning || !canAttach || Boolean(continuableMessage)
-                      }
-                      aria-label="Attach context"
-                    >
-                      <HugeiconsIcon
-                        icon={PlusIcon}
-                        size={19}
-                        strokeWidth={1.8}
-                      />
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="start">
-                    <DropdownMenuItem
-                      onSelect={() => fileInputRef.current?.click()}
-                    >
-                      <HugeiconsIcon icon={File01Icon} size={17} />
-                      Upload file
-                    </DropdownMenuItem>
-                    <DropdownMenuItem onSelect={() => setLinkDialogOpen(true)}>
-                      <HugeiconsIcon icon={Link02Icon} size={17} />
-                      Add link
-                    </DropdownMenuItem>
-                    <DropdownMenuItem
-                      disabled={!canAttachProject}
-                      onSelect={() => setProjectDialogOpen(true)}
-                    >
-                      <HugeiconsIcon icon={Folder01Icon} size={17} />
-                      Add project
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="rounded-full"
+                  disabled={
+                    isRunning || !canAttach || Boolean(continuableMessage)
+                  }
+                  aria-label="Upload file"
+                  onClick={() => fileInputRef.current?.click()}
+                >
+                  <HugeiconsIcon
+                    icon={PlusIcon}
+                    size={19}
+                    strokeWidth={1.8}
+                  />
+                </Button>
                 <ReplyModelPicker
                   disabled={isRunning || Boolean(continuableMessage)}
                   onSaveStateChange={setSavingReplySettings}
