@@ -23,19 +23,66 @@ test("normalizes Codex started and completed items with native correlation", () 
       },
     },
   })
-  assert.deepEqual(started, {
-    id: "item-1",
-    type: "tool",
-    title: "Run command",
-    status: "running",
-    detail: "ls -la",
+  assert.equal(started?.id, "item-1")
+  assert.equal(started?.type, "tool")
+  assert.equal(started?.title, "Run command")
+  assert.equal(started?.status, "running")
+  assert.equal(started?.detail, "ls -la")
+  assert.equal(typeof started?.startedAt, "number")
+
+  assert.equal(completed?.id, "item-1")
+  assert.equal(completed?.type, "tool")
+  assert.equal(completed?.title, "Run command")
+  assert.equal(completed?.status, "completed")
+  assert.equal(typeof completed?.completedAt, "number")
+
+  // Retains detail and startedAt from previous started item when correlated
+  const correlated = normalizeProviderActivity(
+    {
+      type: "activity",
+      method: "item/completed",
+      params: {
+        item: {
+          id: "item-1",
+          type: "commandExecution",
+          status: "completed",
+        },
+      },
+    },
+    started ? [started] : []
+  )
+  assert.equal(correlated?.detail, "ls -la")
+  assert.equal(correlated?.startedAt, started?.startedAt)
+})
+
+test("extracts details for web search and file changes", () => {
+  const search = normalizeProviderActivity({
+    type: "activity",
+    method: "item/started",
+    params: {
+      item: {
+        id: "search-1",
+        type: "webSearch",
+        query: "nextjs app router",
+      },
+    },
   })
-  assert.deepEqual(completed, {
-    id: "item-1",
-    type: "tool",
-    title: "Run command",
-    status: "completed",
+  assert.equal(search?.title, "Search web")
+  assert.equal(search?.detail, "nextjs app router")
+
+  const fileEdit = normalizeProviderActivity({
+    type: "activity",
+    method: "item/started",
+    params: {
+      item: {
+        id: "edit-1",
+        type: "fileChange",
+        changes: [{ path: "app/page.tsx" }],
+      },
+    },
   })
+  assert.equal(fileEdit?.title, "Edit file")
+  assert.equal(fileEdit?.detail, "app/page.tsx")
 })
 
 test("normalizes Claude tool use and result frames", () => {

@@ -31,8 +31,10 @@ import Image from "next/image"
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   type ClipboardEvent,
   type DragEvent,
   type KeyboardEvent,
@@ -57,7 +59,6 @@ import {
   writeCachedAgentAutonomy,
 } from "@/components/chat/chat-agent-controls"
 import { AnnotatedAssistantMessage } from "@/components/chat/annotated-assistant-message"
-import { ProviderActivity } from "@/components/chat/provider-activity"
 import { type FloatingAnnotation } from "@/components/chat/floating-annotation-chip"
 import { ReplyModelPicker } from "@/components/chat/reply-model-picker"
 import { Markdown } from "@/components/ui/markdown"
@@ -175,6 +176,17 @@ type SendMessageOptions = {
   message?: string
   chatId?: Id<"workspaceChats">
   continuationOf?: Id<"workspaceChatMessages">
+  steeringPrompt?: string
+  attachments?: DraftAttachment[]
+  annotations?: FloatingAnnotation[]
+}
+
+/** In-flight queued message waiting to send once the active response finishes. */
+type QueuedChatMessage = {
+  id: string
+  message: string
+  attachments: DraftAttachment[]
+  annotations: FloatingAnnotation[]
 }
 
 /** Card identity shown while a new card chat waits for its first question. */
@@ -246,133 +258,13 @@ function agentRequestFromValue(value: unknown): AgentRequest | undefined {
     ...(typeof candidate.response === "string"
       ? { response: candidate.response }
       : {}),
+    ...(typeof candidate.createdAt === "number"
+      ? { createdAt: candidate.createdAt }
+      : {}),
+    ...(typeof candidate.completedAt === "number"
+      ? { completedAt: candidate.completedAt }
+      : {}),
   }
-}
-
-/** Builds deterministic local requests for exercising every composer request control. */
-function createRequestUiFixtureRequests(): AgentRequest[] {
-  const expiresAt = Date.now() + 5 * 60 * 1_000
-  return [
-    {
-      id: "request-ui-fixture-approval",
-      method: "item/commandExecution/requestApproval",
-      kind: "approval",
-      title: "Request UI test: allow a harmless command",
-      prompt: "This local fixture simulates a runtime approval request.",
-      details: JSON.stringify(
-        {
-          command: "printf 'request UI test\\n'",
-          cwd: "/tmp",
-          risk: "No files are changed.",
-        },
-        null,
-        2
-      ),
-      expiresAt,
-      status: "pending",
-    },
-    {
-      id: "request-ui-fixture-question",
-      method: "item/tool/requestUserInput",
-      kind: "question",
-      title: "Request UI test: choose an option",
-      prompt: "This local fixture simulates a structured agent question.",
-      details: JSON.stringify({ source: "local request UI fixture" }, null, 2),
-      input: JSON.stringify({
-        questions: [
-          {
-            id: "study-mode",
-            header: "Study mode",
-            question: "Which mode should Blitz use for this test?",
-            options: [
-              {
-                value: "quick",
-                label: "Quick review",
-                description: "Keep the response short and focused.",
-              },
-              {
-                value: "deep",
-                label: "Deep review",
-                description: "Include more explanation and context.",
-              },
-            ],
-            isOther: true,
-          },
-        ],
-      }),
-      expiresAt,
-      status: "pending",
-    },
-    {
-      id: "request-ui-fixture-form",
-      method: "mcpServer/elicitation/request",
-      kind: "form",
-      title: "Request UI test: fill in a form",
-      prompt: "This local fixture simulates an MCP form elicitation.",
-      details: JSON.stringify(
-        { serverName: "Local request fixture", mode: "form" },
-        null,
-        2
-      ),
-      input: JSON.stringify({
-        serverName: "Local request fixture",
-        message: "Provide a few values to continue.",
-        fields: [
-          {
-            id: "topic",
-            label: "Topic",
-            type: "text",
-            required: true,
-            description: "A required text field.",
-          },
-          {
-            id: "count",
-            label: "Number of cards",
-            type: "integer",
-            required: true,
-            defaultValue: 3,
-          },
-          {
-            id: "format",
-            label: "Format",
-            type: "single-select",
-            required: true,
-            options: [
-              { value: "cards", label: "Study cards" },
-              { value: "outline", label: "Outline" },
-            ],
-          },
-          {
-            id: "include-sources",
-            label: "Include source links",
-            type: "boolean",
-            defaultValue: true,
-          },
-        ],
-      }),
-      expiresAt,
-      status: "pending",
-    },
-    {
-      id: "request-ui-fixture-url",
-      method: "mcpServer/elicitation/request",
-      kind: "url",
-      title: "Request UI test: open a requested page",
-      prompt: "This local fixture simulates an MCP URL handoff.",
-      details: JSON.stringify(
-        { serverName: "Local request fixture", mode: "url" },
-        null,
-        2
-      ),
-      input: JSON.stringify({
-        serverName: "Local request fixture",
-        message: "Open the page, then return here when you are finished.",
-        url: "https://example.com/request-ui-test",
-      }),
-      expiresAt,
-      status: "pending",
-    },
-  ]
 }
 
 /** Copies text on localhost and LAN browsers that lack the async Clipboard API. */
@@ -528,6 +420,23 @@ async function readChatEvents(
   }
 }
 
+/** Subscribes to platform changes (static across browser runtime). */
+function subscribeToPlatform() {
+  return () => {}
+}
+
+/** Reads whether the client platform is macOS or iOS. */
+function getPlatformIsMac(): boolean {
+  return typeof navigator !== "undefined"
+    ? /(Mac|iPhone|iPod|iPad)/i.test(navigator.platform || navigator.userAgent)
+    : true
+}
+
+/** Default snapshot for server rendering (Mac desktop default). */
+function getServerPlatformIsMac(): boolean {
+  return true
+}
+
 /** Displays saved chat history beside the active conversation and composer. */
 export function ChatWorkspace({
   initialChatId,
@@ -546,6 +455,19 @@ export function ChatWorkspace({
   const messageEndRef = useRef<HTMLDivElement>(null)
   const requestControllerRef = useRef<AbortController | undefined>(undefined)
   const pausedByUserRef = useRef(false)
+  const manuallyMarkedUnreadRef = useRef<Id<"workspaceChats"> | undefined>(
+    undefined
+  )
+  const activeSendPromiseRef = useRef<Promise<boolean> | undefined>(undefined)
+  const sendingRef = useRef(false)
+  const [queuedMessage, setQueuedMessage] = useState<QueuedChatMessage | undefined>(undefined)
+  const queuedMessageRef = useRef<QueuedChatMessage | undefined>(undefined)
+  const [dismissedContinuationId, setDismissedContinuationId] = useState<string>()
+  const isMac = useSyncExternalStore(
+    subscribeToPlatform,
+    getPlatformIsMac,
+    getServerPlatformIsMac
+  )
   const branchChat = useMutation(api.workspaceChats.branch)
   const createProject = useMutation(api.projects.createProject)
   const renameChat = useMutation(api.workspaceChats.rename)
@@ -618,10 +540,6 @@ export function ChatWorkspace({
   const [streamProviderEvents, setStreamProviderEvents] = useState<
     ProviderActivityEvent[]
   >([])
-  const [requestFixtureRequests, setRequestFixtureRequests] = useState<
-    AgentRequest[]
-  >([])
-  const [requestFixtureStep, setRequestFixtureStep] = useState<number>()
   const [approvalBusy, setApprovalBusy] = useState<string>()
   const [projectDialogOpen, setProjectDialogOpen] = useState(false)
   const [newChatDialogOpen, setNewChatDialogOpen] = useState(false)
@@ -633,6 +551,26 @@ export function ChatWorkspace({
   const [importingLink, setImportingLink] = useState(false)
   const persistedAttachments = activeChat?.attachments ?? []
   const messages = activeChat?.messages ?? []
+  const userClientMessageIds = useMemo(
+    () =>
+      new Set(
+        (activeChat?.messages ?? [])
+          .filter((m) => m.role === "user" && m.clientMessageId)
+          .map((m) => m.clientMessageId as string)
+      ),
+    [activeChat?.messages]
+  )
+  const hasOrphanPersistedAttachments =
+    persistedAttachments.length > 0 &&
+    !messages.some((m) => m.role === "user")
+  const latestMessage = messages[messages.length - 1]
+  const continuableMessage =
+    latestMessage?.role === "assistant" &&
+    latestMessage.status === "failed" &&
+    Boolean(latestMessage.content) &&
+    dismissedContinuationId !== latestMessage.id
+      ? latestMessage
+      : undefined
   const sentAnnotations = messages.flatMap((m) =>
     m.role === "user" && "annotations" in m && Array.isArray(m.annotations)
       ? (m.annotations as FloatingAnnotation[])
@@ -721,14 +659,14 @@ export function ChatWorkspace({
   const selectedCard = attachments.find(
     (attachment) => attachment.kind === "card" && attachment.itemId
   )
+  const isStreaming = sending || activeChat?.status === "running"
   const isRunning =
     uploadingFiles ||
     importingLink ||
     sending ||
     activeChat?.status === "running" ||
     savingReplySettings ||
-    Boolean(messageActionId) ||
-    requestFixtureStep !== undefined
+    Boolean(messageActionId)
   const persistedAgentRequestEntry =
     activeChat?.status === "running"
       ? messages.reduceRight<
@@ -751,15 +689,9 @@ export function ChatWorkspace({
   const liveAgentRequestEntry = Object.values(streamAgentRequests).at(-1)
   const composerAgentRequestEntry =
     liveAgentRequestEntry ?? persistedAgentRequestEntry
-  const requestFixtureRequest =
-    requestFixtureStep === undefined
-      ? undefined
-      : requestFixtureRequests[requestFixtureStep]
-  const visibleComposerRequest = requestFixtureRequest
-    ? { request: requestFixtureRequest, messageId: "request-ui-fixture" }
-    : activeChatId
-      ? composerAgentRequestEntry
-      : undefined
+  const visibleComposerRequest = activeChatId
+    ? composerAgentRequestEntry
+    : undefined
   const canAttach = attachments.length < MAX_ATTACHMENTS
   const canAttachProject =
     canAttach &&
@@ -812,10 +744,38 @@ export function ChatWorkspace({
     messageEndRef.current?.scrollIntoView({ block: "end" })
   }, [messages.length, lastMessageContent])
 
-  /** Opens the chat addressed by navigation links without remounting the workspace. */
-  /** Clears a manual unread marker whenever a saved chat becomes active. */
+  const isCurrentChatUnread = Boolean(
+    activeChatTarget?.isUnread ?? activeChat?.isUnread
+  )
+
+  /** Clears the unread marker when viewing or focusing the active chat. */
   useEffect(() => {
-    if (!activeChatId || activeChat?.id !== activeChatId) return
+    if (!activeChatId || !isCurrentChatUnread) return
+    if (manuallyMarkedUnreadRef.current === activeChatId) return
+
+    // If the document is hidden, wait until the user returns to this window or tab.
+    if (
+      typeof document !== "undefined" &&
+      document.visibilityState !== "visible"
+    ) {
+      const handleVisible = () => {
+        if (document.visibilityState === "visible") {
+          manuallyMarkedUnreadRef.current = undefined
+          void setChatUnread({ chatId: activeChatId, unread: false }).catch(
+            () => {}
+          )
+        }
+      }
+      document.addEventListener("visibilitychange", handleVisible, {
+        once: true,
+      })
+      window.addEventListener("focus", handleVisible, { once: true })
+      return () => {
+        document.removeEventListener("visibilitychange", handleVisible)
+        window.removeEventListener("focus", handleVisible)
+      }
+    }
+
     void setChatUnread({ chatId: activeChatId, unread: false }).catch(
       (cause) => {
         setError(
@@ -823,38 +783,31 @@ export function ChatWorkspace({
         )
       }
     )
-  }, [activeChat?.id, activeChatId, setChatUnread])
-
-  /** Starts the development-only sequence that exercises each composer request mode. */
-  const startRequestUiFixture = (): void => {
-    setError("")
-    setRequestFixtureRequests(createRequestUiFixtureRequests())
-    setRequestFixtureStep(0)
-  }
-
-  /** Advances the local request fixture after a simulated approval or denial. */
-  const resolveRequestUiFixture = (): void => {
-    setRequestFixtureStep((current) => {
-      if (current === undefined || current + 1 >= requestFixtureRequests.length)
-        return undefined
-      return current + 1
-    })
-  }
+  }, [activeChatId, isCurrentChatUnread, setChatUnread])
 
   /** Selects one saved chat and mirrors it in the address bar. */
-  const selectChat = (chatId: Id<"workspaceChats">): void => {
+  const selectChat = (
+    chatId: Id<"workspaceChats">,
+    preserveQueue = false
+  ): void => {
+    manuallyMarkedUnreadRef.current = undefined
+    void setChatUnread({ chatId, unread: false }).catch(() => {})
     setSourceSelection(undefined)
     setActiveChatId(chatId)
+    if (!preserveQueue) {
+      setQueuedMessage(undefined)
+      queuedMessageRef.current = undefined
+    }
     revokeDraftPreviews()
     setAttachments([])
     setDraftAnnotations([])
     setExpandedAnnotationId(undefined)
+    setDismissedContinuationId(undefined)
     setError("")
     setEditingMessageId(undefined)
     setEditDraft("")
     setStreamAgentRequests({})
     setStreamProviderEvents([])
-    setRequestFixtureStep(undefined)
     setAgentAutonomy(undefined)
     setAgentSettingsTouched(false)
     setHistoryOpen(false)
@@ -870,11 +823,14 @@ export function ChatWorkspace({
     if (isRunning) return
     setSourceSelection(undefined)
     setActiveChatId(undefined)
+    setQueuedMessage(undefined)
+    queuedMessageRef.current = undefined
     revokeDraftPreviews()
     setAttachments([])
     setDraft("")
     setDraftAnnotations([])
     setExpandedAnnotationId(undefined)
+    setDismissedContinuationId(undefined)
     setError("")
     setEditingMessageId(undefined)
     setEditDraft("")
@@ -884,7 +840,6 @@ export function ChatWorkspace({
     setNewChatProjectId(undefined)
     setStreamAgentRequests({})
     setStreamProviderEvents([])
-    setRequestFixtureStep(undefined)
     setAgentSettingsTouched(false)
     setHistoryOpen(false)
     setNewChatDialogOpen(false)
@@ -895,6 +850,9 @@ export function ChatWorkspace({
   const startNewChatForProject = (project: NewChatProject): void => {
     setSourceSelection(undefined)
     setActiveChatId(undefined)
+    setQueuedMessage(undefined)
+    queuedMessageRef.current = undefined
+    setDismissedContinuationId(undefined)
     setAttachments([
       {
         id: `project:${project._id}`,
@@ -914,7 +872,6 @@ export function ChatWorkspace({
     setWorkingProjectId(project._id)
     setNewChatProjectId(project._id)
     setStreamAgentRequests({})
-    setRequestFixtureStep(undefined)
     setAgentSettingsTouched(false)
     setHistoryOpen(false)
     setNewChatDialogOpen(false)
@@ -923,6 +880,55 @@ export function ChatWorkspace({
       "",
       `/chat?projectId=${encodeURIComponent(project._id)}`
     )
+  }
+
+  /** Queues the draft message and attachments to send automatically once the active response completes. */
+  const queueDraftMessage = (): void => {
+    const message = draft.trim()
+    const hasAttachments = attachments.length > 0
+    const validAnnotations = draftAnnotations.filter(
+      (annotation) => annotation.note.trim().length > 0
+    )
+    if (!message && !hasAttachments && validAnnotations.length === 0) return
+
+    setQueuedMessage((prev) => {
+      const combinedMessage = prev?.message
+        ? `${prev.message}\n\n${message}`
+        : message
+      const combinedAttachments = [
+        ...(prev?.attachments ?? []),
+        ...attachments.filter(
+          (attachment) =>
+            !(prev?.attachments ?? []).some((item) => item.id === attachment.id)
+        ),
+      ]
+      const combinedAnnotations = [
+        ...(prev?.annotations ?? []),
+        ...validAnnotations.filter(
+          (annotation) =>
+            !(prev?.annotations ?? []).some((item) => item.id === annotation.id)
+        ),
+      ]
+      const nextQueued: QueuedChatMessage = {
+        id: prev?.id ?? crypto.randomUUID(),
+        message: combinedMessage,
+        attachments: combinedAttachments,
+        annotations: combinedAnnotations,
+      }
+      queuedMessageRef.current = nextQueued
+      return nextQueued
+    })
+
+    setDraft("")
+    setAttachments([])
+    setDraftAnnotations([])
+    setExpandedAnnotationId(undefined)
+  }
+
+  /** Deletes the queued message before it is sent. */
+  const deleteQueuedMessage = (): void => {
+    setQueuedMessage(undefined)
+    queuedMessageRef.current = undefined
   }
 
   /** Creates a project and returns the metadata needed to start its first chat. */
@@ -969,6 +975,11 @@ export function ChatWorkspace({
     chatId: Id<"workspaceChats">,
     unread: boolean
   ): void => {
+    if (unread) {
+      manuallyMarkedUnreadRef.current = chatId
+    } else if (manuallyMarkedUnreadRef.current === chatId) {
+      manuallyMarkedUnreadRef.current = undefined
+    }
     void setChatUnread({ chatId, unread }).catch((cause) => {
       setError(messageForError(cause, "This chat could not be updated."))
     })
@@ -1191,180 +1202,220 @@ export function ChatWorkspace({
   const sendMessage = async (
     options: SendMessageOptions = {}
   ): Promise<boolean> => {
+    manuallyMarkedUnreadRef.current = undefined
     const submittedAnnotations =
-      options.message === undefined && !options.continuationOf
+      options.annotations ??
+      (options.message === undefined && !options.continuationOf
         ? draftAnnotations.filter((a) => a.note.trim().length > 0)
-        : []
+        : [])
     const rawMessage = (options.message ?? draft).trim()
     const message = rawMessage
     const targetChatId = options.chatId ?? activeChatId
     const targetProjectId = targetChatId ? undefined : newChatProjectId
     if (
       (!message && !submittedAnnotations.length && !options.continuationOf) ||
-      sending ||
+      (!options.continuationOf && sendingRef.current) ||
       uploadingFiles ||
       importingLink ||
       savingReplySettings ||
-      (!options.chatId && activeChat?.status === "running") ||
+      (!options.chatId && !options.continuationOf && activeChat?.status === "running") ||
       (options.continuationOf && !targetChatId)
     )
       return false
     const submittedAttachments =
-      options.message === undefined && !options.continuationOf
+      options.attachments ??
+      (options.message === undefined && !options.continuationOf
         ? attachments
-        : []
+        : [])
     const cardAttachment = submittedAttachments.find(
       (attachment) =>
         attachment.kind === "card" && attachment.projectId && attachment.itemId
     )
     if (!options.continuationOf) {
       setDraft("")
+      setAttachments([])
       setDraftAnnotations([])
       setExpandedAnnotationId(undefined)
+    } else if (options.steeringPrompt) {
+      setDraft("")
     }
     setError("")
     setStreamProviderEvents([])
     setSending(true)
+    sendingRef.current = true
     pausedByUserRef.current = false
     const controller = new AbortController()
     requestControllerRef.current = controller
     let started = false
     let completed = false
-    try {
-      const response = await fetch("/api/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        signal: controller.signal,
-        body: JSON.stringify({
-          ...(options.continuationOf ? {} : { message }),
-          clientMessageId: crypto.randomUUID(),
-          ...(targetChatId ? { chatId: targetChatId } : {}),
-          ...(targetProjectId ? { projectId: targetProjectId } : {}),
-          ...(options.continuationOf
-            ? { continuationOf: options.continuationOf }
-            : {}),
-          ...(cardAttachment?.projectId && cardAttachment.itemId
-            ? {
-                card: {
-                  projectId: cardAttachment.projectId,
-                  itemId: cardAttachment.itemId,
-                },
-              }
-            : {}),
-          projectIds: submittedAttachments.flatMap((attachment) =>
-            attachment.kind === "project" && attachment.projectId
-              ? [attachment.projectId]
-              : []
-          ),
-          attachments: submittedAttachments.flatMap((attachment) =>
-            attachment.kind !== "project" &&
-            attachment.kind !== "card" &&
-            (attachment.text || attachment.documentId)
-              ? [
-                  {
-                    kind: attachment.kind,
-                    label: attachment.label,
-                    text: attachment.text,
-                    ...(attachment.documentId
-                      ? { documentId: attachment.documentId }
-                      : {}),
-                    ...(attachment.ownerToken
-                      ? { ownerToken: attachment.ownerToken }
-                      : {}),
-                    ...(attachment.mimeType
-                      ? { mimeType: attachment.mimeType }
-                      : {}),
-                    ...(attachment.url ? { url: attachment.url } : {}),
+    let resolvedChatId: Id<"workspaceChats"> | undefined = targetChatId
+
+    const run = async (): Promise<boolean> => {
+      try {
+        const response = await fetch("/api/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          signal: controller.signal,
+          body: JSON.stringify({
+            ...(options.continuationOf ? {} : { message }),
+            clientMessageId: crypto.randomUUID(),
+            ...(targetChatId ? { chatId: targetChatId } : {}),
+            ...(targetProjectId ? { projectId: targetProjectId } : {}),
+            ...(options.continuationOf
+              ? { continuationOf: options.continuationOf }
+              : {}),
+            ...(options.steeringPrompt
+              ? { steeringPrompt: options.steeringPrompt }
+              : {}),
+            ...(cardAttachment?.projectId && cardAttachment.itemId
+              ? {
+                  card: {
+                    projectId: cardAttachment.projectId,
+                    itemId: cardAttachment.itemId,
                   },
-                ]
-              : []
-          ),
-          ...(submittedAnnotations.length
-            ? {
-                annotations: submittedAnnotations.map((annotation) => ({
-                  id: annotation.id,
-                  number: annotation.number,
-                  messageId: annotation.messageId,
-                  selectedText: annotation.selectedText,
-                  note: annotation.note,
-                  createdAt: annotation.createdAt,
-                })),
+                }
+              : {}),
+            projectIds: submittedAttachments.flatMap((attachment) =>
+              attachment.kind === "project" && attachment.projectId
+                ? [attachment.projectId]
+                : []
+            ),
+            attachments: submittedAttachments.flatMap((attachment) =>
+              attachment.kind !== "project" &&
+              attachment.kind !== "card" &&
+              (attachment.text || attachment.documentId)
+                ? [
+                    {
+                      kind: attachment.kind,
+                      label: attachment.label,
+                      text: attachment.text,
+                      ...(attachment.documentId
+                        ? { documentId: attachment.documentId }
+                        : {}),
+                      ...(attachment.ownerToken
+                        ? { ownerToken: attachment.ownerToken }
+                        : {}),
+                      ...(attachment.mimeType
+                        ? { mimeType: attachment.mimeType }
+                        : {}),
+                      ...(attachment.url ? { url: attachment.url } : {}),
+                    },
+                  ]
+                : []
+            ),
+            ...(submittedAnnotations.length
+              ? {
+                  annotations: submittedAnnotations.map((annotation) => ({
+                    id: annotation.id,
+                    number: annotation.number,
+                    messageId: annotation.messageId,
+                    selectedText: annotation.selectedText,
+                    note: annotation.note,
+                    createdAt: annotation.createdAt,
+                  })),
+                }
+              : {}),
+            autonomy: effectiveAgentAutonomy,
+            additionalInstructions: effectiveAgentInstructions,
+            ...(effectiveWorkingProjectId
+              ? { workingProjectId: effectiveWorkingProjectId }
+              : {}),
+          }),
+        })
+        if (!response.ok || !response.body) {
+          const result = (await response.json().catch(() => null)) as {
+            error?: string
+          } | null
+          throw new Error(result?.error || "Blitz could not start that reply.")
+        }
+        await readChatEvents(response.body, (event) => {
+          if (event.type === "error") {
+            if (pausedByUserRef.current || controller.signal.aborted) return
+            throw new Error(event.message)
+          }
+          if (event.type === "started") {
+            started = true
+            resolvedChatId = event.chatId
+            revokeDraftPreviews()
+            setAttachments([])
+            setDraftAnnotations([])
+            setExpandedAnnotationId(undefined)
+            selectChat(event.chatId, true)
+            setStreamProviderEvents([])
+          }
+          if (event.type === "activity")
+            setStreamProviderEvents((current) => {
+              const index = current.findIndex((item) => item.id === event.event.id)
+              if (index >= 0) {
+                const next = [...current]
+                next[index] = event.event
+                return next
               }
-            : {}),
-          autonomy: effectiveAgentAutonomy,
-          additionalInstructions: effectiveAgentInstructions,
-          ...(effectiveWorkingProjectId
-            ? { workingProjectId: effectiveWorkingProjectId }
-            : {}),
-        }),
-      })
-      if (!response.ok || !response.body) {
-        const result = (await response.json().catch(() => null)) as {
-          error?: string
-        } | null
-        throw new Error(result?.error || "Blitz could not start that reply.")
-      }
-      await readChatEvents(response.body, (event) => {
-        if (event.type === "error") throw new Error(event.message)
-        if (event.type === "started") {
-          started = true
-          revokeDraftPreviews()
-          setAttachments([])
-          setDraftAnnotations([])
-          setExpandedAnnotationId(undefined)
-          selectChat(event.chatId)
-          setStreamProviderEvents([])
-        }
-        if (event.type === "activity")
-          setStreamProviderEvents((current) => {
-            const index = current.findIndex((item) => item.id === event.event.id)
-            if (index >= 0) {
-              const next = [...current]
-              next[index] = event.event
+              return [...current, event.event].slice(-64)
+            })
+          if (event.type === "agent-request") {
+            setStreamAgentRequests((current) => ({
+              ...current,
+              [event.request.id]: {
+                request: event.request,
+                messageId: event.messageId,
+              },
+            }))
+          }
+          if (event.type === "agent-request-resolved") {
+            setStreamAgentRequests((current) => {
+              const next = { ...current }
+              delete next[event.requestId]
               return next
-            }
-            return [...current, event.event].slice(-64)
-          })
-        if (event.type === "agent-request") {
-          setStreamAgentRequests((current) => ({
-            ...current,
-            [event.request.id]: {
-              request: event.request,
-              messageId: event.messageId,
-            },
-          }))
+            })
+          }
+        })
+        if (!started && !targetChatId)
+          throw new Error("Blitz ended the reply early.")
+        completed = true
+        setDismissedContinuationId(undefined)
+
+        if (queuedMessageRef.current && resolvedChatId) {
+          const queued = queuedMessageRef.current
+          setQueuedMessage(undefined)
+          queuedMessageRef.current = undefined
+          setTimeout(() => {
+            void sendMessage({
+              chatId: resolvedChatId,
+              message: queued.message,
+              attachments: queued.attachments,
+              annotations: queued.annotations,
+            })
+          }, 50)
         }
-        if (event.type === "agent-request-resolved") {
-          setStreamAgentRequests((current) => {
-            const next = { ...current }
-            delete next[event.requestId]
-            return next
-          })
-        }
-      })
-      if (!started && !targetChatId)
-        throw new Error("Blitz ended the reply early.")
-      completed = true
-    } catch (sendError) {
-      const paused = controller.signal.aborted && pausedByUserRef.current
-      if (!paused)
-        setError(
-          messageForError(
-            sendError,
-            "Blitz could not finish that reply. Try again."
+      } catch (sendError) {
+        const paused = controller.signal.aborted || pausedByUserRef.current
+        if (!paused)
+          setError(
+            messageForError(
+              sendError,
+              "Blitz could not finish that reply. Try again."
+            )
           )
-        )
-      if (!started && !options.continuationOf) {
-        setDraft(rawMessage)
-        setDraftAnnotations(submittedAnnotations)
+        if (!started && !options.continuationOf) {
+          setDraft(rawMessage)
+          setDraftAnnotations(submittedAnnotations)
+        } else if (!started && options.steeringPrompt) {
+          setDraft(options.steeringPrompt)
+        }
+      } finally {
+        if (requestControllerRef.current === controller)
+          requestControllerRef.current = undefined
+        pausedByUserRef.current = false
+        sendingRef.current = false
+        setSending(false)
       }
-    } finally {
-      if (requestControllerRef.current === controller)
-        requestControllerRef.current = undefined
-      pausedByUserRef.current = false
-      setSending(false)
+      return completed
     }
-    return completed
+
+    const sendPromise = run()
+    activeSendPromiseRef.current = sendPromise
+    return await sendPromise
   }
 
   /** Copies one user or assistant message and confirms the action inline. */
@@ -1444,6 +1495,7 @@ export function ChatWorkspace({
       )
     if (!activeChatId || !runningMessage) return
     pausedByUserRef.current = true
+    requestControllerRef.current?.abort()
     void fetch("/api/chat/pause", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -1454,12 +1506,17 @@ export function ChatWorkspace({
     })
       .then((response) => {
         if (!response.ok)
-          throw new Error("This reply could not be paused. Its provider session may have ended; reload the chat to check its status.")
-        requestControllerRef.current?.abort()
+          throw new Error(
+            "This reply could not be paused. Its provider session may have ended; reload the chat to check its status."
+          )
       })
       .catch((pauseError: unknown) => {
-        pausedByUserRef.current = false
-        setError(messageForError(pauseError, "The reply could not be paused. Try again."))
+        setError(
+          messageForError(
+            pauseError,
+            "The reply could not be paused. Try again."
+          )
+        )
       })
   }
 
@@ -1505,26 +1562,124 @@ export function ChatWorkspace({
     }
   }
 
-  /** Resumes the latest interrupted response in the same assistant message. */
+  /** Resumes the latest interrupted response in the same assistant message, optionally steered with notes. */
   const continueResponse = async (
-    messageId: Id<"workspaceChatMessages">
+    messageId: Id<"workspaceChatMessages">,
+    steeringPrompt?: string
   ): Promise<void> => {
     if (!activeChatId || isRunning || messageActionId) return
     setMessageActionId(messageId)
     try {
-      await sendMessage({ chatId: activeChatId, continuationOf: messageId })
+      await sendMessage({
+        chatId: activeChatId,
+        continuationOf: messageId,
+        steeringPrompt: steeringPrompt?.trim() || undefined,
+      })
+      if (steeringPrompt) {
+        setDraft("")
+      }
     } finally {
       setMessageActionId(undefined)
     }
   }
 
-  /** Sends on Enter while keeping Shift+Enter available for a new line. */
+  /** Pauses the in-flight reply and continues with the learner's steering notes. */
+  const hotSteerReply = async (): Promise<void> => {
+    const runningMessage = [...messages]
+      .reverse()
+      .find(
+        (message) =>
+          message.role === "assistant" && message.status === "running"
+      )
+    if (!activeChatId || !runningMessage) return
+    const steeringNotes = draft.trim()
+    if (!steeringNotes) return
+    setDraft("")
+    pausedByUserRef.current = true
+    setMessageActionId(runningMessage.id)
+    try {
+      requestControllerRef.current?.abort()
+      const response = await fetch("/api/chat/pause", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          chatId: activeChatId,
+          messageId: runningMessage.id,
+        }),
+      })
+      if (!response.ok) {
+        throw new Error(
+          "This reply could not be paused for steering. Its provider session may have ended; reload the chat to check its status."
+        )
+      }
+      if (activeSendPromiseRef.current) {
+        await activeSendPromiseRef.current.catch(() => {})
+      }
+      sendingRef.current = false
+      await sendMessage({
+        chatId: activeChatId,
+        continuationOf: runningMessage.id,
+        steeringPrompt: steeringNotes,
+      })
+    } catch (hotSteerError: unknown) {
+      setDraft(steeringNotes)
+      setError(
+        messageForError(
+          hotSteerError,
+          "The reply could not be steered. Try again."
+        )
+      )
+    } finally {
+      setMessageActionId(undefined)
+    }
+  }
+
+  /** Sends on Enter, queues while running, or hot-steers with ⌘Enter / Ctrl+Enter. */
   const handleComposerKeyDown = (
     event: KeyboardEvent<HTMLTextAreaElement>
   ): void => {
-    if (event.key === "Enter" && !event.shiftKey) {
-      event.preventDefault()
-      void sendMessage()
+    const isSteerModifier = event.metaKey || event.ctrlKey
+    const isStreaming = sending || activeChat?.status === "running"
+
+    if (event.key === "Enter") {
+      // ⌘Enter on Mac or Ctrl+Enter on Windows/Linux
+      if (isSteerModifier && !event.shiftKey && !event.altKey) {
+        event.preventDefault()
+        if (isStreaming) {
+          if (draft.trim()) {
+            void hotSteerReply()
+          }
+        } else if (continuableMessage) {
+          void continueResponse(
+            continuableMessage.id,
+            draft.trim() || undefined
+          )
+        } else {
+          void sendMessage()
+        }
+        return
+      }
+
+      // Plain Enter without modifier keys
+      if (!event.shiftKey && !event.metaKey && !event.ctrlKey && !event.altKey) {
+        event.preventDefault()
+        if (isStreaming) {
+          const hasDraftContent =
+            Boolean(draft.trim()) ||
+            attachments.length > 0 ||
+            draftAnnotations.some((a) => a.note.trim().length > 0)
+          if (hasDraftContent) {
+            queueDraftMessage()
+          }
+        } else if (continuableMessage) {
+          void continueResponse(
+            continuableMessage.id,
+            draft.trim() || undefined
+          )
+        } else {
+          void sendMessage()
+        }
+      }
     }
   }
 
@@ -1556,7 +1711,38 @@ export function ChatWorkspace({
         {history}
       </aside>
 
-      <div className="flex min-w-0 flex-1 flex-col px-4 sm:px-8">
+      <div
+        className={cn(
+          "relative flex min-w-0 flex-1 flex-col px-4 sm:px-8",
+          draggingFiles && "bg-brand/5"
+        )}
+        onDragEnter={(event) => {
+          event.preventDefault()
+          if (
+            !isRunning &&
+            !continuableMessage &&
+            event.dataTransfer.types.includes("Files")
+          ) {
+            setDraggingFiles(true)
+          }
+        }}
+        onDragOver={(event) => {
+          event.preventDefault()
+          event.dataTransfer.dropEffect = "copy"
+        }}
+        onDragLeave={(event) => {
+          if (event.currentTarget === event.target) setDraggingFiles(false)
+        }}
+        onDrop={handleComposerDrop}
+      >
+        {draggingFiles && (
+          <div className="pointer-events-none absolute inset-0 z-50 flex items-center justify-center rounded-2xl border-2 border-dashed border-brand bg-background/80 backdrop-blur-xs">
+            <div className="flex flex-col items-center gap-2 text-brand">
+              <HugeiconsIcon icon={File01Icon} size={36} strokeWidth={1.8} />
+              <p className="text-base font-medium">Drop files to attach</p>
+            </div>
+          </div>
+        )}
         <header className="flex h-16 shrink-0 items-center justify-between gap-3">
           <div className="flex min-w-0 items-center gap-2">
             <Button
@@ -1597,14 +1783,21 @@ export function ChatWorkspace({
                     Rename chat
                   </DropdownMenuItem>
                   <DropdownMenuItem
-                    onSelect={() => toggleChatUnread(activeChat.id, true)}
+                    onSelect={() =>
+                      toggleChatUnread(
+                        activeChat.id,
+                        !(activeChatTarget?.isUnread ?? activeChat.isUnread)
+                      )
+                    }
                   >
                     <HugeiconsIcon
                       icon={CheckUnread01Icon}
                       size={15}
                       aria-hidden="true"
                     />
-                    Mark as unread
+                    {activeChatTarget?.isUnread ?? activeChat.isUnread
+                      ? "Mark as read"
+                      : "Mark as unread"}
                   </DropdownMenuItem>
                   <DropdownMenuItem
                     onSelect={() =>
@@ -1745,8 +1938,8 @@ export function ChatWorkspace({
                 )}
               </h2>
               <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-muted-foreground">
-                Attach a project, PDF, notes, PowerPoint, or public link. Blitz
-                will use that material as context for the conversation.
+                Attach any file, project, or public link. Blitz will use that
+                material as context for the conversation.
               </p>
             </div>
           ) : (
@@ -1771,18 +1964,79 @@ export function ChatWorkspace({
                   Array.isArray(message.providerEvents)
                     ? (message.providerEvents as ProviderActivityEvent[])
                     : []
+                const messageEvents =
+                  message.status === "running" && streamProviderEvents.length
+                    ? streamProviderEvents
+                    : persistedProviderEvents
+                const messageRequests =
+                  "agentRequests" in message &&
+                  Array.isArray(message.agentRequests)
+                    ? message.agentRequests
+                        .map((value) => agentRequestFromValue(value))
+                        .filter(
+                          (request): request is AgentRequest =>
+                            request !== undefined &&
+                            request.status !== "pending"
+                        )
+                    : []
+                const messageAttachments =
+                  message.role === "user"
+                    ? persistedAttachments.filter((attachment) => {
+                        if (
+                          attachment.clientMessageId &&
+                          userClientMessageIds.has(attachment.clientMessageId)
+                        ) {
+                          return (
+                            attachment.clientMessageId ===
+                            message.clientMessageId
+                          )
+                        }
+                        const firstUserMessage = messages.find(
+                          (m) => m.role === "user"
+                        )
+                        return firstUserMessage?.id === message.id
+                      })
+                    : []
                 return (
                   <article
                     key={message.id}
                     className={cn(
                       "max-w-[88%] text-sm leading-6 sm:max-w-[78%]",
-                      message.role === "user" ? "ml-auto" : "mr-auto min-w-0"
+                      message.role === "user"
+                        ? "ml-auto flex flex-col items-end"
+                        : "mr-auto min-w-0"
                     )}
                   >
+                    {message.role === "user" && messageAttachments.length > 0 ? (
+                      <ul
+                        aria-label="Attached files and context"
+                        className="mb-1.5 flex min-w-0 flex-wrap items-center justify-end gap-1.5"
+                      >
+                        {messageAttachments.map((attachment) => (
+                          <AttachmentChip
+                            key={attachment.id}
+                            kind={attachment.kind}
+                            label={attachment.label}
+                            previewUrl={
+                              attachment.documentId &&
+                              attachment.mimeType?.startsWith("image/")
+                                ? `/api/chat/files?documentId=${encodeURIComponent(attachment.documentId)}&${attachment.projectId ? `projectId=${encodeURIComponent(attachment.projectId)}` : `chatId=${encodeURIComponent(activeChatId ?? "")}`}`
+                                : undefined
+                            }
+                            href={
+                              attachment.documentId
+                                ? `/api/chat/files?documentId=${encodeURIComponent(attachment.documentId)}&${attachment.projectId ? `projectId=${encodeURIComponent(attachment.projectId)}` : `chatId=${encodeURIComponent(activeChatId ?? "")}`}`
+                                : attachment.url ?? undefined
+                            }
+                          />
+                        ))}
+                      </ul>
+                    ) : null}
                     <div
                       className={cn(
                         message.role === "user" &&
                           "rounded-2xl rounded-br-md bg-brand px-4 py-3 text-brand-foreground",
+                        editing && "w-full",
                         message.status === "failed" &&
                           message.role === "assistant" &&
                           "text-destructive"
@@ -1790,19 +2044,14 @@ export function ChatWorkspace({
                     >
                       {message.role === "assistant" ? (
                         <>
-                          {message.status === "running" && streamProviderEvents.length ? (
-                            <ProviderActivity events={streamProviderEvents} />
-                          ) : persistedProviderEvents.length ? (
-                            <ProviderActivity events={persistedProviderEvents} />
-                          ) : null}
-                          {message.thought ? (
-                            <ThoughtTrace
-                              thought={message.thought}
-                              durationMs={message.durationMs}
-                              status={message.status}
-                              startedAt={message.createdAt}
-                            />
-                          ) : null}
+                          <ThoughtTrace
+                            thought={message.thought}
+                            durationMs={message.durationMs}
+                            status={message.status}
+                            startedAt={message.createdAt}
+                            events={messageEvents}
+                            requests={messageRequests}
+                          />
                           {message.content ? (
                             <AnnotatedAssistantMessage
                               messageId={message.id}
@@ -1827,12 +2076,6 @@ export function ChatWorkspace({
                               onSaveAnnotation={saveAnnotation}
                               onDeleteAnnotation={deleteAnnotation}
                             />
-                          ) : message.status === "running" &&
-                            !message.thought ? (
-                            <span className="flex items-center gap-2 text-muted-foreground">
-                              <LoadingIcon className="size-4 animate-spin motion-reduce:animate-none" />
-                              Blitz is reading your context…
-                            </span>
                           ) : message.status === "failed" ? (
                             <p>
                               {activeChat?.lastError ||
@@ -1987,42 +2230,6 @@ export function ChatWorkspace({
                                 </Button>
                               </>
                             ) : null}
-                            {"agentRequests" in message &&
-                            Array.isArray(message.agentRequests)
-                              ? message.agentRequests
-                                  .map((value) => agentRequestFromValue(value))
-                                  .filter(
-                                    (request): request is AgentRequest =>
-                                      request !== undefined &&
-                                      request.status !== "pending"
-                                  )
-                                  .map((request) => (
-                                    <AgentRequestPanel
-                                      key={`history-${request.id}`}
-                                      request={request}
-                                      readOnly
-                                      onSubmit={() => undefined}
-                                    />
-                                  ))
-                              : null}
-                            {latest &&
-                            message.status === "running" &&
-                            (sending || activeChat?.status === "running") ? (
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="sm"
-                                className="h-10 gap-1.5 px-2.5 text-xs font-normal sm:h-7 sm:px-2"
-                                onClick={pauseReply}
-                              >
-                                <HugeiconsIcon
-                                  icon={PauseIcon}
-                                  size={14}
-                                  aria-hidden="true"
-                                />
-                                Pause
-                              </Button>
-                            ) : null}
                             {latest && message.status === "failed" ? (
                               <Button
                                 type="button"
@@ -2061,7 +2268,7 @@ export function ChatWorkspace({
         </section>
 
         <div className="mx-auto w-full max-w-3xl shrink-0 pb-3">
-          {persistedAttachments.length ||
+          {hasOrphanPersistedAttachments ||
           attachments.length ||
           draftAnnotations.length ? (
             <div className="mb-2 flex min-w-0 flex-wrap items-center gap-1.5 px-1">
@@ -2069,19 +2276,26 @@ export function ChatWorkspace({
                 aria-label="Attached context"
                 className="flex min-w-0 flex-wrap items-center gap-1.5"
               >
-                {persistedAttachments.map((attachment) => (
-                  <AttachmentChip
-                    key={attachment.id}
-                    kind={attachment.kind}
-                    label={attachment.label}
-                    previewUrl={
-                      attachment.documentId &&
-                      attachment.mimeType?.startsWith("image/")
-                        ? `/api/chat/files?documentId=${encodeURIComponent(attachment.documentId)}&${attachment.projectId ? `projectId=${encodeURIComponent(attachment.projectId)}` : `chatId=${encodeURIComponent(activeChatId ?? "")}`}`
-                        : undefined
-                    }
-                  />
-                ))}
+                {hasOrphanPersistedAttachments
+                  ? persistedAttachments.map((attachment) => (
+                      <AttachmentChip
+                        key={attachment.id}
+                        kind={attachment.kind}
+                        label={attachment.label}
+                        previewUrl={
+                          attachment.documentId &&
+                          attachment.mimeType?.startsWith("image/")
+                            ? `/api/chat/files?documentId=${encodeURIComponent(attachment.documentId)}&${attachment.projectId ? `projectId=${encodeURIComponent(attachment.projectId)}` : `chatId=${encodeURIComponent(activeChatId ?? "")}`}`
+                            : undefined
+                        }
+                        href={
+                          attachment.documentId
+                            ? `/api/chat/files?documentId=${encodeURIComponent(attachment.documentId)}&${attachment.projectId ? `projectId=${encodeURIComponent(attachment.projectId)}` : `chatId=${encodeURIComponent(activeChatId ?? "")}`}`
+                            : attachment.url ?? undefined
+                        }
+                      />
+                    ))
+                  : null}
                 {attachments.map((attachment) => (
                   <AttachmentChip
                     key={attachment.id}
@@ -2120,16 +2334,8 @@ export function ChatWorkspace({
             <AgentRequestPanel
               key={visibleComposerRequest.request.id}
               request={visibleComposerRequest.request}
-              busy={
-                requestFixtureRequest
-                  ? false
-                  : approvalBusy === visibleComposerRequest.request.id
-              }
+              busy={approvalBusy === visibleComposerRequest.request.id}
               onSubmit={(submission) => {
-                if (requestFixtureRequest) {
-                  resolveRequestUiFixture()
-                  return
-                }
                 void decideAgentRequest(
                   visibleComposerRequest.request,
                   visibleComposerRequest.messageId,
@@ -2138,6 +2344,60 @@ export function ChatWorkspace({
               }}
             />
           ) : null}
+          {queuedMessage ? (
+            <div className="mb-2 flex items-center justify-between gap-2 rounded-xl border border-border/80 bg-muted/40 px-3 py-1.5 text-xs">
+              <div className="flex min-w-0 items-center gap-1.5">
+                <HugeiconsIcon
+                  icon={SendIcon}
+                  size={13}
+                  className="shrink-0 text-brand"
+                  aria-hidden="true"
+                />
+                <span className="shrink-0 font-medium text-muted-foreground">
+                  Queued:
+                </span>
+                <span className="truncate text-foreground">
+                  {queuedMessage.message ||
+                    (queuedMessage.attachments.length
+                      ? `${queuedMessage.attachments.length} attachment(s)`
+                      : "Queued message")}
+                </span>
+              </div>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-6 gap-1 px-2 text-xs font-normal text-muted-foreground hover:text-destructive"
+                onClick={deleteQueuedMessage}
+                aria-label="Delete queued message"
+              >
+                <HugeiconsIcon icon={Delete02Icon} size={12} strokeWidth={2} />
+                Delete
+              </Button>
+            </div>
+          ) : null}
+          {continuableMessage ? (
+            <div className="mb-2 flex items-center justify-between rounded-xl border border-border/80 bg-muted/40 px-3 py-1.5 text-xs">
+              <div className="flex items-center gap-1.5 text-muted-foreground">
+                <HugeiconsIcon
+                  icon={PlayIcon}
+                  size={13}
+                  className="shrink-0 text-brand"
+                  aria-hidden="true"
+                />
+                <span>Continuing paused response</span>
+              </div>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-6 px-2 text-xs font-normal text-muted-foreground hover:text-foreground"
+                onClick={() => setDismissedContinuationId(continuableMessage.id)}
+              >
+                Ask new question instead
+              </Button>
+            </div>
+          ) : null}
           <div
             className={cn(
               "rounded-[24px] border bg-card p-2 shadow-sm focus-within:ring-2 focus-within:ring-ring/40",
@@ -2145,7 +2405,11 @@ export function ChatWorkspace({
             )}
             onDragEnter={(event) => {
               event.preventDefault()
-              if (!isRunning && event.dataTransfer.types.includes("Files"))
+              if (
+                !isRunning &&
+                !continuableMessage &&
+                event.dataTransfer.types.includes("Files")
+              )
                 setDraggingFiles(true)
             }}
             onDragOver={(event) => {
@@ -2162,8 +2426,21 @@ export function ChatWorkspace({
               value={draft}
               maxLength={4_000}
               rows={2}
-              disabled={isRunning}
-              placeholder="Ask Blitz about your material…"
+              disabled={
+                uploadingFiles ||
+                importingLink ||
+                savingReplySettings ||
+                Boolean(messageActionId)
+              }
+              placeholder={
+                isStreaming
+                  ? isMac
+                    ? "Press Enter to queue, ⌘Enter to steer"
+                    : "Press Enter to queue, Ctrl+Enter to steer"
+                  : continuableMessage
+                    ? "Add notes before continuing, or press Play to resume"
+                    : "Ask Blitz…"
+              }
               className="max-h-40 min-h-16 resize-none border-0 bg-transparent px-3 py-2 shadow-none focus-visible:ring-0"
               onChange={(event) => setDraft(event.target.value)}
               onPaste={handleComposerPaste}
@@ -2176,7 +2453,6 @@ export function ChatWorkspace({
                   className="sr-only"
                   type="file"
                   multiple
-                  accept=".pdf,.md,.markdown,.txt,.pptx,.png,.jpg,.jpeg,.webp,.gif,application/pdf,text/plain,text/markdown,application/vnd.openxmlformats-officedocument.presentationml.presentation,image/png,image/jpeg,image/webp,image/gif"
                   onChange={(event) =>
                     void chooseFiles(Array.from(event.target.files ?? []))
                   }
@@ -2188,7 +2464,9 @@ export function ChatWorkspace({
                       variant="ghost"
                       size="icon"
                       className="rounded-full"
-                      disabled={isRunning || !canAttach}
+                      disabled={
+                        isRunning || !canAttach || Boolean(continuableMessage)
+                      }
                       aria-label="Attach context"
                     >
                       <HugeiconsIcon
@@ -2219,7 +2497,7 @@ export function ChatWorkspace({
                   </DropdownMenuContent>
                 </DropdownMenu>
                 <ReplyModelPicker
-                  disabled={isRunning}
+                  disabled={isRunning || Boolean(continuableMessage)}
                   onSaveStateChange={setSavingReplySettings}
                 />
                 <ChatAgentControls
@@ -2227,7 +2505,7 @@ export function ChatWorkspace({
                   additionalInstructions={effectiveAgentInstructions}
                   workingProjectId={effectiveWorkingProjectId}
                   projects={projects}
-                  disabled={isRunning}
+                  disabled={isRunning || Boolean(continuableMessage)}
                   onAutonomyChange={(value) => {
                     setAgentSettingsTouched(true)
                     setAgentAutonomy(value)
@@ -2242,39 +2520,112 @@ export function ChatWorkspace({
                     setWorkingProjectId(value)
                   }}
                 />
-                {process.env.NODE_ENV !== "production" ? (
+              </div>
+              {(() => {
+                if (isStreaming) {
+                  const hasDraft = Boolean(
+                    draft.trim() ||
+                      attachments.length > 0 ||
+                      draftAnnotations.some((a) => a.note.trim().length > 0)
+                  )
+                  if (!hasDraft) {
+                    return (
+                      <Button
+                        type="button"
+                        size="icon"
+                        aria-label="Pause response"
+                        className="ml-auto shrink-0 rounded-full bg-brand text-brand-foreground hover:bg-brand/85"
+                        disabled={Boolean(messageActionId)}
+                        onClick={pauseReply}
+                      >
+                        <HugeiconsIcon
+                          icon={PauseIcon}
+                          size={18}
+                          strokeWidth={2}
+                        />
+                      </Button>
+                    )
+                  }
+                  return (
+                    <div className="ml-auto flex shrink-0 items-center gap-1.5">
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="h-8 gap-1 rounded-full text-xs font-medium"
+                        disabled={Boolean(messageActionId)}
+                        onClick={() => void hotSteerReply()}
+                        aria-label="Steer response"
+                      >
+                        <HugeiconsIcon
+                          icon={PlayIcon}
+                          size={14}
+                          strokeWidth={2}
+                        />
+                        Steer
+                      </Button>
+                      <Button
+                        type="button"
+                        size="icon"
+                        className="h-8 w-8 rounded-full bg-brand text-brand-foreground hover:bg-brand/85"
+                        disabled={Boolean(messageActionId)}
+                        onClick={queueDraftMessage}
+                        aria-label="Queue message"
+                      >
+                        <HugeiconsIcon
+                          icon={SendIcon}
+                          size={16}
+                          strokeWidth={2}
+                        />
+                      </Button>
+                    </div>
+                  )
+                }
+                if (continuableMessage) {
+                  const hasDraft = Boolean(draft.trim())
+                  return (
+                    <Button
+                      type="button"
+                      size="icon"
+                      aria-label={
+                        hasDraft ? "Steer response" : "Resume response"
+                      }
+                      className="ml-auto shrink-0 rounded-full bg-brand text-brand-foreground hover:bg-brand/85"
+                      disabled={Boolean(messageActionId) || isRunning}
+                      onClick={() =>
+                        void continueResponse(
+                          continuableMessage.id,
+                          hasDraft ? draft.trim() : undefined
+                        )
+                      }
+                    >
+                      <HugeiconsIcon
+                        icon={PlayIcon}
+                        size={18}
+                        strokeWidth={2}
+                      />
+                    </Button>
+                  )
+                }
+                return (
                   <Button
                     type="button"
-                    variant="ghost"
-                    size="sm"
-                    className="h-8 px-2 text-xs"
-                    disabled={isRunning && requestFixtureStep === undefined}
-                    onClick={startRequestUiFixture}
+                    size="icon"
+                    aria-label="Send message"
+                    className="ml-auto shrink-0 rounded-full bg-brand text-brand-foreground hover:bg-brand/85"
+                    disabled={
+                      (!draft.trim() && !draftAnnotations.length) || isRunning
+                    }
+                    onClick={() => void sendMessage()}
                   >
-                    {requestFixtureStep === undefined
-                      ? "Test requests"
-                      : "Restart test"}
+                    <HugeiconsIcon
+                      icon={SendIcon}
+                      size={18}
+                      strokeWidth={2}
+                    />
                   </Button>
-                ) : null}
-              </div>
-              <Button
-                type="button"
-                size="icon"
-                aria-label={sending ? "Pause response" : "Send message"}
-                className="ml-auto shrink-0 rounded-full bg-brand text-brand-foreground hover:bg-brand/85"
-                disabled={
-                  sending
-                    ? false
-                    : (!draft.trim() && !draftAnnotations.length) || isRunning
-                }
-                onClick={sending ? pauseReply : () => void sendMessage()}
-              >
-                {sending ? (
-                  <HugeiconsIcon icon={PauseIcon} size={18} strokeWidth={2} />
-                ) : (
-                  <HugeiconsIcon icon={SendIcon} size={18} strokeWidth={2} />
-                )}
-              </Button>
+                )
+              })()}
             </div>
           </div>
           <div className="min-h-6 px-3 pt-1.5">
@@ -2555,15 +2906,17 @@ function AttachmentChip({
   kind,
   label,
   previewUrl,
+  href,
   onRemove,
 }: {
   kind: "card" | "project" | "file" | "link"
   label: string
   previewUrl?: string
+  href?: string
   onRemove?: () => void
 }) {
-  return (
-    <li className="group relative flex h-7 max-w-full min-w-0 items-center gap-1.5 rounded-full border border-border/70 bg-muted/30 px-2.5 text-xs text-foreground backdrop-blur-xs transition-colors hover:border-border hover:bg-muted/60">
+  const content = (
+    <>
       {previewUrl ? (
         <Image
           src={previewUrl}
@@ -2604,8 +2957,31 @@ function AttachmentChip({
           <CancelIcon className="size-3" />
         </button>
       ) : null}
-    </li>
+    </>
   )
+
+  const chipClassName =
+    "group relative flex h-7 max-w-full min-w-0 items-center gap-1.5 rounded-full border border-border/70 bg-muted/30 px-2.5 text-xs text-foreground backdrop-blur-xs transition-colors hover:border-border hover:bg-muted/60"
+
+  if (href && !onRemove) {
+    return (
+      <li>
+        <a
+          href={href}
+          target="_blank"
+          rel="noreferrer"
+          className={cn(
+            chipClassName,
+            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          )}
+        >
+          {content}
+        </a>
+      </li>
+    )
+  }
+
+  return <li className={chipClassName}>{content}</li>
 }
 
 /**

@@ -516,7 +516,7 @@ export function ChatScreen({
             editable={!sending && Boolean(transport)}
             value={draft}
             onChangeText={setDraft}
-            placeholder="Ask Blitz about your material…"
+            placeholder="Ask Blitz…"
             placeholderTextColor="#858585"
             style={styles.input}
           />

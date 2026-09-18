@@ -31,6 +31,33 @@ function isImageAttachment(filename: string, mimeType: string | null): boolean {
 /** Uses local storage and deterministic extraction on the Node host. */
 export const runtime = "nodejs"
 
+/** Human-readable size string used for file descriptors. */
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
+/** Resolves an appropriate MIME type from the upload header or file extension. */
+function inferMimeType(filename: string, candidate: string | null): string {
+  const normalized = candidate?.split(";", 1)[0].trim().toLowerCase()
+  if (normalized && normalized !== "application/octet-stream") return normalized
+  if (/\.pdf$/i.test(filename)) return "application/pdf"
+  if (/\.pptx$/i.test(filename))
+    return "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+  if (/\.json$/i.test(filename)) return "application/json"
+  if (/\.csv$/i.test(filename)) return "text/csv"
+  if (/\.html?$/i.test(filename)) return "text/html"
+  if (/\.(md|markdown)$/i.test(filename)) return "text/markdown"
+  if (
+    /\.(txt|py|ts|tsx|js|jsx|sh|bash|zsh|yaml|yml|toml|xml|css|sql|rs|go|c|cpp|h|java|kt|rb|php|env)$/i.test(
+      filename
+    )
+  )
+    return "text/plain"
+  return "application/octet-stream"
+}
+
 /** Connects to the same personal deployment as the chat route. */
 function client(): ConvexHttpClient {
   const url =
@@ -41,7 +68,7 @@ function client(): ConvexHttpClient {
   return new ConvexHttpClient(url)
 }
 
-/** Saves an original and its full extracted text, rejecting unsupported or unreadable files. */
+/** Saves an original and its full extracted text, supporting any file type up to 50 MB. */
 export async function POST(request: Request): Promise<Response> {
   let cleanup:
     | { storageId: string; key: string; remove: boolean }
@@ -61,12 +88,6 @@ export async function POST(request: Request): Promise<Response> {
     )
     if ((!projectId && !ownerToken) || !filename || !request.body)
       throw new Error("File owner and file are required.")
-    const contentType = request.headers.get("content-type")
-    const imageAttachment = isImageAttachment(filename, contentType)
-    if (!imageAttachment && !/\.(pdf|md|markdown|txt|pptx)$/i.test(filename))
-      throw new Error(
-        "Choose an image, PDF, PowerPoint, Markdown, or text file."
-      )
     if (Number(request.headers.get("content-length")) > 50_000_000)
       throw new Error("Chat files must be under 50 MB.")
     const convex = client()
@@ -82,46 +103,89 @@ export async function POST(request: Request): Promise<Response> {
       remove: projectId ? !("duplicate" in stored && stored.duplicate) : true,
     }
     const storedPath = await resolveProjectFile(storageId, stored.key)
+    const contentType = request.headers.get("content-type")
+    const imageAttachment = isImageAttachment(filename, contentType)
+    let isNativeImage = false
     if (imageAttachment) {
       const claimedMimeType = contentType?.split(";", 1)[0].trim().toLowerCase()
-      if (!isChatImageMimeType(claimedMimeType))
-        throw new Error("Image MIME type is required.")
-      validateChatImageBytes(
-        new Uint8Array(
-          await readProjectFileBytes(storageId, stored.key, 50_000_000)
-        ),
-        claimedMimeType
-      )
+      if (isChatImageMimeType(claimedMimeType)) {
+        try {
+          const imageBytes = new Uint8Array(
+            await readProjectFileBytes(storageId, stored.key, 5_000_000)
+          )
+          validateChatImageBytes(imageBytes, claimedMimeType)
+          isNativeImage = true
+        } catch {
+          isNativeImage = false
+        }
+      }
     }
-    const extracted = imageAttachment
-      ? { extractedText: `[Image attachment: ${stored.filename}]` }
-      : await extractStoredSource({
-          path: storedPath,
-          filename: stored.filename,
-          sizeBytes: stored.size,
-          contentType: stored.mimeType,
-        })
-    if (!extracted.extractedText.trim())
-      throw new Error("There was no readable text in that file.")
-    if (new TextEncoder().encode(extracted.extractedText).length > 500_000)
-      throw new Error(
-        "This file has too much text. Split it into smaller files."
-      )
-    const mimeType = imageAttachment
+
+    let extractedText = ""
+    if (isNativeImage) {
+      extractedText = `[Image attachment: ${stored.filename}]`
+    } else {
+      const isStructuredDoc = /\.(pdf|pptx|html?|md|markdown)$/i.test(filename)
+      if (isStructuredDoc) {
+        try {
+          const result = await extractStoredSource({
+            path: storedPath,
+            filename: stored.filename,
+            sizeBytes: stored.size,
+            contentType: stored.mimeType,
+          })
+          if (result.extractedText.trim()) {
+            extractedText = result.extractedText
+          }
+        } catch {
+          // Fallback to text sampling or file descriptor on structured extraction failure.
+        }
+      }
+
+      if (!extractedText) {
+        try {
+          const sampleBytes = new Uint8Array(
+            await readProjectFileBytes(storageId, stored.key, 500_000)
+          )
+          const hasNullByte = sampleBytes.some((byte) => byte === 0)
+          if (!hasNullByte) {
+            const decoded = new TextDecoder("utf-8", { fatal: true })
+              .decode(sampleBytes)
+              .trim()
+            if (decoded) {
+              if (stored.size > sampleBytes.byteLength) {
+                extractedText = `${decoded.slice(0, 480_000)}\n[remaining text preview omitted; full file (${formatFileSize(stored.size)}) available in workspace]`
+              } else {
+                extractedText = decoded.slice(0, 480_000)
+              }
+            }
+          }
+        } catch {
+          // Binary or non-UTF-8 files proceed to descriptor fallback.
+        }
+      }
+
+      if (!extractedText.trim()) {
+        extractedText = `[Attached file: ${stored.filename} (${formatFileSize(stored.size)})]`
+      }
+    }
+
+    if (new TextEncoder().encode(extractedText).length > 500_000) {
+      extractedText = extractedText.slice(0, 100_000)
+    }
+
+    const mimeType = isNativeImage
       ? contentType?.split(";", 1)[0].trim().toLowerCase() ||
         stored.mimeType ||
         "application/octet-stream"
-      : /\.pdf$/i.test(filename)
-        ? "application/pdf"
-        : /\.pptx$/i.test(filename)
-          ? "application/vnd.openxmlformats-officedocument.presentationml.presentation"
-          : "text/plain"
+      : inferMimeType(filename, contentType || stored.mimeType)
+
     const documentId = await convex.mutation(api.chatCitations.createDocument, {
       ...(projectId ? { projectId } : {}),
       ...(!projectId && ownerToken ? { ownerToken } : {}),
       filename: stored.filename,
       relativeKey: stored.key,
-      text: extracted.extractedText,
+      text: extractedText,
       mimeType,
       sizeBytes: stored.size,
     })
@@ -178,7 +242,9 @@ export async function GET(request: Request): Promise<Response> {
       document.relativeKey,
       50_000_000
     )
-    const inline = ["application/pdf", "text/plain"].includes(document.mimeType)
+    const inline =
+      ["application/pdf", "text/plain"].includes(document.mimeType) ||
+      document.mimeType.startsWith("image/")
     return new Response(new Uint8Array(bytes), {
       headers: {
         "content-type": document.mimeType,

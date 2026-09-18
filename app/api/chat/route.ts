@@ -11,11 +11,14 @@ import {
 } from "@/lib/server/project-agent"
 import { ConvexHttpClient } from "convex/browser"
 import { makeFunctionReference } from "convex/server"
-import { mkdir } from "node:fs/promises"
+import { copyFile, mkdir } from "node:fs/promises"
 import { homedir } from "node:os"
-import { isAbsolute, join } from "node:path"
-import { readProjectFileBytes } from "@/lib/server/project-files"
-import { chatStorageId } from "@/lib/server/source-files"
+import { isAbsolute, join, resolve } from "node:path"
+import {
+  readProjectFileBytes,
+  resolveProjectFile,
+} from "@/lib/server/project-files"
+import { chatStorageId, safeSourceFilename } from "@/lib/server/source-files"
 import type { Id } from "@/convex/_generated/dataModel"
 import {
   resolveAiTaskSelection,
@@ -48,6 +51,7 @@ import {
   type WorkspaceChatCardContext,
   type WorkspaceChatReplayContext,
   type WorkspaceChatProjectContext,
+  type WorkspaceChatInlineAttachment,
 } from "@/lib/server/workspace-chat"
 
 /** Uses Node.js because each turn starts the selected local provider process. */
@@ -99,6 +103,7 @@ const startWorkspaceTurn = makeFunctionReference<
     chatId?: Id<"workspaceChats">
     projectId?: Id<"projects">
     continuationOf?: Id<"workspaceChatMessages">
+    steeringPrompt?: string
     providerId?: string
     providerInstanceId?: string
     providerModel?: string
@@ -112,6 +117,7 @@ const startWorkspaceTurn = makeFunctionReference<
     chatId: Id<"workspaceChats">
     assistantMessageId: Id<"workspaceChatMessages">
     initialTitle?: string
+    steeringPrompt?: string
     providerId: AiProviderId
     providerInstanceId?: string
     providerModel?: string
@@ -209,6 +215,70 @@ async function chatWorkspaceDirectory(chatId: string): Promise<string> {
     throw new Error("Chat workspace must be an absolute path")
   await mkdir(directory, { recursive: true })
   return directory
+}
+
+/** Copies attached chat documents into the workspace under attachments/ and annotates them with paths. */
+async function stageWorkspaceAttachments(
+  client: ConvexHttpClient,
+  workspaceDirectory: string,
+  attachments: WorkspaceChatInlineAttachment[],
+  options: {
+    ownerProjectId?: Id<"projects">
+    chatId?: Id<"workspaceChats">
+  } = {}
+): Promise<void> {
+  const attachmentsDir = join(workspaceDirectory, "attachments")
+  let dirCreated = false
+  const seenFilenames = new Set<string>()
+
+  for (const attachment of attachments) {
+    if (!attachment.documentId) continue
+    let document = await client.query(api.chatCitations.getDocument, {
+      documentId: attachment.documentId,
+      ...(options.ownerProjectId
+        ? { projectId: options.ownerProjectId }
+        : attachment.ownerToken
+          ? { ownerToken: attachment.ownerToken }
+          : options.chatId
+            ? { chatId: options.chatId }
+            : {}),
+    })
+    if (!document && attachment.ownerToken && options.chatId) {
+      document = await client.query(api.chatCitations.getDocument, {
+        documentId: attachment.documentId,
+        chatId: options.chatId,
+      })
+    }
+    if (!document) continue
+
+    const storageId =
+      document.projectId ??
+      (document.ownerToken ? chatStorageId(document.ownerToken) : null)
+    if (!storageId) continue
+
+    try {
+      const sourcePath = await resolveProjectFile(storageId, document.relativeKey)
+      if (!dirCreated) {
+        await mkdir(attachmentsDir, { recursive: true })
+        dirCreated = true
+      }
+      let targetName = safeSourceFilename(document.filename)
+      if (seenFilenames.has(targetName)) {
+        const idPrefix = String(document._id).slice(-6)
+        targetName = `${idPrefix}-${targetName}`
+      }
+      seenFilenames.add(targetName)
+      const targetPath = join(attachmentsDir, targetName)
+
+      if (resolve(sourcePath) !== resolve(targetPath)) {
+        await copyFile(sourcePath, targetPath)
+      }
+      attachment.workspacePath = join("attachments", targetName)
+      attachment.filePath = targetPath
+    } catch {
+      // Attachment copy failure does not block the chat turn.
+    }
+  }
 }
 
 /** Reads a bounded JSON request without allowing attachments to exhaust route memory. */
@@ -384,9 +454,13 @@ export async function POST(request: Request): Promise<Response> {
             0,
             Math.min(24_000, attachmentBudget)
           )
-          if (!attachment.text)
-            throw new Error("Remove a file or link before adding another.")
-          attachmentBudget -= attachment.text.length
+          if (!attachment.text) {
+            attachment.text = `[Attached file: ${document.filename}]`
+          }
+          attachmentBudget = Math.max(
+            0,
+            attachmentBudget - attachment.text.length
+          )
         }
         const retrievalQuestion =
           input.message.trim() ||
@@ -441,6 +515,9 @@ export async function POST(request: Request): Promise<Response> {
           providerEffort: configuredSelection.effort,
           ...(input.continuationOf
             ? { continuationOf: input.continuationOf }
+            : {}),
+          ...(input.steeringPrompt
+            ? { steeringPrompt: input.steeringPrompt }
             : {}),
           clientMessageId: input.clientMessageId,
           message: input.message,
@@ -616,6 +693,26 @@ export async function POST(request: Request): Promise<Response> {
           ? (await prepareProjectAgentWorkspace(workingProjectId))
               .projectDirectory
           : await chatWorkspaceDirectory(turn.chatId)
+        await stageWorkspaceAttachments(
+          client,
+          workspaceDirectory,
+          input.attachments,
+          {
+            ...(ownerProjectId ? { ownerProjectId } : {}),
+            chatId: turn.chatId,
+          }
+        )
+        if (turn.replayContext.attachments.length) {
+          await stageWorkspaceAttachments(
+            client,
+            workspaceDirectory,
+            turn.replayContext.attachments,
+            {
+              ...(ownerProjectId ? { ownerProjectId } : {}),
+              chatId: turn.chatId,
+            }
+          )
+        }
         const selection = {
           providerId: turn.providerId,
           model: turn.providerModel ?? configuredSelection.model,

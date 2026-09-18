@@ -1,7 +1,7 @@
 /** Cancels one exact active workspace chat run without depending on its original stream. */
 
 import { isTrustedBlitzOrigin } from "@/lib/server/request-origin"
-import { pauseChatRun } from "@/lib/server/chat-run-registry"
+import { pauseAndAwaitChatRun } from "@/lib/server/chat-run-registry"
 
 export const runtime = "nodejs"
 
@@ -23,7 +23,8 @@ export async function POST(request: Request): Promise<Response> {
     )
       throw new Error("Chat and message IDs are required")
     const { chatId, messageId } = body as { chatId: string; messageId: string }
-    if (!pauseChatRun(chatId, messageId))
+    const paused = await pauseAndAwaitChatRun(chatId, messageId, 3_000)
+    if (!paused)
       return Response.json(
         { error: "That reply is no longer running" },
         { status: 404 }

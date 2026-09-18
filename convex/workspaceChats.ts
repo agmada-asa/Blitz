@@ -381,6 +381,7 @@ export const get = query({
       providerInstanceId: chat.providerInstanceId ?? null,
       providerSessionId: chat.providerSessionId ?? chat.codexThreadId ?? null,
       status: chat.status,
+      isUnread: chat.isUnread ?? false,
       isArchived: chat.isArchived ?? false,
       agentAutonomy: chat.agentAutonomy ?? "approval",
       agentInstructions: chat.agentInstructions ?? "",
@@ -388,6 +389,7 @@ export const get = query({
       lastError: chat.lastError ?? null,
       messages: messages.map((message) => ({
         id: message._id,
+        clientMessageId: message.clientMessageId ?? null,
         role: message.role,
         content: message.content,
         thought: message.thought ?? null,
@@ -398,10 +400,12 @@ export const get = query({
         providerEvents: message.providerEvents ?? [],
         citations: message.citations ?? [],
         annotations: message.annotations ?? [],
+        steeringNotes: message.steeringNotes ?? [],
         createdAt: message.createdAt,
       })),
       attachments: attachments.map((attachment) => ({
         id: attachment._id,
+        clientMessageId: attachment.clientMessageId ?? null,
         documentId: attachment.documentId,
         kind: attachment.kind,
         label: attachment.label,
@@ -466,6 +470,7 @@ export const startTurn = mutation({
     chatId: v.optional(v.id("workspaceChats")),
     projectId: v.optional(v.id("projects")),
     continuationOf: v.optional(v.id("workspaceChatMessages")),
+    steeringPrompt: v.optional(v.string()),
     providerId: v.optional(v.string()),
     providerInstanceId: v.optional(v.string()),
     providerModel: v.optional(v.string()),
@@ -545,7 +550,7 @@ export const startTurn = mutation({
     const selectedInstance = chat?.providerInstanceId ?? requestedInstance
     const selectedModel = chat?.providerModel ?? requestedModel
     const selectedEffort = chat?.providerEffort ?? requestedEffort
-    if (chat?.status === "running")
+    if (chat?.status === "running" && !args.continuationOf)
       throw new Error("Wait for the active reply to finish")
     const priorMessages = chat
       ? await ctx.db
@@ -573,10 +578,99 @@ export const startTurn = mutation({
         !continuation ||
         continuation.chatId !== chat._id ||
         continuation.role !== "assistant" ||
-        continuation.status !== "failed" ||
+        (continuation.status !== "failed" && continuation.status !== "running") ||
         priorMessages[0]?._id !== continuation._id
-      )
+      ) {
         throw new Error("Only the latest interrupted response can continue")
+      }
+      const steeringPrompt = args.steeringPrompt?.trim()
+        ? boundedText(args.steeringPrompt.trim(), "Steering notes", 2_000)
+        : undefined
+
+      const canResumeProviderTurn = Boolean(
+        continuation.providerTurnId ?? continuation.codexTurnId
+      )
+      const providerSessionId = canResumeProviderTurn
+        ? chat.providerSessionId ?? chat.codexThreadId ?? null
+        : null
+
+      if (steeringPrompt) {
+        // Complete the interrupted response and add the steering prompt as a regular user message
+        await ctx.db.patch(continuation._id, {
+          status: "completed",
+          updatedAt: now,
+        })
+        const userMessageId = await ctx.db.insert("workspaceChatMessages", {
+          chatId: chat._id,
+          clientMessageId,
+          role: "user",
+          content: steeringPrompt,
+          status: "completed",
+          createdAt: now,
+          updatedAt: now,
+        })
+        const assistantMessageId = await ctx.db.insert("workspaceChatMessages", {
+          chatId: chat._id,
+          clientMessageId,
+          role: "assistant",
+          content: "",
+          status: "running",
+          createdAt: now + 1,
+          updatedAt: now,
+        })
+        await ctx.db.patch(chat._id, {
+          status: "running",
+          activeMessageId: assistantMessageId,
+          ...(chat.providerId ? {} : { providerId: selectedProvider }),
+          ...(chat.providerInstanceId || !selectedInstance
+            ? {}
+            : { providerInstanceId: selectedInstance }),
+          ...(chat.providerModel || !selectedModel
+            ? {}
+            : { providerModel: selectedModel }),
+          ...(chat.providerEffort || !selectedEffort
+            ? {}
+            : { providerEffort: selectedEffort }),
+          lastError: undefined,
+          updatedAt: now,
+        })
+        return {
+          chatId: chat._id,
+          assistantMessageId,
+          steeringPrompt,
+          providerId: selectedProvider,
+          ...(selectedInstance ? { providerInstanceId: selectedInstance } : {}),
+          ...(selectedModel ? { providerModel: selectedModel } : {}),
+          ...(selectedEffort ? { providerEffort: selectedEffort } : {}),
+          providerSessionId,
+          codexThreadId: canResumeProviderTurn ? chat.codexThreadId ?? null : null,
+          shouldReplayContext:
+            !providerSessionId ||
+            chat.codexContextReady !== true,
+          replyPrefix: "",
+          replayContext: {
+            messages: replayMessages([
+              {
+                _id: assistantMessageId,
+                role: "assistant",
+                content: "",
+                status: "running",
+                createdAt: now + 1,
+              } as Doc<"workspaceChatMessages">,
+              {
+                _id: userMessageId,
+                role: "user",
+                content: steeringPrompt,
+                status: "completed",
+                createdAt: now,
+              } as Doc<"workspaceChatMessages">,
+              ...priorMessages,
+            ]),
+            ...replayContext,
+          },
+        }
+      }
+
       await ctx.db.patch(continuation._id, {
         status: "running",
         updatedAt: now,
@@ -597,15 +691,6 @@ export const startTurn = mutation({
         lastError: undefined,
         updatedAt: now,
       })
-      // A provider session is resumable only when this failed turn reached the
-      // provider and yielded an accepted turn ID. Upload or transport failures
-      // before acceptance must replay the original request in a fresh session.
-      const canResumeProviderTurn = Boolean(
-        continuation.providerTurnId ?? continuation.codexTurnId
-      )
-      const providerSessionId = canResumeProviderTurn
-        ? chat.providerSessionId ?? chat.codexThreadId ?? null
-        : null
       return {
         chatId: chat._id,
         assistantMessageId: continuation._id,
@@ -874,6 +959,7 @@ export const branch = mutation({
           : {}),
         ...(message.citations ? { citations: message.citations } : {}),
         ...(message.annotations ? { annotations: message.annotations } : {}),
+        ...(message.steeringNotes ? { steeringNotes: message.steeringNotes } : {}),
         status: message.status === "running" ? "failed" : message.status,
         createdAt: now + index,
         updatedAt: now,

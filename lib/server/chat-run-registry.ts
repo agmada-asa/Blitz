@@ -9,7 +9,11 @@ export type ChatRunRegistration = {
   readonly expiresAt: number
 }
 
-type ActiveRun = ChatRunRegistration & { readonly controller: AbortController }
+type ActiveRun = ChatRunRegistration & {
+  readonly controller: AbortController
+  readonly finished: Promise<void>
+  readonly finish: () => void
+}
 
 const REGISTRY_KEY = Symbol.for("blitz.chat-run-registry")
 type GlobalWithRegistry = typeof globalThis & {
@@ -32,6 +36,7 @@ function removeExpired(now = Date.now()): void {
   for (const [entryKey, run] of registry()) {
     if (run.expiresAt <= now) {
       run.controller.abort()
+      run.finish()
       registry().delete(entryKey)
     }
   }
@@ -51,14 +56,21 @@ export function registerChatRun(
   removeExpired()
   const runKey = key(chatId, messageId)
   if (registry().has(runKey)) throw new Error("Chat run is already active")
+  let finish = (): void => {}
+  const finished = new Promise<void>((resolve) => {
+    finish = resolve
+  })
   registry().set(runKey, {
     chatId,
     messageId,
     signal: controller.signal,
     expiresAt,
     controller,
+    finished,
+    finish,
   })
   return () => {
+    finish()
     const current = registry().get(runKey)
     if (current?.controller === controller) registry().delete(runKey)
   }
@@ -71,6 +83,27 @@ export function pauseChatRun(chatId: string, messageId: string): boolean {
   const run = registry().get(runKey)
   if (!run) return false
   run.controller.abort()
+  registry().delete(runKey)
+  return true
+}
+
+/** Aborts one active run and awaits its background cleanup or a maximum timeout. */
+export async function pauseAndAwaitChatRun(
+  chatId: string,
+  messageId: string,
+  timeoutMs = 2_500
+): Promise<boolean> {
+  removeExpired()
+  const runKey = key(chatId, messageId)
+  const run = registry().get(runKey)
+  if (!run) return false
+  run.controller.abort()
+  if (timeoutMs > 0) {
+    await Promise.race([
+      run.finished,
+      new Promise((resolve) => setTimeout(resolve, timeoutMs)),
+    ])
+  }
   registry().delete(runKey)
   return true
 }

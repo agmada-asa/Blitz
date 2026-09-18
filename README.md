@@ -53,10 +53,6 @@ sessions. Claude disables local customizations and MCP servers. OpenCode uses
 process so saved agents cannot override its selected policy. Agent delegation
 and mode switching tools stay disabled in OpenCode.
 
-In development, **Test requests** in the composer runs a local fixture for all
-four request modes. It is useful for checking the UI without relying on a
-provider or MCP server that supports structured elicitation.
-
 Interactive chat treats attached project material as its primary evidence. If
 that material cannot resolve a question or a tool would materially improve the
 answer, Codex chat can use live web search when the provider allows it. External

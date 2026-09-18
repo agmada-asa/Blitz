@@ -7,8 +7,11 @@ import { useEffect, useMemo, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { Textarea } from "@/components/ui/textarea"
+import { ChevronRightIcon } from "@/components/ai/provider-icons"
 import {
+  extractApprovalCommand,
   parseAgentRequestInput,
   type AgentRequest,
   type AgentRequestField,
@@ -25,6 +28,8 @@ type AgentRequestPanelProps = {
   busy?: boolean
   /** Renders a completed interaction as transcript history without controls. */
   readOnly?: boolean
+  /** Optional container class overrides. */
+  className?: string
   /** Receives a validated browser submission for the request. */
   onSubmit: (submission: AgentRequestSubmission) => void
 }
@@ -73,84 +78,117 @@ function QuestionControl({
         <p className="text-xs text-muted-foreground">{question.header}</p>
       ) : null}
       {hasChoices ? (
-        <div className="space-y-1.5">
-          {options.map((option) => {
-            const value = option.value ?? option.label
-            return (
+        question.multiSelect ? (
+          <div className="space-y-1.5">
+            {options.map((option) => {
+              const value = option.value ?? option.label
+              const isChecked = Array.isArray(answer) && answer.includes(value)
+              const inputId = `agent-request-${question.id}-${value}`
+              return (
+                <label
+                  key={value}
+                  htmlFor={inputId}
+                  className={cn(
+                    "flex cursor-pointer items-start gap-2 rounded-lg border border-border/70 px-3 py-2 transition-colors hover:bg-muted/50",
+                    isChecked && "border-brand/50 bg-brand/5",
+                    disabled && "cursor-not-allowed opacity-60"
+                  )}
+                >
+                  <Checkbox
+                    id={inputId}
+                    checked={isChecked}
+                    disabled={disabled}
+                    className="mt-0.5"
+                    onCheckedChange={(checked) => {
+                      const current = Array.isArray(answer) ? answer : []
+                      onChange(
+                        checked
+                          ? [...current, value]
+                          : current.filter((item) => item !== value)
+                      )
+                    }}
+                  />
+                  <span className="min-w-0 text-sm">
+                    <span className="block text-foreground">{option.label}</span>
+                    {option.description ? (
+                      <span className="mt-0.5 block text-xs leading-5 text-muted-foreground">
+                        {option.description}
+                      </span>
+                    ) : null}
+                  </span>
+                </label>
+              )
+            })}
+          </div>
+        ) : (
+          <RadioGroup
+            value={typeof answer === "string" ? answer : ""}
+            onValueChange={onChange}
+            disabled={disabled}
+            className="gap-1.5"
+          >
+            {options.map((option) => {
+              const value = option.value ?? option.label
+              const isChecked = answer === value
+              const inputId = `agent-request-${question.id}-${value}`
+              return (
+                <label
+                  key={value}
+                  htmlFor={inputId}
+                  className={cn(
+                    "flex cursor-pointer items-start gap-2 rounded-lg border border-border/70 px-3 py-2 transition-colors hover:bg-muted/50",
+                    isChecked && "border-brand/50 bg-brand/5",
+                    disabled && "cursor-not-allowed opacity-60"
+                  )}
+                >
+                  <RadioGroupItem
+                    value={value}
+                    id={inputId}
+                    className="mt-0.5"
+                  />
+                  <span className="min-w-0 text-sm">
+                    <span className="block text-foreground">{option.label}</span>
+                    {option.description ? (
+                      <span className="mt-0.5 block text-xs leading-5 text-muted-foreground">
+                        {option.description}
+                      </span>
+                    ) : null}
+                  </span>
+                </label>
+              )
+            })}
+            {question.isOther ? (
               <label
-                key={value}
+                htmlFor={`agent-request-${question.id}-__other__`}
                 className={cn(
                   "flex cursor-pointer items-start gap-2 rounded-lg border border-border/70 px-3 py-2 transition-colors hover:bg-muted/50",
-                  (question.multiSelect
-                    ? Array.isArray(answer) && answer.includes(value)
-                    : answer === value) && "border-brand/50 bg-brand/5",
+                  answer === "__other__" && "border-brand/50 bg-brand/5",
                   disabled && "cursor-not-allowed opacity-60"
                 )}
               >
-                <input
-                  type={question.multiSelect ? "checkbox" : "radio"}
-                  name={`agent-request-${question.id}`}
-                  value={value}
-                  checked={question.multiSelect ? Array.isArray(answer) && answer.includes(value) : answer === value}
-                  disabled={disabled}
-                  className="mt-0.5 size-4 accent-[var(--brand)]"
-                  onChange={() =>
-                    question.multiSelect
-                      ? onChange(
-                          Array.isArray(answer)
-                            ? answer.includes(value)
-                              ? answer.filter((item) => item !== value)
-                              : [...answer, value]
-                            : [value]
-                        )
-                      : onChange(value)
-                  }
+                <RadioGroupItem
+                  value="__other__"
+                  id={`agent-request-${question.id}-__other__`}
+                  className="mt-0.5"
                 />
-                <span className="min-w-0 text-sm">
-                  <span className="block text-foreground">{option.label}</span>
-                  {option.description ? (
-                    <span className="mt-0.5 block text-xs leading-5 text-muted-foreground">
-                      {option.description}
-                    </span>
+                <span className="min-w-0 flex-1 text-sm text-foreground">
+                  Other
+                  {answer === "__other__" ? (
+                    <Input
+                      autoFocus
+                      type={question.isSecret ? "password" : "text"}
+                      value={otherValue ?? ""}
+                      disabled={disabled}
+                      placeholder="Type your answer"
+                      className="mt-2"
+                      onChange={(event) => onOtherChange(event.target.value)}
+                    />
                   ) : null}
                 </span>
               </label>
-            )
-          })}
-          {question.isOther ? (
-            <label
-              className={cn(
-                "flex cursor-pointer items-start gap-2 rounded-lg border border-border/70 px-3 py-2 transition-colors hover:bg-muted/50",
-                answer === "__other__" && "border-brand/50 bg-brand/5",
-                disabled && "cursor-not-allowed opacity-60"
-              )}
-            >
-              <input
-                type="radio"
-                name={`agent-request-${question.id}`}
-                value="__other__"
-                checked={answer === "__other__"}
-                disabled={disabled}
-                className="mt-0.5 size-4 accent-[var(--brand)]"
-                onChange={() => onChange("__other__")}
-              />
-              <span className="min-w-0 flex-1 text-sm text-foreground">
-                Other
-                {answer === "__other__" ? (
-                  <Input
-                    autoFocus
-                    type={question.isSecret ? "password" : "text"}
-                    value={otherValue ?? ""}
-                    disabled={disabled}
-                    placeholder="Type your answer"
-                    className="mt-2"
-                    onChange={(event) => onOtherChange(event.target.value)}
-                  />
-                ) : null}
-              </span>
-            </label>
-          ) : null}
-        </div>
+            ) : null}
+          </RadioGroup>
+        )
       ) : (
         <Input
           type={question.isSecret ? "password" : "text"}
@@ -263,6 +301,7 @@ export function AgentRequestPanel({
   request,
   busy = false,
   readOnly = false,
+  className,
   onSubmit,
 }: AgentRequestPanelProps) {
   const input = useMemo(
@@ -370,7 +409,10 @@ export function AgentRequestPanel({
     return (
       <section
         aria-label={`Blitz request result: ${request.title}`}
-        className="mt-2 rounded-xl border border-border/70 bg-muted/20 p-3 text-sm"
+        className={cn(
+          "rounded-xl border border-border/70 bg-muted/20 p-3 text-sm",
+          className
+        )}
       >
         <div className="flex items-center justify-between gap-3">
           <h3 className="font-medium text-foreground">{request.title}</h3>
@@ -380,6 +422,32 @@ export function AgentRequestPanel({
           <p className="mt-1 text-xs leading-5 text-muted-foreground">
             {request.prompt}
           </p>
+        ) : null}
+        {request.kind === "approval" &&
+        request.details &&
+        request.details !== request.prompt ? (
+          (() => {
+            const command = extractApprovalCommand(request.details)
+            return (
+              <details className="group mt-2">
+                <summary className="flex cursor-pointer select-none items-center gap-1.5 py-1 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground">
+                  <ChevronRightIcon className="size-3.5 shrink-0 transition-transform duration-200 group-open:rotate-90" />
+                  <span>{command ? "View command" : "View details"}</span>
+                </summary>
+                <div className="mt-2">
+                  {command ? (
+                    <pre className="overflow-x-auto rounded-lg border border-border/70 bg-background/80 px-3 py-2 font-mono text-xs text-foreground select-all">
+                      <code>{command}</code>
+                    </pre>
+                  ) : (
+                    <pre className="max-h-48 overflow-auto rounded-lg border border-border/70 bg-background/70 px-3 py-2 text-[11px] leading-5 whitespace-pre-wrap text-muted-foreground">
+                      {request.details}
+                    </pre>
+                  )}
+                </div>
+              </details>
+            )
+          })()
         ) : null}
         {input.validationError ? (
           <p className="mt-2 text-xs text-destructive">{input.validationError}</p>
@@ -422,6 +490,24 @@ export function AgentRequestPanel({
               })
             })()}
           </div>
+        ) : request.kind === "approval" ? (
+          (() => {
+            try {
+              const parsed = request.response
+                ? (JSON.parse(request.response) as { optionId?: string })
+                : null
+              if (parsed?.optionId === "acceptForSession") {
+                return (
+                  <p className="mt-1.5 text-xs text-muted-foreground">
+                    Allowed for this session
+                  </p>
+                )
+              }
+            } catch {
+              // Non-JSON responses or parse errors are not displayed for approvals.
+            }
+            return null
+          })()
         ) : request.response ? (
           <pre className="mt-2 max-h-40 overflow-auto rounded-lg bg-background/70 p-2 text-[11px] leading-5 whitespace-pre-wrap text-muted-foreground">
             {request.response}
@@ -470,32 +556,57 @@ export function AgentRequestPanel({
       </div>
 
       {request.kind === "approval" && request.details !== request.prompt ? (
-        <pre className="mt-2 max-h-48 overflow-auto rounded-lg border border-border/70 bg-background/70 px-3 py-2 text-[11px] leading-5 whitespace-pre-wrap text-muted-foreground">
-          {request.details}
-        </pre>
+        (() => {
+          const command = extractApprovalCommand(request.details)
+          return (
+            <details className="group mt-2">
+              <summary className="flex cursor-pointer select-none items-center gap-1.5 py-1 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground">
+                <ChevronRightIcon className="size-3.5 shrink-0 transition-transform duration-200 group-open:rotate-90" />
+                <span>{command ? "View command" : "View details"}</span>
+              </summary>
+              <div className="mt-2">
+                {command ? (
+                  <pre className="overflow-x-auto rounded-lg border border-border/70 bg-background/80 px-3 py-2 font-mono text-xs text-foreground select-all">
+                    <code>{command}</code>
+                  </pre>
+                ) : (
+                  <pre className="max-h-48 overflow-auto rounded-lg border border-border/70 bg-background/70 px-3 py-2 text-[11px] leading-5 whitespace-pre-wrap text-muted-foreground">
+                    {request.details}
+                  </pre>
+                )}
+              </div>
+            </details>
+          )
+        })()
       ) : null}
 
       {request.kind === "approval" && approvalOptions.length ? (
-        <fieldset className="mt-2 space-y-1.5">
+        <fieldset className="mt-3 space-y-2">
           <legend className="text-xs font-medium text-foreground">
             Choose an option
           </legend>
-          {approvalOptions.map((option) => {
-            const value = option.value ?? option.label
-            return (
-              <label key={value} className="flex items-start gap-2 text-sm">
-                <input
-                  type="radio"
-                  name={`agent-approval-${request.id}`}
-                  value={value}
-                  checked={approvalOption === value}
-                  disabled={busy || expired}
-                  onChange={() => setApprovalOption(value)}
-                />
-                <span>{option.label}</span>
-              </label>
-            )
-          })}
+          <RadioGroup
+            value={approvalOption}
+            onValueChange={setApprovalOption}
+            disabled={busy || expired}
+            className="gap-2"
+          >
+            {approvalOptions.map((option) => {
+              const value = option.value ?? option.label
+              const optionId = `agent-approval-${request.id}-${value}`
+              return (
+                <div key={value} className="flex items-center gap-2">
+                  <RadioGroupItem value={value} id={optionId} />
+                  <label
+                    htmlFor={optionId}
+                    className="cursor-pointer text-sm font-normal text-foreground"
+                  >
+                    {option.label}
+                  </label>
+                </div>
+              )
+            })}
+          </RadioGroup>
         </fieldset>
       ) : null}
 

@@ -12,6 +12,13 @@ export const MAX_WORKSPACE_CHAT_ATTACHMENTS = 8
 export const WORKSPACE_CHAT_CONTINUATION_PROMPT =
   "Continue the interrupted response from where it stopped. Do not repeat text that was already completed."
 
+/** Builds the continuation prompt, optionally steering the response with learner notes. */
+export function workspaceChatContinuationPrompt(steeringPrompt?: string): string {
+  const trimmed = steeringPrompt?.trim()
+  if (!trimmed) return WORKSPACE_CHAT_CONTINUATION_PROMPT
+  return `Continue the interrupted response from where it stopped. Steer the remainder of the response using the following learner notes: "${boundedText(trimmed, 2_000)}" Do not repeat text that was already completed.`
+}
+
 /** Identifies a study card that should start a fresh workspace chat. */
 export interface WorkspaceChatCardReference {
   /** Project that owns the learning item. */
@@ -32,6 +39,10 @@ export interface WorkspaceChatInlineAttachment {
   mimeType?: "image/png" | "image/jpeg" | "image/webp" | "image/gif"
   text: string
   url?: string
+  /** Bounded relative path in the agent's working directory when copied. */
+  workspacePath?: string
+  /** Absolute filesystem path to the attached file on the host. */
+  filePath?: string
 }
 
 /** User annotation on a previous assistant response attached to the current turn. */
@@ -47,6 +58,8 @@ export interface WorkspaceChatAnnotation {
 /** Validated input accepted by the workspace chat route. */
 export interface WorkspaceChatRequest {
   message: string
+  /** Optional learner guidance provided to steer an interrupted response. */
+  steeringPrompt?: string
   /** Project that owns a new chat; existing chats keep their persisted owner. */
   projectId?: Id<"projects">
   /** Runtime autonomy and user instructions selected in the chat composer. */
@@ -220,9 +233,22 @@ export function parseWorkspaceChatRequest(
   const hasAnnotations =
     Array.isArray(rawAnnotations) && rawAnnotations.length > 0
 
+  let steeringPrompt: string | undefined
+  if (continuationOf) {
+    if (typeof input.steeringPrompt === "string") {
+      const trimmed = input.steeringPrompt.trim()
+      if (trimmed.length > 2_000) throw new Error("Steering notes are too long")
+      steeringPrompt = trimmed || undefined
+    } else if (typeof input.message === "string" && input.message.trim()) {
+      const trimmed = input.message.trim()
+      if (trimmed.length > 2_000) throw new Error("Steering notes are too long")
+      steeringPrompt = trimmed
+    }
+  }
+
   let message = ""
   if (continuationOf) {
-    message = WORKSPACE_CHAT_CONTINUATION_PROMPT
+    message = workspaceChatContinuationPrompt(steeringPrompt)
   } else if (typeof input.message === "string") {
     message = input.message.trim()
     if (message.length > MAX_WORKSPACE_CHAT_MESSAGE_LENGTH) {
@@ -389,6 +415,7 @@ export function parseWorkspaceChatRequest(
     ...(card ? { card } : {}),
     ...(chatId ? { chatId } : {}),
     ...(continuationOf ? { continuationOf } : {}),
+    ...(steeringPrompt ? { steeringPrompt } : {}),
   }
 }
 
@@ -486,10 +513,18 @@ export function buildWorkspaceChatPrompt(
     }
   }
   for (const attachment of request.attachments) {
-    context.push(
-      `${attachment.kind.toUpperCase()}: ${attachment.label}${attachment.url ? ` (${attachment.url})` : ""}`,
-      boundedText(attachment.text, 24_000)
-    )
+    const header = `${attachment.kind.toUpperCase()}: ${attachment.label}${attachment.url ? ` (${attachment.url})` : ""}`
+    const lines: string[] = [header]
+    if (attachment.workspacePath) {
+      lines.push(`Workspace path: ${attachment.workspacePath}`)
+    }
+    if (attachment.filePath) {
+      lines.push(`File path: ${attachment.filePath}`)
+    }
+    if (attachment.text) {
+      lines.push(boundedText(attachment.text, 24_000))
+    }
+    context.push(lines.join("\n"))
   }
   if (request.annotations?.length) {
     context.push(
