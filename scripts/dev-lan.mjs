@@ -6,6 +6,7 @@ import { networkInterfaces } from "node:os"
 import { isIP } from "node:net"
 import { fileURLToPath } from "node:url"
 import { formatTerminalQr } from "./lan-qr.mjs"
+import { resolveLocalConvexPorts } from "../electron/service-manager.mjs"
 import {
   killProcessGroups,
   processGroupExists,
@@ -14,6 +15,7 @@ import {
 
 const port = process.env.BLITZ_PORT ?? "3001"
 const lanAddress = process.env.BLITZ_LAN_ADDRESS?.trim() || findLanAddress()
+const convexPorts = await resolveLocalConvexPorts(process.cwd(), process.env)
 const defaultApkPath = fileURLToPath(
   new URL("../build/android/blitz-android-debug.apk", import.meta.url)
 )
@@ -34,9 +36,9 @@ if (!lanAddress || isIP(lanAddress) !== 4) {
 const sharedEnvironment = {
   ...process.env,
   BLITZ_LAN_ADDRESS: lanAddress,
-  BLITZ_CONVEX_URL: process.env.BLITZ_CONVEX_URL ?? "http://127.0.0.1:3210",
-  NEXT_PUBLIC_CONVEX_URL: `http://${lanAddress}:3210`,
-  NEXT_PUBLIC_CONVEX_SITE_URL: `http://${lanAddress}:3211`,
+  BLITZ_CONVEX_URL: `http://127.0.0.1:${convexPorts.cloud}`,
+  NEXT_PUBLIC_CONVEX_URL: `http://${lanAddress}:${convexPorts.cloud}`,
+  NEXT_PUBLIC_CONVEX_SITE_URL: `http://${lanAddress}:${convexPorts.site}`,
   ...(apkPath ? { BLITZ_ANDROID_APK_PATH: apkPath } : {}),
 }
 
@@ -57,7 +59,20 @@ try {
 
 if (apkPath) console.log(`Android installer: ${lanUrl}/api/android\n`)
 
-start("npx", ["convex", "dev", "--tail-logs", "disable"], process.env)
+start(
+  "npx",
+  [
+    "convex",
+    "dev",
+    "--tail-logs",
+    "disable",
+    "--local-cloud-port",
+    String(convexPorts.cloud),
+    "--local-site-port",
+    String(convexPorts.site),
+  ],
+  sharedEnvironment
+)
 start(
   process.execPath,
   [

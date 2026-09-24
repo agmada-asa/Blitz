@@ -3,7 +3,10 @@
 import assert from "node:assert/strict"
 import { EventEmitter } from "node:events"
 import test from "node:test"
-import { ServiceManager } from "../electron/service-manager.mjs"
+import {
+  resolveLocalConvexPorts,
+  ServiceManager,
+} from "../electron/service-manager.mjs"
 
 /** Creates a child-process double that exits when its signal method is called. */
 function fakeChild(
@@ -22,10 +25,13 @@ test("restarts one failed worker and then bounds further recovery", async () => 
   const children: Array<ReturnType<typeof fakeChild>> = []
   const byPid = new Map<number, ReturnType<typeof fakeChild>>()
   const healthUrls: string[] = []
+  const convexPorts = await resolveLocalConvexPorts(process.cwd())
+  let convexArgs: string[] | undefined
   const manager = new ServiceManager({
     cwd: process.cwd(),
     port: 43210,
-    spawnProcess: () => {
+    spawnProcess: (command, args) => {
+      if (command === "npx") convexArgs = args
       const child = fakeChild(children.length + 1)
       children.push(child)
       byPid.set(child.pid, child)
@@ -44,7 +50,13 @@ test("restarts one failed worker and then bounds further recovery", async () => 
 
   await manager.start()
   assert.equal(children.length, 6)
-  assert.ok(healthUrls.some((url) => url.endsWith(":3210")))
+  assert.ok(healthUrls.includes(`http://127.0.0.1:${convexPorts.cloud}`))
+  assert.deepEqual(convexArgs?.slice(-4), [
+    "--local-cloud-port",
+    String(convexPorts.cloud),
+    "--local-site-port",
+    String(convexPorts.site),
+  ])
   children[2].emit("exit", 1, null)
   await new Promise((resolve) => setTimeout(resolve, 10))
   assert.equal(children.length, 7)
