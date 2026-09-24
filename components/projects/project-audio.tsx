@@ -1,11 +1,18 @@
 "use client"
 
-/** Creates and plays local Kokoro audiobooks and project podcasts. */
+/** Manages project audiobook and podcast creation, status, and playback. */
 
 import { useCallback, useEffect, useMemo, useState } from "react"
 import Link from "next/link"
 
 import { Button } from "@/components/ui/button"
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
   Select,
   SelectContent,
@@ -26,6 +33,7 @@ type AudioSource = {
 /** Props required to load and create audio for one project. */
 type ProjectAudioProps = {
   projectId: string
+  projectTitle?: string
   sources: AudioSource[]
 }
 
@@ -67,14 +75,20 @@ function formatCreatedAt(createdAt: number): string {
 }
 
 /** Loads project audio, creates requests, and presents playback and download links. */
-export function ProjectAudio({ projectId, sources }: ProjectAudioProps) {
+export function ProjectAudio({
+  projectId,
+  projectTitle = "Project",
+  sources,
+}: ProjectAudioProps) {
   const [items, setItems] = useState<ProjectAudioItem[]>([])
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const [createError, setCreateError] = useState<string | null>(null)
   const [sourceId, setSourceId] = useState("")
   const [durationMinutes, setDurationMinutes] =
     useState<(typeof DURATIONS)[number]>(15)
   const [focus, setFocus] = useState("")
+  const [createOpen, setCreateOpen] = useState(false)
   const [submitting, setSubmitting] = useState<"audiobook" | "podcast" | null>(
     null
   )
@@ -96,7 +110,7 @@ export function ProjectAudio({ projectId, sources }: ProjectAudioProps) {
       if (!response.ok)
         throw new Error(payload.error || "Audio could not be loaded.")
       setItems(payload.items ?? [])
-      setError(null)
+      setLoadError(null)
     },
     [apiUrl]
   )
@@ -107,7 +121,7 @@ export function ProjectAudio({ projectId, sources }: ProjectAudioProps) {
       void refresh(controller.signal)
         .catch((cause: unknown) => {
           if (!controller.signal.aborted)
-            setError(
+            setLoadError(
               cause instanceof Error
                 ? cause.message
                 : "Audio could not be loaded."
@@ -130,7 +144,7 @@ export function ProjectAudio({ projectId, sources }: ProjectAudioProps) {
     if (!hasActiveJobs) return
     const timer = window.setInterval(() => {
       void refresh().catch((cause: unknown) =>
-        setError(
+        setLoadError(
           cause instanceof Error
             ? cause.message
             : "Audio status could not be refreshed."
@@ -143,7 +157,7 @@ export function ProjectAudio({ projectId, sources }: ProjectAudioProps) {
   /** Submits a project audio generation request and refreshes the visible list. */
   async function createAudio(kind: "audiobook" | "podcast"): Promise<void> {
     setSubmitting(kind)
-    setError(null)
+    setCreateError(null)
     try {
       const response = await fetch(apiUrl, {
         method: "POST",
@@ -166,8 +180,9 @@ export function ProjectAudio({ projectId, sources }: ProjectAudioProps) {
         ...current.filter((item) => item.id !== payload.item!.id),
       ])
       if (kind === "podcast") setFocus("")
+      setCreateOpen(false)
     } catch (cause) {
-      setError(
+      setCreateError(
         cause instanceof Error ? cause.message : "Audio could not be created."
       )
     } finally {
@@ -176,200 +191,103 @@ export function ProjectAudio({ projectId, sources }: ProjectAudioProps) {
   }
 
   return (
-    <div aria-labelledby="project-audio-heading" className="space-y-5">
-      <header>
+    <main className="mx-auto max-w-5xl space-y-8 px-4 py-6 pb-32 sm:px-8 sm:py-8">
+      <header className="space-y-3">
+        <Button asChild variant="ghost" size="sm" className="-ml-3 min-h-9">
+          <Link href={`/projects/${encodeURIComponent(projectId)}`}>
+            ← {projectTitle}
+          </Link>
+        </Button>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h1 className="font-heading text-3xl font-medium tracking-tight">
+            Listen
+          </h1>
+          <Button
+            type="button"
+            variant="outline"
+            className="min-h-10"
+            onClick={() => {
+              setCreateError(null)
+              setCreateOpen(true)
+            }}
+          >
+            Create recording
+          </Button>
+        </div>
+      </header>
+
+      <section aria-labelledby="audio-library-heading" className="space-y-3">
         <h2
-          id="project-audio-heading"
+          id="audio-library-heading"
           className="font-heading text-xl font-medium"
         >
-          Listen to this project
+          Your recordings
         </h2>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Kokoro speaks on this Mac using the voices saved in Settings.
-        </p>
-      </header>
-      <div className="space-y-5">
-        <section aria-labelledby="audiobook-heading" className="space-y-3">
-          <h3 id="audiobook-heading" className="text-sm font-medium">
-            Audiobook
-          </h3>
-          <p className="text-sm text-muted-foreground">
-            Your Research model removes page clutter and smooths the text before
-            Kokoro reads it. This may use model credits.
+        {loading ? (
+          <p className="text-sm text-muted-foreground" role="status">
+            Loading recordings…
           </p>
-          {readySources.length ? (
-            <div className="flex flex-col gap-2 sm:flex-row">
-              <Select value={selectedSourceId} onValueChange={setSourceId}>
-                <SelectTrigger
-                  aria-label="Source for audiobook"
-                  className="min-h-10 flex-1"
-                >
-                  <SelectValue placeholder="Choose a source" />
-                </SelectTrigger>
-                <SelectContent>
-                  {readySources.map((source) => (
-                    <SelectItem key={source.id} value={source.id}>
-                      {source.filename}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <Button
-                className="min-h-10"
-                disabled={
-                  submitting !== null || hasActiveJobs || !selectedSourceId
-                }
-                onClick={() => void createAudio("audiobook")}
-              >
-                {submitting === "audiobook" ? "Starting…" : "Create audiobook"}
-              </Button>
-            </div>
-          ) : (
-            <p className="rounded-lg bg-muted/60 px-3 py-2 text-sm text-muted-foreground">
-              Add a ready source to create an audiobook.
-            </p>
-          )}
-        </section>
-
-        <section
-          aria-labelledby="podcast-heading"
-          className="space-y-3 border-t border-border/70 pt-5"
-        >
-          <h3 id="podcast-heading" className="text-sm font-medium">
-            Project podcast
-          </h3>
-          <p className="text-sm text-muted-foreground">
-            Your Research model writes from project sources, then Kokoro speaks
-            the episode. Longer episodes take more time and may use more model
-            credits.
-          </p>
-          <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto]">
-            <label className="space-y-1.5 text-sm">
-              <span>Episode length</span>
-              <Select
-                value={String(durationMinutes)}
-                onValueChange={(value) =>
-                  setDurationMinutes(
-                    Number(value) as (typeof DURATIONS)[number]
-                  )
-                }
-              >
-                <SelectTrigger
-                  aria-label="Podcast episode length"
-                  className="min-h-10"
-                >
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {DURATIONS.map((duration) => (
-                    <SelectItem key={duration} value={String(duration)}>
-                      {duration} minutes
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </label>
-            <span className="hidden sm:block" aria-hidden="true" />
-          </div>
-          <label className="block space-y-1.5 text-sm">
-            <span>
-              What should the hosts focus on?{" "}
-              <span className="text-muted-foreground">(optional)</span>
-            </span>
-            <Textarea
-              value={focus}
-              onChange={(event) => setFocus(event.target.value)}
-              maxLength={500}
-              placeholder="For example, explain the key ideas and how they connect."
-              className="min-h-20"
-            />
-          </label>
-          <Button
-            className="min-h-10 w-full sm:w-auto"
-            disabled={
-              submitting !== null || hasActiveJobs || !readySources.length
-            }
-            onClick={() => void createAudio("podcast")}
-          >
-            {submitting === "podcast" ? "Starting…" : "Create podcast"}
-          </Button>
-        </section>
-
-        <section
-          aria-labelledby="audio-library-heading"
-          className="space-y-3 border-t border-border/70 pt-5"
-        >
-          <h3 id="audio-library-heading" className="text-sm font-medium">
-            Your audio
-          </h3>
-          {loading ? (
-            <p className="text-sm text-muted-foreground" role="status">
-              Loading audio…
-            </p>
-          ) : null}
-          {!loading && !items.length && !error ? (
-            <p className="text-sm text-muted-foreground">
-              Your audiobooks and podcasts will appear here.
-            </p>
-          ) : null}
+        ) : null}
+        {!loading && !items.length && !loadError ? (
+          <p className="text-sm text-muted-foreground">No recordings yet.</p>
+        ) : null}
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {items.map((item) => (
             <article
               key={item.id}
-              className="space-y-2 rounded-lg border border-border/70 p-3"
+              className="flex aspect-square min-w-0 flex-col justify-between gap-4 rounded-xl border border-border/70 bg-card p-4 sm:p-5"
             >
-              <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
+              <div className="space-y-3">
                 <div className="min-w-0">
-                  <h4 className="truncate text-sm font-medium">{item.title}</h4>
-                  <p className="text-xs text-muted-foreground">
-                    {item.kind === "audiobook"
-                      ? "Audiobook"
-                      : `Podcast${item.durationMinutes ? ` · ${Math.round(item.durationMinutes)} min` : ""}`}
+                  <h3 className="line-clamp-3 font-heading text-lg font-medium break-words">
+                    {item.title}
+                  </h3>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    {item.kind === "audiobook" ? "Audiobook" : "Podcast"}
+                    {item.durationMinutes
+                      ? ` · ${Math.round(item.durationMinutes)} min`
+                      : ""}
                     {formatCreatedAt(item.createdAt)
                       ? ` · ${formatCreatedAt(item.createdAt)}`
                       : ""}
                   </p>
                 </div>
-                <span className="text-xs text-muted-foreground">
+                <span className="text-sm text-muted-foreground" role="status">
                   {generationLabel(item)}
                 </span>
-              </div>
-              {item.error ? (
-                <p className="text-sm text-destructive">{item.error}</p>
-              ) : null}
-              {item.audioUrl && item.status === "completed" ? (
-                <div className="space-y-2">
-                  <audio
-                    className="w-full"
-                    controls
-                    preload="none"
-                    src={item.audioUrl}
+                {item.error ? (
+                  <p
+                    className="line-clamp-3 text-sm text-destructive"
+                    role="alert"
                   >
-                    Your browser does not support audio playback.
-                  </audio>
-                  <div className="flex flex-wrap items-center gap-3">
-                    <Button asChild variant="outline" size="sm">
-                      <Link
-                        href={`/projects/${encodeURIComponent(projectId)}/listen/${item.id}`}
-                      >
-                        Open listening room
-                      </Link>
-                    </Button>
-                    <a
-                      className="text-sm font-medium text-brand underline-offset-4 hover:underline"
-                      href={`${item.audioUrl}?download=1`}
-                      download
+                    {item.error}
+                  </p>
+                ) : null}
+              </div>
+              {item.status === "completed" && item.audioUrl ? (
+                <div className="flex flex-col gap-2">
+                  <Button asChild className="min-h-10 w-full">
+                    <Link
+                      href={`/projects/${encodeURIComponent(projectId)}/listen/${encodeURIComponent(item.id)}`}
                     >
-                      Download audio
-                    </a>
-                  </div>
+                      Listen
+                    </Link>
+                  </Button>
+                  <a
+                    className="min-h-9 content-center text-center text-sm font-medium text-brand underline-offset-4 hover:underline focus-visible:rounded-sm focus-visible:outline-2 focus-visible:outline-ring"
+                    href={`${item.audioUrl}?download=1`}
+                    download
+                  >
+                    Download audio
+                  </a>
                 </div>
               ) : null}
             </article>
           ))}
-        </section>
-        {error ? (
+        </div>
+        {loadError ? (
           <div className="flex flex-wrap items-center gap-3" role="alert">
-            <p className="text-sm text-destructive">{error}</p>
+            <p className="text-sm text-destructive">{loadError}</p>
             <Button
               type="button"
               variant="outline"
@@ -378,7 +296,7 @@ export function ProjectAudio({ projectId, sources }: ProjectAudioProps) {
                 setLoading(true)
                 void refresh()
                   .catch((cause: unknown) =>
-                    setError(
+                    setLoadError(
                       cause instanceof Error
                         ? cause.message
                         : "Audio could not be loaded."
@@ -387,11 +305,151 @@ export function ProjectAudio({ projectId, sources }: ProjectAudioProps) {
                   .finally(() => setLoading(false))
               }}
             >
-              Retry
+              Try again
             </Button>
           </div>
         ) : null}
-      </div>
-    </div>
+      </section>
+
+      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+        <DialogContent className="max-h-[90svh] overflow-y-auto sm:max-w-xl">
+          <DialogHeader>
+            <DialogTitle>Create recording</DialogTitle>
+          </DialogHeader>
+          <Tabs defaultValue="audiobook" className="items-start">
+            <TabsList className="w-full max-w-sm">
+              <TabsTrigger value="audiobook" className="flex-1">
+                Audiobook
+              </TabsTrigger>
+              <TabsTrigger value="podcast" className="flex-1">
+                Podcast
+              </TabsTrigger>
+            </TabsList>
+            <TabsContent value="audiobook" className="w-full">
+              <div className="space-y-3">
+                <label className="block space-y-1.5 text-sm">
+                  <span className="font-medium">Source</span>
+                  {readySources.length ? (
+                    <Select
+                      value={selectedSourceId}
+                      onValueChange={setSourceId}
+                    >
+                      <SelectTrigger
+                        aria-label="Source for audiobook"
+                        className="min-h-10"
+                      >
+                        <SelectValue placeholder="Choose a source" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {readySources.map((source) => (
+                          <SelectItem key={source.id} value={source.id}>
+                            {source.filename}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  ) : (
+                    <Select disabled>
+                      <SelectTrigger
+                        aria-label="Source for audiobook"
+                        className="min-h-10"
+                      >
+                        <SelectValue placeholder="Choose a source" />
+                      </SelectTrigger>
+                    </Select>
+                  )}
+                </label>
+                <Button
+                  className="min-h-10 w-full"
+                  disabled={
+                    submitting !== null || hasActiveJobs || !selectedSourceId
+                  }
+                  onClick={() => void createAudio("audiobook")}
+                >
+                  {submitting === "audiobook"
+                    ? "Starting…"
+                    : "Create audiobook"}
+                </Button>
+              </div>
+            </TabsContent>
+            <TabsContent value="podcast" className="w-full">
+              <div className="space-y-3">
+                <label className="block space-y-1.5 text-sm">
+                  <span className="font-medium">Episode length</span>
+                  <Select
+                    value={String(durationMinutes)}
+                    onValueChange={(value) =>
+                      setDurationMinutes(
+                        Number(value) as (typeof DURATIONS)[number]
+                      )
+                    }
+                  >
+                    <SelectTrigger
+                      aria-label="Podcast episode length"
+                      className="min-h-10"
+                    >
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {DURATIONS.map((duration) => (
+                        <SelectItem key={duration} value={String(duration)}>
+                          {duration} minutes
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </label>
+                <label className="block space-y-1.5 text-sm">
+                  <span className="font-medium">
+                    Focus{" "}
+                    <span className="font-normal text-muted-foreground">
+                      (optional)
+                    </span>
+                  </span>
+                  <Textarea
+                    value={focus}
+                    onChange={(event) => setFocus(event.target.value)}
+                    maxLength={500}
+                    placeholder="What should the hosts focus on?"
+                    className="min-h-20"
+                  />
+                </label>
+                <Button
+                  className="min-h-10 w-full"
+                  disabled={
+                    submitting !== null || hasActiveJobs || !readySources.length
+                  }
+                  onClick={() => void createAudio("podcast")}
+                >
+                  {submitting === "podcast" ? "Starting…" : "Create podcast"}
+                </Button>
+              </div>
+            </TabsContent>
+          </Tabs>
+          {!readySources.length ? (
+            <p className="text-sm text-muted-foreground">
+              Add a ready source in the{" "}
+              <Link
+                className="font-medium text-brand underline-offset-4 hover:underline"
+                href={`/projects/${encodeURIComponent(projectId)}`}
+              >
+                project overview
+              </Link>{" "}
+              to create a recording.
+            </p>
+          ) : null}
+          {hasActiveJobs ? (
+            <p className="text-sm text-muted-foreground" role="status">
+              Finish the current recording before starting another.
+            </p>
+          ) : null}
+          {createError ? (
+            <p role="alert" className="text-sm text-destructive">
+              {createError}
+            </p>
+          ) : null}
+        </DialogContent>
+      </Dialog>
+    </main>
   )
 }

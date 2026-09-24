@@ -10,7 +10,6 @@ import { Checkbox } from "@/components/ui/checkbox"
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
@@ -189,7 +188,7 @@ export function ListeningRoom({ projectId, audioId }: ListeningRoomProps) {
     setAskOpen(true)
   }
 
-  /** Sends the chosen passage IDs and in-dialog history to the Replies model. */
+  /** Sends the selected passages and conversation to the project audio endpoint. */
   async function askBlitz(): Promise<void> {
     const text = question.trim()
     if (!text || asking || !askIndices.length) return
@@ -247,8 +246,8 @@ export function ListeningRoom({ projectId, audioId }: ListeningRoomProps) {
     return (
       <main className="mx-auto max-w-4xl space-y-4 px-4 py-8 sm:px-8">
         <Button asChild variant="outline">
-          <Link href={`/projects/${encodeURIComponent(projectId)}`}>
-            Back to project
+          <Link href={`/projects/${encodeURIComponent(projectId)}/listen`}>
+            Back to Listen
           </Link>
         </Button>
         <p role="alert" className="text-sm text-destructive">
@@ -261,21 +260,18 @@ export function ListeningRoom({ projectId, audioId }: ListeningRoomProps) {
   return (
     <main className="mx-auto max-w-6xl px-4 pt-6 pb-28 sm:px-8 sm:pt-10">
       <Button asChild variant="ghost" className="mb-6 -ml-3">
-        <Link href={`/projects/${encodeURIComponent(projectId)}`}>
-          ← Back to project
+        <Link href={`/projects/${encodeURIComponent(projectId)}/listen`}>
+          ← Back to Listen
         </Link>
       </Button>
       <div className="mb-8">
         <p className="text-sm text-muted-foreground">
-          {recording.item.kind === "podcast" ? "Project podcast" : "Audiobook"}
+          {recording.item.kind === "podcast" ? "Podcast" : "Audiobook"} ·{" "}
+          {formatTime(recording.transcript.durationSeconds)}
         </p>
         <h1 className="mt-1 font-heading text-3xl font-medium tracking-tight sm:text-4xl">
           {recording.item.title}
         </h1>
-        <p className="mt-2 text-sm text-muted-foreground">
-          {formatTime(recording.transcript.durationSeconds)} of audio · Kokoro
-          on this Mac
-        </p>
       </div>
 
       <div className="grid gap-8 lg:grid-cols-[minmax(0,320px)_minmax(0,1fr)] lg:items-start">
@@ -320,10 +316,6 @@ export function ListeningRoom({ projectId, audioId }: ListeningRoomProps) {
           >
             Ask about this passage
           </Button>
-          <p className="text-sm leading-6 text-muted-foreground">
-            Follow the highlighted passage as it plays. Select passages in the
-            transcript to ask about them together.
-          </p>
         </section>
 
         <section aria-labelledby="transcript-heading" className="min-w-0">
@@ -335,9 +327,6 @@ export function ListeningRoom({ projectId, audioId }: ListeningRoomProps) {
               >
                 Transcript
               </h2>
-              <p className="mt-1 text-sm text-muted-foreground">
-                {segments.length} timed passages
-              </p>
             </div>
             <Button
               size="sm"
@@ -345,7 +334,7 @@ export function ListeningRoom({ projectId, audioId }: ListeningRoomProps) {
               aria-pressed={followAlong}
               onClick={() => setFollowAlong((current) => !current)}
             >
-              Follow along {followAlong ? "on" : "off"}
+              {followAlong ? "Follow along on" : "Follow along off"}
             </Button>
           </div>
           {selection.length ? (
@@ -431,11 +420,7 @@ export function ListeningRoom({ projectId, audioId }: ListeningRoomProps) {
       <Dialog open={askOpen} onOpenChange={setAskOpen}>
         <DialogContent className="flex max-h-[88svh] flex-col sm:max-w-xl">
           <DialogHeader>
-            <DialogTitle>Ask about selected audio</DialogTitle>
-            <DialogDescription>
-              Blitz uses your Replies model and the selected transcript
-              passages.
-            </DialogDescription>
+            <DialogTitle>Ask about this passage</DialogTitle>
           </DialogHeader>
           <div className="min-h-0 flex-1 space-y-4 overflow-y-auto pr-1">
             <blockquote className="max-h-36 overflow-y-auto border-l-2 border-brand pl-3 text-sm leading-6 text-muted-foreground">
