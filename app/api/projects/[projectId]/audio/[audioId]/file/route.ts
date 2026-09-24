@@ -1,7 +1,6 @@
 /** Streams a completed local project recording with browser seeking support. */
 
-import { createReadStream, promises as fs } from "node:fs"
-import { Readable } from "node:stream"
+import { promises as fs } from "node:fs"
 
 import { api } from "@/convex/_generated/api"
 import type { Id } from "@/convex/_generated/dataModel"
@@ -33,6 +32,64 @@ function requestedRange(
   return { start, end }
 }
 
+/** Reads a bounded file range and closes its handle once, including on seek cancellation. */
+async function fileRangeStream(
+  path: string,
+  start: number,
+  end: number
+): Promise<ReadableStream<Uint8Array>> {
+  const handle = await fs.open(path, "r")
+  let position = start
+  let closed = false
+  let closing: Promise<void> | undefined
+
+  /** Closes the file at most once when playback ends or the browser abandons a range. */
+  function closeFile(): Promise<void> {
+    closed = true
+    return (closing ??= handle.close())
+  }
+
+  return new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      if (closed) return
+      try {
+        const remaining = end - position + 1
+        if (remaining <= 0) {
+          await closeFile()
+          controller.close()
+          return
+        }
+        const buffer = Buffer.allocUnsafe(Math.min(64 * 1024, remaining))
+        const { bytesRead } = await handle.read(
+          buffer,
+          0,
+          buffer.length,
+          position
+        )
+        if (closed) return
+        if (!bytesRead) {
+          await closeFile()
+          controller.close()
+          return
+        }
+        position += bytesRead
+        controller.enqueue(buffer.subarray(0, bytesRead))
+        if (position > end) {
+          await closeFile()
+          controller.close()
+        }
+      } catch (error) {
+        if (closed) return
+        controller.error(error)
+        await closeFile()
+      }
+    },
+    async cancel() {
+      await closeFile()
+    },
+  })
+}
+
 /** Serves only a completed file belonging to an existing project. */
 export async function GET(
   request: Request,
@@ -54,8 +111,8 @@ export async function GET(
     const end = range?.end ?? size - 1
     const filename = `${recording.item.kind}-${audioId}.wav`
     const download = new URL(request.url).searchParams.has("download")
-    const stream = createReadStream(recording.path, { start, end })
-    return new Response(Readable.toWeb(stream) as ReadableStream<Uint8Array>, {
+    const stream = await fileRangeStream(recording.path, start, end)
+    return new Response(stream, {
       status: range ? 206 : 200,
       headers: {
         "Content-Type": "audio/wav",
