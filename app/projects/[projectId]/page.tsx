@@ -7,12 +7,19 @@ import Link from "next/link"
 import { use, useEffect, useState } from "react"
 
 import { ProjectActions } from "@/components/projects/project-actions"
+import { ProjectAudio } from "@/components/projects/project-audio"
 import { ProjectFiles } from "@/components/projects/project-files"
 import { ProjectLearningWorkspace } from "@/components/projects/project-learning-workspace"
 import { ResearchPanel } from "@/components/projects/research-panel"
 import { SourceOverviewDialog } from "@/components/projects/source-overview-dialog"
 import { SourceUploader } from "@/components/projects/source-uploader"
 import { Button } from "@/components/ui/button"
+import {
+  Dialog,
+  DialogContent,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog"
 import { Skeleton } from "@/components/ui/skeleton"
 import { api } from "@/convex/_generated/api"
 import type { Id } from "@/convex/_generated/dataModel"
@@ -158,6 +165,26 @@ export default function ProjectPage({
         }}
         headerActions={
           <>
+            <Dialog>
+              <DialogTrigger asChild>
+                <Button variant="outline" className="min-h-10 rounded-full">
+                  Listen
+                </Button>
+              </DialogTrigger>
+              <DialogContent className="max-h-[88svh] overflow-y-auto sm:max-w-3xl">
+                <DialogTitle className="sr-only">
+                  Listen to this project
+                </DialogTitle>
+                <ProjectAudio
+                  projectId={projectId}
+                  sources={sources.map((source) => ({
+                    id: String(source._id),
+                    filename: source.filename,
+                    status: source.status,
+                  }))}
+                />
+              </DialogContent>
+            </Dialog>
             <Button
               asChild
               variant="outline"
@@ -241,7 +268,8 @@ export default function ProjectPage({
                 }}
               />
             )}
-            {sourceStatus === "CanLoadMore" || sourceStatus === "LoadingMore" ? (
+            {sourceStatus === "CanLoadMore" ||
+            sourceStatus === "LoadingMore" ? (
               <Button
                 variant="outline"
                 className="mt-4"

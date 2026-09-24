@@ -1,0 +1,21 @@
+# Project audio
+
+Blitz can narrate a ready source as an audiobook or write a podcast from the ready sources in a project. Both features run Kokoro on the Mac hosting Blitz. Chat's **Read aloud** action uses the same local speech worker and the first voice saved in Settings.
+
+## Voices and setup
+
+Settings offers five Kokoro voices with short previews. Users save one or two voices in order. The first narrates audiobooks and chat replies. Podcasts use one host when one voice is saved and alternate between two hosts when two are saved. Voice IDs are validated at the route and Convex boundaries.
+
+Run `scripts/setup-kokoro.sh` once on the Mac. [Local Kokoro setup](local-kokoro.md) covers the Python environment and model download. The worker keeps the model loaded between requests, so a long recording submits short sections through the same queue used by chat playback. A chat request can run between sections of a long job.
+
+## Generation
+
+- An audiobook reads the full `extractedText` of one ready project source. It does not send that text to a text model.
+- A podcast first sends project source text to the configured **Research** model. Large projects are summarized in bounded source sections before the model writes an outline and five-minute script sections. Source text and the optional focus are treated as data, and each section must pass a dialogue and word-count check before speech starts. This means podcast creation can use provider credits even though speech is local.
+- Podcast length choices are 15, 30, 60, and 90 minutes. The final length depends on the selected voices' speaking pace; the saved item reports measured audio length after generation.
+
+`POST /api/projects/[projectId]/audio` starts a background job. `GET` on the same route lists its state. The browser polls while a job is active and shows the current stage; recording progress is measured in completed speech chunks. Manifests, timed transcript JSON, and completed WAV audio live under the project's `Audio/<id>/` directory. Podcasts also keep their original script JSON. `/api/projects/[projectId]/audio/[audioId]/file` serves completed audio with byte ranges for seeking. The WAV download is uncompressed, so long episodes can use substantial disk space.
+
+The listening room at `/projects/[projectId]/listen/[audioId]` follows the timed transcript during playback and can seek to any passage. WAV part lengths are measured, then the shorter displayed passages receive approximate times within each part based on their text length. Users can select up to twelve passages and ask about them in a popup. The popup sends only those saved passages and its short in-dialog history to the configured Replies model. Those questions use provider credits; closing the popup discards its temporary conversation.
+
+Only one audio job per project starts at a time. A job interrupted when the local host exits is marked failed when the app next reads it; the user can create it again. Failed jobs retain their error so the interface can explain the recovery step. Source files and generated audio use the existing ignored project data directory, or `BLITZ_DATA_DIR` when configured.
