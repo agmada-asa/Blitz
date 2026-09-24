@@ -411,6 +411,21 @@ export default defineSchema({
     updatedAt: v.number(),
   }).index("by_scope", ["scope"]),
 
+  /** One global record for the ordered Kokoro voices used as podcast hosts. */
+  audioVoiceSettings: defineTable({
+    scope: v.literal("global"),
+    voiceIds: v.array(
+      v.union(
+        v.literal("af_heart"),
+        v.literal("af_bella"),
+        v.literal("af_nicole"),
+        v.literal("am_fenrir"),
+        v.literal("am_puck")
+      )
+    ),
+    updatedAt: v.number(),
+  }).index("by_scope", ["scope"]),
+
   /** General Blitz sessions opened from the top-level Chat tab. */
   workspaceChats: defineTable({
     /** Optional owning project. Chats can exist independently of projects. */

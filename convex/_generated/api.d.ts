@@ -11,6 +11,7 @@
 import type * as activity from "../activity.js";
 import type * as ai_provider_settings from "../ai_provider_settings.js";
 import type * as attempts from "../attempts.js";
+import type * as audioSettings from "../audioSettings.js";
 import type * as cards from "../cards.js";
 import type * as chatAgents from "../chatAgents.js";
 import type * as chatCitations from "../chatCitations.js";
@@ -40,6 +41,7 @@ declare const fullApi: ApiFromModules<{
   activity: typeof activity;
   ai_provider_settings: typeof ai_provider_settings;
   attempts: typeof attempts;
+  audioSettings: typeof audioSettings;
   cards: typeof cards;
   chatAgents: typeof chatAgents;
   chatCitations: typeof chatCitations;
