@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
 import { ChevronRightIcon } from "@/components/ai/provider-icons"
 import {
@@ -202,7 +203,7 @@ function QuestionControl({
   )
 }
 
-/** Renders one MCP form field with the smallest native control that fits its type. */
+/** Renders one MCP form field with the shared control that fits its type. */
 function FormFieldControl({
   field,
   value,
@@ -228,23 +229,25 @@ function FormFieldControl({
   }
   if (field.type === "single-select") {
     return (
-      <select
-        aria-label={field.label}
+      <Select
         value={typeof value === "string" ? value : ""}
         disabled={disabled}
-        className="h-8 w-full rounded-lg border border-input bg-background px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50"
-        onChange={(event) => onChange(event.target.value)}
+        onValueChange={onChange}
       >
-        <option value="">Select an option</option>
-        {(field.options ?? []).map((option) => (
-          <option
-            key={option.value ?? option.label}
-            value={option.value ?? option.label}
-          >
-            {option.label}
-          </option>
-        ))}
-      </select>
+        <SelectTrigger aria-label={field.label} className="w-full">
+          <SelectValue placeholder="Select an option" />
+        </SelectTrigger>
+        <SelectContent>
+          {(field.options ?? []).map((option) => (
+            <SelectItem
+              key={option.value ?? option.label}
+              value={option.value ?? option.label}
+            >
+              {option.label}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
     )
   }
   if (field.type === "multi-select") {

@@ -551,6 +551,24 @@ export function ChatWorkspace({
   const [linkUrl, setLinkUrl] = useState("")
   const [importingLink, setImportingLink] = useState(false)
   const persistedAttachments = activeChat?.attachments ?? []
+  const contextualAttachments = [
+    ...attachments.filter(
+      (attachment) =>
+        attachment.kind === "card" || attachment.kind === "project"
+    ),
+    ...persistedAttachments.filter(
+      (attachment) =>
+        attachment.kind === "card" || attachment.kind === "project"
+    ),
+  ].filter(
+    (attachment, index, all) =>
+      all.findIndex(
+        (candidate) =>
+          candidate.kind === attachment.kind &&
+          (candidate.itemId ?? candidate.projectId) ===
+            (attachment.itemId ?? attachment.projectId)
+      ) === index
+  )
   const messages = activeChat?.messages ?? []
   const userClientMessageIds = useMemo(
     () =>
@@ -564,6 +582,13 @@ export function ChatWorkspace({
   const hasOrphanPersistedAttachments =
     persistedAttachments.length > 0 &&
     !messages.some((m) => m.role === "user")
+  const composerAttachments = [
+    ...(hasOrphanPersistedAttachments ? persistedAttachments : []),
+    ...attachments,
+  ].filter(
+    (attachment) =>
+      attachment.kind !== "card" && attachment.kind !== "project"
+  )
   const latestMessage = messages[messages.length - 1]
   const continuableMessage =
     latestMessage?.role === "assistant" &&
@@ -660,6 +685,26 @@ export function ChatWorkspace({
   const selectedCard = attachments.find(
     (attachment) => attachment.kind === "card" && attachment.itemId
   )
+  const contextualCard =
+    selectedCard ??
+    persistedAttachments.find(
+      (attachment) => attachment.kind === "card" && attachment.itemId
+    )
+  const contextualProject =
+    selectedProject ??
+    persistedAttachments.find(
+      (attachment) => attachment.kind === "project" && attachment.projectId
+    )
+  const contextProjectId =
+    contextualCard?.projectId ??
+    contextualProject?.projectId ??
+    activeChat?.projectId ??
+    newChatProjectId
+  const contextProject = projects?.find(
+    (project) => project._id === contextProjectId
+  )
+  const contextProjectLabel =
+    contextProject?.title ?? contextualProject?.label ?? "Project"
   const isStreaming = sending || activeChat?.status === "running"
   const isRunning =
     uploadingFiles ||
@@ -727,20 +772,6 @@ export function ChatWorkspace({
   const effectiveWorkingProjectId = agentSettingsTouched
     ? workingProjectId
     : (persistedAgentSettings?.workingProjectId ?? workingProjectId)
-  const welcomeProjectId =
-    selectedCard?.projectId ??
-    selectedProject?.projectId ??
-    activeChat?.projectId ??
-    newChatProjectId
-  const welcomeProject = projects?.find(
-    (project) => project._id === welcomeProjectId
-  )
-  const welcomeProjectLabel =
-    welcomeProject?.title ??
-    (selectedProject && selectedProject.projectId === welcomeProjectId
-      ? selectedProject.label
-      : undefined)
-
   useEffect(() => {
     messageEndRef.current?.scrollIntoView({ block: "end" })
   }, [messages.length, lastMessageContent])
@@ -1744,114 +1775,126 @@ export function ChatWorkspace({
             </div>
           </div>
         )}
-        <header className="flex h-16 shrink-0 items-center justify-between gap-3">
-          <div className="flex min-w-0 items-center gap-2">
+        <header className="shrink-0">
+          <div className="flex h-16 items-center justify-between gap-3">
+            <div className="flex min-w-0 items-center gap-2">
+              <DropdownMenu>
+                {activeChat ? (
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon-xs"
+                      className="size-7 shrink-0 rounded-lg text-muted-foreground hover:text-foreground"
+                      aria-label={`Actions for ${activeChat.title}`}
+                    >
+                      <HugeiconsIcon icon={MoreHorizontalIcon} size={16} />
+                    </Button>
+                  </DropdownMenuTrigger>
+                ) : null}
+                {activeChat ? (
+                  <DropdownMenuContent align="start">
+                    <DropdownMenuItem
+                      onSelect={() => openRenameChat(activeChat.id)}
+                    >
+                      <HugeiconsIcon icon={PencilEdit02Icon} size={15} aria-hidden="true" />
+                      Rename chat
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      onSelect={() =>
+                        toggleChatUnread(
+                          activeChat.id,
+                          !(activeChatTarget?.isUnread ?? activeChat.isUnread)
+                        )
+                      }
+                    >
+                      <HugeiconsIcon icon={CheckUnread01Icon} size={15} aria-hidden="true" />
+                      {activeChatTarget?.isUnread ?? activeChat.isUnread ? "Mark as read" : "Mark as unread"}
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      onSelect={() => toggleChatPinned(activeChat.id, !activeChatTarget?.isPinned)}
+                    >
+                      <HugeiconsIcon icon={Pin02Icon} size={15} aria-hidden="true" />
+                      {activeChatTarget?.isPinned ? "Unpin chat" : "Pin chat"}
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      onSelect={() => toggleChatArchived(activeChat.id, !activeChat.isArchived)}
+                    >
+                      <HugeiconsIcon icon={Archive02Icon} size={15} aria-hidden="true" />
+                      {activeChat.isArchived ? "Restore chat" : "Archive chat"}
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem className="text-destructive focus:text-destructive" onSelect={() => setDeleteChatId(activeChat.id)}>
+                      <HugeiconsIcon icon={Delete02Icon} size={15} aria-hidden="true" />
+                      Delete chat
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                ) : null}
+              </DropdownMenu>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                className="rounded-full md:hidden"
+                aria-label="Open chat history"
+                onClick={() => setHistoryOpen(true)}
+              >
+                <HugeiconsIcon icon={Menu01Icon} size={18} strokeWidth={1.8} />
+              </Button>
+              <h1 className="min-w-0 flex-1 truncate text-xl font-medium tracking-tight">
+                {activeChat?.title ?? "New chat"}
+              </h1>
+            </div>
             <Button
               type="button"
-              variant="ghost"
-              size="icon-sm"
-              className="rounded-full md:hidden"
-              aria-label="Open chat history"
-              onClick={() => setHistoryOpen(true)}
+              variant="outline"
+              className="shrink-0 rounded-full px-3 md:hidden"
+              disabled={isRunning}
+              onClick={startNewChat}
             >
-              <HugeiconsIcon icon={Menu01Icon} size={18} strokeWidth={1.8} />
+              New chat
             </Button>
-            <h1 className="truncate text-xl font-medium tracking-tight">
-              {activeChat?.title ?? "New chat"}
-            </h1>
-            {activeChat && (
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon-xs"
-                    className="size-7 rounded-lg text-muted-foreground hover:text-foreground"
-                    aria-label={`Actions for ${activeChat.title}`}
-                  >
-                    <HugeiconsIcon icon={MoreHorizontalIcon} size={16} />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="start">
-                  <DropdownMenuItem
-                    onSelect={() => openRenameChat(activeChat.id)}
-                  >
-                    <HugeiconsIcon
-                      icon={PencilEdit02Icon}
-                      size={15}
-                      aria-hidden="true"
-                    />
-                    Rename chat
-                  </DropdownMenuItem>
-                  <DropdownMenuItem
-                    onSelect={() =>
-                      toggleChatUnread(
-                        activeChat.id,
-                        !(activeChatTarget?.isUnread ?? activeChat.isUnread)
-                      )
-                    }
-                  >
-                    <HugeiconsIcon
-                      icon={CheckUnread01Icon}
-                      size={15}
-                      aria-hidden="true"
-                    />
-                    {activeChatTarget?.isUnread ?? activeChat.isUnread
-                      ? "Mark as read"
-                      : "Mark as unread"}
-                  </DropdownMenuItem>
-                  <DropdownMenuItem
-                    onSelect={() =>
-                      toggleChatPinned(
-                        activeChat.id,
-                        !activeChatTarget?.isPinned
-                      )
-                    }
-                  >
-                    <HugeiconsIcon
-                      icon={Pin02Icon}
-                      size={15}
-                      aria-hidden="true"
-                    />
-                    {activeChatTarget?.isPinned ? "Unpin chat" : "Pin chat"}
-                  </DropdownMenuItem>
-                  <DropdownMenuItem
-                    onSelect={() =>
-                      toggleChatArchived(activeChat.id, !activeChat.isArchived)
-                    }
-                  >
-                    <HugeiconsIcon
-                      icon={Archive02Icon}
-                      size={15}
-                      aria-hidden="true"
-                    />
-                    {activeChat.isArchived ? "Restore chat" : "Archive chat"}
-                  </DropdownMenuItem>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem
-                    className="text-destructive focus:text-destructive"
-                    onSelect={() => setDeleteChatId(activeChat.id)}
-                  >
-                    <HugeiconsIcon
-                      icon={Delete02Icon}
-                      size={15}
-                      aria-hidden="true"
-                    />
-                    Delete chat
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            )}
           </div>
-          <Button
-            type="button"
-            variant="outline"
-            className="rounded-full md:hidden"
-            disabled={isRunning}
-            onClick={startNewChat}
-          >
-            New chat
-          </Button>
+          {contextualAttachments.length || contextProjectId ? (
+            <div className="flex min-h-9 items-center justify-between gap-2 border-b border-border/60 px-1 pb-2">
+              {contextualAttachments.length ? (
+                <ul aria-label="Chat context" className="flex min-w-0 flex-wrap items-center gap-1.5">
+                  {contextualAttachments.map((attachment) => {
+                    const isDraft = attachments.some(
+                      (item) => item.id === attachment.id
+                    )
+                    return (
+                      <AttachmentChip
+                        key={`${attachment.kind}:${attachment.itemId ?? attachment.projectId}`}
+                        kind={attachment.kind}
+                        label={attachment.label}
+                        onRemove={isDraft ? () => {
+                          setAttachments((current) => current.filter((item) => item.id !== attachment.id))
+                          if (attachment.kind === "project" && attachment.projectId === newChatProjectId)
+                            setNewChatProjectId(undefined)
+                        } : undefined}
+                      />
+                    )
+                  })}
+                </ul>
+              ) : (
+                <p className="min-w-0 truncate text-xs text-muted-foreground">
+                  <span className="font-medium text-foreground">Project</span>
+                  <span aria-hidden="true"> · </span>
+                  {contextProjectLabel}
+                </p>
+              )}
+              {contextProjectId ? (
+                <Button asChild type="button" variant="ghost" size="sm" className="h-8 shrink-0 px-2 text-xs">
+                  <Link href={contextualCard
+                    ? `/projects/${encodeURIComponent(contextProjectId)}/learn?resume=1`
+                    : `/projects/${encodeURIComponent(contextProjectId)}`}>
+                    ← {contextualCard ? "Lesson" : "Project"}
+                  </Link>
+                </Button>
+              ) : null}
+            </div>
+          ) : null}
         </header>
 
         <section
@@ -1904,44 +1947,12 @@ export function ChatWorkspace({
                 <HugeiconsIcon icon={Chat01Icon} size={25} strokeWidth={1.8} />
               </span>
               <h2 className="mt-5 text-2xl font-medium tracking-tight">
-                {selectedCard?.itemId ? (
-                  <>
-                    Ask about {selectedCard.label}
-                    {welcomeProjectId && welcomeProjectLabel ? (
-                      <>
-                        {" "}
-                        in{" "}
-                        <Link
-                          href={`/projects/${encodeURIComponent(welcomeProjectId)}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-brand underline decoration-brand/35 underline-offset-4 hover:decoration-brand focus-visible:rounded-sm focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
-                        >
-                          {welcomeProjectLabel}
-                        </Link>
-                      </>
-                    ) : null}
-                  </>
-                ) : selectedProject?.projectId ? (
-                  <>
-                    Ask about{" "}
-                    <Link
-                      href={`/projects/${encodeURIComponent(selectedProject.projectId)}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-brand underline decoration-brand/35 underline-offset-4 hover:decoration-brand focus-visible:rounded-sm focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
-                    >
-                      {selectedProject.label}
-                    </Link>
-                  </>
-                ) : (
-                  "Ask about anything"
-                )}
+                {contextualCard
+                  ? `Ask about ${contextualCard.label}`
+                  : contextualProject
+                    ? `Ask about ${contextualProject.label}`
+                    : "Ask Blitz"}
               </h2>
-              <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-muted-foreground">
-                Attach any file, project, or public link. Blitz will use that
-                material as context for the conversation.
-              </p>
             </div>
           ) : (
             <div
@@ -2272,8 +2283,7 @@ export function ChatWorkspace({
         </section>
 
         <div className="mx-auto w-full max-w-3xl shrink-0 pb-3">
-          {hasOrphanPersistedAttachments ||
-          attachments.length ||
+          {composerAttachments.length ||
           draftAnnotations.length ? (
             <div className="mb-2 flex min-w-0 flex-wrap items-center gap-1.5 px-1">
               <ul
@@ -2281,7 +2291,13 @@ export function ChatWorkspace({
                 className="flex min-w-0 flex-wrap items-center gap-1.5"
               >
                 {hasOrphanPersistedAttachments
-                  ? persistedAttachments.map((attachment) => (
+                  ? persistedAttachments
+                      .filter(
+                        (attachment) =>
+                          attachment.kind !== "card" &&
+                          attachment.kind !== "project"
+                      )
+                      .map((attachment) => (
                       <AttachmentChip
                         key={attachment.id}
                         kind={attachment.kind}
@@ -2300,7 +2316,13 @@ export function ChatWorkspace({
                       />
                     ))
                   : null}
-                {attachments.map((attachment) => (
+                {attachments
+                  .filter(
+                    (attachment) =>
+                      attachment.kind !== "card" &&
+                      attachment.kind !== "project"
+                  )
+                  .map((attachment) => (
                   <AttachmentChip
                     key={attachment.id}
                     kind={attachment.kind}
@@ -2452,11 +2474,13 @@ export function ChatWorkspace({
             />
             <div className="flex items-center justify-between gap-2 pt-1">
               <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
-                <input
+                <Input
                   ref={fileInputRef}
                   className="sr-only"
                   type="file"
                   multiple
+                  tabIndex={-1}
+                  aria-hidden="true"
                   onChange={(event) =>
                     void chooseFiles(Array.from(event.target.files ?? []))
                   }
@@ -2478,30 +2502,57 @@ export function ChatWorkspace({
                     strokeWidth={1.8}
                   />
                 </Button>
-                <ReplyModelPicker
-                  disabled={isRunning || Boolean(continuableMessage)}
-                  onSaveStateChange={setSavingReplySettings}
-                />
-                <ChatAgentControls
-                  autonomy={effectiveAgentAutonomy}
-                  additionalInstructions={effectiveAgentInstructions}
-                  workingProjectId={effectiveWorkingProjectId}
-                  projects={projects}
-                  disabled={isRunning || Boolean(continuableMessage)}
-                  onAutonomyChange={(value) => {
-                    setAgentSettingsTouched(true)
-                    setAgentAutonomy(value)
-                    writeCachedAgentAutonomy(value)
-                  }}
-                  onInstructionsChange={(value) => {
-                    setAgentSettingsTouched(true)
-                    setAgentInstructions(value)
-                  }}
-                  onWorkingProjectChange={(value) => {
-                    setAgentSettingsTouched(true)
-                    setWorkingProjectId(value)
-                  }}
-                />
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-9 shrink-0 rounded-full px-3 text-xs"
+                      disabled={isRunning || Boolean(continuableMessage)}
+                    >
+                      Options
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent
+                    side="top"
+                    align="start"
+                    className="max-h-[min(70svh,32rem)] w-[min(24rem,calc(100vw-2rem))] overflow-y-auto rounded-xl p-4"
+                  >
+                    <div className="space-y-4">
+                      <section className="space-y-2">
+                        <h2 className="text-sm font-medium">Reply model</h2>
+                        <ReplyModelPicker
+                          disabled={isRunning || Boolean(continuableMessage)}
+                          onSaveStateChange={setSavingReplySettings}
+                        />
+                      </section>
+                      <section className="space-y-2 border-t pt-3">
+                        <h2 className="text-sm font-medium">Working project</h2>
+                        <ChatAgentControls
+                          autonomy={effectiveAgentAutonomy}
+                          additionalInstructions={effectiveAgentInstructions}
+                          workingProjectId={effectiveWorkingProjectId}
+                          projects={projects}
+                          disabled={isRunning || Boolean(continuableMessage)}
+                          onAutonomyChange={(value) => {
+                            setAgentSettingsTouched(true)
+                            setAgentAutonomy(value)
+                            writeCachedAgentAutonomy(value)
+                          }}
+                          onInstructionsChange={(value) => {
+                            setAgentSettingsTouched(true)
+                            setAgentInstructions(value)
+                          }}
+                          onWorkingProjectChange={(value) => {
+                            setAgentSettingsTouched(true)
+                            setWorkingProjectId(value)
+                          }}
+                        />
+                      </section>
+                    </div>
+                  </PopoverContent>
+                </Popover>
               </div>
               {(() => {
                 if (isStreaming) {

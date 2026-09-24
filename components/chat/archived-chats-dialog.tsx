@@ -101,12 +101,14 @@ export function ArchivedChatsDialog({
                       {chat.title}
                     </span>
                     <div className="mt-1.5 flex items-center gap-2">
-                      <Badge
-                        variant="outline"
-                        className="h-4.5 max-w-[180px] truncate px-1.5 py-0 text-[10px] font-normal text-muted-foreground border-border/60"
-                      >
-                        {chat.projectTitle || "No project"}
-                      </Badge>
+                      {chat.projectTitle ? (
+                        <Badge
+                          variant="outline"
+                          className="h-4.5 max-w-[180px] truncate px-1.5 py-0 text-[10px] font-normal text-muted-foreground border-border/60"
+                        >
+                          {chat.projectTitle}
+                        </Badge>
+                      ) : null}
                       <span className="text-[11px] text-muted-foreground">
                         <ElapsedTime since={chat.updatedAt} />
                       </span>
