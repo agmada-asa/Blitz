@@ -29,11 +29,3 @@ export function clipboardImageFiles<T extends ComposerFile>(
 export function droppedFiles<T extends ComposerFile>(files: readonly T[]): T[] {
   return [...files]
 }
-
-/** Limits an attachment batch to the remaining composer slots. */
-export function limitComposerFiles<T>(
-  files: readonly T[],
-  availableSlots: number
-): T[] {
-  return availableSlots > 0 ? [...files].slice(0, availableSlots) : []
-}

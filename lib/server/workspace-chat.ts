@@ -6,8 +6,8 @@ import type { Id } from "../../convex/_generated/dataModel.js"
 export const MAX_WORKSPACE_CHAT_MESSAGE_LENGTH = 4_000
 /** Maximum attachment text accepted in one request. */
 export const MAX_WORKSPACE_CHAT_ATTACHMENT_CHARACTERS = 96_000
-/** Maximum count of card, file, link, and project attachments in one request. */
-export const MAX_WORKSPACE_CHAT_ATTACHMENTS = 8
+/** Maximum historical attachments replayed into one model turn. */
+export const MAX_WORKSPACE_CHAT_REPLAY_ATTACHMENTS = 8
 /** Server-owned prompt used to resume an interrupted assistant response. */
 export const WORKSPACE_CHAT_CONTINUATION_PROMPT =
   "Continue the interrupted response from where it stopped. Do not repeat text that was already completed."
@@ -284,12 +284,8 @@ export function parseWorkspaceChatRequest(
     throw new Error("Attached projects must be unique")
   if (card && projectIds.includes(card.projectId))
     throw new Error("The card project is already attached")
-  if (
-    !Array.isArray(input.attachments) ||
-    input.attachments.length + projectIds.length + (card ? 1 : 0) >
-      MAX_WORKSPACE_CHAT_ATTACHMENTS
-  )
-    throw new Error(`Attach at most ${MAX_WORKSPACE_CHAT_ATTACHMENTS} items`)
+  if (!Array.isArray(input.attachments))
+    throw new Error("Attachments are invalid")
   if (
     continuationOf &&
     (card ||
@@ -445,7 +441,7 @@ export function mergeWorkspaceChatReplay(
     if (
       projectIds.length >= 3 ||
       request.attachments.length + projectIds.length + (card ? 1 : 0) >=
-        MAX_WORKSPACE_CHAT_ATTACHMENTS
+        MAX_WORKSPACE_CHAT_REPLAY_ATTACHMENTS
     )
       break
     if (!projectIds.includes(projectId)) projectIds.push(projectId)
@@ -458,7 +454,7 @@ export function mergeWorkspaceChatReplay(
   for (const attachment of replay.attachments) {
     if (
       attachments.length + projectIds.length + (card ? 1 : 0) >=
-        MAX_WORKSPACE_CHAT_ATTACHMENTS ||
+        MAX_WORKSPACE_CHAT_REPLAY_ATTACHMENTS ||
       remainingCharacters <= 0
     )
       break

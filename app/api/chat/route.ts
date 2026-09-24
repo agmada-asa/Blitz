@@ -11,6 +11,7 @@ import {
 } from "@/lib/server/project-agent"
 import { ConvexHttpClient } from "convex/browser"
 import { makeFunctionReference } from "convex/server"
+import { constants as fileConstants } from "node:fs"
 import { copyFile, mkdir } from "node:fs/promises"
 import { homedir } from "node:os"
 import { isAbsolute, join, resolve } from "node:path"
@@ -229,7 +230,6 @@ async function stageWorkspaceAttachments(
 ): Promise<void> {
   const attachmentsDir = join(workspaceDirectory, "attachments")
   let dirCreated = false
-  const seenFilenames = new Set<string>()
 
   for (const attachment of attachments) {
     if (!attachment.documentId) continue
@@ -262,21 +262,17 @@ async function stageWorkspaceAttachments(
         await mkdir(attachmentsDir, { recursive: true })
         dirCreated = true
       }
-      let targetName = safeSourceFilename(document.filename)
-      if (seenFilenames.has(targetName)) {
-        const idPrefix = String(document._id).slice(-6)
-        targetName = `${idPrefix}-${targetName}`
-      }
-      seenFilenames.add(targetName)
+      const targetName = `${document._id}-${safeSourceFilename(document.filename)}`
       const targetPath = join(attachmentsDir, targetName)
 
       if (resolve(sourcePath) !== resolve(targetPath)) {
-        await copyFile(sourcePath, targetPath)
+        // Clone on supporting filesystems so large attachments need no second full copy.
+        await copyFile(sourcePath, targetPath, fileConstants.COPYFILE_FICLONE)
       }
       attachment.workspacePath = join("attachments", targetName)
       attachment.filePath = targetPath
     } catch {
-      // Attachment copy failure does not block the chat turn.
+      throw new Error(`Could not make ${document.filename} available in chat.`)
     }
   }
 }
@@ -424,10 +420,12 @@ export async function POST(request: Request): Promise<Response> {
             )
           attachment.label = document.filename
           if (
-            document.mimeType === "image/png" ||
-            document.mimeType === "image/jpeg" ||
-            document.mimeType === "image/webp" ||
-            document.mimeType === "image/gif"
+            document.sizeBytes <= 5_000_000 &&
+            nativeImageBytes + document.sizeBytes <= 20_000_000 &&
+            (document.mimeType === "image/png" ||
+              document.mimeType === "image/jpeg" ||
+              document.mimeType === "image/webp" ||
+              document.mimeType === "image/gif")
           ) {
             attachment.mimeType = document.mimeType
             const storageId =
@@ -441,8 +439,6 @@ export async function POST(request: Request): Promise<Response> {
               5_000_000
             )
             nativeImageBytes += bytes.byteLength
-            if (nativeImageBytes > 20_000_000)
-              throw new Error("Attached images exceed the 20 MB chat limit.")
             nativeImageAttachments.push({
               type: "image",
               mimeType: document.mimeType,
@@ -562,6 +558,11 @@ export async function POST(request: Request): Promise<Response> {
                 : input.chatId ? { chatId: input.chatId } : {}),
             })
             if (!document) continue
+            if (
+              document.sizeBytes > 5_000_000 ||
+              nativeImageBytes + document.sizeBytes > 20_000_000
+            )
+              continue
             const storageId =
               document.projectId ??
               (document.ownerToken ? chatStorageId(document.ownerToken) : null)
@@ -572,8 +573,6 @@ export async function POST(request: Request): Promise<Response> {
               5_000_000
             )
             nativeImageBytes += bytes.byteLength
-            if (nativeImageBytes > 20_000_000)
-              throw new Error("Attached images exceed the 20 MB chat limit.")
             nativeImageDocumentIds.add(attachment.documentId)
             nativeImageAttachments.push({
               type: "image",

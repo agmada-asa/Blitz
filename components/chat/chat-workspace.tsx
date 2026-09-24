@@ -102,11 +102,8 @@ import type { ProviderActivityEvent } from "@/lib/provider-activity"
 import {
   clipboardImageFiles,
   droppedFiles,
-  limitComposerFiles,
 } from "@/lib/client/chat-composer-input"
 
-/** Maximum context items accepted with one message. */
-const MAX_ATTACHMENTS = 8
 /** Maximum project collections accepted with one message. */
 const MAX_PROJECT_ATTACHMENTS = 3
 /** Maximum extracted characters retained for one browser-owned attachment. */
@@ -738,9 +735,7 @@ export function ChatWorkspace({
   const visibleComposerRequest = activeChatId
     ? composerAgentRequestEntry
     : undefined
-  const canAttach = attachments.length < MAX_ATTACHMENTS
   const canAttachProject =
-    canAttach &&
     attachments.filter((attachment) => attachment.kind === "project").length <
       MAX_PROJECT_ATTACHMENTS
   const renameTarget =
@@ -1058,7 +1053,6 @@ export function ChatWorkspace({
   /** Adds an unsent attachment unless the same project or URL is already selected. */
   const addAttachment = (attachment: DraftAttachment): void => {
     setAttachments((current) => {
-      if (current.length >= MAX_ATTACHMENTS) return current
       if (
         current.some(
           (item) =>
@@ -1082,15 +1076,10 @@ export function ChatWorkspace({
     if (uploadingFiles) return
     setUploadingFiles(true)
     setError("")
-    const selected = limitComposerFiles(
-      files,
-      MAX_ATTACHMENTS - attachments.length
-    )
+    const selected = files
     const uploadProjectId = activeChat?.projectId ?? newChatProjectId ?? selectedProject?.projectId
     for (const file of selected) {
       try {
-        if (file.size > 50_000_000)
-          throw new Error("Chat files must be under 50 MB.")
         const response = await fetch("/api/chat/files", {
           method: "POST",
           headers: {
@@ -1136,7 +1125,7 @@ export function ChatWorkspace({
     if (!files.length) return
     event.preventDefault()
     setDraggingFiles(false)
-    if (!isRunning && canAttach) void chooseFiles(files)
+    if (!isRunning) void chooseFiles(files)
   }
 
   /** Handles clipboard screenshots without changing ordinary multiline text paste. */
@@ -1144,7 +1133,7 @@ export function ChatWorkspace({
     event: ClipboardEvent<HTMLTextAreaElement>
   ): void => {
     const files = Array.from(event.clipboardData.files)
-    if (!files.length || isRunning || !canAttach) return
+    if (!files.length || isRunning) return
     const images = clipboardImageFiles(files)
     if (!images.length) return
     event.preventDefault()
@@ -1154,7 +1143,7 @@ export function ChatWorkspace({
   /** Fetches a public source through the protected route and attaches extracted text. */
   const attachLink = async (): Promise<void> => {
     const url = linkUrl.trim()
-    if (!url || importingLink || !canAttach) return
+    if (!url || importingLink) return
     setImportingLink(true)
     setError("")
     try {
@@ -2490,9 +2479,7 @@ export function ChatWorkspace({
                   variant="ghost"
                   size="icon"
                   className="rounded-full"
-                  disabled={
-                    isRunning || !canAttach || Boolean(continuableMessage)
-                  }
+                  disabled={isRunning || Boolean(continuableMessage)}
                   aria-label="Upload file"
                   onClick={() => fileInputRef.current?.click()}
                 >

@@ -13,6 +13,7 @@ import {
   removeProjectFile,
   readProjectFileBytes,
   resolveProjectFile,
+  streamProjectFile,
 } from "@/lib/server/project-files"
 import { extractStoredSource } from "@/lib/server/source-ingestion/extract"
 import {
@@ -68,7 +69,7 @@ function client(): ConvexHttpClient {
   return new ConvexHttpClient(url)
 }
 
-/** Saves an original and its full extracted text, supporting any file type up to 50 MB. */
+/** Saves any original and records bounded text when extraction is practical. */
 export async function POST(request: Request): Promise<Response> {
   let cleanup:
     | { storageId: string; key: string; remove: boolean }
@@ -88,14 +89,12 @@ export async function POST(request: Request): Promise<Response> {
     )
     if ((!projectId && !ownerToken) || !filename || !request.body)
       throw new Error("File owner and file are required.")
-    if (Number(request.headers.get("content-length")) > 50_000_000)
-      throw new Error("Chat files must be under 50 MB.")
     const convex = client()
     if (projectId && !(await convex.query(api.projects.getProject, { projectId })))
       throw new Error("Project not found.")
     const stored = projectId
-      ? await storeOriginalSource({ projectId, filename, body: request.body, mimeType: request.headers.get("content-type"), maxBytes: 50_000_000 })
-      : await storeOriginalChatUpload({ ownerToken: ownerToken!, filename, body: request.body, mimeType: request.headers.get("content-type"), maxBytes: 50_000_000 })
+      ? await storeOriginalSource({ projectId, filename, body: request.body, mimeType: request.headers.get("content-type") })
+      : await storeOriginalChatUpload({ ownerToken: ownerToken!, filename, body: request.body, mimeType: request.headers.get("content-type") })
     const storageId = projectId ?? chatStorageId(ownerToken!)
     cleanup = {
       storageId,
@@ -237,18 +236,17 @@ export async function GET(request: Request): Promise<Response> {
       document.projectId ??
       (document.ownerToken ? chatStorageId(document.ownerToken) : null)
     if (!storageId) throw new Error("File not found.")
-    const bytes = await readProjectFileBytes(
+    const file = await streamProjectFile(
       storageId,
-      document.relativeKey,
-      50_000_000
+      document.relativeKey
     )
     const inline =
       ["application/pdf", "text/plain"].includes(document.mimeType) ||
       document.mimeType.startsWith("image/")
-    return new Response(new Uint8Array(bytes), {
+    return new Response(file.body, {
       headers: {
         "content-type": document.mimeType,
-        "content-length": String(bytes.byteLength),
+        "content-length": String(file.size),
         "content-disposition": `${inline ? "inline" : "attachment"}; filename*=UTF-8''${encodeURIComponent(document.filename)}`,
         "cache-control": "no-store",
         "x-content-type-options": "nosniff",
