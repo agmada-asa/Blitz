@@ -1,12 +1,9 @@
-/** Verifies page-aware narration input and predictable spoken abbreviations. */
+/** Verifies page-aware audiobook input before model and speech preparation. */
 
 import assert from "node:assert/strict"
 import test from "node:test"
 
-import {
-  splitAudiobookSource,
-  spokenAudiobookText,
-} from "../lib/audiobook-text.ts"
+import { splitAudiobookSource } from "../lib/audiobook-text.ts"
 
 test("keeps page and slide boundaries without speaking their markers", () => {
   assert.deepEqual(
@@ -34,12 +31,5 @@ test("splits a long page into bounded continuations without adding page breaks",
       .join(" ")
       .replace(/\s+/g, " "),
     source.trim().replace(/\s+/g, " ")
-  )
-})
-
-test("writes common abbreviations in speakable form", () => {
-  assert.equal(
-    spokenAudiobookText("AI vs. ML vs LLMs. AI adoption rises."),
-    "A I versus M L versus large language models. A I adoption rises."
   )
 })

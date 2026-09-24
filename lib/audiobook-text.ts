@@ -1,4 +1,4 @@
-/** Keeps source page boundaries and normalizes known speech trouble spots. */
+/** Keeps source page boundaries before audiobook narration is prepared. */
 
 /** Maximum source characters in one audiobook narration edit request. */
 export const AUDIOBOOK_SECTION_LENGTH = 6_000
@@ -69,17 +69,4 @@ export function splitAudiobookSource(
   }
   appendPage()
   return sections
-}
-
-/** Forces known abbreviations into forms the local voice reads consistently. */
-export function spokenAudiobookText(text: string): string {
-  return text
-    .replace(/\bLLMs\b/g, "large language models")
-    .replace(/\bLLM\b/g, "large language model")
-    .replace(/\bAI\b/g, "A I")
-    .replace(/\bML\b/g, "M L")
-    .replace(/\bvs\.(?=\s+\w)/gi, "versus")
-    .replace(/\bvs\b/gi, "versus")
-    .replace(/\s+/g, " ")
-    .trim()
 }

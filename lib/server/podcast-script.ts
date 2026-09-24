@@ -5,6 +5,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { z } from "zod"
 
+import { SPOKEN_AUDIO_GUIDANCE, spokenAudioText } from "../spoken-audio"
 import { runProviderTextTurn } from "./providers/run-text-turn"
 import type { ProviderSelection } from "./providers/types"
 
@@ -187,7 +188,7 @@ export async function createPodcastScript(input: {
     )
     const sectionCount = input.requestedMinutes / 5
     const outlineText = await writeWithProvider(
-      `Create an educational podcast outline grounded in the project material below. Project: ${input.projectTitle}. Target length: ${input.requestedMinutes} minutes in exactly ${sectionCount} five-minute sections. ${input.hostCount === 2 ? "Two hosts will discuss it." : "One host will narrate it."} User focus preference: ${input.focus || "Cover the project's main ideas."}\n\nReturn JSON only: {"title":"...","sections":[{"title":"...","coverage":"Specific supported ideas to discuss"}]}. Include exactly ${sectionCount} sections. Cover the project broadly, then give the requested focus more time. Do not repeat topics to fill time.\n\n<project_sources>\n${context}\n</project_sources>`,
+      `Create an educational podcast outline grounded in the project material below. Project: ${input.projectTitle}. Target length: ${input.requestedMinutes} minutes in exactly ${sectionCount} five-minute sections. ${input.hostCount === 2 ? "Two hosts will discuss it." : "One host will narrate it."} User focus preference: ${input.focus || "Cover the project's main ideas."}\n\nReturn JSON only: {"title":"...","sections":[{"title":"...","coverage":"Specific supported ideas to discuss"}]}. Include exactly ${sectionCount} sections. Cover the project broadly, then give the requested focus more time. Leave page furniture, QR codes, access instructions, and meaningless identifiers out of the plan.\n\n<project_sources>\n${context}\n</project_sources>`,
       input.selection,
       workspaceDirectory
     )
@@ -206,27 +207,31 @@ export async function createPodcastScript(input: {
       let failureReason = "The script was incomplete"
       for (let attempt = 0; attempt < 2; attempt += 1) {
         const response = await writeWithProvider(
-          `Write section ${index + 1} of ${sectionCount} for the podcast "${outline.title}". Topic: ${section.title}. Coverage: ${section.coverage}. Target 700 to 780 spoken words. Output natural educational dialogue, with at least 600 and at most 900 spoken words. ${input.hostCount === 2 ? "Alternate between host1 and host2 throughout. Give each host at least three substantive turns." : "Use host1 only as a solo narrator."} Do not speak names, voice descriptions, stage directions, source labels, or production instructions. The content must be supported by the project sources. ${attempt ? `The prior draft failed validation: ${failureReason}. Return a complete five-minute section with only spoken text in each turn.` : ""}\n\nPrevious ending for continuity:\n${priorEnding || "Opening section."}\n\nReturn JSON only: {"turns":[{"speaker":"host1","text":"spoken words"}]}.\n\n<project_sources>\n${context}\n</project_sources>`,
+          `Write section ${index + 1} of ${sectionCount} for the podcast "${outline.title}". Topic: ${section.title}. Coverage: ${section.coverage}. Target 700 to 780 spoken words. Output natural educational dialogue, with at least 600 and at most 900 spoken words. ${input.hostCount === 2 ? "Alternate between host1 and host2 throughout. Give each host at least three substantive turns." : "Use host1 only as a solo narrator."} ${SPOKEN_AUDIO_GUIDANCE} Do not speak speaker labels, voice descriptions, stage directions, source labels, or production instructions. The content must be supported by the project sources. ${attempt ? `The prior draft failed validation: ${failureReason}. Return a complete five-minute section with only spoken text in each turn.` : ""}\n\nPrevious ending for continuity:\n${priorEnding || "Opening section."}\n\nReturn JSON only: {"turns":[{"speaker":"host1","text":"spoken words"}]}.\n\n<project_sources>\n${context}\n</project_sources>`,
           input.selection,
           workspaceDirectory
         )
         try {
           const parsed = segmentSchema.parse(parseJsonObject(response))
-          const count = wordCount(parsed.turns)
+          const spokenTurns = parsed.turns.map((turn) => ({
+            ...turn,
+            text: spokenAudioText(turn.text),
+          }))
+          const count = wordCount(spokenTurns)
           const speakersValid =
             input.hostCount === 2
-              ? parsed.turns.filter((turn) => turn.speaker === "host1")
-                  .length >= 3 &&
-                parsed.turns.filter((turn) => turn.speaker === "host2")
-                  .length >= 3
-              : parsed.turns.every((turn) => turn.speaker === "host1")
+              ? spokenTurns.filter((turn) => turn.speaker === "host1").length >=
+                  3 &&
+                spokenTurns.filter((turn) => turn.speaker === "host2").length >=
+                  3
+              : spokenTurns.every((turn) => turn.speaker === "host1")
           if (
             count >= 600 &&
             count <= 900 &&
             speakersValid &&
-            !hasProductionNotes(parsed.turns)
+            !hasProductionNotes(spokenTurns)
           ) {
-            segment = parsed
+            segment = { turns: spokenTurns }
             break
           }
           failureReason =
