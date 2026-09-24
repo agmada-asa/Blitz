@@ -4,21 +4,15 @@
 
 import type { FunctionArgs, FunctionReturnType } from "convex/server"
 import { useBackgroundNotice } from "@/components/background-notices"
-import { useRef, useState } from "react"
+import { useRef, useState, type DragEvent } from "react"
 
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
+import { ResearchPanel } from "@/components/projects/research-panel"
 import { Input } from "@/components/ui/input"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
-import {
-  CancelIcon,
-  ClipboardPasteIcon,
-  FileIcon,
-  FileUploadIconComponent,
-  LinkIcon,
-  LoadingIcon,
-} from "@/components/ui/icon"
+import { CancelIcon, FileIcon, LoadingIcon } from "@/components/ui/icon"
 import { api } from "@/convex/_generated/api"
 import type { Id } from "@/convex/_generated/dataModel"
 import {
@@ -30,6 +24,7 @@ import { sourcePartFilename, splitSourceText } from "@/lib/source-splitting"
 /** Convex operations and project identity required by source ingestion. */
 type Props = {
   projectId: Id<"projects">
+  initialResearchRequestId?: string
   createSource: (
     input: FunctionArgs<typeof api.sources.createSource>
   ) => Promise<FunctionReturnType<typeof api.sources.createSource>>
@@ -51,6 +46,9 @@ type ImportResult = {
   status: "queued" | "failed" | "retained"
   detail: string
 }
+
+/** The source entry method selected in the shared shadcn tab strip. */
+type SourceTab = "files" | "paste" | "link" | "research"
 
 /** Outcome of sequentially saving a bounded source part list. */
 type QueuePartsResult = {
@@ -88,6 +86,7 @@ async function responseError(
 /** Renders file, paste, and public-link imports as quick queue submissions. */
 export function SourceUploader({
   projectId,
+  initialResearchRequestId,
   createSource,
   updateSource,
   enqueue,
@@ -95,6 +94,11 @@ export function SourceUploader({
 }: Props) {
   const notifyBackground = useBackgroundNotice()
   const inputRef = useRef<HTMLInputElement>(null)
+  const dragDepth = useRef(0)
+  const [dragging, setDragging] = useState(false)
+  const [activeTab, setActiveTab] = useState<SourceTab>(
+    initialResearchRequestId ? "research" : "files"
+  )
   const [paste, setPaste] = useState("")
   const [url, setUrl] = useState("")
   const [busy, setBusy] = useState(false)
@@ -103,6 +107,29 @@ export function SourceUploader({
     text: string
   }>()
   const [results, setResults] = useState<ImportResult[]>([])
+
+  /** Highlights the upload target only while a file drag is over it. */
+  function enterDropZone(event: DragEvent<HTMLDivElement>): void {
+    if (!event.dataTransfer.types.includes("Files")) return
+    event.preventDefault()
+    dragDepth.current += 1
+    setDragging(true)
+  }
+
+  /** Clears the highlight after the file drag leaves the upload target. */
+  function leaveDropZone(event: DragEvent<HTMLDivElement>): void {
+    event.preventDefault()
+    dragDepth.current = Math.max(0, dragDepth.current - 1)
+    if (dragDepth.current === 0) setDragging(false)
+  }
+
+  /** Imports files dropped on the upload target through the normal file flow. */
+  function dropFiles(event: DragEvent<HTMLDivElement>): void {
+    event.preventDefault()
+    dragDepth.current = 0
+    setDragging(false)
+    if (!busy) void chooseFiles(Array.from(event.dataTransfer.files))
+  }
 
   /** Creates one source snapshot and queues it for local preparation. */
   const queueSource = async (
@@ -369,7 +396,7 @@ export function SourceUploader({
     <Card
       id="add-source"
       aria-busy={busy}
-      className="scroll-mt-6 overflow-visible border-transparent bg-card font-sans"
+      className="scroll-mt-6 overflow-visible border-border bg-card font-sans"
     >
       <CardContent className="p-5 sm:p-7">
         <h2 className="mb-4 font-heading text-xl">Add sources</h2>
@@ -379,8 +406,15 @@ export function SourceUploader({
           </p>
         ) : null}
 
-        <Tabs defaultValue="files" className="gap-0">
-          <TabsList aria-label="Source input type" className="mb-4">
+        <Tabs
+          value={activeTab}
+          onValueChange={(value) => setActiveTab(value as SourceTab)}
+          className="gap-0"
+        >
+          <TabsList
+            aria-label="Source input type"
+            className="mb-4 h-auto max-w-full flex-wrap justify-start"
+          >
             <TabsTrigger value="files" disabled={busy}>
               Upload
             </TabsTrigger>
@@ -390,99 +424,109 @@ export function SourceUploader({
             <TabsTrigger value="link" disabled={busy}>
               Link
             </TabsTrigger>
+            <TabsTrigger value="research" disabled={busy}>
+              Deep Research
+            </TabsTrigger>
           </TabsList>
-          <input
+          <Input
             ref={inputRef}
             type="file"
             multiple
             className="sr-only"
             tabIndex={-1}
+            aria-hidden="true"
             onChange={(event) => {
               const files = Array.from(event.target.files ?? [])
               event.target.value = ""
               void chooseFiles(files)
             }}
           />
-          <div className="rounded-xl border border-border/70 p-3 sm:p-4">
-            <TabsContent
-              value="files"
-              className="mt-0 flex flex-col items-stretch gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4"
+          <TabsContent value="files" className="mt-0">
+            <div
+              onDragEnter={enterDropZone}
+              onDragOver={(event) => event.preventDefault()}
+              onDragLeave={leaveDropZone}
+              onDrop={dropFiles}
+              className={
+                dragging
+                  ? "flex min-h-36 flex-col items-center justify-center gap-3 rounded-xl border-2 border-brand bg-brand/10 p-4 text-center"
+                  : "flex min-h-36 flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-border p-4 text-center"
+              }
             >
-              <div className="flex min-w-0 items-center gap-3">
-                <FileUploadIconComponent
-                  className="shrink-0 text-muted-foreground"
-                  size={24}
-                />
-                <div className="min-w-0">
-                  <p className="text-sm font-medium">Upload files</p>
-                  <p className="truncate text-xs text-muted-foreground">
-                    PDF · MD · TXT · PPTX · up to 1 GB each
-                  </p>
-                </div>
-              </div>
+              <p className="text-sm text-muted-foreground">Drop files here</p>
               <Button
                 type="button"
-                size="sm"
                 disabled={busy}
                 onClick={() => inputRef.current?.click()}
-                className="w-full shrink-0 rounded-lg sm:w-auto"
+                className="min-h-10 rounded-lg"
               >
-                Choose files
+                Upload files
               </Button>
-            </TabsContent>
+            </div>
+          </TabsContent>
 
-            <TabsContent value="paste" className="mt-0">
-              <div className="mb-2 flex items-center gap-2 text-sm font-medium">
-                <ClipboardPasteIcon size={17} /> Paste notes
-              </div>
-              <Textarea
-                aria-label="Notes to prepare"
-                value={paste}
-                disabled={busy}
-                onChange={(event) => setPaste(event.target.value)}
-                placeholder="Drop your notes here…"
-                className="min-h-28 flex-1 resize-none"
-              />
-              <Button
-                type="button"
-                disabled={busy || !paste.trim()}
-                onClick={() => void queuePaste()}
-                className="mt-2 w-full rounded-lg"
-              >
-                {busy ? (
+          <TabsContent value="paste" className="mt-0">
+            <Textarea
+              aria-label="Notes to prepare"
+              value={paste}
+              disabled={busy}
+              onChange={(event) => setPaste(event.target.value)}
+              placeholder="Drop your notes here…"
+              className="min-h-28 flex-1 resize-none"
+            />
+            <Button
+              type="button"
+              disabled={busy || !paste.trim()}
+              onClick={() => void queuePaste()}
+              className="mt-2 w-full rounded-lg"
+            >
+              {busy ? (
+                <>
                   <LoadingIcon
                     className="animate-spin motion-reduce:animate-none"
                     size={16}
                   />
-                ) : (
-                  <span>Queue notes</span>
-                )}
-              </Button>
-            </TabsContent>
+                  Importing notes…
+                </>
+              ) : (
+                <span>Import notes</span>
+              )}
+            </Button>
+          </TabsContent>
 
-            <TabsContent value="link" className="mt-0 flex gap-2">
-              <LinkIcon
-                className="mt-2 shrink-0 text-muted-foreground"
-                size={17}
-              />
-              <Input
-                type="url"
-                aria-label="Public source link"
-                value={url}
-                disabled={busy}
-                onChange={(event) => setUrl(event.target.value)}
-                placeholder="https://example.com/your-notes"
-              />
-              <Button
-                type="button"
-                disabled={busy || !url.trim()}
-                onClick={() => void importUrl()}
-                className="shrink-0 rounded-lg"
-              >
-                {busy ? "Importing…" : "Import link"}
-              </Button>
-            </TabsContent>
-          </div>
+          <TabsContent
+            value="link"
+            className="mt-0 flex flex-col gap-2 sm:flex-row"
+          >
+            <Input
+              type="url"
+              aria-label="Public source link"
+              value={url}
+              disabled={busy}
+              onChange={(event) => setUrl(event.target.value)}
+              placeholder="https://example.com/your-notes"
+            />
+            <Button
+              type="button"
+              disabled={busy || !url.trim()}
+              onClick={() => void importUrl()}
+              className="w-full shrink-0 rounded-lg sm:w-auto"
+            >
+              {busy ? "Importing…" : "Import link"}
+            </Button>
+          </TabsContent>
+          <TabsContent
+            value="research"
+            forceMount
+            className="mt-0 data-[state=inactive]:hidden"
+          >
+            <ResearchPanel
+              key={String(projectId)}
+              projectId={String(projectId)}
+              initialRequestId={initialResearchRequestId}
+              active={activeTab === "research"}
+            />
+          </TabsContent>
         </Tabs>
 
         {results.length ? (

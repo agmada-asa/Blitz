@@ -1,18 +1,13 @@
 "use client"
 
-/** Renders a project's local file inventory, ingestion lifecycle, citations, and agent output. */
+/** Renders a project's source inventory, ingestion lifecycle, and generated files. */
 
 import { useState } from "react"
+import Link from "next/link"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card"
+import { Card, CardContent } from "@/components/ui/card"
 import { Progress } from "@/components/ui/progress"
 import {
   ArrowUpRightIcon,
@@ -72,18 +67,11 @@ export type ProjectArtifact = {
   updatedAt?: number
 }
 
-/** Citation metadata shown beside a retrieval result or prepared source. */
-export type ProjectFileCitation = {
-  sourceId: string
-  label: string
-  detail?: string
-}
-
 /** Actions supplied by the desktop bridge or route integration for local artifacts. */
 export type ProjectFilesActions = {
   onOpenArtifact?: (artifact: ProjectArtifact) => void
   onRevealArtifact?: (artifact: ProjectArtifact) => void
-  onOpenSource?: (source: ProjectFileSource) => void
+  onOpenCreatedFilesFolder?: () => void
   onAddArtifactToSources?: (artifact: ProjectArtifact) => void | Promise<void>
   onRetryIngestion?: (sourceId: string) => void | Promise<void>
 }
@@ -95,7 +83,6 @@ export type ProjectFilesProps = {
   ingestion?: ProjectFileIngestion[]
   preparation?: ProjectFilePreparation[]
   artifacts?: ProjectArtifact[]
-  citations?: ProjectFileCitation[]
   actions?: ProjectFilesActions
 }
 
@@ -141,6 +128,8 @@ function sourceStatus(
       label: preparationJob.status === "queued" ? "Queued" : "Preparing",
       variant: "outline" as const,
     }
+  if (preparationJob?.status === "completed")
+    return { label: "Ready", variant: "secondary" as const }
   if (source.status === "processing")
     return { label: "Preparing", variant: "outline" as const }
   return { label: "Ready", variant: "secondary" as const }
@@ -164,6 +153,7 @@ function preparationProgress(
   preparationJob: ProjectFilePreparation | undefined
 ): number | undefined {
   if (
+    preparationJob?.status === "completed" ||
     preparationJob?.totalChunks === undefined ||
     preparationJob.totalChunks <= 0
   )
@@ -176,14 +166,18 @@ function preparationProgress(
 
 /** Renders source and artifact states in one responsive project workspace panel. */
 export function ProjectFiles({
+  projectId,
   sources,
   ingestion = [],
   preparation = [],
   artifacts = [],
-  citations = [],
   actions = {},
 }: ProjectFilesProps) {
   const [busyArtifactId, setBusyArtifactId] = useState<string>()
+  const [artifactError, setArtifactError] = useState<{
+    id: string
+    message: string
+  }>()
   const [retryingSourceId, setRetryingSourceId] = useState<string>()
   const [retryError, setRetryError] = useState<{
     sourceId: string
@@ -196,8 +190,15 @@ export function ProjectFiles({
   async function addArtifact(artifact: ProjectArtifact) {
     if (!actions.onAddArtifactToSources) return
     setBusyArtifactId(artifact.id)
+    setArtifactError(undefined)
     try {
       await actions.onAddArtifactToSources(artifact)
+    } catch (error) {
+      setArtifactError({
+        id: artifact.id,
+        message:
+          error instanceof Error ? error.message : "File could not be added.",
+      })
     } finally {
       setBusyArtifactId(undefined)
     }
@@ -223,175 +224,133 @@ export function ProjectFiles({
     }
   }
 
-  return (
-    <section
-      className="mt-10 space-y-4"
-      aria-labelledby="project-files-heading"
-    >
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h2 id="project-files-heading" className="font-heading text-2xl">
-            Project files
-          </h2>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Original sources and generated files.
-          </p>
-        </div>
-      </div>
+  const revealLabel =
+    typeof navigator !== "undefined" && /Mac/i.test(navigator.userAgent)
+      ? "Show in Finder"
+      : "Show in folder"
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Sources</CardTitle>
-          <CardDescription>
-            Check preparation status and open your originals.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-2">
-          {sources.length ? (
-            sources.map((source) => {
-              const ingestionJob = ingestion.find(
-                (item) => item.sourceId === String(source._id)
-              )
-              const preparationJob = preparation.find(
-                (item) => item.sourceId === String(source._id)
-              )
-              const state = sourceStatus(source, ingestion, preparation)
-              const citationCount = citations.filter(
-                (citation) => citation.sourceId === String(source._id)
-              ).length
-              const sourceCitations = citations.filter(
-                (citation) => citation.sourceId === String(source._id)
-              )
-              const progress = preparationProgress(preparationJob)
-              return (
-                <div
-                  key={String(source._id)}
-                  className="rounded-lg border border-border/70 p-3 sm:p-4"
-                >
-                  <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div className="flex min-w-0 items-start gap-3">
-                      <FileIcon
-                        className="mt-0.5 shrink-0 text-muted-foreground"
-                        size={20}
-                        aria-hidden="true"
-                      />
-                      <div className="min-w-0">
-                        <p className="font-medium break-words">
-                          {source.relativeKey || source.filename}
-                        </p>
-                        <p className="mt-0.5 text-xs text-muted-foreground">
-                          {[
-                            source.mimeType,
-                            formatSize(source.sizeBytes),
-                            citationCount
-                              ? `${citationCount} citation${citationCount === 1 ? "" : "s"}`
-                              : undefined,
-                          ]
-                            .filter(Boolean)
-                            .join(" · ") || "Local source"}
-                        </p>
+  return (
+    <section className="space-y-5" aria-label="Sources and created files">
+      <Card className="border-border bg-card">
+        <CardContent className="p-5 sm:p-7">
+          <h2 className="font-heading text-xl">Your sources</h2>
+          <div className="mt-4 divide-y divide-border/70 rounded-xl border border-border">
+            {sources.length ? (
+              sources.map((source) => {
+                const ingestionJob = ingestion.find(
+                  (item) => item.sourceId === String(source._id)
+                )
+                const preparationJob = preparation.find(
+                  (item) => item.sourceId === String(source._id)
+                )
+                const state = sourceStatus(source, ingestion, preparation)
+                const progress = preparationProgress(preparationJob)
+                return (
+                  <div key={String(source._id)} className="p-4 sm:p-5">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div className="flex min-w-0 items-start gap-3">
+                        <FileIcon
+                          className="mt-0.5 shrink-0 text-muted-foreground"
+                          size={20}
+                          aria-hidden="true"
+                        />
+                        <div className="min-w-0">
+                          <Link
+                            href={`/projects/${encodeURIComponent(String(projectId))}/sources/${encodeURIComponent(String(source._id))}`}
+                            className="font-medium break-words hover:text-brand focus-visible:rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+                          >
+                            {source.filename}
+                          </Link>
+                        </div>
                       </div>
+                      <Badge variant={state.variant}>{state.label}</Badge>
                     </div>
-                    <Badge variant={state.variant}>{state.label}</Badge>
-                  </div>
-                  {actions.onOpenSource ? (
-                    <div className="mt-3">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => actions.onOpenSource?.(source)}
-                      >
-                        <ArrowUpRightIcon size={15} /> Overview & preview
-                      </Button>
-                    </div>
-                  ) : null}
-                  {progress !== undefined ? (
-                    <div className="mt-3 space-y-1.5">
-                      <div className="flex justify-between text-xs text-muted-foreground">
-                        <span>Preparing study material</span>
-                        <span>{Math.round(progress)}%</span>
+                    {progress !== undefined ? (
+                      <div className="mt-3 space-y-1.5">
+                        <div className="flex justify-between text-xs text-muted-foreground">
+                          <span>Preparing study material</span>
+                          <span>{Math.round(progress)}%</span>
+                        </div>
+                        <Progress
+                          value={progress}
+                          aria-label={`Preparation ${Math.round(progress)} percent complete`}
+                        />
                       </div>
-                      <Progress
-                        value={progress}
-                        aria-label={`Preparation ${Math.round(progress)} percent complete`}
-                      />
-                    </div>
-                  ) : null}
-                  {sourceCitations.length ? (
-                    <div className="mt-3 rounded-md bg-muted/60 px-3 py-2 text-xs text-muted-foreground">
-                      <span className="font-medium text-foreground">
-                        Retrieval citations:
-                      </span>{" "}
-                      {sourceCitations
-                        .map((citation) =>
-                          citation.detail
-                            ? `${citation.label} (${citation.detail})`
-                            : citation.label
-                        )
-                        .join(" · ")}
-                    </div>
-                  ) : null}
-                  {source.unsupported ? (
-                    <p className="mt-3 rounded-md bg-muted/60 px-3 py-2 text-sm text-muted-foreground">
-                      This file is available for agent inspection but cannot be
-                      indexed for retrieval yet.
-                    </p>
-                  ) : null}
-                  {state.label === "Needs attention" ? (
-                    <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
-                      <span>
-                        {sourceError(source, ingestionJob, preparationJob) ||
-                          "This file could not be prepared for retrieval."}
-                      </span>
-                      {retryError?.sourceId === String(source._id) ? (
-                        <span className="basis-full text-xs">
-                          {retryError.message}
+                    ) : null}
+                    {source.unsupported ? (
+                      <p className="mt-3 rounded-md bg-muted/60 px-3 py-2 text-sm text-muted-foreground">
+                        This file is available for agent inspection but cannot
+                        be indexed for retrieval yet.
+                      </p>
+                    ) : null}
+                    {state.label === "Needs attention" ? (
+                      <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                        <span>
+                          {sourceError(source, ingestionJob, preparationJob) ||
+                            "This file could not be prepared for retrieval."}
                         </span>
-                      ) : null}
-                      {actions.onRetryIngestion ? (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          disabled={retryingSourceId === String(source._id)}
-                          onClick={() => void retrySource(String(source._id))}
-                        >
-                          {retryingSourceId === String(source._id) ? (
-                            <LoadingIcon
-                              className="animate-spin motion-reduce:animate-none"
-                              size={14}
-                            />
-                          ) : (
-                            <RotateLeftIcon size={14} />
-                          )}
-                          {retryingSourceId === String(source._id)
-                            ? "Retrying…"
-                            : "Retry"}
-                        </Button>
-                      ) : null}
-                    </div>
-                  ) : null}
-                </div>
-              )
-            })
-          ) : (
-            <p className="rounded-lg border border-dashed p-5 text-sm text-muted-foreground">
-              No source files yet. Upload a file above to make it available for
-              retrieval.
-            </p>
-          )}
+                        {retryError?.sourceId === String(source._id) ? (
+                          <span className="basis-full text-xs">
+                            {retryError.message}
+                          </span>
+                        ) : null}
+                        {actions.onRetryIngestion ? (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            disabled={retryingSourceId === String(source._id)}
+                            onClick={() => void retrySource(String(source._id))}
+                          >
+                            {retryingSourceId === String(source._id) ? (
+                              <LoadingIcon
+                                className="animate-spin motion-reduce:animate-none"
+                                size={14}
+                              />
+                            ) : (
+                              <RotateLeftIcon size={14} />
+                            )}
+                            {retryingSourceId === String(source._id)
+                              ? "Retrying…"
+                              : "Retry"}
+                          </Button>
+                        ) : null}
+                      </div>
+                    ) : null}
+                  </div>
+                )
+              })
+            ) : (
+              <p className="p-5 text-sm text-muted-foreground">
+                No sources yet.
+              </p>
+            )}
+          </div>
         </CardContent>
       </Card>
 
-      <div className="grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
-        <Card>
-          <CardHeader>
-            <CardTitle>Agent files</CardTitle>
-            <CardDescription>
-              Created files stay in the project workspace until you add one to
-              sources.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-2">
+      <Card className="border-border bg-card">
+        <CardContent className="p-5 sm:p-7">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h2 className="font-heading text-xl">Created files</h2>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Your agent may have created files for this project.
+              </p>
+            </div>
+            {actions.onOpenCreatedFilesFolder ? (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={actions.onOpenCreatedFilesFolder}
+              >
+                <FolderIcon size={15} />{" "}
+                {revealLabel === "Show in Finder"
+                  ? "Open in Finder"
+                  : "Open folder"}
+              </Button>
+            ) : null}
+          </div>
+          <div className="mt-4 space-y-2">
             {activeArtifacts.length ? (
               activeArtifacts.map((artifact) => (
                 <div
@@ -424,7 +383,7 @@ export function ProjectFiles({
                         size="sm"
                         onClick={() => actions.onRevealArtifact?.(artifact)}
                       >
-                        <FolderIcon size={15} /> Reveal
+                        <FolderIcon size={15} /> {revealLabel}
                       </Button>
                     ) : null}
                     {actions.onAddArtifactToSources &&
@@ -446,16 +405,21 @@ export function ProjectFiles({
                       </Button>
                     ) : null}
                   </div>
+                  {artifactError?.id === artifact.id ? (
+                    <p role="alert" className="w-full text-sm text-destructive">
+                      {artifactError.message}
+                    </p>
+                  ) : null}
                 </div>
               ))
             ) : (
-              <p className="rounded-lg border border-dashed p-5 text-sm text-muted-foreground">
-                Generated files will appear here when an agent creates them.
+              <p className="text-sm text-muted-foreground">
+                No created files yet.
               </p>
             )}
-          </CardContent>
-        </Card>
-      </div>
+          </div>
+        </CardContent>
+      </Card>
     </section>
   )
 }

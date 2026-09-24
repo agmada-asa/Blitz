@@ -248,7 +248,7 @@ export function PdfReader({
         }
 
         setStatus(
-          match < 0 && page === initialPage
+          needle && match < 0 && page === initialPage
             ? "Read the Passage tab for the exact cited text."
             : ""
         )
@@ -363,7 +363,9 @@ export function PdfReader({
       <canvas
         ref={canvasRef}
         className="max-w-full bg-white"
-        aria-label={`Original PDF page ${page}. The Passage tab contains accessible source text.`}
+        aria-label={quote.trim()
+          ? `Original PDF page ${page}. The Passage tab contains accessible source text.`
+          : `Original PDF page ${page}. Extracted text is available in the adjacent tab.`}
         role="img"
       />
     </div>
