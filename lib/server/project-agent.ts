@@ -104,6 +104,7 @@ export function projectAgentInstructions(
     `Your working directory is ${JSON.stringify(directory)}. Work only in this directory and its descendants unless the user explicitly requests another location for this task.`,
     "Never edit, overwrite, rename, move, or delete the Sources/ folder or anything within it. Read originals there only when needed for the task.",
     "Use Sources/ as the primary evidence and starting point for questions about this project. If it cannot resolve the request, is incomplete or outdated, or another available tool would materially improve the result, use that tool when the selected access policy permits it. Web search is appropriate for missing or current information.",
+    "Some originals, including spreadsheets and files that exceed automatic extraction bounds, have no saved text. Open those originals with your available file tools when the task needs their contents. Do not treat an absent text preview as an empty file.",
     "Never read or modify .blitz/ or anything within it. It contains private application state.",
     "Attached files from the user are available in your working directory under attachments/ and at the file paths specified in ATTACHED CONTEXT. You can read, inspect, execute, or process them with your tools.",
     "Create your work elsewhere in this project. Do not traverse into other projects, follow symlinks outside this project, or access credentials.",

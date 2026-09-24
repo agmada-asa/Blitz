@@ -107,7 +107,7 @@ function sourceStatus(
     (item) => item.sourceId === String(source._id)
   )
   if (source.unsupported)
-    return { label: "Unsupported file", variant: "outline" as const }
+    return { label: "Original saved", variant: "outline" as const }
   if (
     ingestionJob?.status === "failed" ||
     preparationJob?.status === "failed" ||
@@ -279,8 +279,7 @@ export function ProjectFiles({
                     ) : null}
                     {source.unsupported ? (
                       <p className="mt-3 rounded-md bg-muted/60 px-3 py-2 text-sm text-muted-foreground">
-                        This file is available for agent inspection but cannot
-                        be indexed for retrieval yet.
+                        The original is saved. Ask an agent to work with this file.
                       </p>
                     ) : null}
                     {state.label === "Needs attention" ? (

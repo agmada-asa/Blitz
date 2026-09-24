@@ -106,10 +106,11 @@ export function ProjectSourceDetail({
     (job) => String(job.sourceId) === sourceId
   )
   const needsAttention =
-    source.status === "failed" ||
-    ingestionJob?.status === "failed" ||
-    preparationJob?.status === "failed" ||
-    preparationJob?.leaseExpired
+    !source.unsupported &&
+    (source.status === "failed" ||
+      ingestionJob?.status === "failed" ||
+      preparationJob?.status === "failed" ||
+      preparationJob?.leaseExpired)
   const isBusy =
     source.status === "processing" ||
     ingestionJob?.status === "queued" ||
@@ -223,7 +224,7 @@ export function ProjectSourceDetail({
       ) : null}
       {source.unsupported ? (
         <p className="mb-4 rounded-lg bg-muted p-3 text-sm text-muted-foreground">
-          This file is saved, but its text could not be extracted.
+          The original is saved. Ask an agent to work with this file.
         </p>
       ) : null}
 

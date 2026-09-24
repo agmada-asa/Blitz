@@ -36,11 +36,13 @@ intentionally not a packaged installer yet.
 
 Original uploads use `POST /api/sources/upload` with `x-blitz-project-id`,
 `x-blitz-filename`, and the raw file body. The same endpoint accepts browser,
-Electron, and Android LAN requests. Uploads have a 1 GiB byte limit. Local PDF
+Electron, and Android LAN requests. Originals stream to the project folder
+without an application byte limit. Local PDF
 extraction uses file-backed range reads, while approved public research downloads
 retain their separate 5 MB network boundary. Persisted extracted text is limited
-to 500 KB in UTF-8. Inputs that cross a later parsing or text limit stay retained
-with an actionable error; Blitz never silently truncates searchable evidence.
+to 500 KB in UTF-8. Inputs that cross a parsing or text bound stay saved for
+agent inspection without partial indexing; Blitz never silently truncates
+searchable evidence.
 
 `worker:ingestion` recovers queued uploads and expired five-minute ingestion
 leases through `/api/sources/retry`. Failed files require an explicit retry.

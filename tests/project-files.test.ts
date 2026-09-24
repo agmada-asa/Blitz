@@ -10,6 +10,7 @@ import {
   resolveProjectFile,
   readProjectFileBytes,
   storeProjectFile,
+  streamProjectFile,
 } from "../lib/server/project-files.ts"
 
 /** Runs a test with an isolated data root and removes it afterward. */
@@ -205,5 +206,6 @@ test("downloads enforce byte limits and reject symlink targets", async () => {
       readProjectFileBytes("download", "alias.txt", 20),
       /symlink/
     )
+    await assert.rejects(streamProjectFile("download", "alias.txt"), /symlink/)
   })
 })

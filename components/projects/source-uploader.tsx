@@ -239,7 +239,7 @@ export function SourceUploader({
           imported.push({
             filename: file.name,
             status: "retained",
-            detail: "Original file retained for agent inspection.",
+            detail: "Original saved. An agent can work with this file.",
           })
         else if (!upload.extracted && !upload.duplicate)
           throw new Error(upload.error || "The source could not be extracted.")
@@ -264,8 +264,8 @@ export function SourceUploader({
     setMessage({
       type: failed ? "error" : "success",
       text: failed
-        ? `${failed} file${failed === 1 ? "" : "s"} could not be prepared. Review the details below.`
-        : `${imported.length} file${imported.length === 1 ? "" : "s"} uploaded.${retained ? ` ${retained} retained for inspection without indexing.` : ""}`,
+        ? `${failed} file${failed === 1 ? "" : "s"} could not be saved. Review the details below.`
+        : `${imported.length} file${imported.length === 1 ? "" : "s"} uploaded.${retained ? ` ${retained} saved for agent use.` : ""}`,
     })
     const queuedCount = imported.filter(
       (item) => item.status === "queued"

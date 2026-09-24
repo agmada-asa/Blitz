@@ -296,6 +296,7 @@ export const createOriginalSource = mutation({
       return {
         sourceId: duplicate._id,
         ingestionJobId: job?._id,
+        unsupported: duplicate.unsupported,
         ...(job?.status ? { ingestionStatus: job.status } : {}),
         ...(job?.leaseExpiresAt !== undefined
           ? { ingestionLeaseExpiresAt: job.leaseExpiresAt }
@@ -417,6 +418,7 @@ export const completeOriginalIngestion = mutation({
     leaseToken: v.string(),
     extractedText: v.string(),
     status: v.union(v.literal("completed"), v.literal("failed")),
+    unsupported: v.optional(v.boolean()),
     error: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
@@ -429,7 +431,7 @@ export const completeOriginalIngestion = mutation({
       (job.leaseExpiresAt ?? 0) <= Date.now()
     )
       throw new Error("Ingestion lease expired")
-    if (args.status === "completed") {
+    if (args.status === "completed" && !args.unsupported) {
       if (
         !args.extractedText.trim() ||
         new TextEncoder().encode(args.extractedText).byteLength > 500_000
@@ -466,13 +468,14 @@ export const completeOriginalIngestion = mutation({
     await ctx.db.patch(source._id, {
       extractedText: args.extractedText,
       status: args.status === "completed" ? "ready" : "failed",
-      ...(args.error ? { error: args.error.slice(0, 500) } : {}),
+      unsupported: args.unsupported ?? false,
+      error: args.error ? args.error.slice(0, 500) : undefined,
     })
     await ctx.db.patch(job._id, {
       leaseToken: undefined,
       leaseExpiresAt: undefined,
       status: args.status,
-      ...(args.error ? { error: args.error.slice(0, 500) } : {}),
+      error: args.error ? args.error.slice(0, 500) : undefined,
       updatedAt: Date.now(),
     })
   },

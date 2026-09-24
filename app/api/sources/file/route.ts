@@ -4,7 +4,7 @@ import { basename } from "node:path"
 import { ConvexHttpClient } from "convex/browser"
 
 import { api } from "@/convex/_generated/api"
-import { readProjectFileBytes } from "@/lib/server/project-files"
+import { streamProjectFile } from "@/lib/server/project-files"
 
 /** Uses Node because the original source lives in the local project workspace. */
 export const runtime = "nodejs"
@@ -23,7 +23,7 @@ const INLINE_SAFE_MIME_TYPES = new Set([
   "image/svg+xml",
 ])
 
-/** Returns a bounded original source file after resolving its project-owned key. */
+/** Streams an original source file after resolving its project-owned key. */
 export async function GET(request: Request): Promise<Response> {
   const url = new URL(request.url)
   const projectId = url.searchParams.get("projectId")
@@ -82,22 +82,18 @@ export async function GET(request: Request): Promise<Response> {
       })
     }
 
-    const bytes = await readProjectFileBytes(
-      projectId,
-      source.relativeKey,
-      50_000_000
-    )
+    const file = await streamProjectFile(projectId, source.relativeKey)
     const isInline =
       url.searchParams.get("inline") === "1" &&
       INLINE_SAFE_MIME_TYPES.has(source.mimeType ?? "")
-    return new Response(new Uint8Array(bytes), {
+    return new Response(file.body, {
       headers: {
         "cache-control": "no-store",
         "content-type": source.mimeType || "application/octet-stream",
         "content-disposition": `${isInline ? "inline" : "attachment"}; filename*=UTF-8''${encodeURIComponent(basename(source.filename))}`,
         "content-security-policy": "sandbox",
         "x-content-type-options": "nosniff",
-        "content-length": String(bytes.byteLength),
+        "content-length": String(file.size),
       },
     })
   } catch (error) {

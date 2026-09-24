@@ -7,13 +7,14 @@ import { join } from "node:path"
 import test from "node:test"
 
 import {
-  MAX_ORIGINAL_SOURCE_BYTES,
+  safeSourceFilename,
   storeOriginalSource,
 } from "../lib/server/source-files.ts"
 import {
   getProjectDirectory,
   readProjectFileBytes,
   resolveProjectFile,
+  streamProjectFile,
 } from "../lib/server/project-files.ts"
 
 /** Creates a web stream from one deterministic byte payload. */
@@ -60,28 +61,34 @@ test("stores original bytes atomically and deduplicates retries", async () => {
   }
 })
 
-test("allows 1 GB uploads and rejects a stream above its configured boundary", async () => {
+test("streams stored originals back for download", async () => {
   const root = await mkdtemp(join(tmpdir(), "blitz-source-files-"))
   const previous = process.env.BLITZ_DATA_DIR
   process.env.BLITZ_DATA_DIR = root
   try {
-    assert.ok(MAX_ORIGINAL_SOURCE_BYTES >= 1_000_000_000)
-    await assert.rejects(
-      storeOriginalSource({
-        projectId: "project-b",
-        filename: "huge.bin",
-        body: streamFor(new Uint8Array(17)),
-        maxBytes: 16,
-      }),
-      /size limit/
-    )
-    const sourceDir = join(getProjectDirectory("project-b"), "Sources")
-    assert.deepEqual(await readdir(sourceDir), [])
+    const bytes = new Uint8Array(17)
+    bytes.fill(42)
+    const stored = await storeOriginalSource({
+      projectId: "project-b",
+      filename: "archive.bin",
+      body: streamFor(bytes),
+    })
+    assert.equal(stored.size, bytes.byteLength)
+    const streamed = await streamProjectFile("project-b", stored.key)
+    assert.equal(streamed.size, bytes.byteLength)
+    assert.deepEqual(new Uint8Array(await new Response(streamed.body).arrayBuffer()), bytes)
+    assert.deepEqual(await readdir(join(getProjectDirectory("project-b"), "Sources")), [stored.key.slice("Sources/".length)])
   } finally {
     if (previous === undefined) delete process.env.BLITZ_DATA_DIR
     else process.env.BLITZ_DATA_DIR = previous
     await rm(root, { recursive: true, force: true })
   }
+})
+
+test("keeps long Unicode filenames within one filesystem segment", () => {
+  const filename = safeSourceFilename(`${"研".repeat(100)}.xlsx`)
+  assert.ok(Buffer.byteLength(`${"a".repeat(64)}-${filename}`) <= 255)
+  assert.match(filename, /\.xlsx$/)
 })
 
 test("reads stored project file bytes correctly within configured limits", async () => {
