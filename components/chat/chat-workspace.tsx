@@ -59,6 +59,7 @@ import {
   writeCachedAgentAutonomy,
 } from "@/components/chat/chat-agent-controls"
 import { AnnotatedAssistantMessage } from "@/components/chat/annotated-assistant-message"
+import { ReadAloudButton } from "@/components/chat/read-aloud-button"
 import { type FloatingAnnotation } from "@/components/chat/floating-annotation-chip"
 import { ReplyModelPicker } from "@/components/chat/reply-model-picker"
 import { Markdown } from "@/components/ui/markdown"
@@ -2204,6 +2205,9 @@ export function ChatWorkspace({
                           <>
                             {message.content ? (
                               <>
+                                {message.status !== "running" ? (
+                                  <ReadAloudButton text={message.content} />
+                                ) : null}
                                 <Button
                                   type="button"
                                   variant="ghost"
