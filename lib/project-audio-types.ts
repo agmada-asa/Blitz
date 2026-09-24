@@ -7,7 +7,7 @@ export type ProjectAudioStatus =
   "queued" | "generating" | "completed" | "failed"
 /** Stage reported during a long local generation job. */
 export type ProjectAudioStage =
-  "preparing" | "writing" | "recording" | "finishing"
+  "preparing" | "adapting" | "writing" | "recording" | "finishing"
 
 /** Public metadata for one locally stored project recording. */
 export type ProjectAudioItem = {

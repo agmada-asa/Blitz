@@ -44,6 +44,7 @@ function statusLabel(status: string): string {
 function generationLabel(item: ProjectAudioItem): string {
   if (item.status !== "generating") return statusLabel(item.status)
   if (item.stage === "preparing") return "Preparing source"
+  if (item.stage === "adapting") return "Preparing narration"
   if (item.stage === "writing") return "Writing script"
   if (item.stage === "finishing") return "Finishing audio"
   if (item.stage === "recording") {
@@ -193,7 +194,8 @@ export function ProjectAudio({ projectId, sources }: ProjectAudioProps) {
             Audiobook
           </h3>
           <p className="text-sm text-muted-foreground">
-            Turn one ready source into narrated audio.
+            Your Research model removes page clutter and smooths the text before
+            Kokoro reads it. This may use model credits.
           </p>
           {readySources.length ? (
             <div className="flex flex-col gap-2 sm:flex-row">

@@ -18,16 +18,22 @@ import type {
 } from "@/lib/project-audio-types"
 import { validateKokoroVoiceIds, type KokoroVoiceId } from "@/lib/kokoro-voices"
 import { loadSavedAiModelSettings } from "./ai-model-settings"
+import { createAudiobookScript } from "./audiobook-script"
 import { synthesizeKokoroToFile } from "./kokoro"
 import { createPodcastScript, type PodcastSource } from "./podcast-script"
 import { resolveProjectFile, storeProjectFile } from "./project-files"
+import { extractStoredSource } from "./source-ingestion/extract"
 
 /** One passage awaiting synthesis, with its stable speaker identity. */
 type AudioPassage = {
   text: string
   voiceId: KokoroVoiceId
   speaker: ProjectAudioSegment["speaker"]
+  pauseBeforeSeconds?: number
 }
+
+/** One measured WAV chunk and an optional section pause before it. */
+type AudioPart = { path: string; pauseBeforeSeconds: number }
 
 /** Validates on-disk transcript content before it reaches a client or model. */
 const transcriptSchema = z.object({
@@ -348,7 +354,10 @@ function timedPassages(
 }
 
 /** Joins PCM parts with the Python standard library and an atomic rename. */
-async function joinParts(outputPath: string, parts: string[]): Promise<void> {
+async function joinParts(
+  outputPath: string,
+  parts: AudioPart[]
+): Promise<void> {
   const python = process.env.BLITZ_KOKORO_PYTHON?.trim() || "python3"
   const script = join(process.cwd(), "scripts", "join-wav.py")
   await new Promise<void>((resolve, reject) => {
@@ -389,7 +398,35 @@ async function wavMinutes(path: string): Promise<number> {
   }
 }
 
-/** Generates the audiobook's entire saved source text with the first selected voice. */
+/** Re-reads a stored PDF so a newly improved page order helps older imports too. */
+async function audiobookSourceText(
+  projectId: string,
+  source: {
+    kind: string
+    relativeKey?: string
+    filename: string
+    mimeType?: string
+    sizeBytes?: number
+    extractedText: string
+  }
+): Promise<string> {
+  if (source.kind !== "pdf" || !source.relativeKey || !source.sizeBytes)
+    return source.extractedText
+  try {
+    const original = await extractStoredSource({
+      path: await resolveProjectFile(projectId, source.relativeKey),
+      filename: source.filename,
+      contentType: source.mimeType ?? null,
+      sizeBytes: source.sizeBytes,
+    })
+    return original.extractedText
+  } catch {
+    // An older upload may no longer be readable, while its saved text is still usable.
+    return source.extractedText
+  }
+}
+
+/** Saves a spoken script grounded in the source before mapping it to one voice. */
 async function audiobookPass(
   manifest: AudioManifest,
   client: ConvexHttpClient,
@@ -402,16 +439,33 @@ async function audiobookPass(
   })
   if (!source || source.status !== "ready" || !source.extractedText.trim())
     throw new Error("The selected source is not ready for narration")
-  // Extraction markers aid page navigation in text but are not source prose.
-  const narration = source.extractedText.replace(
-    /^\[(?:Page|Slide) \d+\]\s*$/gm,
-    ""
+  const settings = await loadSavedAiModelSettings(client)
+  const selection = resolveAiTaskSelection(settings, "research", {
+    providerEnvironmentFallback: process.env.BLITZ_RESEARCH_PROVIDER,
+    modelEnvironmentFallback: process.env.BLITZ_CODEX_MODEL,
+    effortEnvironmentFallback: process.env.BLITZ_CODEX_EFFORT,
+  })
+  const sections = await createAudiobookScript({
+    sourceText: await audiobookSourceText(manifest.projectId, source),
+    filename: source.filename,
+    selection,
+  })
+  await storeProjectFile(
+    manifest.projectId,
+    `Audio/${manifest.id}/script.json`,
+    JSON.stringify({ sourceId: manifest.sourceId, sections }, null, 2)
   )
-  return speechChunks(narration).map((text) => ({
-    text,
-    voiceId: manifest.voiceIds[0],
-    speaker: "narrator",
-  }))
+  return sections.flatMap((section, sectionIndex) =>
+    speechChunks(section.text).map((text, chunkIndex) => ({
+      text,
+      voiceId: manifest.voiceIds[0],
+      speaker: "narrator",
+      pauseBeforeSeconds:
+        sectionIndex > 0 && section.startsNewSection && chunkIndex === 0
+          ? 0.8
+          : 0,
+    }))
+  )
 }
 
 /** Writes the podcast script, then maps each host's turns to the selected voices. */
@@ -464,7 +518,7 @@ async function runProjectAudio(
 ): Promise<void> {
   try {
     manifest.status = "generating"
-    manifest.stage = manifest.kind === "podcast" ? "writing" : "preparing"
+    manifest.stage = manifest.kind === "podcast" ? "writing" : "adapting"
     await writeManifest(manifest)
     const passages =
       manifest.kind === "audiobook"
@@ -475,7 +529,7 @@ async function runProjectAudio(
     manifest.completedChunks = 0
     manifest.totalChunks = passages.length
     await writeManifest(manifest)
-    const parts: string[] = []
+    const parts: AudioPart[] = []
     const segments: ProjectAudioSegment[] = []
     for (const [index, passage] of passages.entries()) {
       const path = await resolveProjectFile(
@@ -487,8 +541,10 @@ async function runProjectAudio(
         voiceId: passage.voiceId,
         outputPath: path,
       })
-      parts.push(path)
-      const startSeconds = segments.at(-1)?.endSeconds ?? 0
+      const pauseBeforeSeconds = passage.pauseBeforeSeconds ?? 0
+      parts.push({ path, pauseBeforeSeconds })
+      const startSeconds =
+        (segments.at(-1)?.endSeconds ?? 0) + pauseBeforeSeconds
       segments.push(
         ...timedPassages(
           passage,

@@ -9,8 +9,8 @@ import wave
 from pathlib import Path
 
 
-def join_wav(output: Path, parts: list[Path]) -> None:
-    """Write compatible source frames atomically; fail on an empty or mismatched part."""
+def join_wav(output: Path, parts: list[dict[str, object]]) -> None:
+    """Join compatible frames and put a short silence before section starts."""
     if not parts:
         raise ValueError("At least one audio part is required")
     temporary = output.with_suffix(output.suffix + ".partial")
@@ -18,7 +18,11 @@ def join_wav(output: Path, parts: list[Path]) -> None:
     expected: tuple[int, int, int, str] | None = None
     try:
         with wave.open(str(temporary), "wb") as destination:
-            for part in parts:
+            for entry in parts:
+                part = Path(str(entry["path"]))
+                pause_seconds = float(entry.get("pauseBeforeSeconds", 0))
+                if pause_seconds < 0 or pause_seconds > 2:
+                    raise ValueError("Section pause is invalid")
                 with wave.open(str(part), "rb") as source:
                     details = (
                         source.getnchannels(),
@@ -33,6 +37,10 @@ def join_wav(output: Path, parts: list[Path]) -> None:
                         destination.setparams(source.getparams())
                     elif details != expected:
                         raise ValueError(f"Audio part format changed: {part.name}")
+                    if pause_seconds:
+                        frames = round(pause_seconds * source.getframerate())
+                        frame_bytes = source.getnchannels() * source.getsampwidth()
+                        destination.writeframes(b"\0" * frames * frame_bytes)
                     while frames := source.readframes(24_000):
                         destination.writeframes(frames)
         os.replace(temporary, output)
@@ -42,5 +50,5 @@ def join_wav(output: Path, parts: list[Path]) -> None:
 
 if __name__ == "__main__":
     if len(sys.argv) != 2:
-        raise SystemExit("Usage: join-wav.py OUTPUT < JSON_PART_PATHS")
-    join_wav(Path(sys.argv[1]), [Path(part) for part in json.load(sys.stdin)])
+        raise SystemExit("Usage: join-wav.py OUTPUT < JSON_PARTS")
+    join_wav(Path(sys.argv[1]), json.load(sys.stdin))
