@@ -10,6 +10,7 @@ import { resolveLocalConvexPorts } from "../electron/service-manager.mjs"
 import {
   killProcessGroups,
   processGroupExists,
+  registerLauncherShutdown,
   terminateProcessGroups,
 } from "./process-groups.mjs"
 
@@ -59,6 +60,8 @@ try {
 
 if (apkPath) console.log(`Android installer: ${lanUrl}/api/android\n`)
 
+registerLauncherShutdown(processGroups, stop)
+
 start(
   "npx",
   [
@@ -106,9 +109,6 @@ start(
   ["--experimental-strip-types", "scripts/research-worker.ts"],
   sharedEnvironment
 )
-
-process.on("SIGINT", () => stop("SIGINT"))
-process.on("SIGTERM", () => stop("SIGTERM"))
 
 /** Returns the first external IPv4 address, or undefined when no LAN is available. */
 function findLanAddress() {

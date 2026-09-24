@@ -1,9 +1,11 @@
 /** Verifies that local launcher shutdown cleans up complete process groups. */
 
 import assert from "node:assert/strict"
+import { EventEmitter } from "node:events"
 import test from "node:test"
 import {
   processGroupExists,
+  registerLauncherShutdown,
   signalProcessGroup,
   terminateProcessGroups,
 } from "../scripts/process-groups.mjs"
@@ -67,4 +69,49 @@ test("treats an exited process group as absent", () => {
 
   assert.equal(processGroupExists(301, killProcess), false)
   assert.equal(signalProcessGroup(301, "SIGTERM", killProcess), false)
+})
+
+test("terminal loss requests shutdown and exit kills surviving groups", () => {
+  const runtime = new EventEmitter()
+  const stops: Array<[string, number | undefined]> = []
+  const signals: Array<[number, string]> = []
+
+  registerLauncherShutdown(
+    new Set([401, 402]),
+    (signal: string, exitCode?: number) => stops.push([signal, exitCode]),
+    {
+      runtime,
+      platform: "darwin",
+      killProcess: (pid: number, signal: string) => {
+        signals.push([pid, signal])
+        return true
+      },
+    }
+  )
+
+  runtime.emit("SIGHUP")
+  assert.deepEqual(stops, [["SIGTERM", 129]])
+
+  runtime.emit("exit")
+  assert.deepEqual(signals, [
+    [-401, "SIGKILL"],
+    [-402, "SIGKILL"],
+  ])
+})
+
+test("unexpected launcher exit kills its child group without a prior signal", () => {
+  const runtime = new EventEmitter()
+  const signals: Array<[number, string]> = []
+
+  registerLauncherShutdown(new Set([501]), () => {}, {
+    runtime,
+    platform: "darwin",
+    killProcess: (pid: number, signal: string) => {
+      signals.push([pid, signal])
+      return true
+    },
+  })
+
+  runtime.emit("exit")
+  assert.deepEqual(signals, [[-501, "SIGKILL"]])
 })

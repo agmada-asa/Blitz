@@ -77,3 +77,24 @@ export function killProcessGroups(groupIds, killProcess = process.kill) {
   for (const groupId of validGroupIds(groupIds))
     signalProcessGroup(groupId, "SIGKILL", killProcess)
 }
+
+/**
+ * Stops owned process groups when the launcher is interrupted or loses its terminal.
+ * The exit hook is a synchronous fallback for unexpected launcher failures.
+ */
+export function registerLauncherShutdown(
+  groupIds,
+  stop,
+  {
+    runtime = process,
+    platform = process.platform,
+    killProcess = process.kill,
+  } = {}
+) {
+  runtime.on("SIGINT", () => stop("SIGINT"))
+  runtime.on("SIGTERM", () => stop("SIGTERM"))
+  if (platform !== "win32") {
+    runtime.on("SIGHUP", () => stop("SIGTERM", 129))
+    runtime.once("exit", () => killProcessGroups(groupIds, killProcess))
+  }
+}
