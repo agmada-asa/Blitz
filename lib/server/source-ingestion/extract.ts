@@ -7,6 +7,7 @@ import { getDocument } from "pdfjs-dist/legacy/build/pdf.mjs"
 import { unzipSync } from "fflate"
 import { SourceIngestionError } from "./errors.ts"
 import { MAX_ORIGINAL_SOURCE_BYTES } from "../source-files.ts"
+import { pdfPageReadingOrder } from "./pdf-reading-order.ts"
 
 /** Maximum downloaded bytes accepted by the research extraction boundary. */
 export const MAX_DOWNLOADED_SOURCE_BYTES = 5_000_000
@@ -264,13 +265,10 @@ async function extractPdfText(
         const content = await page.getTextContent({
           includeMarkedContent: false,
         })
-        const pageText = content.items
-          .map((item) =>
-            "str" in item && typeof item.str === "string" ? item.str : ""
-          )
-          .join(" ")
-          .replace(/\s+/g, " ")
-          .trim()
+        const pageText = pdfPageReadingOrder(
+          content.items.filter((item) => "str" in item),
+          page.view[2] - page.view[0]
+        )
         if (pageText) readablePageFound = true
         const pageOutput = `[Page ${pageNumber}]${pageText ? `\n${pageText}` : ""}`
         const separatorLength = pages.length ? 2 : 0

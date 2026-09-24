@@ -13,8 +13,9 @@ decks fail as unreadable. PDF extraction
 uses the installed `pdfjs-dist` runtime and reads at most 500 pages. Research
 downloads use bounded in-memory bytes. Project-local PDFs use file-backed range
 reads so a large original does not need an equally large server heap allocation.
-PDF parsing disables evaluation when supported and keeps `[Page N]` markers in
-page order. Scanned or image-only PDFs fail with an OCR message; this boundary
+PDF parsing disables evaluation when supported, sorts positioned text into lines
+and common two- or three-column reading order, and keeps `[Page N]` markers in page order.
+Scanned or image-only PDFs fail with an OCR message; this boundary
 does not perform OCR.
 
 Research downloads are capped at 5 MB. Original project uploads are capped at
