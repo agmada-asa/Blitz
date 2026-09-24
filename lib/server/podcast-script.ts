@@ -5,7 +5,11 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { z } from "zod"
 
-import { SPOKEN_AUDIO_GUIDANCE, spokenAudioText } from "../spoken-audio"
+import {
+  SPOKEN_AUDIO_GUIDANCE,
+  spokenAudioText,
+  type AudioPronunciation,
+} from "../spoken-audio"
 import { runProviderTextTurn } from "./providers/run-text-turn"
 import type { ProviderSelection } from "./providers/types"
 
@@ -13,7 +17,12 @@ import type { ProviderSelection } from "./providers/types"
 export type PodcastSource = { filename: string; text: string }
 
 /** One spoken passage; the speaker key resolves to a saved Kokoro host voice. */
-export type PodcastTurn = { speaker: "host1" | "host2"; text: string }
+export type PodcastTurn = {
+  speaker: "host1" | "host2"
+  text: string
+  spokenText: string
+  pronunciations: AudioPronunciation[]
+}
 
 /** A complete script saved beside its locally generated audio. */
 export type PodcastScript = {
@@ -30,6 +39,14 @@ const segmentSchema = z.object({
       z.object({
         speaker: z.union([z.literal("host1"), z.literal("host2")]),
         text: z.string().trim().min(1),
+        pronunciations: z
+          .array(
+            z.object({
+              written: z.string().trim().min(1).max(100),
+              spoken: z.string().trim().min(1).max(160),
+            })
+          )
+          .default([]),
       })
     )
     .min(1),
@@ -58,7 +75,7 @@ function parseJsonObject(text: string): unknown {
 /** Counts audible words for a useful section-length check. */
 function wordCount(turns: PodcastTurn[]): number {
   return turns.reduce(
-    (count, turn) => count + turn.text.trim().split(/\s+/).length,
+    (count, turn) => count + turn.spokenText.trim().split(/\s+/).length,
     0
   )
 }
@@ -197,26 +214,42 @@ export async function createPodcastScript(input: {
       throw new Error("The podcast writer returned an incomplete outline")
 
     const turns: PodcastTurn[] = []
+    const knownPronunciations = new Map<string, string>()
     for (const [index, section] of outline.sections.entries()) {
       const priorEnding = turns
         .slice(-3)
         .map((turn) => `${turn.speaker}: ${turn.text}`)
         .join("\n")
         .slice(-1_500)
-      let segment: z.infer<typeof segmentSchema> | undefined
+      const previousPronunciations = Array.from(
+        knownPronunciations,
+        ([written, spoken]) => ({ written, spoken })
+      ).slice(-30)
+      let segment: PodcastTurn[] | undefined
       let failureReason = "The script was incomplete"
       for (let attempt = 0; attempt < 2; attempt += 1) {
         const response = await writeWithProvider(
-          `Write section ${index + 1} of ${sectionCount} for the podcast "${outline.title}". Topic: ${section.title}. Coverage: ${section.coverage}. Target 700 to 780 spoken words. Output natural educational dialogue, with at least 600 and at most 900 spoken words. ${input.hostCount === 2 ? "Alternate between host1 and host2 throughout. Give each host at least three substantive turns." : "Use host1 only as a solo narrator."} ${SPOKEN_AUDIO_GUIDANCE} Do not speak speaker labels, voice descriptions, stage directions, source labels, or production instructions. The content must be supported by the project sources. ${attempt ? `The prior draft failed validation: ${failureReason}. Return a complete five-minute section with only spoken text in each turn.` : ""}\n\nPrevious ending for continuity:\n${priorEnding || "Opening section."}\n\nReturn JSON only: {"turns":[{"speaker":"host1","text":"spoken words"}]}.\n\n<project_sources>\n${context}\n</project_sources>`,
+          `Write section ${index + 1} of ${sectionCount} for the podcast "${outline.title}". Topic: ${section.title}. Coverage: ${section.coverage}. Target 700 to 780 spoken words. Output natural educational dialogue, with at least 600 and at most 900 spoken words. ${input.hostCount === 2 ? "Alternate between host1 and host2 throughout. Give each host at least three substantive turns." : "Use host1 only as a solo narrator."} ${SPOKEN_AUDIO_GUIDANCE} Do not speak speaker labels, voice descriptions, stage directions, source labels, or production instructions. The content must be supported by the project sources. ${attempt ? `The prior draft failed validation: ${failureReason}. Return a complete five-minute section with only spoken text in each turn.` : ""}\n\nPrevious ending for continuity:\n${priorEnding || "Opening section."}\nPrevious pronunciation choices for consistency only:\n${JSON.stringify(previousPronunciations)}\n\nReturn JSON only: {"turns":[{"speaker":"host1","text":"Reader-facing words with ordinary spelling, such as AI","pronunciations":[{"written":"AI","spoken":"eigh eye"}]}]}. Pronunciation spellings are for speech only; keep them out of text.\n\n<project_sources>\n${context}\n</project_sources>`,
           input.selection,
           workspaceDirectory
         )
         try {
           const parsed = segmentSchema.parse(parseJsonObject(response))
-          const spokenTurns = parsed.turns.map((turn) => ({
-            ...turn,
-            text: spokenAudioText(turn.text),
-          }))
+          const candidatePronunciations = new Map(knownPronunciations)
+          const spokenTurns = parsed.turns.map((turn) => {
+            for (const entry of turn.pronunciations)
+              if (!candidatePronunciations.has(entry.written))
+                candidatePronunciations.set(entry.written, entry.spoken)
+            const pronunciations = Array.from(
+              candidatePronunciations,
+              ([written, spoken]) => ({ written, spoken })
+            ).filter((entry) => turn.text.includes(entry.written))
+            return {
+              ...turn,
+              pronunciations,
+              spokenText: spokenAudioText(turn.text, pronunciations),
+            }
+          })
           const count = wordCount(spokenTurns)
           const speakersValid =
             input.hostCount === 2
@@ -231,7 +264,9 @@ export async function createPodcastScript(input: {
             speakersValid &&
             !hasProductionNotes(spokenTurns)
           ) {
-            segment = { turns: spokenTurns }
+            for (const [written, spoken] of candidatePronunciations)
+              knownPronunciations.set(written, spoken)
+            segment = spokenTurns
             break
           }
           failureReason =
@@ -248,7 +283,7 @@ export async function createPodcastScript(input: {
         throw new Error(
           `The podcast writer could not complete section ${index + 1}: ${failureReason}`
         )
-      turns.push(...segment.turns)
+      turns.push(...segment)
     }
     return {
       title: outline.title,

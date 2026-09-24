@@ -17,6 +17,7 @@ import type {
   ProjectAudioTranscript,
 } from "@/lib/project-audio-types"
 import { validateKokoroVoiceIds, type KokoroVoiceId } from "@/lib/kokoro-voices"
+import { spokenAudioText, type AudioPronunciation } from "@/lib/spoken-audio"
 import { loadSavedAiModelSettings } from "./ai-model-settings"
 import { createAudiobookScript } from "./audiobook-script"
 import { synthesizeKokoroToFile } from "./kokoro"
@@ -27,6 +28,8 @@ import { extractStoredSource } from "./source-ingestion/extract"
 /** One passage awaiting synthesis, with its stable speaker identity. */
 type AudioPassage = {
   text: string
+  spokenText: string
+  pronunciations: AudioPronunciation[]
   voiceId: KokoroVoiceId
   speaker: ProjectAudioSegment["speaker"]
   pauseBeforeSeconds?: number
@@ -47,6 +50,7 @@ const transcriptSchema = z.object({
         startSeconds: z.number().nonnegative(),
         endSeconds: z.number().positive(),
         text: z.string().min(1),
+        spokenText: z.string().min(1).optional(),
         speaker: z.enum(["narrator", "host1", "host2"]),
       })
     )
@@ -282,8 +286,31 @@ async function readyPodcastSources(
   return sources
 }
 
-/** Splits speech near sentence boundaries while preserving every source word. */
-function speechChunks(text: string, maxLength = 360): string[] {
+/** Finds a pronunciation whose written phrase straddles two chunks. */
+function pronunciationCrossesBoundary(
+  left: string,
+  right: string,
+  pronunciations: readonly AudioPronunciation[]
+): boolean {
+  const joined = `${left} ${right}`
+  return pronunciations.some(({ written }) => {
+    if (!written.includes(" ")) return false
+    let position = joined.indexOf(written)
+    while (position >= 0) {
+      if (position < left.length && position + written.length > left.length + 1)
+        return true
+      position = joined.indexOf(written, position + 1)
+    }
+    return false
+  })
+}
+
+/** Splits speech near sentences without breaking a term's phonetic spelling. */
+function speechChunks(
+  text: string,
+  maxLength = 360,
+  pronunciations: readonly AudioPronunciation[] = []
+): string[] {
   const normalized = text.replace(/\s+/g, " ").trim()
   const sentences = normalized.match(/[^.!?]+[.!?]+["']?|[^.!?]+$/g) ?? [
     normalized,
@@ -320,7 +347,17 @@ function speechChunks(text: string, maxLength = 360): string[] {
     }
   }
   if (current) chunks.push(current)
-  return chunks
+  const merged: string[] = []
+  for (const chunk of chunks) {
+    const previous = merged.at(-1)
+    if (
+      previous &&
+      pronunciationCrossesBoundary(previous, chunk, pronunciations)
+    )
+      merged[merged.length - 1] = `${previous} ${chunk}`
+    else merged.push(chunk)
+  }
+  return merged
 }
 
 /** Divides a measured WAV part into shorter follow-along passages without rerunning TTS. */
@@ -330,8 +367,16 @@ function timedPassages(
   durationSeconds: number,
   firstIndex: number
 ): ProjectAudioSegment[] {
-  const lines = speechChunks(passage.text, 140)
-  const weights = lines.map((line) =>
+  let lines = speechChunks(passage.text, 140, passage.pronunciations)
+  let spokenLines = lines.map((line) =>
+    spokenAudioText(line, passage.pronunciations)
+  )
+  // Keep the saved speech transcript exact if a rare term crosses a display split.
+  if (spokenLines.join(" ") !== passage.spokenText) {
+    lines = [passage.text]
+    spokenLines = [passage.spokenText]
+  }
+  const weights = spokenLines.map((line) =>
     Math.max(1, line.replace(/\s/g, "").length)
   )
   const totalWeight = weights.reduce((total, weight) => total + weight, 0)
@@ -348,6 +393,7 @@ function timedPassages(
           ? startSeconds + durationSeconds
           : startSeconds + (elapsedWeight / totalWeight) * durationSeconds,
       text: line,
+      spokenText: spokenLines[offset],
       speaker: passage.speaker,
     }
   })
@@ -456,15 +502,19 @@ async function audiobookPass(
     JSON.stringify({ sourceId: manifest.sourceId, sections }, null, 2)
   )
   return sections.flatMap((section, sectionIndex) =>
-    speechChunks(section.text).map((text, chunkIndex) => ({
-      text,
-      voiceId: manifest.voiceIds[0],
-      speaker: "narrator",
-      pauseBeforeSeconds:
-        sectionIndex > 0 && section.startsNewSection && chunkIndex === 0
-          ? 0.8
-          : 0,
-    }))
+    speechChunks(section.text, 360, section.pronunciations).map(
+      (text, chunkIndex) => ({
+        text,
+        spokenText: spokenAudioText(text, section.pronunciations),
+        pronunciations: section.pronunciations,
+        voiceId: manifest.voiceIds[0],
+        speaker: "narrator",
+        pauseBeforeSeconds:
+          sectionIndex > 0 && section.startsNewSection && chunkIndex === 0
+            ? 0.8
+            : 0,
+      })
+    )
   )
 }
 
@@ -498,8 +548,10 @@ async function podcastPass(
     JSON.stringify(script, null, 2)
   )
   return script.turns.flatMap((turn) =>
-    speechChunks(turn.text).map((text) => ({
+    speechChunks(turn.text, 360, turn.pronunciations).map((text) => ({
       text,
+      spokenText: spokenAudioText(text, turn.pronunciations),
+      pronunciations: turn.pronunciations,
       voiceId:
         turn.speaker === "host2" && manifest.voiceIds[1]
           ? manifest.voiceIds[1]
@@ -537,7 +589,7 @@ async function runProjectAudio(
         `Audio/${manifest.id}/parts/${String(index + 1).padStart(4, "0")}.wav`
       )
       await synthesizeKokoroToFile({
-        text: passage.text,
+        text: passage.spokenText,
         voiceId: passage.voiceId,
         outputPath: path,
       })

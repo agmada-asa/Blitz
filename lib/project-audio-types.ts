@@ -25,12 +25,14 @@ export type ProjectAudioItem = {
   totalChunks?: number
 }
 
-/** A spoken passage timed within measured WAV sections for follow-along playback. */
+/** A readable passage timed within measured WAV sections for follow-along playback. */
 export type ProjectAudioSegment = {
   index: number
   startSeconds: number
   endSeconds: number
   text: string
+  /** Exact speech spelling for new recordings; absent on older transcripts. */
+  spokenText?: string
   speaker: "narrator" | "host1" | "host2"
 }
 
