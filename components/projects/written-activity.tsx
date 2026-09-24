@@ -219,7 +219,7 @@ export function WrittenActivity({ projectId, topicId }: WrittenActivityProps) {
 
   if (loadedActivity === undefined && !activityOverride)
     return (
-      <main className="mx-auto flex min-h-screen w-full max-w-2xl items-center justify-center px-5 py-10 font-sans">
+      <main className="flex min-h-svh items-center justify-center bg-background px-5 py-10 font-sans text-foreground">
         <p className="text-sm text-muted-foreground" role="status">
           Loading written activity…
         </p>
@@ -228,7 +228,7 @@ export function WrittenActivity({ projectId, topicId }: WrittenActivityProps) {
 
   if (loadedActivity === null && !activityOverride && startPending)
     return (
-      <main className="mx-auto flex min-h-screen w-full max-w-2xl items-center justify-center px-5 py-10 font-sans">
+      <main className="flex min-h-svh items-center justify-center bg-background px-5 py-10 font-sans text-foreground">
         <p className="text-sm text-muted-foreground" role="status">
           Starting written activity…
         </p>
@@ -237,16 +237,15 @@ export function WrittenActivity({ projectId, topicId }: WrittenActivityProps) {
 
   if (!activity || !item)
     return (
-      <main className="mx-auto flex min-h-screen w-full max-w-2xl flex-col justify-center gap-5 px-5 py-10 font-sans">
+      <main className="flex min-h-svh flex-col justify-center gap-5 bg-background px-5 py-10 font-sans text-foreground sm:px-8">
+        <div className="mx-auto w-full max-w-2xl space-y-5">
         <Link
           href={`/projects/${encodeURIComponent(projectId)}`}
           className="text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
         >
-          Back to project
+          Exit
         </Link>
-        <h1 className="font-heading text-3xl font-medium tracking-tight">
-          Written answers
-        </h1>
+        <h1 className="font-heading text-3xl font-medium tracking-tight">Write</h1>
         {error ? (
           <p role="alert" className="text-sm text-destructive">
             {error}
@@ -265,69 +264,112 @@ export function WrittenActivity({ projectId, topicId }: WrittenActivityProps) {
         >
           Try again
         </Button>
+        </div>
       </main>
     )
 
   return (
-    <main className="mx-auto flex min-h-screen w-full max-w-2xl flex-col px-5 py-8 pb-16 font-sans sm:px-8 sm:py-12">
-      <div className="mb-10 flex items-center justify-between gap-4">
+    <main className="min-h-svh bg-background px-4 py-4 font-sans text-foreground sm:px-8 sm:py-6">
+      <div className="mx-auto flex max-w-4xl items-center justify-between border-b border-border pb-3">
+        <h1 className="text-sm font-medium">Write</h1>
         <Link
           href={`/projects/${encodeURIComponent(projectId)}`}
-          className="text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+          className="rounded-md px-3 py-2 text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline focus-visible:ring-2 focus-visible:ring-ring"
         >
-          Back to project
+          Exit
         </Link>
-        {activity.status === "completed" ? (
-          <p className="text-sm text-muted-foreground" role="status">
-            Activity complete
-          </p>
-        ) : null}
       </div>
 
-      <section className="space-y-6">
-        <h1 className="font-heading text-2xl leading-tight font-medium tracking-tight sm:text-3xl">
+      <div className="mx-auto w-full max-w-3xl py-6 sm:py-8">
+        <p className="text-xs text-muted-foreground" role="status">
+          Prompt {currentIndex + 1} of {activity.items.length}
+          {draftSaved ? " · Draft saved" : ""}
+        </p>
+        <h2 className="mt-4 font-heading text-2xl leading-tight font-medium tracking-tight sm:text-3xl">
           {item.prompt}
-        </h1>
+        </h2>
 
         {hasReference ? (
-          <section className="space-y-2">
-            <h2 className="text-sm font-medium">Your saved answer</h2>
-            <p className="text-sm leading-relaxed whitespace-pre-wrap text-muted-foreground">
-              {item.answer}
-            </p>
-          </section>
+          <div className="mt-6 grid gap-5 md:grid-cols-2">
+            <section aria-labelledby="saved-answer-heading" className="space-y-2">
+              <h3 id="saved-answer-heading" className="text-sm font-medium">Your answer</h3>
+              <p className="text-sm leading-relaxed whitespace-pre-wrap text-muted-foreground">
+                {item.answer}
+              </p>
+            </section>
+            <section aria-labelledby="source-guide-heading" className="space-y-2 border-t border-border pt-4 md:border-t-0 md:border-l md:pt-0 md:pl-5">
+              <h3 id="source-guide-heading" className="text-sm font-medium">Source guide</h3>
+              <p className="text-sm leading-relaxed whitespace-pre-wrap text-muted-foreground">
+                {item.reference}
+              </p>
+              <p className="text-xs text-muted-foreground">
+                {item.sourceLabels.join(", ")}
+              </p>
+            </section>
+          </div>
         ) : (
-          <>
-            <div className="space-y-3">
-              <label
-                htmlFor="written-answer"
-                className="text-sm text-muted-foreground"
-              >
-                Your answer
-              </label>
-              <Textarea
-                id="written-answer"
-                value={draftAnswer}
-                onChange={(event) => {
-                  setDraftAnswers((current) => ({
-                    ...current,
-                    [item.itemId]: event.target.value,
-                  }))
-                  setDraftSaved(false)
-                  setError("")
-                }}
-                rows={8}
-                maxLength={10_000}
-                className="min-h-44 resize-y bg-card text-base leading-relaxed"
-                disabled={pendingAction !== undefined}
-              />
-            </div>
+          <div className="mt-6 space-y-3">
+            <label htmlFor="written-answer" className="text-sm font-medium">
+              Your answer
+            </label>
+            <Textarea
+              id="written-answer"
+              value={draftAnswer}
+              onChange={(event) => {
+                setDraftAnswers((current) => ({
+                  ...current,
+                  [item.itemId]: event.target.value,
+                }))
+                setDraftSaved(false)
+                setError("")
+              }}
+              rows={8}
+              maxLength={10_000}
+              className="min-h-44 resize-y bg-card text-base leading-relaxed"
+              disabled={pendingAction !== undefined}
+            />
+          </div>
+        )}
 
-            <div className="flex flex-wrap gap-3">
+        {error ? (
+          <p role="alert" className="mt-4 text-sm text-destructive">{error}</p>
+        ) : null}
+
+        <nav aria-label="Written activity prompts" className="mt-6 flex flex-wrap justify-between gap-2">
+          {currentIndex > 0 ? (
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => moveTo(currentIndex - 1)}
+              disabled={pendingAction !== undefined}
+            >
+              Previous
+            </Button>
+          ) : <span />}
+
+          {hasReference ? (
+            currentIndex < activity.items.length - 1 ? (
+              <Button
+                type="button"
+                onClick={() => moveTo(currentIndex + 1)}
+                disabled={pendingAction !== undefined}
+              >
+                Next prompt
+              </Button>
+            ) : activity.status === "completed" ? (
+              <Button
+                type="button"
+                onClick={startNewActivity}
+                disabled={startPending || pendingAction !== undefined}
+              >
+                {startPending ? "Starting…" : "New activity"}
+              </Button>
+            ) : null
+          ) : (
+            <div className="ml-auto flex flex-wrap gap-2">
               <Button
                 type="button"
                 variant="outline"
-                className="min-h-11"
                 onClick={() => void submitAnswer(false)}
                 disabled={!draftAnswer.trim() || pendingAction !== undefined}
               >
@@ -335,75 +377,15 @@ export function WrittenActivity({ projectId, topicId }: WrittenActivityProps) {
               </Button>
               <Button
                 type="button"
-                className="min-h-11"
                 onClick={() => void submitAnswer(true)}
                 disabled={!draftAnswer.trim() || pendingAction !== undefined}
               >
                 {pendingAction === "compare" ? "Comparing…" : "Compare answer"}
               </Button>
             </div>
-            {draftSaved ? (
-              <p className="text-sm text-muted-foreground" role="status">
-                Draft saved.
-              </p>
-            ) : null}
-          </>
-        )}
-
-        {error ? (
-          <p role="alert" className="text-sm text-destructive">
-            {error}
-          </p>
-        ) : null}
-
-        {hasReference ? (
-          <section className="space-y-4 border-t border-border pt-6">
-            <div className="space-y-2">
-              <h2 className="text-sm font-medium">Reference</h2>
-              <p className="text-sm leading-relaxed whitespace-pre-wrap text-muted-foreground">
-                {item.reference}
-              </p>
-              <p className="text-xs text-muted-foreground">
-                Source: {item.sourceLabels.join(", ")}
-              </p>
-            </div>
-          </section>
-        ) : null}
-      </section>
-
-      <nav
-        aria-label="Written activity prompts"
-        className="mt-auto flex items-center justify-between gap-3 pt-12"
-      >
-        <Button
-          type="button"
-          variant="ghost"
-          onClick={() => moveTo(currentIndex - 1)}
-          disabled={currentIndex === 0 || pendingAction !== undefined}
-          className="min-h-11"
-        >
-          Previous
-        </Button>
-        {currentIndex < activity.items.length - 1 ? (
-          <Button
-            type="button"
-            onClick={() => moveTo(currentIndex + 1)}
-            disabled={!hasReference || pendingAction !== undefined}
-            className="min-h-11"
-          >
-            Next
-          </Button>
-        ) : activity.status === "completed" ? (
-          <Button
-            type="button"
-            onClick={startNewActivity}
-            disabled={startPending || pendingAction !== undefined}
-            className="min-h-11"
-          >
-            {startPending ? "Starting…" : "New activity"}
-          </Button>
-        ) : null}
-      </nav>
+          )}
+        </nav>
+      </div>
     </main>
   )
 }
