@@ -174,22 +174,22 @@ export function ProjectGrid({ projects, onCreate }: ProjectGridProps) {
           </p>
           <ul
             aria-label="Projects"
-            className="overflow-hidden rounded-2xl border bg-card"
+            className="grid grid-cols-2 gap-3 md:grid-cols-[repeat(auto-fill,minmax(160px,200px))]"
           >
             {filtered?.map((project) => (
               <li
                 key={project._id}
-                className="flex items-center gap-2 border-b pr-3 last:border-0 hover:bg-muted/50"
+                className="relative h-28 min-w-0 rounded-2xl border border-border bg-card transition-colors hover:bg-muted/50"
               >
                 <Link
                   href={`/projects/${project._id}`}
-                  className="min-w-0 flex-1 px-5 py-5 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+                  className="absolute inset-0 flex min-w-0 flex-col justify-between rounded-2xl px-3 pb-3 pt-9 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none sm:px-4"
                 >
-                  <h2 className="text-base font-medium tracking-tight break-words">
+                  <h2 className="line-clamp-2 text-sm font-medium tracking-tight break-words sm:text-base">
                     {project.title}
                   </h2>
                   {project.createdAt && (
-                    <p className="mt-1 text-xs text-muted-foreground">
+                    <p className="text-xs text-muted-foreground">
                       Created{" "}
                       {new Date(project.createdAt).toLocaleDateString("en-GB", {
                         day: "numeric",
@@ -200,7 +200,9 @@ export function ProjectGrid({ projects, onCreate }: ProjectGridProps) {
                     </p>
                   )}
                 </Link>
-                <ProjectActions project={project} />
+                <div className="absolute top-1 right-1 z-10">
+                  <ProjectActions project={project} />
+                </div>
               </li>
             ))}
           </ul>
@@ -262,26 +264,20 @@ export function ProjectGrid({ projects, onCreate }: ProjectGridProps) {
   )
 }
 
-/** Shows compact project rows while the library query resolves. */
+/** Shows project placeholders at the same compact size as loaded cards. */
 function ProjectGridLoading() {
   return (
     <div role="status" aria-label="Loading projects">
       <span className="sr-only">Loading projects</span>
       <div
         aria-hidden="true"
-        className="overflow-hidden rounded-[20px] border border-border bg-card"
+        className="grid grid-cols-2 gap-3 md:grid-cols-[repeat(auto-fill,minmax(160px,200px))]"
       >
-        {Array.from({ length: 4 }, (_, index) => (
-          <div
+        {Array.from({ length: 8 }, (_, index) => (
+          <Skeleton
             key={index}
-            className="flex min-h-20 items-center justify-between border-b border-border px-5 py-4 last:border-0 sm:px-6"
-          >
-            <div className="space-y-2">
-              <Skeleton className="h-5 w-44 bg-muted" />
-              <Skeleton className="h-4 w-24 bg-muted" />
-            </div>
-            <Skeleton className="size-5 rounded-full bg-muted" />
-          </div>
+            className="h-28 rounded-2xl bg-card"
+          />
         ))}
       </div>
     </div>
