@@ -18,6 +18,15 @@ export type SourceSelection = {
   citationId: string
 }
 
+/** Identifies a source citation attached to a project learning item. */
+export type LearningSourceSelection = {
+  kind: "learning"
+  projectId: Id<"projects">
+  sourceId: Id<"sources">
+  filename: string
+  locator?: string
+}
+
 /** Subscribes to the breakpoint without mismatching the server render. */
 function subscribeWidth(callback: () => void) {
   const media = window.matchMedia("(min-width: 1024px)")
@@ -38,7 +47,7 @@ export function SourcePane({
   selection,
   onClose,
 }: {
-  selection: SourceSelection
+  selection: SourceSelection | LearningSourceSelection
   onClose: () => void
 }) {
   const desktop = useSyncExternalStore(
@@ -78,7 +87,11 @@ export function SourcePane({
   return (
     <aside
       aria-label="Source reader"
-      className="flex h-full w-[min(45vw,680px)] min-w-96 shrink-0 flex-col border-l bg-background"
+      className={
+        "kind" in selection
+          ? "sticky top-6 flex h-[calc(100dvh-3rem)] w-full min-w-0 flex-col border-l bg-background"
+          : "flex h-full w-[min(45vw,680px)] min-w-96 shrink-0 flex-col border-l bg-background"
+      }
       onKeyDown={(event) => {
         if (event.key === "Escape") {
           event.stopPropagation()
@@ -97,17 +110,39 @@ export function SourcePane({
 }
 
 /** Loads the source by citation identity and scrolls directly to the highlighted saved passage. */
-export function SourceReader({ selection }: { selection: SourceSelection }) {
-  const result = useQuery(api.chatCitations.read, selection)
+export function SourceReader({
+  selection,
+}: {
+  selection: SourceSelection | LearningSourceSelection
+}) {
+  const chatResult = useQuery(
+    api.chatCitations.read,
+    "kind" in selection ? "skip" : selection
+  )
+  const learningResult = useQuery(
+    api.learning.readSourceCitation,
+    "kind" in selection
+      ? {
+          projectId: selection.projectId,
+          sourceId: selection.sourceId,
+          locator: selection.locator,
+        }
+      : "skip"
+  )
+  const result = "kind" in selection ? learningResult : chatResult
+  const hasOriginalPdf = Boolean(
+    result && result.fileUrl && result.mimeType === "application/pdf"
+  )
   const markerRef = useRef<HTMLElement>(null)
-  const [tab, setTab] = useState("passage")
+  const [tab, setTab] = useState("")
+  const activeTab = tab || (hasOriginalPdf ? "pdf" : "passage")
   useEffect(() => {
-    if (tab === "passage")
+    if (activeTab === "passage")
       markerRef.current?.scrollIntoView({
         block: "center",
         behavior: "instant",
       })
-  }, [result, tab])
+  }, [result, activeTab])
   if (result === undefined)
     return (
       <p role="status" className="p-6">
@@ -120,7 +155,7 @@ export function SourceReader({ selection }: { selection: SourceSelection }) {
         This citation is no longer available. Return to the chat and ask for a
         new reference.
       </p>
-    )
+  )
   const { citation, text, startOffset, endOffset, fileUrl, mimeType } = result
   const externalUrl = result.originalUrl
     ? markdownHref(result.originalUrl)
@@ -128,7 +163,9 @@ export function SourceReader({ selection }: { selection: SourceSelection }) {
   const original = fileUrl
     ? `${fileUrl}${citation.page ? `#page=${citation.page}` : ""}`
     : externalUrl
-  const newTabUrl = `/sources/view?chatId=${encodeURIComponent(selection.chatId)}&messageId=${encodeURIComponent(selection.messageId)}&citationId=${encodeURIComponent(selection.citationId)}`
+  const newTabUrl = "kind" in selection
+    ? `/sources/learning-view?projectId=${encodeURIComponent(selection.projectId)}&sourceId=${encodeURIComponent(selection.sourceId)}${selection.locator ? `&locator=${encodeURIComponent(selection.locator)}` : ""}`
+    : `/sources/view?chatId=${encodeURIComponent(selection.chatId)}&messageId=${encodeURIComponent(selection.messageId)}&citationId=${encodeURIComponent(selection.citationId)}`
   return (
     <section className="flex min-h-0 flex-1 flex-col overflow-hidden">
       <header className="space-y-2 border-b px-5 py-4 pr-12">
@@ -149,7 +186,11 @@ export function SourceReader({ selection }: { selection: SourceSelection }) {
           ) : null}
         </div>
       </header>
-      <Tabs value={tab} onValueChange={setTab} className="min-h-0 flex-1 gap-0">
+      <Tabs
+        value={activeTab}
+        onValueChange={setTab}
+        className="min-h-0 flex-1 gap-0"
+      >
         <TabsList className="mx-5 mt-3 shrink-0" aria-label="Source view">
           <TabsTrigger value="passage">Passage</TabsTrigger>
           {fileUrl && mimeType === "application/pdf" ? (

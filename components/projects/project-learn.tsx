@@ -10,6 +10,7 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
+  type CSSProperties,
   type ReactNode,
 } from "react"
 import Link from "next/link"
@@ -35,6 +36,16 @@ import type {
   EventRequest,
   LearningAnswer,
 } from "@/lib/learning/client-contracts"
+import { ReadAloudButton } from "@/components/chat/read-aloud-button"
+import {
+  LearningSidePane,
+  type LearningChatCard,
+  type LearningPanelSelection,
+  type LearningSidePaneTab,
+} from "@/components/projects/learning-side-pane"
+import {
+  type LearningSourceSelection,
+} from "@/components/chat/source-pane"
 import { cn } from "@/lib/utils"
 
 /** Describes the source-grounded path returned by the project learning query. */
@@ -48,6 +59,27 @@ type LearnConcept = LearnSection["concepts"][number]
 
 /** Describes one explanation or answerable check shown in Learn. */
 type LearnItem = LearnConcept["items"][number]
+
+/** Builds the visible lesson or question copy that read aloud should speak. */
+function learnItemSpeechText(item: LearnItem): string {
+  if (item.type === "explain")
+    return [item.title, item.body]
+      .filter((part): part is string => Boolean(part?.trim()))
+      .join("\n\n")
+
+  const options =
+    item.type === "true-false"
+      ? [{ text: "True" }, { text: "False" }]
+      : (item.options ?? [])
+  return [
+    item.question || item.title,
+    ...options.map(
+      (option, index) => `${String.fromCharCode(65 + index)}. ${option.text}`
+    ),
+  ]
+    .filter((part): part is string => Boolean(part?.trim()))
+    .join("\n\n")
+}
 
 /** Props identify the project whose path and learning events are displayed. */
 type ProjectLearnProps = {
@@ -242,6 +274,15 @@ function ProjectLearnContent({ projectId, resume = false }: ProjectLearnProps) {
   const [itemIndex, setItemIndex] = useState<number>()
   const [sessionStarted, setSessionStarted] = useState(resume)
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
+  const [sourceSelection, setSourceSelection] =
+    useState<LearningPanelSelection>()
+  const [askBlitzOpen, setAskBlitzOpen] = useState(false)
+  const [chatCard, setChatCard] = useState<LearningChatCard>()
+  const [sidePaneTab, setSidePaneTab] =
+    useState<LearningSidePaneTab>("source")
+  const [sidePaneWidth, setSidePaneWidth] = useState(420)
+  const [sidePaneMaxWidth, setSidePaneMaxWidth] = useState(720)
+  const layoutRef = useRef<HTMLElement | null>(null)
   const [selection, setSelection] = useState<string[]>([])
   const [feedback, setFeedback] = useState<AnswerResponse | null>(null)
   const [answerError, setAnswerError] = useState("")
@@ -252,7 +293,9 @@ function ProjectLearnContent({ projectId, resume = false }: ProjectLearnProps) {
   const defaultSection = useMemo(
     () =>
       path?.sections.find((section) =>
-        section.concepts.some((concept) => concept.status !== "mastered")
+        section.concepts.some(
+          (concept) => concept.completionStatus !== "completed"
+        )
       ) ?? path?.sections[0],
     [path]
   )
@@ -263,7 +306,7 @@ function ProjectLearnContent({ projectId, resume = false }: ProjectLearnProps) {
   const defaultConcept = useMemo(
     () =>
       activeSection?.concepts.find(
-        (concept) => concept.status !== "mastered"
+        (concept) => concept.completionStatus !== "completed"
       ) ?? activeSection?.concepts[0],
     [activeSection]
   )
@@ -290,15 +333,94 @@ function ProjectLearnContent({ projectId, resume = false }: ProjectLearnProps) {
       : -1
   const activeItemIndex = itemIndex ?? (savedIndex >= 0 ? savedIndex : 0)
   const currentItem = items[activeItemIndex]
-  const itemSourceLabels = currentItem?.sourceLabels ?? []
-  const sourceLabels = Array.from(
-    new Set(
-      (itemSourceLabels.length
-        ? itemSourceLabels
-        : (activeConcept?.sourceLabels ?? [])
-      ).filter(Boolean)
-    )
+  const sourceCitations = currentItem?.sourceCitations?.length
+    ? currentItem.sourceCitations
+    : (activeConcept?.sourceCitations ?? [])
+  const sidePaneOpen = Boolean(sourceSelection || askBlitzOpen)
+
+  /** Returns the widest side panel that leaves room for the lesson column. */
+  const maximumSidePaneWidth = useCallback((): number => {
+    const layoutWidth =
+      layoutRef.current?.getBoundingClientRect().width ??
+      (typeof window === "undefined" ? 1024 : window.innerWidth)
+    return Math.max(320, Math.min(720, Math.floor(layoutWidth - 230 - 240 - 8)))
+  }, [])
+
+  /** Keeps a requested panel width within the learning layout's usable range. */
+  const fitSidePaneWidth = useCallback(
+    (width: number): number =>
+      Math.min(maximumSidePaneWidth(), Math.max(320, Math.round(width))),
+    [maximumSidePaneWidth]
   )
+
+  /** Opens one source in the shared side panel and makes its tab active. */
+  function openSource(selection: LearningPanelSelection): void {
+    setSourceSelection(selection)
+    setSidePaneTab("source")
+    setSidePaneWidth((width) => fitSidePaneWidth(width))
+  }
+
+  /** Starts Ask Blitz with the current learning card attached as context. */
+  function openAskBlitz(): void {
+    if (!currentItem) return
+    const sourceLabel = Array.from(
+      new Set(sourceCitations.map((citation) => citation.filename))
+    )
+      .slice(0, 3)
+      .join(", ")
+      .slice(0, 180)
+    setChatCard({
+      id: currentItem.id as Id<"learningItems">,
+      projectId: convexProjectId,
+      title: currentItem.title,
+      sourceLabel: sourceLabel || "Source unavailable",
+    })
+    setAskBlitzOpen(true)
+    setSidePaneTab("chat")
+    setSidePaneWidth((width) => fitSidePaneWidth(width))
+  }
+
+  /** Closes the active tab and selects another open tab when one remains. */
+  function closeActiveSidePaneTab(): void {
+    if (sidePaneTab === "source") {
+      setSourceSelection(undefined)
+      if (askBlitzOpen) setSidePaneTab("chat")
+      return
+    }
+    setAskBlitzOpen(false)
+    if (sourceSelection) setSidePaneTab("source")
+  }
+
+  /** Closes all side panel tabs after a mobile dialog dismissal. */
+  function closeSidePane(): void {
+    setSourceSelection(undefined)
+    setAskBlitzOpen(false)
+  }
+
+  /** Sets the panel width from the left edge of its right-anchored track. */
+  function resizeSidePane(clientX: number): void {
+    const bounds = layoutRef.current?.getBoundingClientRect()
+    if (!bounds) return
+    setSidePaneWidth(fitSidePaneWidth(bounds.right - clientX))
+  }
+
+  /** Re-clamps the panel if the app shell or browser viewport changes width. */
+  useEffect(() => {
+    if (!sidePaneOpen || !layoutRef.current) return
+    const clampOnResize = () => {
+      const maximum = maximumSidePaneWidth()
+      setSidePaneMaxWidth(maximum)
+      setSidePaneWidth((width) => fitSidePaneWidth(width))
+    }
+    clampOnResize()
+    const observer = new ResizeObserver(clampOnResize)
+    observer.observe(layoutRef.current)
+    window.addEventListener("resize", clampOnResize)
+    return () => {
+      observer.disconnect()
+      window.removeEventListener("resize", clampOnResize)
+    }
+  }, [fitSidePaneWidth, maximumSidePaneWidth, sidePaneOpen])
 
   /** Persists the active item so the project can resume this lesson later. */
   useEffect(() => {
@@ -348,7 +470,8 @@ function ProjectLearnContent({ projectId, resume = false }: ProjectLearnProps) {
   function selectSection(section: LearnSection): void {
     const nextConcept =
       section.concepts.find(
-        (concept) => concept.status !== "mastered" && concept.items.length
+        (concept) =>
+          concept.completionStatus !== "completed" && concept.items.length
       ) ?? section.concepts.find((concept) => concept.items.length)
     const savedItemIndex =
       nextConcept &&
@@ -508,8 +631,8 @@ function ProjectLearnContent({ projectId, resume = false }: ProjectLearnProps) {
                   : setSelection([option.id])
               }
               className={cn(
-                "flex min-h-14 w-full items-center gap-3 rounded-xl border bg-card px-3 py-3 text-left text-sm transition-colors hover:border-foreground/20 hover:bg-muted/40 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none disabled:cursor-default sm:px-4 sm:text-base",
-                selected && !feedback && "border-brand/40 bg-brand/[0.05]",
+                "flex min-h-14 w-full cursor-pointer items-center gap-3 rounded-xl border bg-card px-3 py-3 text-left text-sm transition-colors hover:border-brand/50 hover:bg-brand/10 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none disabled:cursor-default sm:px-4 sm:text-base",
+                selected && !feedback && "border-brand/60 bg-brand/15 hover:border-brand/70 hover:bg-brand/20",
                 correct && "border-emerald-500/45 bg-emerald-500/[0.06]",
                 incorrectSelection &&
                   "border-destructive/45 bg-destructive/[0.06]"
@@ -559,6 +682,16 @@ function ProjectLearnContent({ projectId, resume = false }: ProjectLearnProps) {
                     <button
                       key={concept.id}
                       type="button"
+                      aria-label={
+                        concept.questionCount > 0
+                          ? concept.title +
+                            ", " +
+                            concept.answeredQuestionCount +
+                            " of " +
+                            concept.questionCount +
+                            " questions answered"
+                          : concept.title + ", no questions"
+                      }
                       aria-current={
                         activeConcept?.id === concept.id && sessionStarted
                           ? "page"
@@ -569,11 +702,11 @@ function ProjectLearnContent({ projectId, resume = false }: ProjectLearnProps) {
                         "flex min-h-10 w-full items-center gap-2 rounded-lg px-2 text-left text-sm text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none",
                         activeConcept?.id === concept.id &&
                           "font-medium text-foreground",
-                        concept.status === "mastered" &&
+                        concept.completionStatus === "completed" &&
                           "text-emerald-700 dark:text-emerald-300"
                       )}
                     >
-                      {concept.status === "mastered" ? (
+                      {concept.completionStatus === "completed" ? (
                         <CheckCircleIcon
                           size={15}
                           className="shrink-0"
@@ -586,6 +719,13 @@ function ProjectLearnContent({ projectId, resume = false }: ProjectLearnProps) {
                         />
                       )}
                       <span className="truncate">{concept.title}</span>
+                      <span className="shrink-0 text-xs text-muted-foreground">
+                        {concept.questionCount > 0
+                          ? concept.answeredQuestionCount +
+                            "/" +
+                            concept.questionCount
+                          : "No questions"}
+                      </span>
                     </button>
                   ))}
                 </div>
@@ -691,8 +831,19 @@ function ProjectLearnContent({ projectId, resume = false }: ProjectLearnProps) {
         : "Next concept"
 
   return (
-    <main className="mx-auto grid w-full max-w-6xl gap-5 px-4 py-5 sm:px-7 sm:py-8 lg:grid-cols-[230px_minmax(0,1fr)] lg:gap-10">
-      <aside className="lg:pt-1">
+    <main
+      ref={layoutRef}
+      style={
+        { "--learning-side-pane-width": `${sidePaneWidth}px` } as CSSProperties
+      }
+      className={cn(
+        "relative grid min-h-[calc(100svh-68px-env(safe-area-inset-bottom))] w-full grid-cols-1 pb-5 lg:h-svh lg:min-h-0 lg:overflow-hidden lg:pb-0",
+        sidePaneOpen
+          ? "lg:grid-cols-[230px_minmax(0,1fr)_8px_var(--learning-side-pane-width)]"
+          : "lg:grid-cols-[230px_minmax(0,1fr)]"
+      )}
+    >
+      <aside className="min-w-0 px-4 py-5 lg:flex lg:min-h-0 lg:flex-col lg:overflow-hidden lg:border-r lg:border-border/70 lg:bg-background/70">
         <ProjectHeading projectTitle={project.title} projectId={projectId} />
         <div className="mt-5 lg:hidden">
           <Button
@@ -715,12 +866,12 @@ function ProjectLearnContent({ projectId, resume = false }: ProjectLearnProps) {
             </div>
           ) : null}
         </div>
-        <div className="mt-6 hidden max-h-[68svh] overflow-y-auto lg:block">
+        <div className="mt-6 hidden min-h-0 flex-1 overflow-y-auto lg:block">
           {renderNavigation()}
         </div>
       </aside>
 
-      <section className="min-w-0 lg:pt-1">
+      <section className="min-w-0 px-4 py-5 sm:px-7 sm:py-8 lg:min-h-0 lg:overflow-y-auto lg:px-0 lg:py-8">
         {!sessionStarted ? (
           <>
             <div className="flex flex-wrap items-end justify-between gap-3">
@@ -733,6 +884,16 @@ function ProjectLearnContent({ projectId, resume = false }: ProjectLearnProps) {
                 <li key={concept.id}>
                   <button
                     type="button"
+                    aria-label={
+                      concept.questionCount > 0
+                        ? concept.title +
+                          ", " +
+                          concept.answeredQuestionCount +
+                          " of " +
+                          concept.questionCount +
+                          " questions answered"
+                        : concept.title + ", no questions"
+                    }
                     aria-current={
                       activeConcept.id === concept.id ? "step" : undefined
                     }
@@ -745,7 +906,7 @@ function ProjectLearnContent({ projectId, resume = false }: ProjectLearnProps) {
                         : "text-muted-foreground"
                     )}
                   >
-                    {concept.status === "mastered" ? (
+                    {concept.completionStatus === "completed" ? (
                       <CheckCircleIcon
                         size={17}
                         className="shrink-0 text-emerald-600"
@@ -757,6 +918,14 @@ function ProjectLearnContent({ projectId, resume = false }: ProjectLearnProps) {
                       </span>
                     )}
                     <span className="min-w-0 flex-1">{concept.title}</span>
+                    <span className="shrink-0 text-xs text-muted-foreground">
+                      {concept.questionCount > 0
+                        ? concept.answeredQuestionCount +
+                          " / " +
+                          concept.questionCount +
+                          " questions"
+                        : "No questions"}
+                    </span>
                   </button>
                 </li>
               ))}
@@ -781,6 +950,10 @@ function ProjectLearnContent({ projectId, resume = false }: ProjectLearnProps) {
               >
                 <ArrowLeftIcon aria-hidden="true" /> Learning path
               </Button>
+              <ReadAloudButton
+                key={currentItem.id}
+                text={learnItemSpeechText(currentItem)}
+              />
               <div className="flex items-center gap-2 text-sm text-muted-foreground">
                 <span>
                   {activeItemIndex + 1} of {items.length}
@@ -808,8 +981,8 @@ function ProjectLearnContent({ projectId, resume = false }: ProjectLearnProps) {
                   type="button"
                   variant="ghost"
                   size="icon"
-                  aria-label="Next card"
-                  title="Next card"
+                  aria-label="Next page"
+                  title="Next page"
                   disabled={!hasNextCard || pending}
                   onClick={advance}
                   className="min-h-10 min-w-10 rounded-full"
@@ -818,6 +991,7 @@ function ProjectLearnContent({ projectId, resume = false }: ProjectLearnProps) {
                 </Button>
               </div>
             </div>
+            <div className="mx-auto w-full max-w-4xl px-4 text-left sm:px-7">
             {isQuestion ? (
               <>
                 <h2 className="max-w-3xl font-heading text-3xl font-medium tracking-tight sm:text-4xl">
@@ -849,7 +1023,11 @@ function ProjectLearnContent({ projectId, resume = false }: ProjectLearnProps) {
                     {answerError}
                   </p>
                 ) : null}
-                <SourceReferences labels={sourceLabels} />
+                <SourceReferences
+                  citations={sourceCitations}
+                  projectId={convexProjectId}
+                  onOpen={openSource}
+                />
                 {feedback ? (
                   <Button
                     type="button"
@@ -902,7 +1080,11 @@ function ProjectLearnContent({ projectId, resume = false }: ProjectLearnProps) {
                     </div>
                   </details>
                 ) : null}
-                <SourceReferences labels={sourceLabels} />
+                <SourceReferences
+                  citations={sourceCitations}
+                  projectId={convexProjectId}
+                  onOpen={openSource}
+                />
                 <Button
                   type="button"
                   onClick={advance}
@@ -913,16 +1095,14 @@ function ProjectLearnContent({ projectId, resume = false }: ProjectLearnProps) {
               </>
             )}
             <Button
-              asChild
+              type="button"
               variant="ghost"
               className="mt-3 min-h-10 rounded-full px-3"
+              onClick={openAskBlitz}
             >
-              <Link
-                href={`/chat?cardProjectId=${encodeURIComponent(projectId)}&cardId=${encodeURIComponent(currentItem.id)}`}
-              >
-                Ask Blitz
-              </Link>
+              Ask Blitz
             </Button>
+            </div>
           </>
         ) : (
           <div className="rounded-xl border border-border/70 bg-card p-5">
@@ -940,6 +1120,57 @@ function ProjectLearnContent({ projectId, resume = false }: ProjectLearnProps) {
           </div>
         )}
       </section>
+      {sidePaneOpen ? (
+        <>
+          <button
+            type="button"
+            role="separator"
+            aria-label="Resize learning side panel"
+            aria-orientation="vertical"
+            aria-valuemin={320}
+            aria-valuemax={sidePaneMaxWidth}
+            aria-valuenow={sidePaneWidth}
+            className="hidden touch-none cursor-col-resize items-center justify-center bg-transparent outline-none hover:bg-border/30 focus-visible:bg-border/30 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand lg:flex"
+            onPointerDown={(event) => {
+              event.preventDefault()
+              event.currentTarget.setPointerCapture(event.pointerId)
+              resizeSidePane(event.clientX)
+            }}
+            onPointerMove={(event) => {
+              if (event.currentTarget.hasPointerCapture(event.pointerId))
+                resizeSidePane(event.clientX)
+            }}
+            onKeyDown={(event) => {
+              const step = event.shiftKey ? 48 : 16
+              if (event.key === "ArrowLeft") {
+                event.preventDefault()
+                setSidePaneWidth((width) => fitSidePaneWidth(width + step))
+              } else if (event.key === "ArrowRight") {
+                event.preventDefault()
+                setSidePaneWidth((width) => fitSidePaneWidth(width - step))
+              } else if (event.key === "Home") {
+                event.preventDefault()
+                setSidePaneWidth(320)
+              } else if (event.key === "End") {
+                event.preventDefault()
+                setSidePaneWidth(sidePaneMaxWidth)
+              }
+            }}
+          >
+            <span aria-hidden="true" className="h-12 w-0.5 rounded-full bg-border" />
+          </button>
+          <LearningSidePane
+            sourceSelection={sourceSelection}
+            chatOpen={askBlitzOpen}
+            chatCard={chatCard}
+            activeTab={sidePaneTab}
+            onTabChange={setSidePaneTab}
+            onCloseTab={closeActiveSidePaneTab}
+            onClose={closeSidePane}
+            onOpenSource={openSource}
+          />
+        </>
+      ) : null}
     </main>
   )
 }
@@ -967,12 +1198,41 @@ function ProjectHeading({
 }
 
 /** Lists source filenames associated with the current learning item. */
-function SourceReferences({ labels }: { labels: string[] }) {
-  if (!labels.length) return null
+function SourceReferences({
+  citations,
+  projectId,
+  onOpen,
+}: {
+  citations: Array<{ sourceId: string; filename: string; locator?: string }>
+  projectId: Id<"projects">
+  onOpen: (selection: LearningSourceSelection) => void
+}) {
+  if (!citations.length) return null
   return (
     <p className="mt-5 flex min-w-0 items-start gap-2 text-sm text-muted-foreground">
       <FileIcon size={16} className="mt-0.5 shrink-0" aria-hidden="true" />
-      <span className="min-w-0 break-words">{labels.join(" · ")}</span>
+      <span className="flex min-w-0 flex-wrap gap-x-1">
+        {citations.map((citation, index) => (
+          <span key={`${citation.sourceId}:${citation.locator ?? index}`}>
+            {index > 0 ? "· " : null}
+            <button
+              type="button"
+              className="rounded-sm text-left underline decoration-border underline-offset-4 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+              onClick={() =>
+                onOpen({
+                  kind: "learning",
+                  projectId,
+                  sourceId: citation.sourceId as Id<"sources">,
+                  filename: citation.filename,
+                  locator: citation.locator,
+                })
+              }
+            >
+              {citation.filename}{citation.locator ? `, ${citation.locator}` : ""}
+            </button>
+          </span>
+        ))}
+      </span>
     </p>
   )
 }
