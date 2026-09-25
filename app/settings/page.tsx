@@ -56,7 +56,7 @@ export default function SettingsPage() {
             </h2>
             <p className="mt-1 text-sm leading-5 text-muted-foreground">
               Choose the models and reasoning levels Blitz uses for research,
-              card generation, and replies.
+              content generation, and replies.
             </p>
           </div>
           <ProviderConnections />

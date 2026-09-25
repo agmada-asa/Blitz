@@ -44,6 +44,14 @@ export function ProjectSourceDetail({
     projectId: projectIdValue,
     sourceIds: [sourceIdValue],
   })
+  const contentJobs = useQuery(api.contentGeneration.listForProject, {
+    projectId: projectIdValue,
+    sourceIds: [sourceIdValue],
+  })
+  const coverage = useQuery(api.contentGeneration.getCoverage, {
+    projectId: projectIdValue,
+    sourceId: sourceIdValue,
+  })
   const [retrying, setRetrying] = useState(false)
   const [retryError, setRetryError] = useState("")
   const [desktopAvailable, setDesktopAvailable] = useState(false)
@@ -105,24 +113,27 @@ export function ProjectSourceDetail({
   const preparationJob = preparation?.find(
     (job) => String(job.sourceId) === sourceId
   )
+  const contentJob = contentJobs?.find(
+    (job) => String(job.sourceId) === sourceId
+  )
+  const generationJob = contentJob ?? preparationJob
   const needsAttention =
-    !source.unsupported &&
-    (source.status === "failed" ||
-      ingestionJob?.status === "failed" ||
-      preparationJob?.status === "failed" ||
-      preparationJob?.leaseExpired)
+    source.status === "failed" ||
+    ingestionJob?.status === "failed" ||
+    generationJob?.status === "failed" ||
+    generationJob?.leaseExpired
   const isBusy =
     source.status === "processing" ||
     ingestionJob?.status === "queued" ||
     ingestionJob?.status === "running" ||
-    preparationJob?.status === "queued" ||
-    preparationJob?.status === "leased"
-  const statusLabel = source.unsupported
-    ? "Original saved"
-    : needsAttention
-      ? "Needs attention"
-      : isBusy
-        ? "Preparing"
+    generationJob?.status === "queued" ||
+    generationJob?.status === "leased"
+  const statusLabel = needsAttention
+    ? "Needs attention"
+    : isBusy
+      ? "Preparing"
+      : source.unsupported && !generationJob
+        ? "Original saved"
         : "Ready"
   const downloadUrl = `/api/sources/file?projectId=${encodeURIComponent(projectId)}&sourceId=${encodeURIComponent(sourceId)}`
   const inlineUrl = `${downloadUrl}&inline=1`
@@ -200,9 +211,9 @@ export function ProjectSourceDetail({
           <p role="alert" className="text-sm">
             {retryError ||
               ingestionJob?.error ||
-              preparationJob?.error ||
+              generationJob?.error ||
               source.error ||
-              "This source could not be prepared."}
+              "Content generation could not finish."}
           </p>
           <Button
             className="mt-3"
@@ -222,10 +233,42 @@ export function ProjectSourceDetail({
           </Button>
         </div>
       ) : null}
-      {source.unsupported ? (
+      {source.unsupported && !contentJob ? (
         <p className="mb-4 rounded-lg bg-muted p-3 text-sm text-muted-foreground">
           The original is saved. Ask an agent to work with this file.
         </p>
+      ) : null}
+
+      {contentJob && coverage ? (
+        <section className="mb-6 max-w-4xl" aria-labelledby="coverage-heading">
+          <h2
+            id="coverage-heading"
+            className="font-heading text-lg font-medium"
+          >
+            Learning coverage
+          </h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {contentJob.includedSections ?? 0} sections included
+            {contentJob.skippedSections
+              ? `, ${contentJob.skippedSections} skipped`
+              : ""}
+            .
+          </p>
+          {coverage.some((entry) => entry.status === "skipped") ? (
+            <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-muted-foreground">
+              {coverage.map((entry, index) =>
+                entry.status === "skipped" ? (
+                  <li key={entry.sectionId}>
+                    {entry.sectionId.startsWith("chunk_")
+                      ? `Section ${index + 1}`
+                      : entry.sectionId}
+                    : {entry.reason}
+                  </li>
+                ) : null
+              )}
+            </ul>
+          ) : null}
+        </section>
       ) : null}
 
       <Tabs defaultValue="original" className="min-w-0">
@@ -276,9 +319,7 @@ export function ProjectSourceDetail({
               </p>
             ) : (
               <p className="text-sm text-muted-foreground">
-                {isBusy
-                  ? "Summary will appear when preparation finishes."
-                  : "No summary is available."}
+                No summary is available.
               </p>
             )}
           </div>

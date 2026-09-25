@@ -38,15 +38,19 @@ export function ProjectSourcesWorkspace({
     { initialNumItems: 20 }
   )
   const createSource = useMutation(api.sources.createSource)
-  const createAndEnqueue = useMutation(api.sources.createAndEnqueue)
   const updateSource = useMutation(api.sources.updateSource)
-  const enqueue = useMutation(api.preparation.enqueue)
+  const enqueueContent = useMutation(api.contentGeneration.enqueue)
+  const setContentDepth = useMutation(api.contentGeneration.setDepth)
   const [agentWorkspaceDirectory, setAgentWorkspaceDirectory] = useState("")
   const [desktopAvailable, setDesktopAvailable] = useState(false)
   const ingestion = useQuery(api.projectAgents.listIngestion, {
     projectId: convexProjectId,
   })
   const preparation = useQuery(api.preparation.listJobsForProject, {
+    projectId: convexProjectId,
+    sourceIds: sources.map((source) => source._id),
+  })
+  const contentJobs = useQuery(api.contentGeneration.listForProject, {
     projectId: convexProjectId,
     sourceIds: sources.map((source) => source._id),
   })
@@ -133,7 +137,7 @@ export function ProjectSourcesWorkspace({
   if (project === undefined) return <SourcesLoadingState />
   if (!project) return <SourcesNotFoundState />
 
-  const preparationJobs = preparation?.map((job) => ({
+  const legacyJobs = preparation?.map((job) => ({
     jobId: String(job.jobId),
     sourceId: String(job.sourceId),
     status: job.status,
@@ -143,6 +147,19 @@ export function ProjectSourcesWorkspace({
     generatedItemCount: job.generatedItemCount ?? undefined,
     leaseExpired: job.leaseExpired,
   }))
+  const agentJobs = contentJobs?.map((job) => ({
+    jobId: String(job.jobId),
+    sourceId: String(job.sourceId),
+    status: job.status,
+    error: job.error ?? undefined,
+    nextChunkOrdinal: job.importedPages,
+    totalChunks: job.totalPages ?? undefined,
+    leaseExpired: job.leaseExpired,
+  })) ?? []
+  const preparationJobs = [
+    ...(legacyJobs ?? []).filter((job) => !agentJobs.some((agent) => agent.sourceId === job.sourceId)),
+    ...agentJobs,
+  ]
 
   return (
     <main className="mx-auto w-full max-w-6xl px-4 py-5 pb-24 sm:px-7 sm:py-8">
@@ -218,11 +235,12 @@ export function ProjectSourcesWorkspace({
         <aside className="min-w-0 lg:sticky lg:top-6 lg:self-start">
           <SourceUploader
             projectId={convexProjectId}
+            depth={project.contentDepth ?? 3}
+            onDepthChange={(depth) => setContentDepth({ projectId: convexProjectId, depth })}
             initialResearchRequestId={initialResearchRequestId}
             createSource={createSource}
-            createAndEnqueue={createAndEnqueue}
             updateSource={updateSource}
-            enqueue={enqueue}
+            enqueueContent={enqueueContent}
           />
         </aside>
       </div>

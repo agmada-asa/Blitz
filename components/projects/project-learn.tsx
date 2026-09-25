@@ -18,6 +18,7 @@ import type { FunctionReturnType } from "convex/server"
 
 import { Button } from "@/components/ui/button"
 import { Progress } from "@/components/ui/progress"
+import { Markdown } from "@/components/ui/markdown"
 import { Skeleton } from "@/components/ui/skeleton"
 import {
   ArrowLeftIcon,
@@ -789,14 +790,14 @@ function ProjectLearnContent({ projectId, resume = false }: ProjectLearnProps) {
                     ((activeItemIndex + 1) / items.length) * 100
                   )}
                   className="h-1.5 w-16 sm:w-24"
-                  aria-label={`Card ${activeItemIndex + 1} of ${items.length}`}
+                  aria-label={`Page ${activeItemIndex + 1} of ${items.length}`}
                 />
                 <Button
                   type="button"
                   variant="ghost"
                   size="icon"
-                  aria-label="Previous card"
-                  title="Previous card"
+                  aria-label="Previous page"
+                  title="Previous page"
                   disabled={!hasPreviousCard || pending}
                   onClick={retreat}
                   className="min-h-10 min-w-10 rounded-full"
@@ -881,12 +882,8 @@ function ProjectLearnContent({ projectId, resume = false }: ProjectLearnProps) {
                   {currentItem.title}
                 </h2>
                 {currentItem.body ? (
-                  <div className="mt-5 max-w-[68ch] space-y-4 text-base leading-7 text-foreground/80">
-                    {currentItem.body
-                      .split(/\n{2,}/)
-                      .map((paragraph, index) => (
-                        <p key={`${currentItem.id}-${index}`}>{paragraph}</p>
-                      ))}
+                  <div className="mt-5 max-w-[68ch] text-base leading-7 text-foreground/80 [&_.chat-markdown]:space-y-4">
+                    <Markdown text={currentItem.body} />
                   </div>
                 ) : null}
                 {currentItem.deepExplanation ? (
@@ -930,7 +927,7 @@ function ProjectLearnContent({ projectId, resume = false }: ProjectLearnProps) {
         ) : (
           <div className="rounded-xl border border-border/70 bg-card p-5">
             <h1 className="font-heading text-2xl font-medium">
-              This concept has no learning cards
+              This concept has no learning pages
             </h1>
             <Button
               type="button"

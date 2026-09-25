@@ -12,6 +12,7 @@ import { ResearchPanel } from "@/components/projects/research-panel"
 import { Input } from "@/components/ui/input"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
+import { Slider } from "@/components/ui/slider"
 import { CancelIcon, FileIcon, LoadingIcon } from "@/components/ui/icon"
 import { api } from "@/convex/_generated/api"
 import type { Id } from "@/convex/_generated/dataModel"
@@ -20,10 +21,17 @@ import {
   type SourceKind,
 } from "@/lib/client/extract-source"
 import { sourcePartFilename, splitSourceText } from "@/lib/source-splitting"
+import {
+  CONTENT_DEPTHS,
+  DEFAULT_CONTENT_DEPTH,
+  contentDepth,
+} from "@/lib/content-generation"
 
 /** Convex operations and project identity required by source ingestion. */
 type Props = {
   projectId: Id<"projects">
+  depth?: number
+  onDepthChange?: (depth: number) => Promise<unknown>
   initialResearchRequestId?: string
   createSource: (
     input: FunctionArgs<typeof api.sources.createSource>
@@ -31,19 +39,16 @@ type Props = {
   updateSource: (
     input: FunctionArgs<typeof api.sources.updateSource>
   ) => Promise<FunctionReturnType<typeof api.sources.updateSource>>
-  enqueue: (
-    input: FunctionArgs<typeof api.preparation.enqueue>
-  ) => Promise<FunctionReturnType<typeof api.preparation.enqueue>>
-  /** Optional atomic source and preparation mutation used by the live route. */
-  createAndEnqueue?: (
-    input: FunctionArgs<typeof api.sources.createAndEnqueue>
-  ) => Promise<FunctionReturnType<typeof api.sources.createAndEnqueue>>
+  enqueueContent: (input: {
+    projectId: Id<"projects">
+    sourceId: Id<"sources">
+  }) => Promise<unknown>
 }
 
 /** One recoverable result from a bulk source import. */
 type ImportResult = {
   filename: string
-  status: "queued" | "failed" | "retained"
+  status: "queued" | "failed"
   detail: string
 }
 
@@ -86,15 +91,17 @@ async function responseError(
 /** Renders file, paste, and public-link imports as quick queue submissions. */
 export function SourceUploader({
   projectId,
+  depth = DEFAULT_CONTENT_DEPTH,
+  onDepthChange,
   initialResearchRequestId,
   createSource,
   updateSource,
-  enqueue,
-  createAndEnqueue,
+  enqueueContent,
 }: Props) {
   const notifyBackground = useBackgroundNotice()
   const inputRef = useRef<HTMLInputElement>(null)
   const dragDepth = useRef(0)
+  const pendingDepthSave = useRef<Promise<boolean> | null>(null)
   const [dragging, setDragging] = useState(false)
   const [activeTab, setActiveTab] = useState<SourceTab>(
     initialResearchRequestId ? "research" : "files"
@@ -102,11 +109,33 @@ export function SourceUploader({
   const [paste, setPaste] = useState("")
   const [url, setUrl] = useState("")
   const [busy, setBusy] = useState(false)
+  const [selectedDepth, setSelectedDepth] = useState(depth)
+  const [depthError, setDepthError] = useState("")
   const [message, setMessage] = useState<{
     type: "error" | "success"
     text: string
   }>()
   const [results, setResults] = useState<ImportResult[]>([])
+
+  /** Saves a selected depth for jobs queued after this change. */
+  function saveDepth(value: number): void {
+    if (!onDepthChange) return
+    setDepthError("")
+    pendingDepthSave.current = onDepthChange(value).then(
+      () => true,
+      () => {
+        setSelectedDepth(depth)
+        setDepthError("Detail setting could not be saved. Try again.")
+        return false
+      }
+    )
+  }
+
+  /** Prevents a source from snapshotting the old detail level during a save. */
+  async function waitForDepth(): Promise<void> {
+    if (pendingDepthSave.current && !(await pendingDepthSave.current))
+      throw new Error("Save the lesson detail setting before adding sources.")
+  }
 
   /** Highlights the upload target only while a file drag is over it. */
   function enterDropZone(event: DragEvent<HTMLDivElement>): void {
@@ -131,7 +160,7 @@ export function SourceUploader({
     if (!busy) void chooseFiles(Array.from(event.dataTransfer.files))
   }
 
-  /** Creates one source snapshot and queues it for local preparation. */
+  /** Creates one source snapshot and queues it for content generation. */
   const queueSource = async (
     filename: string,
     kind: SourceKind,
@@ -140,16 +169,7 @@ export function SourceUploader({
   ): Promise<void> => {
     if (!text.trim())
       throw new Error("There was no readable text in that source.")
-    if (createAndEnqueue) {
-      await createAndEnqueue({
-        projectId,
-        filename,
-        kind,
-        extractedText: text,
-        ...(originalUrl ? { originalUrl } : {}),
-      })
-      return
-    }
+    await waitForDepth()
     let sourceId: Id<"sources"> | undefined
     try {
       sourceId = await createSource({
@@ -159,7 +179,7 @@ export function SourceUploader({
         extractedText: text,
         ...(originalUrl ? { originalUrl } : {}),
       })
-      await enqueue({ projectId, sourceId })
+      await enqueueContent({ projectId, sourceId })
     } catch (error) {
       if (sourceId) {
         await updateSource({
@@ -215,6 +235,7 @@ export function SourceUploader({
     const imported: ImportResult[] = []
     for (const file of selected) {
       try {
+        await waitForDepth()
         const originalResponse = await fetch("/api/sources/upload", {
           method: "POST",
           headers: {
@@ -235,13 +256,7 @@ export function SourceUploader({
           duplicate?: boolean
           error?: string
         }
-        if (upload.unsupported)
-          imported.push({
-            filename: file.name,
-            status: "retained",
-            detail: "Original saved. An agent can work with this file.",
-          })
-        else if (!upload.extracted && !upload.duplicate)
+        if (!upload.extracted && !upload.duplicate && !upload.unsupported)
           throw new Error(upload.error || "The source could not be extracted.")
         else
           imported.push({
@@ -249,7 +264,7 @@ export function SourceUploader({
             status: "queued",
             detail: upload.duplicate
               ? "This file is already uploaded."
-              : "Uploaded and queued for preparation.",
+              : "Uploaded and queued for content generation.",
           })
       } catch (error) {
         const detail = messageForError(error, "Could not read that file.")
@@ -258,21 +273,18 @@ export function SourceUploader({
       setResults([...imported])
     }
     const failed = imported.filter((item) => item.status === "failed").length
-    const retained = imported.filter(
-      (item) => item.status === "retained"
-    ).length
     setMessage({
       type: failed ? "error" : "success",
       text: failed
         ? `${failed} file${failed === 1 ? "" : "s"} could not be saved. Review the details below.`
-        : `${imported.length} file${imported.length === 1 ? "" : "s"} uploaded.${retained ? ` ${retained} saved for agent use.` : ""}`,
+        : `${imported.length} file${imported.length === 1 ? "" : "s"} uploaded.`,
     })
     const queuedCount = imported.filter(
       (item) => item.status === "queued"
     ).length
     if (queuedCount)
       notifyBackground(
-        "Card preparation continues in the background.",
+        "Content generation continues in the background.",
         "/notifications",
         "View notifications"
       )
@@ -311,9 +323,12 @@ export function SourceUploader({
                 : `Queued ${result.queuedFilenames.length} parts`,
           },
         ])
-        setMessage({ type: "success", text: "Notes queued for preparation." })
+        setMessage({
+          type: "success",
+          text: "Notes queued for content generation.",
+        })
         notifyBackground(
-          "Card preparation continues in the background.",
+          "Content generation continues in the background.",
           "/notifications",
           "View notifications"
         )
@@ -374,9 +389,12 @@ export function SourceUploader({
                 : `Queued ${result.queuedFilenames.length} parts`,
           },
         ])
-        setMessage({ type: "success", text: "Link queued for preparation." })
+        setMessage({
+          type: "success",
+          text: "Link queued for content generation.",
+        })
         notifyBackground(
-          "Card preparation continues in the background.",
+          "Content generation continues in the background.",
           "/notifications",
           "View notifications"
         )
@@ -400,6 +418,40 @@ export function SourceUploader({
     >
       <CardContent className="p-5 sm:p-7">
         <h2 className="mb-4 font-heading text-xl">Add sources</h2>
+        <div className="mb-6 space-y-3">
+          <div className="flex items-baseline justify-between gap-3">
+            <label htmlFor="content-depth" className="text-sm font-medium">
+              Lesson detail
+            </label>
+            <span className="text-sm text-muted-foreground">
+              {contentDepth(selectedDepth).label}
+            </span>
+          </div>
+          <Slider
+            id="content-depth"
+            aria-label="Lesson detail"
+            min={1}
+            max={5}
+            step={1}
+            value={[selectedDepth]}
+            disabled={busy || !onDepthChange}
+            onValueChange={(values) =>
+              setSelectedDepth(values[0] ?? DEFAULT_CONTENT_DEPTH)
+            }
+            onValueCommit={(values) =>
+              saveDepth(values[0] ?? DEFAULT_CONTENT_DEPTH)
+            }
+          />
+          <div className="flex justify-between text-xs text-muted-foreground">
+            <span>{CONTENT_DEPTHS[0].label}</span>
+            <span>{CONTENT_DEPTHS[4].label}</span>
+          </div>
+          {depthError ? (
+            <p role="alert" className="text-sm text-destructive">
+              {depthError}
+            </p>
+          ) : null}
+        </div>
         {busy ? (
           <p role="status" className="mb-4 text-sm text-muted-foreground">
             Keep this page open while uploading.

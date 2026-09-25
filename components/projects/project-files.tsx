@@ -106,7 +106,7 @@ function sourceStatus(
   const preparationJob = preparation.find(
     (item) => item.sourceId === String(source._id)
   )
-  if (source.unsupported)
+  if (source.unsupported && !preparationJob)
     return { label: "Original saved", variant: "outline" as const }
   if (
     ingestionJob?.status === "failed" ||
@@ -277,9 +277,9 @@ export function ProjectFiles({
                         />
                       </div>
                     ) : null}
-                    {source.unsupported ? (
+                    {source.unsupported && !preparationJob ? (
                       <p className="mt-3 rounded-md bg-muted/60 px-3 py-2 text-sm text-muted-foreground">
-                        The original is saved. Ask an agent to work with this file.
+                        The original is saved. Content generation is not available for this file yet.
                       </p>
                     ) : null}
                     {state.label === "Needs attention" ? (
