@@ -150,12 +150,42 @@ export default defineSchema({
     projectId: v.id("projects"),
     topicId: v.optional(v.id("topics")),
     title: v.string(),
+    /** Other source terms that refer to this same taught idea. */
+    aliases: v.optional(v.array(v.string())),
     sourceIds: v.array(v.id("sources")),
     createdAt: v.number(),
   })
     .index("by_project", ["projectId"])
     .index("by_project_title", ["projectId", "title"])
     .index("by_project_topic", ["projectId", "topicId"]),
+
+  /** One source-supported connection between two concepts in a project. */
+  conceptRelationships: defineTable({
+    projectId: v.id("projects"),
+    sourceId: v.id("sources"),
+    fromConceptId: v.id("concepts"),
+    toConceptId: v.id("concepts"),
+    kind: v.union(
+      v.literal("prerequisite_for"),
+      v.literal("part_of"),
+      v.literal("causes"),
+      v.literal("contrasts_with"),
+      v.literal("applies_to"),
+      v.literal("related_to")
+    ),
+    explanation: v.string(),
+    evidence: v.array(
+      v.object({
+        sectionId: v.optional(v.string()),
+        locator: v.string(),
+      })
+    ),
+    createdAt: v.number(),
+  })
+    .index("by_project", ["projectId"])
+    .index("by_project_source", ["projectId", "sourceId"])
+    .index("by_project_from", ["projectId", "fromConceptId"])
+    .index("by_project_to", ["projectId", "toConceptId"]),
 
   learningItems: defineTable({
     projectId: v.id("projects"),
@@ -366,12 +396,18 @@ export default defineSchema({
     updatedAt: v.number(),
   })
     .index("by_project_source", ["projectId", "sourceId"])
-    .index("by_status_createdAt", ["status", "createdAt"]),
+    .index("by_status_createdAt", ["status", "createdAt"])
+    /** Finds a project's active lease before another source starts generating. */
+    .index("by_project_status_lease", ["projectId", "status", "leaseExpiresAt"])
+    /** Finds expired leases without active jobs hiding them in the queue. */
+    .index("by_status_lease", ["status", "leaseExpiresAt"]),
 
   /** Idempotent page commits allow a large agent draft to resume after a failed import. */
   contentPageCommits: defineTable({
     jobId: v.id("contentGenerationJobs"),
     pageKey: v.string(),
+    /** Saved concept lets a resumed job resolve links after page imports. */
+    conceptId: v.optional(v.id("concepts")),
     payloadHash: v.string(),
     createdAt: v.number(),
   }).index("by_job_page", ["jobId", "pageKey"]),

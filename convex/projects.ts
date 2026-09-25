@@ -96,6 +96,12 @@ export const deleteProject = mutation({
     )
     add(
       await ctx.db
+        .query("conceptRelationships")
+        .withIndex("by_project", (q) => q.eq("projectId", projectId))
+        .take(2001)
+    )
+    add(
+      await ctx.db
         .query("learningItems")
         .withIndex("by_project", (q) => q.eq("projectId", projectId))
         .take(2001)

@@ -3,6 +3,10 @@
 import { z } from "zod"
 import { lexer, type Token } from "marked"
 import { markdownHref } from "./markdown.ts"
+import {
+  conceptConnectionSchema,
+  MAX_CONCEPT_CONNECTIONS,
+} from "./concept-map.ts"
 
 /** Visible lesson depth; three is the default for a capable reader new to the topic. */
 export const DEFAULT_CONTENT_DEPTH = 3
@@ -101,6 +105,8 @@ export const lessonDraftSchema = z
     conceptId: z.string().min(1).max(128).optional(),
     topicTitle: z.string().trim().min(1).max(140),
     conceptTitle: z.string().trim().min(1).max(180),
+    /** Other names in this source for the same teachable concept. */
+    aliases: z.array(z.string().trim().min(1).max(180)).max(8).optional(),
     title: z.string().trim().min(1).max(180),
     bodyMarkdown: z.string().trim().min(1).max(10_000),
     sourceReferences: z.array(sourceReferenceSchema).min(1).max(12),
@@ -134,6 +140,11 @@ export const contentManifestSchema = z
       .min(1)
       .max(1_000),
     skippedReason: z.string().trim().min(1).max(400).optional(),
+    /** Source-backed links to current pages or existing project concepts. */
+    connections: z
+      .array(conceptConnectionSchema)
+      .max(MAX_CONCEPT_CONNECTIONS)
+      .optional(),
   })
   .strict()
 

@@ -8,6 +8,7 @@ import {
   type ContentManifest,
   type LessonDraft,
 } from "../content-generation.ts"
+import { validateConceptConnections } from "../concept-map.ts"
 
 /** Maximum bytes accepted from one agent-authored draft file. */
 const MAX_MANIFEST_BYTES = 200_000
@@ -32,7 +33,8 @@ export async function readContentDrafts(
   sourceId: string,
   depth: number,
   knownSourceIds: ReadonlySet<string>,
-  expectedSectionIds: ReadonlySet<string> = new Set()
+  expectedSectionIds: ReadonlySet<string> = new Set(),
+  knownConceptIds: ReadonlySet<string> = new Set()
 ): Promise<{ manifest: ContentManifest; pages: LessonDraft[] }> {
   for (const directory of [draftDirectory, join(draftDirectory, "pages")]) {
     const stat = await fs
@@ -106,5 +108,16 @@ export async function readContentDrafts(
     concepts.add(conceptKey)
     pages.push(page)
   }
+  if (manifest.connections)
+    validateConceptConnections(manifest.connections, {
+      pageKeys,
+      knownConceptIds,
+      extractedSectionIds: expectedSectionIds,
+      includedSectionIds: new Set(
+        manifest.coverage
+          .filter((entry) => entry.status === "included")
+          .map((entry) => entry.sectionId)
+      ),
+    })
   return { manifest, pages }
 }

@@ -10,6 +10,10 @@ import {
   contentDepth,
   validateLessonDraft,
 } from "../lib/content-generation"
+import {
+  MAX_CONCEPT_CONNECTIONS,
+  validateConceptConnections,
+} from "../lib/concept-map"
 import { resolveQueuedContentSelection } from "./ai_provider_settings"
 
 /** Worker steps that can be shown while a source is being processed. */
@@ -33,6 +37,26 @@ const contentActivity = v.object({
   detail: v.optional(v.string()),
   startedAt: v.optional(v.number()),
   completedAt: v.optional(v.number()),
+})
+
+/** One page or saved concept named by a generated relationship. */
+const relationshipEndpoint = v.union(
+  v.object({ kind: v.literal("page"), key: v.string() }),
+  v.object({ kind: v.literal("concept"), id: v.string() })
+)
+
+/** Relationship draft sent with the completed source job. */
+const relationshipDraft = v.object({
+  from: relationshipEndpoint,
+  to: relationshipEndpoint,
+  kind: v.string(),
+  explanation: v.string(),
+  evidence: v.array(
+    v.object({
+      sectionId: v.optional(v.string()),
+      locator: v.string(),
+    })
+  ),
 })
 
 /** Long enough for one file-reading agent turn and bounded draft import. */
@@ -187,7 +211,7 @@ export const getCoverage = query({
   },
 })
 
-/** Claims the oldest available source while retaining its depth and provider snapshot. */
+/** Claims the oldest available source, with one live generation lease per project. */
 export const claimNext = mutation({
   args: { leaseToken: v.string() },
   handler: async (ctx, args) => {
@@ -197,15 +221,36 @@ export const claimNext = mutation({
     const queued = await ctx.db
       .query("contentGenerationJobs")
       .withIndex("by_status_createdAt", (q) => q.eq("status", "queued"))
-      .take(30)
+      .take(200)
     const expired = await ctx.db
       .query("contentGenerationJobs")
-      .withIndex("by_status_createdAt", (q) => q.eq("status", "leased"))
-      .take(30)
-    const job = [
-      ...queued,
-      ...expired.filter((item) => (item.leaseExpiresAt ?? 0) <= now),
-    ].sort((left, right) => left.createdAt - right.createdAt)[0]
+      .withIndex("by_status_lease", (q) =>
+        q.eq("status", "leased").lte("leaseExpiresAt", now)
+      )
+      .take(200)
+    const candidates = [...queued, ...expired].sort(
+      (left, right) => left.createdAt - right.createdAt
+    )
+    let job: (typeof candidates)[number] | undefined
+    const busyProjects = new Set<string>()
+    for (const candidate of candidates) {
+      if (busyProjects.has(String(candidate.projectId))) continue
+      // A later file must see links committed by earlier files in this project.
+      const activeLease = await ctx.db
+        .query("contentGenerationJobs")
+        .withIndex("by_project_status_lease", (q) =>
+          q
+            .eq("projectId", candidate.projectId)
+            .eq("status", "leased")
+            .gt("leaseExpiresAt", now)
+        )
+        .first()
+      if (activeLease) busyProjects.add(String(candidate.projectId))
+      else {
+        job = candidate
+        break
+      }
+    }
     if (!job) return null
     const source = await ctx.db.get(job.sourceId)
     const project = await ctx.db.get(job.projectId)
@@ -470,15 +515,35 @@ export const commitPage = mutation({
         projectId: job.projectId,
         topicId,
         title: page.conceptTitle,
+        ...(page.aliases?.length ? { aliases: page.aliases } : {}),
         sourceIds: [...sourceIds] as Id<"sources">[],
         createdAt: now,
       }))
-    if (concept)
+    if (concept) {
+      const aliases = [
+        ...(concept.aliases ?? []),
+        ...(page.conceptTitle.toLocaleLowerCase() ===
+        concept.title.toLocaleLowerCase()
+          ? []
+          : [page.conceptTitle]),
+        ...(page.aliases ?? []),
+      ]
+        .filter(
+          (alias, index, all) =>
+            alias.toLocaleLowerCase() !== concept.title.toLocaleLowerCase() &&
+            all.findIndex(
+              (candidate) =>
+                candidate.toLocaleLowerCase() === alias.toLocaleLowerCase()
+            ) === index
+        )
+        .slice(0, 24)
       await ctx.db.patch(conceptId, {
+        aliases,
         sourceIds: [
           ...new Set([...concept.sourceIds.map(String), ...sourceIds]),
         ] as Id<"sources">[],
       })
+    }
     const existingItems = await ctx.db
       .query("learningItems")
       .withIndex("by_concept_order", (q) => q.eq("conceptId", conceptId))
@@ -602,6 +667,7 @@ export const commitPage = mutation({
     await ctx.db.insert("contentPageCommits", {
       jobId: job._id,
       pageKey: page.key,
+      conceptId,
       payloadHash: args.payloadHash,
       createdAt: now,
     })
@@ -615,14 +681,97 @@ export const commitPage = mutation({
 
 /** Finishes a fully imported draft and clears its source's preparation state. */
 export const finish = mutation({
-  args: { jobId: v.id("contentGenerationJobs"), leaseToken: v.string() },
+  args: {
+    jobId: v.id("contentGenerationJobs"),
+    leaseToken: v.string(),
+    connections: v.optional(v.array(relationshipDraft)),
+  },
   handler: async (ctx, args) => {
     const job = await ctx.db.get(args.jobId)
     if (!job) throw new Error("Content job not found")
     requireLease(job, args.leaseToken)
     if (job.totalPages === undefined || job.importedPages !== job.totalPages)
       throw new Error("Some lesson pages were not imported")
+    const commits = await ctx.db
+      .query("contentPageCommits")
+      .withIndex("by_job_page", (q) => q.eq("jobId", job._id))
+      .take(251)
+    if (commits.length !== job.totalPages)
+      throw new Error("Lesson page checkpoints are incomplete")
+    // Resolve existing endpoints against the project before replacing any saved links.
+    const conceptIds = new Set<string>()
+    for (const connection of args.connections ?? [])
+      for (const endpoint of [connection.from, connection.to])
+        if (endpoint.kind === "concept") conceptIds.add(endpoint.id)
+    const validConceptIds = new Set<string>()
+    for (const id of conceptIds) {
+      const concept = await ctx.db.get(id as Id<"concepts">)
+      if (concept?.projectId === job.projectId) validConceptIds.add(id)
+    }
+    const includedSectionIds = new Set(
+      job.coverage
+        ?.filter((entry) => entry.status === "included")
+        .map((entry) => entry.sectionId) ?? []
+    )
+    const connections = validateConceptConnections(args.connections ?? [], {
+      pageKeys: new Set(commits.map((commit) => commit.pageKey)),
+      knownConceptIds: validConceptIds,
+      includedSectionIds,
+      extractedSectionIds: new Set(
+        job.coverage
+          ?.filter((entry) => entry.sectionId.startsWith("chunk_"))
+          .map((entry) => entry.sectionId) ?? []
+      ),
+    })
+    const pageConceptIds = new Map(
+      commits.map((commit) => [commit.pageKey, commit.conceptId])
+    )
+    // One row per source keeps provenance separate when several files support a link.
+    const savedLinks = await ctx.db
+      .query("conceptRelationships")
+      .withIndex("by_project_source", (q) =>
+        q.eq("projectId", job.projectId).eq("sourceId", job.sourceId)
+      )
+      .take(MAX_CONCEPT_CONNECTIONS + 1)
+    if (savedLinks.length > MAX_CONCEPT_CONNECTIONS)
+      throw new Error("Source has too many saved concept relationships")
+    for (const link of savedLinks) await ctx.db.delete(link._id)
     const now = Date.now()
+    const seenLinks = new Set<string>()
+    for (const connection of connections) {
+      let fromConceptId =
+        connection.from.kind === "page"
+          ? pageConceptIds.get(connection.from.key)
+          : (connection.from.id as Id<"concepts">)
+      let toConceptId =
+        connection.to.kind === "page"
+          ? pageConceptIds.get(connection.to.key)
+          : (connection.to.id as Id<"concepts">)
+      if (!fromConceptId || !toConceptId)
+        throw new Error("Concept relationship has an uncommitted page")
+      if (fromConceptId === toConceptId)
+        throw new Error("A concept cannot link to itself")
+      if (
+        (connection.kind === "contrasts_with" ||
+          connection.kind === "related_to") &&
+        String(fromConceptId) > String(toConceptId)
+      )
+        [fromConceptId, toConceptId] = [toConceptId, fromConceptId]
+      const key = `${connection.kind}\0${fromConceptId}\0${toConceptId}`
+      if (seenLinks.has(key))
+        throw new Error("Source repeats a concept relationship")
+      seenLinks.add(key)
+      await ctx.db.insert("conceptRelationships", {
+        projectId: job.projectId,
+        sourceId: job.sourceId,
+        fromConceptId,
+        toConceptId,
+        kind: connection.kind,
+        explanation: connection.explanation,
+        evidence: connection.evidence,
+        createdAt: now,
+      })
+    }
     await ctx.db.patch(job._id, {
       status: "completed",
       durationMs: job.startedAt ? now - job.startedAt : undefined,
