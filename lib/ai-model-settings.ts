@@ -187,6 +187,16 @@ export const CODEX_MODEL_OPTIONS = [
     reasoningEfforts: ["low", "medium", "high", "xhigh", "max", "ultra"],
   },
   {
+    id: "gpt-6-sol",
+    label: "GPT-6 Sol",
+    reasoningEfforts: ["low", "medium", "high", "xhigh", "max", "ultra"],
+  },
+  {
+    id: "gpt-6-luna",
+    label: "GPT-6 Luna",
+    reasoningEfforts: ["low", "medium", "high", "max"],
+  },
+  {
     id: "gpt-5.6-sol",
     label: "GPT-5.6 Sol",
     reasoningEfforts: ["low", "medium", "high", "xhigh", "max", "ultra"],
@@ -282,9 +292,9 @@ export type AiModelSettings = Record<AiModelField, string> &
 
 /** Model used by each task before a setting or legacy environment fallback exists. */
 export const DEFAULT_AI_MODELS: Readonly<Record<AiModelField, string>> = {
-  researchModel: "gpt-5.6-luna",
-  replyModel: "gpt-5.6-luna",
-  cardGenerationModel: "gpt-5.6-luna",
+  researchModel: "gpt-6-luna",
+  replyModel: "gpt-6-luna",
+  cardGenerationModel: "gpt-6-luna",
 }
 
 /** Reasoning level used by each task before a setting or legacy fallback exists. */
@@ -394,6 +404,7 @@ export function isLegacyAiModelOption(
 ): boolean {
   if (provider === "codex")
     return (
+      option.id.startsWith("gpt-5.6") ||
       option.id.startsWith("gpt-5.5") ||
       option.id.startsWith("gpt-5.4") ||
       option.id.startsWith("gpt-5.3") ||
@@ -752,11 +763,12 @@ export const AI_MODEL_COST_RANKS: Readonly<Record<string, number>> = {
   // Codex / OpenAI models: Spark is the ultra-lightweight tier, Mini is next, then full models
   "gpt-5.3-codex-spark": 1,
   "gpt-5.4-mini": 2,
-  "gpt-5.5": 3,
-  "gpt-5.6-luna": 4,
-  "gpt-5.6-terra": 5,
-  "gpt-5.6-sol": 6,
-  "gpt-6-astra": 7,
+  "gpt-6-luna": 3,
+  "gpt-5.5": 4,
+  "gpt-5.6-luna": 5,
+  "gpt-5.6-terra": 6,
+  "gpt-5.6-sol": 7,
+  "gpt-6-astra": 8,
   // Claude Code models: Haiku is fastest and lowest cost, then Sonnet, then Opus
   haiku: 1,
   sonnet: 2,

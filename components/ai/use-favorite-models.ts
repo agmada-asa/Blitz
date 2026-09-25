@@ -18,7 +18,7 @@ const FAVORITE_MODELS_EVENT = "blitz:favorite-models-change"
 /** Curated default models starred before the learner customizes their list. */
 export const DEFAULT_FAVORITE_MODELS: readonly string[] = [
   "gpt-6-astra",
-  "gpt-5.6-luna",
+  "gpt-6-luna",
 ]
 
 /**
@@ -105,15 +105,13 @@ export function useFavoriteModels() {
   /** Toggles the favorite status of a model ID, updating storage and notifying other pickers. */
   const toggleFavorite = useCallback(
     (modelId: string): void => {
-      setFavorites((current) => {
-        const next = current.includes(modelId)
-          ? current.filter((id) => id !== modelId)
-          : [...current, modelId]
-        writeStoredFavorites(next)
-        return next
-      })
+      const next = favorites.includes(modelId)
+        ? favorites.filter((id) => id !== modelId)
+        : [...favorites, modelId]
+      setFavorites(next)
+      writeStoredFavorites(next)
     },
-    []
+    [favorites]
   )
 
   return {

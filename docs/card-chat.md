@@ -51,7 +51,7 @@ The local `scripts/chat-worker.ts` process claims queued messages with a bounded
 
 For HTTP clients, `POST /api/learning/chat/retry` takes `projectId`, `itemId`, and the failed `messageId`; it deliberately requeues that existing record and never creates a duplicate question.
 
-The worker uses `BLITZ_CODEX_WORKSPACE` or `~/.local/share/blitz/codex-workspace`, an explicitly created directory outside the repository. `BLITZ_CODEX_MODEL` defaults to `gpt-5.6-luna`; sandbox is read-only and approval requests remain declined until an approval UI is wired. The queue allows later questions to wait behind an active turn and recovers expired leases, so the web request can succeed while the Mac worker is offline.
+The worker uses `BLITZ_CODEX_WORKSPACE` or `~/.local/share/blitz/codex-workspace`, an explicitly created directory outside the repository. `BLITZ_CODEX_MODEL` defaults to `gpt-6-luna`; sandbox is read-only and approval requests remain declined until an approval UI is wired. The queue allows later questions to wait behind an active turn and recovers expired leases, so the web request can succeed while the Mac worker is offline.
 
 The saved Replies model and reasoning level from `/settings` take precedence for new card-reply turns. See `docs/ai-model-settings.md` for fallback behavior.
 

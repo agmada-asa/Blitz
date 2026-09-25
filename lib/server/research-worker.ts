@@ -148,7 +148,7 @@ export async function runResearchProposalStep(
       claim.researchModel ??
       options.model ??
       process.env.BLITZ_CODEX_MODEL ??
-      "gpt-5.6-luna"
+      "gpt-6-luna"
     const effort = claim.researchEffort ?? options.effort
     if (
       !options.runTurn &&

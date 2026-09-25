@@ -244,7 +244,7 @@ export async function runChatWorkerStep(
           claim.providerModel ??
           options.model ??
           process.env.BLITZ_CODEX_MODEL ??
-          "gpt-5.6-luna",
+          "gpt-6-luna",
         ...((claim.providerEffort ?? options.effort)
           ? { effort: claim.providerEffort ?? options.effort }
           : {}),
