@@ -82,7 +82,10 @@ function LoadedProjectOverview({ project }: { project: Doc<"projects"> }) {
         <h1 className="min-w-0 font-heading text-3xl font-semibold tracking-tight break-words sm:text-4xl">
           {project.title}
         </h1>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <Button asChild variant="outline" className="min-h-10 rounded-full">
+            <Link href={`${base}/map`}>Concept map</Link>
+          </Button>
           <Button asChild variant="ghost" className="min-h-10 rounded-full">
             <Link
               href={`/chat?projectId=${encodeURIComponent(String(projectId))}`}

@@ -17,8 +17,12 @@ from the project sources. Any added background must link directly to the
 public source that supports it, beside the explanation in the lesson.
 
 The local worker gives the agent the new source, a source-ID inventory, and a
-paginated export of existing learning items. It also supplies extracted source
-sections when deterministic extraction succeeds. The agent writes
+paginated export of existing learning items. It also exports the project's
+concept map, including aliases, typed relationships, and their source locations.
+The agent follows relevant links to other originals before revising a lesson;
+the saved map guides inspection but does not replace reading source evidence.
+The worker also supplies extracted source sections when deterministic extraction
+succeeds. The agent writes
 `manifest.json` and one JSON draft per lesson under its job's temporary
 `Learning drafts/` directory. Each lesson draft contains Markdown teaching
 content, exact source locations, and optional new structured questions.
@@ -36,9 +40,10 @@ skipped with a reason. If extraction is unavailable, the agent identifies
 sections while reading the original and reports that coverage itself. That
 case is reviewable but cannot provide the same mechanical omission check.
 Draft validation checks file bounds, paths, source ownership, page length,
-answer references, and complete coverage of known section IDs before any
-page is imported. Raw HTML and remote images are rejected. Markdown renders
-as semantic elements without executing generated HTML.
+answer references, relationship endpoints and evidence, and complete coverage
+of known section IDs before any page is imported. Raw HTML and remote images
+are rejected. Markdown renders as semantic elements without executing generated
+HTML.
 
 Convex remains the published source of truth. Page imports are idempotent
 checkpoints. An updated lesson keeps its learning-item ID, stores its prior
@@ -50,6 +55,14 @@ Existing duplicate explanations for a revised concept are archived from live
 views. A failed job keeps already published lessons usable and can resume its
 remaining page imports from the temporary drafts. Successful jobs remove
 their temporary files.
+
+After every page is imported, the completion mutation replaces the new source's
+concept relationships and marks the job complete in the same transaction. A
+relationship must point to saved project concepts and cite included sections
+from that source, or an original-file locator when extraction is unavailable.
+Repeated mentions can add aliases to an existing concept. Projects created
+before this feature already have concept nodes; their links appear as later
+source jobs establish supported relationships.
 
 The older chunk generator remains available for legacy preparation jobs and
 older mobile import paths. New web and Electron sources use the agent job.

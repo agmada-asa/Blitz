@@ -177,6 +177,11 @@ export function ProjectSourcesWorkspace({
             Sources
           </h1>
         </div>
+        <Button asChild variant="outline" className="min-h-10 rounded-full">
+          <Link href={`/projects/${encodeURIComponent(projectId)}/map`}>
+            Explore concept map
+          </Link>
+        </Button>
       </div>
 
       <div className="grid min-w-0 items-start gap-6 lg:grid-cols-2">
