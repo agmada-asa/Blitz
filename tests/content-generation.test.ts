@@ -22,7 +22,7 @@ function page() {
   }
 }
 
-test("rejects unknown source references and overlong compact pages", () => {
+test("rejects unknown source references and pages beyond the selected detail", () => {
   assert.throws(() =>
     validateLessonDraft(
       {
@@ -38,7 +38,7 @@ test("rejects unknown source references and overlong compact pages", () => {
     validateLessonDraft(
       {
         ...page(),
-        bodyMarkdown: Array.from({ length: 91 }, () => "word").join(" "),
+        bodyMarkdown: Array.from({ length: 161 }, () => "word").join(" "),
       },
       1,
       new Set(["source-1"]),
@@ -83,10 +83,12 @@ test("rejects duplicate retired question IDs in one lesson", () => {
   )
 })
 
-test("rejects generated remote images and raw HTML", () => {
+test("rejects generated remote images, raw HTML, and unsafe links", () => {
   for (const bodyMarkdown of [
     "A fact with ![tracking](https://example.com/image.png).",
     'A fact with <img src="https://example.com/image.png">.',
+    "A fact with [an unsafe citation](javascript:alert(1)).",
+    "A fact with [a non-source citation](mailto:example@example.com).",
   ])
     assert.throws(() =>
       validateLessonDraft(
@@ -96,6 +98,41 @@ test("rejects generated remote images and raw HTML", () => {
         "source-1"
       )
     )
+})
+
+test("accepts a direct public citation beside background context", () => {
+  const draft = validateLessonDraft(
+    {
+      ...page(),
+      bodyMarkdown:
+        "A prerequisite explained with a [public reference](https://example.com/background).",
+    },
+    3,
+    new Set(["source-1"]),
+    "source-1"
+  )
+  assert.match(draft.bodyMarkdown, /https:\/\/example\.com\/background/)
+})
+
+test("allows a substantial Balanced lesson within its new limit", () => {
+  const bodyMarkdown = Array.from({ length: 500 }, () => "word").join(" ")
+  assert.equal(
+    validateLessonDraft(
+      { ...page(), bodyMarkdown },
+      3,
+      new Set(["source-1"]),
+      "source-1"
+    ).bodyMarkdown,
+    bodyMarkdown
+  )
+  assert.throws(() =>
+    validateLessonDraft(
+      { ...page(), bodyMarkdown: `${bodyMarkdown} extra` },
+      3,
+      new Set(["source-1"]),
+      "source-1"
+    )
+  )
 })
 
 test("reads every manifest page and rejects a symlinked page directory", async () => {

@@ -2,17 +2,43 @@
 
 import { z } from "zod"
 import { lexer, type Token } from "marked"
+import { markdownHref } from "./markdown.ts"
 
-/** Visible lesson depth; three is the default two-paragraph treatment. */
+/** Visible lesson depth; three is the default for a capable reader new to the topic. */
 export const DEFAULT_CONTENT_DEPTH = 3
 
-/** Labels and upper word limits for the five content depth positions. */
+/** Presentation preferences and upper word limits for the five lesson detail positions. */
 export const CONTENT_DEPTHS = [
-  { value: 1, label: "Compact", maxWords: 90 },
-  { value: 2, label: "Brief", maxWords: 120 },
-  { value: 3, label: "Balanced", maxWords: 180 },
-  { value: 4, label: "Detailed", maxWords: 250 },
-  { value: 5, label: "In depth", maxWords: 330 },
+  {
+    value: 1,
+    label: "Compact",
+    maxWords: 160,
+    description: "Assumes familiarity with the topic and keeps the key reasoning clear.",
+  },
+  {
+    value: 2,
+    label: "Brief",
+    maxWords: 270,
+    description: "Assumes some background and explains new terms as needed.",
+  },
+  {
+    value: 3,
+    label: "Balanced",
+    maxWords: 500,
+    description: "Assumes you are new to the topic and explains it without talking down.",
+  },
+  {
+    value: 4,
+    label: "Detailed",
+    maxWords: 700,
+    description: "Assumes little background and gives more context and examples.",
+  },
+  {
+    value: 5,
+    label: "In depth",
+    maxWords: 900,
+    description: "Builds the foundations and follows each important step in detail.",
+  },
 ] as const
 
 /** Returns the requested depth or rejects a malformed persisted value. */
@@ -76,7 +102,7 @@ export const lessonDraftSchema = z
     topicTitle: z.string().trim().min(1).max(140),
     conceptTitle: z.string().trim().min(1).max(180),
     title: z.string().trim().min(1).max(180),
-    bodyMarkdown: z.string().trim().min(1).max(6_000),
+    bodyMarkdown: z.string().trim().min(1).max(10_000),
     sourceReferences: z.array(sourceReferenceSchema).min(1).max(12),
     questions: z.array(questionSchema).max(4),
     retireQuestionIds: z.array(z.string().min(1).max(128)).max(12).optional(),
@@ -117,10 +143,14 @@ export type LessonDraft = z.infer<typeof lessonDraftSchema>
 /** A validated manifest of agent-written lesson files. */
 export type ContentManifest = z.infer<typeof contentManifestSchema>
 
-/** Rejects generated HTML and remote images before the shared Markdown view sees them. */
+/** Rejects unsupported media and unsafe links before the shared Markdown view sees them. */
 function containsUnsupportedMedia(tokens: Token[]): boolean {
   return tokens.some((token) => {
     if (token.type === "html" || token.type === "image") return true
+    if (token.type === "link") {
+      const href = markdownHref(token.href)
+      if (!href || !/^https?:\/\//i.test(href)) return true
+    }
     const nested = token as Token & {
       tokens?: Token[]
       items?: Array<{ tokens: Token[] }>
@@ -159,7 +189,7 @@ export function validateLessonDraft(
   )
     throw new Error(`Page ${page.key} repeats a retired question`)
   if (containsUnsupportedMedia(lexer(page.bodyMarkdown, { gfm: true })))
-    throw new Error(`Page ${page.key} contains unsupported HTML or images`)
+    throw new Error(`Page ${page.key} contains unsupported HTML, images, or links`)
   const words = page.bodyMarkdown.match(/\S+/g)?.length ?? 0
   if (words > contentDepth(depth).maxWords)
     throw new Error(`Page ${page.key} exceeds the selected depth`)

@@ -5,11 +5,16 @@ file stays in `Sources/`. Pasted notes and links use the same job after their
 bounded text is stored. Research imports retain their existing import
 checkpoint IDs and queue the agent for learning content.
 
-The project has a five-step lesson detail preference. Each new job snapshots
-that preference and the selected content-generation provider. Changing the
-preference affects later jobs; it does not rewrite pages already published.
-The worker runs the provider snapshot with a project workspace write policy
-and without network access.
+The project has a five-step lesson detail preference. It controls available
+space and the amount of prior familiarity assumed by the lesson, while the
+model and reasoning choice remains in Settings. Balanced assumes a capable
+reader who is new to the topic and permits up to 500 words per lesson. Each
+new job snapshots the preference and the selected content-generation provider.
+Changing the preference affects later jobs; it does not rewrite pages already
+published. The worker runs the provider snapshot with a project workspace
+write policy and allows hosted web search when a needed prerequisite is absent
+from the project sources. Any added background must link directly to the
+public source that supports it, beside the explanation in the lesson.
 
 The local worker gives the agent the new source, a source-ID inventory, and a
 paginated export of existing learning items. It also supplies extracted source

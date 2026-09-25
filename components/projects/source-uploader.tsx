@@ -446,6 +446,9 @@ export function SourceUploader({
             <span>{CONTENT_DEPTHS[0].label}</span>
             <span>{CONTENT_DEPTHS[4].label}</span>
           </div>
+          <p className="text-sm text-muted-foreground">
+            {contentDepth(selectedDepth).description}
+          </p>
           {depthError ? (
             <p role="alert" className="text-sm text-destructive">
               {depthError}
