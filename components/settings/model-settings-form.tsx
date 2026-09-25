@@ -35,6 +35,7 @@ import {
   resolveAiProvider,
   validateAiModelSettings,
   validateAiTaskProviders,
+  type AiProviderModelCatalogs,
   type AiModelField,
   type AiModelSettings,
   type AiProviderField,
@@ -167,6 +168,12 @@ function ModelSettingsEditor({
             provider?.message ?? "Could not check provider setup. Try again."
           )
       }
+      const modelCatalogs: AiProviderModelCatalogs = {}
+      for (const provider of availability) {
+        if (provider.models?.length)
+          modelCatalogs[provider.providerId] = provider.models
+      }
+      settings = validateAiModelSettings(settings, modelCatalogs)
       const saved = await saveSettings(settings)
       setDraft(saved)
       setIsDirty(false)

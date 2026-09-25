@@ -154,13 +154,20 @@ test("rejects an unsupported model and reasoning combination", () => {
         researchEffort: "ultra",
         replyEffort: "medium",
         cardGenerationEffort: "medium",
+      }, {
+        codex: [
+          {
+            id: "gpt-5.6-luna",
+            reasoningEfforts: ["low", "medium", "high", "xhigh", "max"],
+          },
+        ],
       }),
     /not available/
   )
 })
 
-/** Confirms provider-specific reasoning controls are rejected before persistence. */
-test("rejects reasoning unsupported by the selected provider", () => {
+/** Confirms settings reject malformed reasoning effort tokens. */
+test("rejects malformed reasoning effort values", () => {
   assert.throws(
     () =>
       validateAiModelSettings({
@@ -168,7 +175,7 @@ test("rejects reasoning unsupported by the selected provider", () => {
         replyModel: "claude-sonnet",
         cardGenerationModel: "opencode/big-pickle",
         researchEffort: "medium",
-        replyEffort: "xhigh",
+        replyEffort: "high effort",
         cardGenerationEffort: "medium",
         replyProvider: "claude-code",
         cardGenerationProvider: "opencode",

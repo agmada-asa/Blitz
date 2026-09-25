@@ -161,7 +161,9 @@ export const AI_REASONING_EFFORTS = [
 
 /** A supported reasoning level, or an explicit provider default when no control exists. */
 export type AiReasoningEffort =
-  (typeof AI_REASONING_EFFORTS)[number] | "default"
+  | (typeof AI_REASONING_EFFORTS)[number]
+  | "default"
+  | (string & {})
 
 /** One curated Codex model and the reasoning levels it supports in Blitz. */
 export type CodexModelOption = {
@@ -238,6 +240,18 @@ export type AiProviderModelOption = {
   readonly reasoningEfforts: readonly AiReasoningEffort[]
   readonly inputModalities?: readonly ("text" | "image" | "audio")[]
 }
+
+/** Provider-reported model data used to validate selections against a live catalog. */
+export type AiProviderModelCatalogOption = {
+  readonly id: string
+  readonly reasoningEffort?: AiReasoningEffort
+  readonly reasoningEfforts?: readonly AiReasoningEffort[]
+}
+
+/** Current model catalogs keyed by provider, when a provider exposes them. */
+export type AiProviderModelCatalogs = Partial<
+  Record<AiProviderId, readonly AiProviderModelCatalogOption[]>
+>
 
 /** Curated defaults used until a provider reports a runtime model catalog. */
 export const AI_PROVIDER_MODEL_OPTIONS: Readonly<
@@ -347,6 +361,9 @@ const MODEL_OPTION_BY_ID = new Map<string, CodexModelOption>(
 
 /** Accepts the punctuation used by Codex model IDs while rejecting whitespace and control text. */
 const AI_MODEL_NAME_PATTERN = /^[A-Za-z0-9._:/@-]+$/
+
+/** Accepts provider effort identifiers without allowing spaces or control text. */
+const AI_REASONING_EFFORT_PATTERN = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/
 
 /** Returns whether a model ID is included in the current picker. */
 export function isKnownCodexModel(model: string): model is CodexModelId {
@@ -577,36 +594,43 @@ export function validateAiModelName(
   return model
 }
 
-/** Validates a selected reasoning level against its paired model when Blitz knows that model. */
+/** Validates an effort value and checks model support when a provider catalog is supplied. */
 export function validateAiReasoningEffort(
   value: string,
   model: string,
   field: AiReasoningField,
-  provider?: AiProviderId
+  provider?: AiProviderId,
+  modelCatalogs?: AiProviderModelCatalogs
 ): AiReasoningEffort {
-  const effort = value.trim() as AiReasoningEffort
+  const effort = value.trim()
   const label = AI_REASONING_FIELD_LABELS[field]
-  if (
-    effort !== "default" &&
-    !(AI_REASONING_EFFORTS as readonly string[]).includes(effort)
-  )
+  if (effort.length > 64 || !AI_REASONING_EFFORT_PATTERN.test(effort))
     throw new Error(`${label} reasoning level is not supported`)
-  // Opaque ACP model variants require the authenticated runtime catalog. Keep
-  // a requested effort for adapter validation without advertising unknown UI controls.
-  const supportedEfforts = provider === "antigravity" && model !== "antigravity/default"
-    ? ["default", ...AI_REASONING_EFFORTS]
-    : provider
-      ? getSupportedAiReasoningEffortsForProvider(provider, model)
-      : getSupportedAiReasoningEfforts(model)
-  if (!supportedEfforts.includes(effort)) {
+  const providerCatalog = provider ? modelCatalogs?.[provider] : undefined
+  const catalogOption = providerCatalog?.find((option) => option.id === model)
+  if (providerCatalog?.length && !catalogOption) {
+    const providerLabel =
+      AI_PROVIDER_OPTIONS.find((option) => option.id === provider)?.label ??
+      provider
+    throw new Error(`${label} model is not available from ${providerLabel}`)
+  }
+  const catalogEfforts = catalogOption
+    ? (catalogOption.reasoningEfforts ??
+      (catalogOption.reasoningEffort
+        ? [catalogOption.reasoningEffort]
+        : ["default"]))
+    : undefined
+  // Without a provider catalog, the adapter validates compatibility at dispatch.
+  if (catalogEfforts && !catalogEfforts.includes(effort)) {
     throw new Error(`${label} reasoning level is not available for ${model}`)
   }
-  return effort
+  return effort as AiReasoningEffort
 }
 
-/** Validates all task selections before they are saved or handed to a worker. */
+/** Validates setting shape and provider-reported model support when catalogs are available. */
 export function validateAiModelSettings(
-  settings: AiModelSettingsInput
+  settings: AiModelSettingsInput,
+  modelCatalogs?: AiProviderModelCatalogs
 ): AiModelSettings {
   const researchModel = validateAiModelName(
     settings.researchModel,
@@ -647,19 +671,22 @@ export function validateAiModelSettings(
       settings.researchEffort,
       researchModel,
       "researchEffort",
-      researchProvider
+      researchProvider,
+      modelCatalogs
     ),
     replyEffort: validateAiReasoningEffort(
       settings.replyEffort,
       replyModel,
       "replyEffort",
-      replyProvider
+      replyProvider,
+      modelCatalogs
     ),
     cardGenerationEffort: validateAiReasoningEffort(
       settings.cardGenerationEffort,
       cardGenerationModel,
       "cardGenerationEffort",
-      cardGenerationProvider
+      cardGenerationProvider,
+      modelCatalogs
     ),
   }
 }
