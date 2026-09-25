@@ -8,6 +8,7 @@ import {
   Chat01Icon,
   CheckUnread01Icon,
   Copy01Icon,
+  Download01Icon,
   Delete02Icon,
   File01Icon,
   Folder01Icon,
@@ -86,9 +87,13 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover"
-import { SourcePane } from "@/components/chat/source-pane"
+import {
+  SourcePane,
+  type SourceSelection,
+} from "@/components/chat/source-pane"
 import { ThoughtTrace } from "@/components/chat/thought-trace"
 import { Textarea } from "@/components/ui/textarea"
+import { Checkbox } from "@/components/ui/checkbox"
 import { CancelIcon, LoadingIcon, SparklesIcon } from "@/components/ui/icon"
 import { api } from "@/convex/_generated/api"
 import type { Id } from "@/convex/_generated/dataModel"
@@ -167,6 +172,10 @@ type ChatWorkspaceProps = {
   /** Optional unsent prompt used when a card starts a focused chat. */
   initialPrompt?: string
   initialProject?: ChatAgentProject
+  /** Removes the full-page history rail and fits chat inside another panel. */
+  embedded?: boolean
+  /** Lets an owning panel open citations in its own source tab. */
+  onOpenSource?: (selection: SourceSelection) => void
 }
 
 /** Optional overrides for standard, edited, and continued chat submissions. */
@@ -211,6 +220,15 @@ function messageForError(error: unknown, fallback: string): string {
   return error instanceof Error && error.message.trim()
     ? error.message
     : fallback
+}
+
+/** Formats a message creation time as a local 24-hour clock value. */
+function formatMessageTime(timestamp: number): string {
+  return new Intl.DateTimeFormat(undefined, {
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).format(timestamp)
 }
 
 /** Converts persisted or streamed data into a safe composer request envelope. */
@@ -441,6 +459,8 @@ export function ChatWorkspace({
   initialCard,
   initialPrompt,
   initialProject,
+  embedded = false,
+  onOpenSource,
 }: ChatWorkspaceProps) {
   const projects = useQuery(api.projects.listProjects)
   const chats = useQuery(api.workspaceChats.list, { archived: false }) as
@@ -519,6 +539,9 @@ export function ChatWorkspace({
   const [renameChatId, setRenameChatId] = useState<Id<"workspaceChats">>()
   const [renameDraft, setRenameDraft] = useState("")
   const [deleteChatId, setDeleteChatId] = useState<Id<"workspaceChats">>()
+  const [exportDialogOpen, setExportDialogOpen] = useState(false)
+  const [includeAgentActivity, setIncludeAgentActivity] = useState(true)
+  const [exportNotice, setExportNotice] = useState("")
   const [deletingChat, setDeletingChat] = useState(false)
   const [archivedDialogOpen, setArchivedDialogOpen] = useState(false)
   const [chatActionPending, setChatActionPending] = useState(false)
@@ -567,6 +590,57 @@ export function ChatWorkspace({
       ) === index
   )
   const messages = activeChat?.messages ?? []
+  /** Formats the loaded conversation as Markdown with optional agent activity. */
+  const exportChatMarkdown = (): string => {
+    const title = activeChat?.title?.trim() || "Chat"
+    const sections = [`# ${title}`]
+    for (const message of messages) {
+      const heading = message.role === "user" ? "You" : "Blitz"
+      sections.push(`## ${heading}\n\n${message.content || "_(No message text)_"}`)
+      if (!includeAgentActivity || message.role !== "assistant") continue
+
+      const thought = "thought" in message ? message.thought : undefined
+      if (thought?.trim()) sections.push(`### Agent working\n\n${thought.trim()}`)
+
+      const events = "providerEvents" in message && Array.isArray(message.providerEvents)
+        ? (message.providerEvents as ProviderActivityEvent[])
+        : []
+      for (const event of events) {
+        const detail = event.detail?.trim()
+        sections.push(`### Tool: ${event.title} (${event.status})${detail ? `\n\n${detail}` : ""}`)
+      }
+
+      const requests = "agentRequests" in message && Array.isArray(message.agentRequests)
+        ? message.agentRequests.map((value) => agentRequestFromValue(value)).filter((value): value is AgentRequest => value !== undefined)
+        : []
+      for (const request of requests) {
+        sections.push(`### Agent request: ${request.title || request.method} (${request.status})\n\n${request.details}`)
+      }
+    }
+    return `${sections.join("\n\n---\n\n")}\n`
+  }
+
+  /** Copies the chosen transcript to the clipboard and reports recoverable errors. */
+  const copyExport = async (): Promise<void> => {
+    try {
+      await navigator.clipboard.writeText(exportChatMarkdown())
+      setExportNotice("Chat copied to clipboard.")
+    } catch {
+      setExportNotice("Clipboard access failed. Try downloading the Markdown file.")
+    }
+  }
+
+  /** Downloads the chosen transcript as a Markdown file. */
+  const downloadExport = (): void => {
+    const blob = new Blob([exportChatMarkdown()], { type: "text/markdown;charset=utf-8" })
+    const url = URL.createObjectURL(blob)
+    const anchor = document.createElement("a")
+    anchor.href = url
+    anchor.download = `${(activeChat?.title || "chat").replace(/[^a-z0-9-_]+/gi, "-").replace(/^-|-$/g, "") || "chat"}.md`
+    anchor.click()
+    URL.revokeObjectURL(url)
+    setExportNotice("Markdown file downloaded.")
+  }
   const userClientMessageIds = useMemo(
     () =>
       new Set(
@@ -838,11 +912,12 @@ export function ChatWorkspace({
     setAgentAutonomy(undefined)
     setAgentSettingsTouched(false)
     setHistoryOpen(false)
-    window.history.replaceState(
-      null,
-      "",
-      `/chat?chatId=${encodeURIComponent(chatId)}`
-    )
+    if (!embedded)
+      window.history.replaceState(
+        null,
+        "",
+        `/chat?chatId=${encodeURIComponent(chatId)}`
+      )
   }
 
   /** Clears the active conversation and starts a new standalone chat. */
@@ -870,7 +945,7 @@ export function ChatWorkspace({
     setAgentSettingsTouched(false)
     setHistoryOpen(false)
     setNewChatDialogOpen(false)
-    window.history.replaceState(null, "", "/chat")
+    if (!embedded) window.history.replaceState(null, "", "/chat")
   }
 
   /** Clears the composer and assigns the selected project to the pending chat. */
@@ -902,11 +977,12 @@ export function ChatWorkspace({
     setAgentSettingsTouched(false)
     setHistoryOpen(false)
     setNewChatDialogOpen(false)
-    window.history.replaceState(
-      null,
-      "",
-      `/chat?projectId=${encodeURIComponent(project._id)}`
-    )
+    if (!embedded)
+      window.history.replaceState(
+        null,
+        "",
+        `/chat?projectId=${encodeURIComponent(project._id)}`
+      )
   }
 
   /** Queues the draft message and attachments to send automatically once the active response completes. */
@@ -1722,11 +1798,18 @@ export function ChatWorkspace({
   )
 
   return (
-    <main className="flex h-[calc(100svh-68px-env(safe-area-inset-bottom))] min-h-0 w-full overflow-hidden md:h-svh md:min-h-0">
+    <main
+      className={cn(
+        "flex min-h-0 w-full overflow-hidden",
+        embedded
+          ? "h-full"
+          : "h-[calc(100svh-68px-env(safe-area-inset-bottom))] md:h-svh"
+      )}
+    >
       <aside
         className={cn(
           "hidden w-[276px] shrink-0 border-r border-border/70 bg-card/40 md:block",
-          sourceSelection && "md:hidden"
+          (embedded || sourceSelection) && "md:hidden"
         )}
       >
         {history}
@@ -1734,7 +1817,8 @@ export function ChatWorkspace({
 
       <div
         className={cn(
-          "relative flex min-w-0 flex-1 flex-col px-4 sm:px-8",
+          "relative flex min-w-0 flex-1 flex-col",
+          embedded ? "px-3" : "px-4 sm:px-8",
           draggingFiles && "bg-brand/5"
         )}
         onDragEnter={(event) => {
@@ -1766,7 +1850,20 @@ export function ChatWorkspace({
         )}
         <header className="shrink-0">
           <div className="flex h-16 items-center justify-between gap-3">
-            <div className="flex min-w-0 items-center gap-2">
+            <div className="flex min-w-0 flex-1 items-center gap-2">
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                className={cn("shrink-0 rounded-full", !embedded && "md:hidden")}
+                aria-label="Open chat history"
+                onClick={() => setHistoryOpen(true)}
+              >
+                <HugeiconsIcon icon={Menu01Icon} size={18} strokeWidth={1.8} />
+              </Button>
+              <h1 className="min-w-0 flex-1 truncate text-xl font-medium tracking-tight">
+                {activeChat?.title ?? "New chat"}
+              </h1>
               <DropdownMenu>
                 {activeChat ? (
                   <DropdownMenuTrigger asChild>
@@ -1782,12 +1879,22 @@ export function ChatWorkspace({
                   </DropdownMenuTrigger>
                 ) : null}
                 {activeChat ? (
-                  <DropdownMenuContent align="start">
+                  <DropdownMenuContent align="end">
                     <DropdownMenuItem
                       onSelect={() => openRenameChat(activeChat.id)}
                     >
                       <HugeiconsIcon icon={PencilEdit02Icon} size={15} aria-hidden="true" />
                       Rename chat
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      onSelect={() => {
+                        setIncludeAgentActivity(true)
+                        setExportNotice("")
+                        setExportDialogOpen(true)
+                      }}
+                    >
+                      <HugeiconsIcon icon={Download01Icon} size={15} aria-hidden="true" />
+                      Export chat
                     </DropdownMenuItem>
                     <DropdownMenuItem
                       onSelect={() =>
@@ -1820,19 +1927,6 @@ export function ChatWorkspace({
                   </DropdownMenuContent>
                 ) : null}
               </DropdownMenu>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-sm"
-                className="rounded-full md:hidden"
-                aria-label="Open chat history"
-                onClick={() => setHistoryOpen(true)}
-              >
-                <HugeiconsIcon icon={Menu01Icon} size={18} strokeWidth={1.8} />
-              </Button>
-              <h1 className="min-w-0 flex-1 truncate text-xl font-medium tracking-tight">
-                {activeChat?.title ?? "New chat"}
-              </h1>
             </div>
             <Button
               type="button"
@@ -1846,6 +1940,15 @@ export function ChatWorkspace({
           </div>
           {contextualAttachments.length || contextProjectId ? (
             <div className="flex min-h-9 items-center justify-between gap-2 border-b border-border/60 px-1 pb-2">
+              {contextProjectId ? (
+                <Button asChild type="button" variant="ghost" size="sm" className="h-8 shrink-0 px-2 text-xs">
+                  <Link href={contextualCard
+                    ? `/projects/${encodeURIComponent(contextProjectId)}/learn?resume=1`
+                    : `/projects/${encodeURIComponent(contextProjectId)}`}>
+                    ← {contextualCard ? "Lesson" : "Project"}
+                  </Link>
+                </Button>
+              ) : null}
               {contextualAttachments.length ? (
                 <ul aria-label="Chat context" className="flex min-w-0 flex-wrap items-center gap-1.5">
                   {contextualAttachments.map((attachment) => {
@@ -1873,15 +1976,6 @@ export function ChatWorkspace({
                   {contextProjectLabel}
                 </p>
               )}
-              {contextProjectId ? (
-                <Button asChild type="button" variant="ghost" size="sm" className="h-8 shrink-0 px-2 text-xs">
-                  <Link href={contextualCard
-                    ? `/projects/${encodeURIComponent(contextProjectId)}/learn?resume=1`
-                    : `/projects/${encodeURIComponent(contextProjectId)}`}>
-                    ← {contextualCard ? "Lesson" : "Project"}
-                  </Link>
-                </Button>
-              ) : null}
             </div>
           ) : null}
         </header>
@@ -2002,10 +2096,10 @@ export function ChatWorkspace({
                   <article
                     key={message.id}
                     className={cn(
-                      "max-w-[88%] text-sm leading-6 sm:max-w-[78%]",
+                      "group text-sm leading-6",
                       message.role === "user"
-                        ? "ml-auto flex flex-col items-end"
-                        : "mr-auto min-w-0"
+                        ? "ml-auto flex max-w-[88%] flex-col items-end sm:max-w-[78%]"
+                        : "mr-auto w-full min-w-0"
                     )}
                   >
                     {message.role === "user" && messageAttachments.length > 0 ? (
@@ -2064,12 +2158,14 @@ export function ChatWorkspace({
                               isReadOnly={isRunning}
                               onToggleExpand={toggleExpandAnnotation}
                               onCitation={(citation) => {
-                                if (activeChatId)
-                                  setSourceSelection({
+                                if (!activeChatId) return
+                                const selection: SourceSelection = {
                                     chatId: activeChatId,
                                     messageId: message.id,
                                     citationId: citation.id,
-                                  })
+                                }
+                                if (onOpenSource) onOpenSource(selection)
+                                else setSourceSelection(selection)
                               }}
                               onAddAnnotation={(selectedText) =>
                                 addAnnotation(message.id, selectedText)
@@ -2159,12 +2255,13 @@ export function ChatWorkspace({
                     </div>
 
                     {!editing ? (
-                      <div
-                        className={cn(
-                          "mt-1 flex flex-wrap items-center gap-1 text-muted-foreground",
-                          message.role === "user" && "justify-end"
-                        )}
-                      >
+                      <div className="mt-1 flex w-full items-center justify-between gap-2">
+                        <div
+                          className={cn(
+                            "flex min-w-0 flex-wrap items-center gap-1 text-muted-foreground",
+                            message.role === "user" && "justify-end"
+                          )}
+                        >
                         {message.content ? (
                           <Button
                             type="button"
@@ -2261,6 +2358,16 @@ export function ChatWorkspace({
                             ) : null}
                           </>
                         )}
+                        </div>
+                        {typeof message.createdAt === "number" ? (
+                          <time
+                            dateTime={new Date(message.createdAt).toISOString()}
+                            aria-label={`Sent at ${formatMessageTime(message.createdAt)}`}
+                            className="shrink-0 select-none whitespace-nowrap text-right text-[11px] leading-4 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100"
+                          >
+                            {formatMessageTime(message.createdAt)}
+                          </time>
+                        ) : null}
                       </div>
                     ) : null}
                   </article>
@@ -2668,7 +2775,7 @@ export function ChatWorkspace({
         </div>
       </div>
 
-      {sourceSelection ? (
+      {!embedded && sourceSelection ? (
         <SourcePane
           key={`${sourceSelection.messageId}:${sourceSelection.citationId}`}
           selection={sourceSelection}
@@ -2679,6 +2786,7 @@ export function ChatWorkspace({
       <Dialog open={historyOpen} onOpenChange={setHistoryOpen}>
         <DialogContent
           className="h-[min(680px,calc(100svh-2rem))] min-w-0 overflow-hidden p-0 sm:max-w-sm"
+          showCloseButton={false}
           aria-describedby={undefined}
         >
           <DialogTitle className="sr-only">Chat history</DialogTitle>
@@ -2761,6 +2869,39 @@ export function ChatWorkspace({
               </Button>
             </DialogFooter>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={exportDialogOpen} onOpenChange={setExportDialogOpen}>
+        <DialogContent aria-describedby="export-chat-description">
+          <DialogHeader>
+            <DialogTitle>Export chat</DialogTitle>
+            <DialogDescription id="export-chat-description">
+              Export the full conversation as Markdown, including your messages and replies.
+            </DialogDescription>
+          </DialogHeader>
+          <label className="flex cursor-pointer items-start gap-3 rounded-lg border p-3 text-sm">
+            <Checkbox
+              checked={includeAgentActivity}
+              onCheckedChange={(checked) => setIncludeAgentActivity(checked === true)}
+              className="mt-0.5"
+            />
+            <span className="grid gap-1">
+              <span className="font-medium">Include agent working and tool calls</span>
+              <span className="text-muted-foreground">Adds available working notes, tool activity, and agent requests.</span>
+            </span>
+          </label>
+          <p aria-live="polite" className="min-h-5 text-sm text-muted-foreground">{exportNotice}</p>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => void copyExport()}>
+              <HugeiconsIcon icon={Copy01Icon} size={15} aria-hidden="true" />
+              Copy to clipboard
+            </Button>
+            <Button type="button" onClick={downloadExport}>
+              <HugeiconsIcon icon={Download01Icon} size={15} aria-hidden="true" />
+              Export as Markdown
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 
