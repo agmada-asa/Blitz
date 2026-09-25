@@ -351,14 +351,16 @@ export function ChatHistory({
                             ) : null}
                           </span>
                         </div>
-                        <div className="flex items-center">
-                          <Badge
-                            variant="outline"
-                            className="h-4.5 max-w-[190px] truncate px-1.5 py-0 text-[10px] font-normal text-muted-foreground border-border/60"
-                          >
-                            {chat.projectTitle || "No project"}
-                          </Badge>
-                        </div>
+                        {chat.projectTitle ? (
+                          <div className="flex items-center">
+                            <Badge
+                              variant="outline"
+                              className="h-4.5 max-w-[190px] truncate px-1.5 py-0 text-[10px] font-normal text-muted-foreground border-border/60"
+                            >
+                              {chat.projectTitle}
+                            </Badge>
+                          </div>
+                        ) : null}
                       </button>
                     </ContextMenuTrigger>
                     <ContextMenuContent>

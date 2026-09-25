@@ -1,4 +1,4 @@
-/** Stores bounded original sources through the shared project filesystem boundary. */
+/** Stores original sources through the shared project filesystem boundary. */
 
 import { createHash, randomBytes } from "node:crypto"
 import { promises as fs } from "node:fs"
@@ -10,12 +10,6 @@ import {
   resolveProjectFile,
   storeProjectFile,
 } from "./project-files.ts"
-
-/** Maximum original upload size accepted by local desktop and Android clients. */
-export const MAX_ORIGINAL_SOURCE_BYTES = 1024 * 1024 * 1024
-
-/** User-facing label for the original upload boundary. */
-export const ORIGINAL_SOURCE_LIMIT_LABEL = "1 GB"
 
 /** Durable metadata returned after an upload is stored or deduplicated. */
 export interface StoredSourceFile {
@@ -38,25 +32,29 @@ export interface StoredChatFile {
 
 /** Converts an untrusted client filename to one safe relative path segment. */
 export function safeSourceFilename(filename: string): string {
-  const candidate = basename(filename).replace(/[\u0000-\u001f\u007f]/g, "").trim() || "source.bin"
-  return candidate.slice(0, 255)
+  const candidate =
+    basename(filename.replaceAll("\\", "/"))
+      .replace(/[\u0000-\u001f\u007f]/g, "")
+      .trim() || "source.bin"
+  // The content hash and separator also occupy bytes in the filesystem segment.
+  const extension = candidate.match(/\.[^.]{1,20}$/)?.[0] ?? ""
+  const suffix = Buffer.byteLength(extension) <= 24 ? extension : ""
+  const stem = suffix ? candidate.slice(0, -suffix.length) : candidate
+  let safeStem = ""
+  for (const character of stem) {
+    if (Buffer.byteLength(safeStem + character + suffix) > 190) break
+    safeStem += character
+  }
+  return (safeStem || "source") + suffix
 }
 
-/** Adapts a web stream while enforcing the byte limit before yielding an oversized chunk. */
-async function* boundedChunks(body: ReadableStream<Uint8Array>, maxBytes: number): AsyncGenerator<Uint8Array> {
+/** Adapts a web request body to the streaming project file store. */
+async function* sourceChunks(body: ReadableStream<Uint8Array>): AsyncGenerator<Uint8Array> {
   const reader = body.getReader()
-  let size = 0
   try {
     while (true) {
       const next = await reader.read()
       if (next.done) return
-      size += next.value.byteLength
-      if (size > maxBytes)
-        throw new Error(
-          maxBytes === MAX_ORIGINAL_SOURCE_BYTES
-            ? `Source upload exceeds the ${ORIGINAL_SOURCE_LIMIT_LABEL} limit`
-            : "Source upload exceeds the size limit"
-        )
       yield next.value
     }
   } finally {
@@ -70,14 +68,13 @@ export async function storeOriginalSource(input: {
   filename: string
   mimeType?: string | null
   body: ReadableStream<Uint8Array>
-  maxBytes?: number
 }): Promise<StoredSourceFile> {
   const filename = safeSourceFilename(input.filename)
   const temporaryKey = `Sources/.upload-${randomBytes(12).toString("hex")}`
   const stored = await storeProjectFile(
     input.projectId,
     temporaryKey,
-    Readable.from(boundedChunks(input.body, input.maxBytes ?? MAX_ORIGINAL_SOURCE_BYTES)),
+    Readable.from(sourceChunks(input.body)),
   )
   if (!stored.size) {
     await fs.rm(stored.path, { force: true })
@@ -122,7 +119,6 @@ export async function storeOriginalChatUpload(input: {
   filename: string
   mimeType?: string | null
   body: ReadableStream<Uint8Array>
-  maxBytes?: number
 }): Promise<StoredChatFile> {
   const storageId = chatStorageId(input.ownerToken)
   const filename = safeSourceFilename(input.filename)
@@ -130,9 +126,7 @@ export async function storeOriginalChatUpload(input: {
   const stored = await storeProjectFile(
     storageId,
     temporaryKey,
-    Readable.from(
-      boundedChunks(input.body, input.maxBytes ?? MAX_ORIGINAL_SOURCE_BYTES)
-    )
+    Readable.from(sourceChunks(input.body))
   )
   if (!stored.size) {
     await fs.rm(stored.path, { force: true })
@@ -159,7 +153,6 @@ export async function exportLegacyDerivedSource(input: {
   const safeName = safeSourceFilename(input.filename).replace(/\.[^.]+$/, "")
   const key = `Sources/legacy-derived-${safeName}.txt`
   const payload = Buffer.from(`LEGACY DERIVED TEXT\n${input.text.trim()}\n`, "utf8")
-  if (payload.byteLength > MAX_ORIGINAL_SOURCE_BYTES) throw new Error("Derived source exceeds the size limit")
   const stored = await storeProjectFile(input.projectId, key, payload)
   return { key: stored.key, size: stored.size }
 }

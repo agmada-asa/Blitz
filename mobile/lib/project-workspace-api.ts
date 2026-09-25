@@ -40,7 +40,12 @@ export type MobileWorkspaceItem = {
 export type MobileWorkspaceConcept = {
   readonly id: string
   readonly title: string
+  /** Legacy correct-streak status retained for older project servers. */
   readonly status: "new" | "practicing" | "mastered"
+  /** Progress state based on distinct questions answered at least once. */
+  readonly completionStatus: "new" | "practicing" | "completed"
+  readonly answeredQuestionCount: number
+  readonly questionCount: number
   readonly itemCount: number
   readonly sourceLabels: string[]
   readonly hasNewMaterial: boolean
@@ -51,6 +56,8 @@ export type MobileWorkspaceConcept = {
 export type MobileWorkspaceSection = {
   readonly id: string
   readonly title: string
+  readonly completedConcepts: number
+  /** Retained as a fallback for responses from older project servers. */
   readonly masteredConcepts: number
   readonly hasNewMaterial: boolean
   readonly concepts: MobileWorkspaceConcept[]
@@ -100,6 +107,9 @@ export type MobileWorkspacePayload = {
     readonly stats: {
       readonly sectionCount: number
       readonly conceptCount: number
+      readonly answeredQuestionCount: number
+      readonly completedConceptCount: number
+      /** Retained as a fallback for responses from older project servers. */
       readonly masteredConceptCount: number
       readonly questionCount: number
     }
@@ -296,6 +306,12 @@ function parseWorkspace(value: unknown): MobileWorkspacePayload {
       return {
         id: section.id,
         title: section.title,
+        completedConcepts:
+          typeof section.completedConcepts === "number"
+            ? section.completedConcepts
+            : typeof section.masteredConcepts === "number"
+              ? section.masteredConcepts
+              : 0,
         masteredConcepts:
           typeof section.masteredConcepts === "number"
             ? section.masteredConcepts
@@ -308,6 +324,22 @@ function parseWorkspace(value: unknown): MobileWorkspacePayload {
             typeof concept.title !== "string"
           )
             return []
+          const items = Array.isArray(concept.items)
+            ? concept.items.slice(0, 100).flatMap((item) => {
+                const parsed = parseItem(item)
+                return parsed ? [parsed] : []
+              })
+            : []
+          const questionCount =
+            typeof concept.questionCount === "number"
+              ? concept.questionCount
+              : items.filter((item) => item.type !== "explain").length
+          const answeredQuestionCount =
+            typeof concept.answeredQuestionCount === "number"
+              ? concept.answeredQuestionCount
+              : concept.status === "mastered"
+                ? questionCount
+                : 0
           return [
             {
               id: concept.id,
@@ -316,16 +348,20 @@ function parseWorkspace(value: unknown): MobileWorkspacePayload {
                 concept.status === "mastered" || concept.status === "practicing"
                   ? concept.status
                   : "new",
-              itemCount: Array.isArray(concept.items)
-                ? concept.items.length
-                : 0,
+              completionStatus:
+                concept.completionStatus === "completed" ||
+                concept.completionStatus === "practicing"
+                  ? concept.completionStatus
+                  : concept.status === "mastered"
+                    ? "completed"
+                    : concept.status === "practicing"
+                      ? "practicing"
+                      : "new",
+              answeredQuestionCount,
+              questionCount,
+              itemCount: items.length,
               hasNewMaterial: concept.hasNewMaterial === true,
-              items: Array.isArray(concept.items)
-                ? concept.items.slice(0, 100).flatMap((item) => {
-                    const parsed = parseItem(item)
-                    return parsed ? [parsed] : []
-                  })
-                : [],
+              items,
               sourceLabels: Array.isArray(concept.sourceLabels)
                 ? concept.sourceLabels
                     .filter(
@@ -345,6 +381,11 @@ function parseWorkspace(value: unknown): MobileWorkspacePayload {
       stats: {
         sectionCount: numberField("sectionCount"),
         conceptCount: numberField("conceptCount"),
+        answeredQuestionCount: numberField("answeredQuestionCount"),
+        completedConceptCount:
+          typeof stats.completedConceptCount === "number"
+            ? numberField("completedConceptCount")
+            : numberField("masteredConceptCount"),
         masteredConceptCount: numberField("masteredConceptCount"),
         questionCount: numberField("questionCount"),
       },

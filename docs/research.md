@@ -4,7 +4,7 @@
 
 Proposal planning happens on the local Mac through the Codex app-server worker. It uses hosted live web search to discover URLs, but does not download sources into Blitz, import them, or create lessons. The worker requires an observed web-search event before saving source suggestions. Suggested URLs are recorded as `suggested-unverified`; appearing in a search result is not a content review. Planned notes carry the fixed `generated` label and contain an outline only. A later approval flow owns source retrieval and note creation.
 
-The queue has bounded leases, idempotent request IDs, safe failure text, and an explicit retry endpoint at `/api/research/proposals/retry`. Search is enabled only for the planner process through `-c web_search="live"`; the user's global Codex configuration is unchanged. The worker uses the stable external Blitz workspace and read-only sandbox with approval requests declined, and defaults to `gpt-5.6-luna`. `scripts/research-worker.ts` can be run with `--once` for one poll; it never exposes Codex credentials.
+The queue has bounded leases, idempotent request IDs, safe failure text, and an explicit retry endpoint at `/api/research/proposals/retry`. Search is enabled only for the planner process through `-c web_search="live"`; the user's global Codex configuration is unchanged. The worker uses the stable external Blitz workspace and read-only sandbox with approval requests declined, and defaults to `gpt-6-luna`. `scripts/research-worker.ts` can be run with `--once` for one poll; it never exposes Codex credentials.
 
 The saved Research model and reasoning level from `/settings` take precedence for new planning turns. See `docs/ai-model-settings.md` for fallback behavior and the scope of all three choices.
 

@@ -35,6 +35,7 @@ import {
   resolveAiProvider,
   validateAiModelSettings,
   validateAiTaskProviders,
+  type AiProviderModelCatalogs,
   type AiModelField,
   type AiModelSettings,
   type AiProviderField,
@@ -66,9 +67,8 @@ const MODEL_FIELDS: Array<{
     providerField: "cardGenerationProvider",
     modelField: "cardGenerationModel",
     effortField: "cardGenerationEffort",
-    label: "Card generation",
-    description:
-      "Turns uploaded and approved source material into study cards.",
+    label: "Content generation",
+    description: "Turns sources into lessons and questions.",
   },
   {
     task: "reply",
@@ -76,7 +76,7 @@ const MODEL_FIELDS: Array<{
     modelField: "replyModel",
     effortField: "replyEffort",
     label: "Replies",
-    description: "Answers questions in workspace chat and about study cards.",
+    description: "Answers questions in workspace chat and about study pages.",
   },
 ]
 
@@ -167,6 +167,12 @@ function ModelSettingsEditor({
             provider?.message ?? "Could not check provider setup. Try again."
           )
       }
+      const modelCatalogs: AiProviderModelCatalogs = {}
+      for (const provider of availability) {
+        if (provider.models?.length)
+          modelCatalogs[provider.providerId] = provider.models
+      }
+      settings = validateAiModelSettings(settings, modelCatalogs)
       const saved = await saveSettings(settings)
       setDraft(saved)
       setIsDirty(false)
@@ -222,6 +228,13 @@ function ModelSettingsEditor({
                     >
                       {description}
                     </p>
+                    {task === "cardGeneration" &&
+                    selectedProvider !== "codex" ? (
+                      <p className="mt-1 text-sm leading-5 text-muted-foreground">
+                        New lessons use the default Codex model because this
+                        provider cannot write validated lesson drafts.
+                      </p>
+                    ) : null}
                   </div>
                   <div className="space-y-1.5">
                     <span className="text-xs font-medium">
@@ -332,7 +345,7 @@ function ModelSettingsEditor({
                   {provider.id === "antigravity" ? (
                     <p className="mt-1 text-xs text-muted-foreground">
                       Workspace chat only. Native reads and administrator
-                      policies still apply. Card generation and background card
+                      policies still apply. Content generation and background
                       replies are unavailable.
                     </p>
                   ) : null}

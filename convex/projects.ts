@@ -96,7 +96,19 @@ export const deleteProject = mutation({
     )
     add(
       await ctx.db
+        .query("conceptRelationships")
+        .withIndex("by_project", (q) => q.eq("projectId", projectId))
+        .take(2001)
+    )
+    add(
+      await ctx.db
         .query("learningItems")
+        .withIndex("by_project", (q) => q.eq("projectId", projectId))
+        .take(2001)
+    )
+    add(
+      await ctx.db
+        .query("lessonPageRevisions")
         .withIndex("by_project", (q) => q.eq("projectId", projectId))
         .take(2001)
     )
@@ -187,6 +199,18 @@ export const deleteProject = mutation({
         await ctx.db
           .query("preparationChunks")
           .withIndex("by_job_ordinal", (q) => q.eq("jobId", job._id))
+          .take(2001)
+      )
+    const contentJobs = await ctx.db
+      .query("contentGenerationJobs")
+      .withIndex("by_project_source", (q) => q.eq("projectId", projectId))
+      .take(2001)
+    add(contentJobs)
+    for (const job of contentJobs)
+      add(
+        await ctx.db
+          .query("contentPageCommits")
+          .withIndex("by_job_page", (q) => q.eq("jobId", job._id))
           .take(2001)
       )
     const conversations = await ctx.db

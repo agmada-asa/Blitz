@@ -1,10 +1,31 @@
 "use client"
 
 /** Renders chat Markdown as semantic React elements without injecting generated HTML. */
-import { memo, type ReactNode } from "react"
+import { memo, type ReactNode, useMemo, useState } from "react"
 import type { Token, Tokens } from "marked"
-import { QuoteUpIcon } from "@hugeicons/core-free-icons"
+import { Copy01Icon, QuoteUpIcon, Tick02Icon } from "@hugeicons/core-free-icons"
 import { HugeiconsIcon } from "@hugeicons/react"
+import hljs from "highlight.js/lib/core"
+import type { LanguageFn } from "highlight.js"
+import bash from "highlight.js/lib/languages/bash"
+import c from "highlight.js/lib/languages/c"
+import cpp from "highlight.js/lib/languages/cpp"
+import css from "highlight.js/lib/languages/css"
+import csharp from "highlight.js/lib/languages/csharp"
+import go from "highlight.js/lib/languages/go"
+import java from "highlight.js/lib/languages/java"
+import javascript from "highlight.js/lib/languages/javascript"
+import json from "highlight.js/lib/languages/json"
+import markdown from "highlight.js/lib/languages/markdown"
+import php from "highlight.js/lib/languages/php"
+import plaintext from "highlight.js/lib/languages/plaintext"
+import python from "highlight.js/lib/languages/python"
+import ruby from "highlight.js/lib/languages/ruby"
+import rust from "highlight.js/lib/languages/rust"
+import sql from "highlight.js/lib/languages/sql"
+import typescript from "highlight.js/lib/languages/typescript"
+import xml from "highlight.js/lib/languages/xml"
+import yaml from "highlight.js/lib/languages/yaml"
 import {
   markdownHref,
   markdownImageSrc,
@@ -34,6 +55,275 @@ type CitationOptions = {
   citations?: readonly ChatCitation[]
   onCitation?: (citation: ChatCitation) => void
   annotations?: readonly ChatAnnotation[]
+}
+
+/** Describes a nested syntax token emitted by the highlighter. */
+type HighlightNode = {
+  className: string
+  children: Array<HighlightNode | string>
+}
+
+/** Creates a private Highlight.js instance for explicit and automatic grammar selection. */
+const codeHighlighter = hljs.newInstance()
+
+/** Languages highlighted directly and considered during automatic language detection. */
+const supportedCodeLanguages: Array<[string, LanguageFn]> = [
+  ["bash", bash],
+  ["c", c],
+  ["cpp", cpp],
+  ["css", css],
+  ["csharp", csharp],
+  ["go", go],
+  ["java", java],
+  ["javascript", javascript],
+  ["json", json],
+  ["markdown", markdown],
+  ["php", php],
+  ["plaintext", plaintext],
+  ["python", python],
+  ["ruby", ruby],
+  ["rust", rust],
+  ["sql", sql],
+  ["typescript", typescript],
+  ["xml", xml],
+  ["yaml", yaml],
+]
+
+for (const [name, grammar] of supportedCodeLanguages)
+  codeHighlighter.registerLanguage(name, grammar)
+
+/**
+ * Maps a Markdown fence name to a registered grammar, preserving unknown names for auto-detection.
+ * @param language Raw language text from the Markdown fence.
+ * @returns The normalized grammar name, or an empty string for an empty fence.
+ */
+function canonicalCodeLanguage(language: string): string | undefined {
+  const name = language
+    .trim()
+    .split(/[\s,{]/, 1)[0]
+    ?.toLowerCase()
+  const aliases: Record<string, string> = {
+    "c++": "cpp",
+    cc: "cpp",
+    cxx: "cpp",
+    cs: "csharp",
+    "c#": "csharp",
+    h: "c",
+    hpp: "cpp",
+    html: "xml",
+    js: "javascript",
+    jsx: "javascript",
+    md: "markdown",
+    plain: "plaintext",
+    py: "python",
+    sh: "bash",
+    shell: "bash",
+    ts: "typescript",
+    tsx: "typescript",
+    text: "plaintext",
+    txt: "plaintext",
+    yml: "yaml",
+  }
+  return aliases[name] ?? name
+}
+
+/**
+ * Parses Highlight.js spans into nested text nodes, decoding escaped source without injecting HTML.
+ * @param markup Escaped markup returned by Highlight.js.
+ * @returns Nested syntax nodes with source text decoded for React rendering.
+ */
+function parseHighlightMarkup(markup: string): Array<HighlightNode | string> {
+  const root: HighlightNode = { className: "", children: [] }
+  const stack = [root]
+  const spanTags = /<span class="([^"]+)">|<\/span>/g
+  let offset = 0
+
+  for (const match of markup.matchAll(spanTags)) {
+    const index = match.index ?? offset
+    if (index > offset)
+      stack[stack.length - 1].children.push(
+        markdownText(markup.slice(offset, index))
+      )
+
+    if (match[0] === "</span>") {
+      if (stack.length > 1) stack.pop()
+    } else {
+      const node: HighlightNode = {
+        className: match[1],
+        children: [],
+      }
+      stack[stack.length - 1].children.push(node)
+      stack.push(node)
+    }
+    offset = index + match[0].length
+  }
+
+  if (offset < markup.length)
+    stack[stack.length - 1].children.push(markdownText(markup.slice(offset)))
+  return root.children
+}
+
+/**
+ * Converts parsed tokens to keyed React spans and preserves all source characters as text.
+ * @param nodes Parsed syntax nodes from the highlighter.
+ * @param parentKey Stable key prefix for nested spans.
+ * @returns React spans and text nodes suitable for rendering inside `code`.
+ */
+function renderHighlightNodes(
+  nodes: Array<HighlightNode | string>,
+  parentKey = "token"
+): ReactNode[] {
+  return nodes.map((node, index) => {
+    if (typeof node === "string") return node
+    return (
+      <span key={`${parentKey}-${index}`} className={node.className}>
+        {renderHighlightNodes(node.children, `${parentKey}-${index}`)}
+      </span>
+    )
+  })
+}
+
+/**
+ * Highlights code with a registered grammar or auto-detects an unknown fence.
+ * @param code Exact code text to display.
+ * @param requestedLanguage Language specified by the Markdown fence, if any.
+ * @returns Highlight.js markup and the language label to display above the code.
+ */
+function highlightCode(code: string, requestedLanguage: string) {
+  const canonical = canonicalCodeLanguage(requestedLanguage)
+  const hasGrammar = Boolean(
+    canonical && codeHighlighter.getLanguage(canonical)
+  )
+  const result = hasGrammar
+    ? codeHighlighter.highlight(code, {
+        language: canonical as string,
+        ignoreIllegals: true,
+      })
+    : codeHighlighter.highlightAuto(code)
+  const language =
+    result.language ?? (canonical && !hasGrammar ? undefined : canonical)
+  const labels: Record<string, string> = {
+    bash: "Bash",
+    c: "C",
+    cpp: "C++",
+    css: "CSS",
+    csharp: "C#",
+    go: "Go",
+    java: "Java",
+    javascript: "JavaScript",
+    json: "JSON",
+    markdown: "Markdown",
+    php: "PHP",
+    plaintext: "Plain text",
+    python: "Python",
+    ruby: "Ruby",
+    rust: "Rust",
+    sql: "SQL",
+    typescript: "TypeScript",
+    xml: "HTML / XML",
+    yaml: "YAML",
+  }
+  const originalLabel =
+    canonical && labels[canonical]
+      ? labels[canonical]
+      : requestedLanguage.trim()
+
+  return {
+    markup: result.value,
+    label: language
+      ? (labels[language] ?? language)
+      : originalLabel || "Plain text",
+  }
+}
+
+/**
+ * Renders source code and its language label; Copy writes the exact source to the clipboard.
+ * @param code Exact fenced source text.
+ * @param language Markdown fence language used for highlighting or automatic detection.
+ * @returns A labeled, syntax-colored code block with a copy action.
+ */
+function CodeBlock({ code, language }: { code: string; language: string }) {
+  const [copied, setCopied] = useState(false)
+  const highlighted = useMemo(
+    () => highlightCode(code, language),
+    [code, language]
+  )
+
+  /**
+   * Copies the exact source and briefly confirms success, leaving the action unchanged if clipboard access fails.
+   * @returns A promise that settles after clipboard access succeeds or fails.
+   */
+  async function copyCode() {
+    try {
+      await navigator.clipboard.writeText(code)
+      setCopied(true)
+      window.setTimeout(() => setCopied(false), 1600)
+    } catch {
+      setCopied(false)
+    }
+  }
+
+  return (
+    <div className="markdown-code-block group/code">
+      <div className="markdown-code-header">
+        <span className="markdown-code-language">{highlighted.label}</span>
+        <Button
+          type="button"
+          variant="ghost"
+          size="default"
+          className="markdown-copy-button"
+          onClick={copyCode}
+          aria-label={copied ? "Code copied" : "Copy code"}
+          title={copied ? "Copied" : "Copy code"}
+        >
+          <HugeiconsIcon icon={copied ? Tick02Icon : Copy01Icon} size={18} />
+          {copied ? "Copied" : "Copy"}
+        </Button>
+      </div>
+      <pre tabIndex={0}>
+        <code>
+          {renderHighlightNodes(parseHighlightMarkup(highlighted.markup))}
+        </code>
+      </pre>
+    </div>
+  )
+}
+
+/**
+ * Renders a copy action that writes a tab-separated Markdown table.
+ * @param text Table text with tab-separated cells and newline-separated rows.
+ * @returns A button that copies the table and reports successful copying.
+ */
+function CopyTableButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false)
+
+  /**
+   * Copies the supplied table text and briefly confirms success, leaving the action unchanged on clipboard failure.
+   * @returns A promise that settles after clipboard access succeeds or fails.
+   */
+  async function copyTable() {
+    try {
+      await navigator.clipboard.writeText(text)
+      setCopied(true)
+      window.setTimeout(() => setCopied(false), 1600)
+    } catch {
+      setCopied(false)
+    }
+  }
+
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      size="xs"
+      className="markdown-table-copy"
+      onClick={copyTable}
+      aria-label={copied ? "Table copied" : "Copy table"}
+    >
+      <HugeiconsIcon icon={copied ? Tick02Icon : Copy01Icon} size={13} />
+      {copied ? "Copied" : "Copy table"}
+    </Button>
+  )
 }
 
 /** Renders a model hyperlink referencing a user annotation, opening a read-only text display bubble. */
@@ -211,9 +501,11 @@ function blocks(tokens: Token[], options: CitationOptions): ReactNode {
         )
       case "code":
         return (
-          <pre key={key} tabIndex={0}>
-            <code>{token.text}</code>
-          </pre>
+          <CodeBlock
+            key={key}
+            code={token.text}
+            language={token.lang?.split(/[\s,]/)[0] ?? ""}
+          />
         )
       case "blockquote":
         return (
@@ -247,11 +539,23 @@ function blocks(tokens: Token[], options: CitationOptions): ReactNode {
         return (
           <div
             key={key}
-            className="markdown-table"
+            className="markdown-table group/table"
             tabIndex={0}
             role="region"
             aria-label="Table"
           >
+            <CopyTableButton
+              text={[
+                token.header
+                  .map((cell: Tokens.TableCell) => markdownText(cell.text))
+                  .join("\t"),
+                ...token.rows.map((row: Tokens.TableCell[]) =>
+                  row
+                    .map((cell: Tokens.TableCell) => markdownText(cell.text))
+                    .join("\t")
+                ),
+              ].join("\n")}
+            />
             <table>
               <thead>
                 <tr>

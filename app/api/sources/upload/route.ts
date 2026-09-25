@@ -1,10 +1,6 @@
-/** Receives bounded original source bytes from the browser or Android client. */
+/** Streams original source bytes into the user's project folder. */
 
-import {
-  MAX_ORIGINAL_SOURCE_BYTES,
-  ORIGINAL_SOURCE_LIMIT_LABEL,
-  storeOriginalSource,
-} from "@/lib/server/source-files"
+import { storeOriginalSource } from "@/lib/server/source-files"
 import { randomUUID } from "node:crypto"
 import { ConvexHttpClient } from "convex/browser"
 import { api } from "@/convex/_generated/api"
@@ -34,7 +30,12 @@ function sourceFormat(filename: string): {
   if (/\.pdf$/i.test(filename)) return { kind: "pdf", supported: true }
   if (/\.(md|markdown)$/i.test(filename))
     return { kind: "markdown", supported: true }
-  if (/\.(txt|pptx)$/i.test(filename)) return { kind: "text", supported: true }
+  if (
+    /\.(txt|pptx|html?|csv|json|xml|ya?ml|toml|py|tsx?|jsx?|css|scss|sql|sh|bash|zsh|rs|go|c|cpp|h|java|kt|rb|php)$/i.test(
+      filename
+    )
+  )
+    return { kind: "text", supported: true }
   return { kind: "text", supported: false }
 }
 
@@ -49,14 +50,6 @@ export async function POST(request: Request): Promise<Response> {
     )
   if (!request.body)
     return Response.json({ error: "Source upload is empty" }, { status: 400 })
-  const contentLength = request.headers.get("content-length")
-  if (contentLength && Number(contentLength) > MAX_ORIGINAL_SOURCE_BYTES)
-    return Response.json(
-      {
-        error: `Source upload exceeds the ${ORIGINAL_SOURCE_LIMIT_LABEL} limit`,
-      },
-      { status: 413 }
-    )
   try {
     const convex = convexClient()
     const project = await convex.query(api.projects.getProject, {
@@ -91,6 +84,7 @@ export async function POST(request: Request): Promise<Response> {
           sourceId: record.sourceId,
           duplicate: true,
           pending: ingestionStillRunning,
+          unsupported: "unsupported" in record ? record.unsupported : false,
         },
         {
           status: ingestionStillRunning ? 202 : 200,
@@ -115,9 +109,8 @@ export async function POST(request: Request): Promise<Response> {
         ingestionJobId: record.ingestionJobId,
         leaseToken,
         extractedText: "",
-        status: "failed",
-        error:
-          "Original file retained for agent inspection; no deterministic parser is available.",
+        status: "completed",
+        unsupported: true,
       })
       return Response.json(
         { ...stored, sourceId: record.sourceId, unsupported: true },
@@ -139,7 +132,7 @@ export async function POST(request: Request): Promise<Response> {
       })
       if (Buffer.byteLength(normalized.text, "utf8") > 500_000)
         throw new Error(
-          "Source text exceeds the 500 KB extraction limit. Split it into smaller files."
+          "Extracted text exceeds the automatic preparation boundary."
         )
       const chunks = segmentSourceDocument(normalized)
       await convex.mutation(api.sourceRetrieval.replaceChunks, {
@@ -186,27 +179,24 @@ export async function POST(request: Request): Promise<Response> {
         ingestionJobId: record.ingestionJobId,
         leaseToken,
         extractedText: "",
-        status: "failed",
-        error: message,
+        status: "completed",
+        unsupported: true,
       })
       return Response.json(
         {
           ...stored,
           sourceId: record.sourceId,
           ingestionJobId: record.ingestionJobId,
-          error: message,
+          unsupported: true,
+          extractionError: message,
         },
-        { status: 422, headers: { "Cache-Control": "no-store" } }
+        { headers: { "Cache-Control": "no-store" } }
       )
     }
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "Source upload failed"
-    const status = /size limit/i.test(message)
-      ? 413
-      : /empty/i.test(message)
-        ? 400
-        : 500
+    const status = /empty/i.test(message) ? 400 : 500
     return Response.json({ error: message }, { status })
   }
 }

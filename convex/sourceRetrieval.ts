@@ -15,6 +15,8 @@ const MAX_RESULTS = MAX_RETRIEVAL_RESULTS
 const MAX_NEIGHBORS = 5
 const MAX_CONTEXT_CHARS = MAX_RETRIEVAL_CONTEXT_CHARS
 const MAX_CHUNK_TEXT = 12_000
+/** Per-query filename lookup cache for legacy chunks without denormalized names. */
+type SourceNameCache = Map<string, string | null>
 const STOP_WORDS = new Set([
   "about",
   "after",
@@ -66,7 +68,8 @@ async function exactSearchFor(
   ctx: Pick<QueryCtx, "db">,
   projectId: Id<"projects">,
   value: string,
-  maxResultsInput?: number
+  maxResultsInput?: number,
+  sourceNameCache: SourceNameCache = new Map()
 ): Promise<RetrievalResult[]> {
   const needle = boundedQuery(value).toLocaleLowerCase()
   const maxResults = Math.min(
@@ -81,7 +84,7 @@ async function exactSearchFor(
     .take(MAX_RESULTS * 4)
   const matches: RetrievalResult[] = []
   for (const chunk of rankExactCandidates(chunks, needle, maxResults)) {
-    const result = await resultForChunk(ctx, chunk)
+    const result = await resultForChunk(ctx, chunk, sourceNameCache)
     if (result) matches.push(result)
     if (matches.length >= maxResults) break
   }
@@ -94,14 +97,13 @@ async function neighborsFor(
   projectId: Id<"projects">,
   sourceId: Id<"sources">,
   ordinal: number,
-  radiusInput?: number
+  radiusInput?: number,
+  sourceNameCache: SourceNameCache = new Map()
 ): Promise<RetrievalResult[]> {
   const radius = Math.min(
     MAX_NEIGHBORS,
     Math.max(0, Math.floor(radiusInput ?? 2))
   )
-  const source = await ctx.db.get(sourceId)
-  if (!source || source.projectId !== projectId) return []
   const chunks = await ctx.db
     .query("sourceChunks")
     .withIndex("by_project_source_ordinal", (q) =>
@@ -114,7 +116,7 @@ async function neighborsFor(
     .order("asc")
     .take(radius * 2 + 1)
   const results = await Promise.all(
-    chunks.map((chunk) => resultForChunk(ctx, chunk))
+    chunks.map((chunk) => resultForChunk(ctx, chunk, sourceNameCache))
   )
   return results.filter((result): result is RetrievalResult => result !== null)
 }
@@ -140,12 +142,14 @@ export async function retrieveProjectContext(
     .filter((word, index, all) => all.indexOf(word) === index)
     .slice(0, 8)
   const matches: RetrievalResult[] = []
+  const sourceNameCache: SourceNameCache = new Map()
   for (const word of words) {
     const found = await exactSearchFor(
       ctx,
       projectId,
       word,
-      options.maxResults ?? 6
+      options.maxResults ?? 6,
+      sourceNameCache
     )
     for (const result of found) {
       if (
@@ -181,7 +185,8 @@ export async function retrieveProjectContext(
       projectId,
       match.citation.sourceId,
       match.citation.ordinal,
-      options.neighborRadius
+      options.neighborRadius,
+      sourceNameCache
     ))
       byId.set(String(result.citation.chunkId), result)
   }
@@ -202,15 +207,27 @@ function boundedQuery(value: string): string {
 /** Converts a persisted chunk into a citation carrying no source body metadata. */
 async function resultForChunk(
   ctx: Pick<QueryCtx, "db">,
-  chunk: Doc<"sourceChunks">
+  chunk: Doc<"sourceChunks">,
+  sourceNameCache: SourceNameCache = new Map()
 ): Promise<RetrievalResult | null> {
-  const source = await ctx.db.get(chunk.sourceId)
-  if (!source) return null
+  let sourceFilename = chunk.sourceFilename
+  if (sourceFilename === undefined) {
+    const sourceKey = String(chunk.sourceId)
+    if (sourceNameCache.has(sourceKey)) {
+      sourceFilename = sourceNameCache.get(sourceKey) ?? undefined
+    } else {
+      const source = await ctx.db.get(chunk.sourceId)
+      const validSource = source?.projectId === chunk.projectId ? source : null
+      sourceFilename = validSource?.filename
+      sourceNameCache.set(sourceKey, sourceFilename ?? null)
+    }
+  }
+  if (!sourceFilename) return null
   return {
     text: chunk.text,
     citation: {
       sourceId: chunk.sourceId,
-      sourceFilename: source.filename,
+      sourceFilename,
       chunkId: chunk._id,
       ordinal: chunk.ordinal,
       references: chunk.references,
@@ -273,11 +290,13 @@ export const retrieveContext = query({
       MAX_CONTEXT_CHARS,
       Math.max(500, Math.floor(args.maxChars ?? 8_000))
     )
+    const sourceNameCache: SourceNameCache = new Map()
     const matches = await exactSearchFor(
       ctx,
       args.projectId,
       args.query,
-      args.maxResults
+      args.maxResults,
+      sourceNameCache
     )
     const byId = new Map<string, RetrievalResult>(
       matches.map((match) => [String(match.citation.chunkId), match])
@@ -288,7 +307,8 @@ export const retrieveContext = query({
         args.projectId,
         match.citation.sourceId,
         match.citation.ordinal,
-        args.neighborRadius
+        args.neighborRadius,
+        sourceNameCache
       )
       for (const result of neighbors)
         byId.set(String(result.citation.chunkId), result)
@@ -361,6 +381,7 @@ export const replaceChunks = mutation({
         ...chunk,
         projectId: args.projectId,
         sourceId: args.sourceId,
+        sourceFilename: source.filename,
         ...(args.ingestionJobId ? { ingestionJobId: args.ingestionJobId } : {}),
         createdAt: now,
       })

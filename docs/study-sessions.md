@@ -22,6 +22,11 @@ updates the concept review, and returns the explanation only after scoring.
 Skip advances locally and sends no answer event, so it cannot become an
 incorrect attempt.
 
+Each distinct question item counts toward project concept completion after a
+valid answer, whether the answer is correct or incorrect. Re-answering the
+same item does not count again. This completion progress is separate from the
+correctness-based review schedule.
+
 Test keeps selections in memory until Finish. Finish submits answered
 questions one by one through `/api/learning/answer`. Unanswered questions are
 skipped and remain separate from incorrect results. The test locks selections
@@ -52,7 +57,6 @@ measured iframe viewport. Study returned immediate server feedback. A ten-questi
 test with two answers returned one correct, one incorrect, and eight unanswered;
 no feedback appeared before Finish. Two-question cursor pages returned the same
 ordered question IDs as the full deck, without duplicates or answer keys.
-
 
 After scoring, correct options are green and selected incorrect options are red,
 with check/cancel icons and equivalent accessible labels. Test mode reveals

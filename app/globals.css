@@ -363,9 +363,26 @@
 .chat-markdown li > * + * { margin-top: .35em; }
 .chat-markdown code { font-family: ui-monospace, monospace; font-size: .9em; background: #ffffff0d; border-radius: 4px; padding: .12em .3em; }
 .chat-markdown pre { overflow-x: auto; max-width: 100%; padding: 12px; border-radius: 8px; background: #00000040; white-space: pre; overflow-wrap: normal; }
+.markdown-code-block { min-width: 0; overflow: hidden; border-radius: 8px; background: #00000040; }
+.markdown-code-header { display: flex; min-height: 46px; align-items: center; justify-content: space-between; gap: 12px; padding: 6px 8px 6px 14px; border-bottom: 1px solid #ffffff14; }
+.markdown-code-block pre { margin: 0; padding: 12px 14px; border-radius: 0; background: transparent; }
+.markdown-code-language { color: var(--muted-foreground); font-size: 14px; font-weight: 600; letter-spacing: .02em; }
+.markdown-copy-button, .markdown-table-copy { opacity: 0; transition: opacity 120ms ease; }
+.markdown-code-block:hover .markdown-copy-button, .markdown-code-block:focus-within .markdown-copy-button, .markdown-table:hover .markdown-table-copy, .markdown-table:focus-within .markdown-table-copy { opacity: 1; }
+.markdown-code-block .markdown-copy-button:focus-visible, .markdown-table-copy:focus-visible { opacity: 1; }
+.markdown-code-block .hljs-keyword, .markdown-code-block .hljs-literal, .markdown-code-block .hljs-type, .markdown-code-block .hljs-built_in, .markdown-code-block .hljs-selector-tag { color: #c4a7e7; }
+.markdown-code-block .hljs-string, .markdown-code-block .hljs-regexp, .markdown-code-block .hljs-template-tag { color: #a6da95; }
+.markdown-code-block .hljs-number, .markdown-code-block .hljs-symbol, .markdown-code-block .hljs-bullet { color: #f5a97f; }
+.markdown-code-block .hljs-comment, .markdown-code-block .hljs-quote, .markdown-code-block .hljs-meta { color: #8bd5ca; }
+.markdown-code-block .hljs-title, .markdown-code-block .hljs-section, .markdown-code-block .hljs-attr, .markdown-code-block .hljs-attribute, .markdown-code-block .hljs-variable, .markdown-code-block .hljs-property { color: #8aadf4; }
+.markdown-code-block .hljs-name, .markdown-code-block .hljs-selector-class, .markdown-code-block .hljs-selector-id { color: #f5a97f; }
 .chat-markdown pre code { padding: 0; background: transparent; }
 .chat-markdown blockquote { border-left: 2px solid var(--brand); padding-left: 12px; }
 .chat-markdown hr { border-color: #ffffff26; }
-.markdown-table { overflow-x: auto; max-width: 100%; }
+.markdown-table { position: relative; overflow-x: auto; max-width: 100%; padding-top: 28px; }
+.markdown-table-copy { position: absolute; top: 0; right: 0; }
 .chat-markdown table { border-collapse: collapse; font-size: .9em; }
 .chat-markdown th, .chat-markdown td { padding: 8px 12px; border: 1px solid #ffffff26; text-align: left; min-width: 110px; }
+@media (hover: none) {
+  .markdown-copy-button, .markdown-table-copy { opacity: 1; }
+}

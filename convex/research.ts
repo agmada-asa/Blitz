@@ -8,7 +8,8 @@ import {
   researchImportPartMatchesSource,
   validateResearchImportPartSequence,
 } from "../lib/research-import-checkpoint"
-import { resolveQueuedAiSelection } from "./ai_provider_settings"
+import { resolveQueuedAiSelection, resolveQueuedContentSelection } from "./ai_provider_settings"
+import { DEFAULT_CONTENT_DEPTH } from "../lib/content-generation"
 
 /** Maximum request text retained for one proposal. */
 export const MAX_RESEARCH_REQUEST_LENGTH = 2_000
@@ -780,7 +781,8 @@ export const completeImport = mutation({
       sourceTextSnapshot: extractedText,
       sourceFilename: filename,
       sourceKind: args.kind,
-      status: "queued",
+      // Research checkpoints still refer to this legacy job; the agent job owns content.
+      status: "completed",
       nextChunkOrdinal: 0,
       learningScope: proposal.scope,
       providerId: selection.providerId,
@@ -788,6 +790,22 @@ export const completeImport = mutation({
       generationEffort: selection.effort,
       generatedItemCount: 0,
       attemptCount: 0,
+      createdAt: now,
+      updatedAt: now,
+    })
+    const project = await ctx.db.get(row.projectId)
+    if (!project) throw new Error("Project not found")
+    const contentSelection = await resolveQueuedContentSelection(ctx)
+    await ctx.db.insert("contentGenerationJobs", {
+      projectId: row.projectId,
+      sourceId,
+      status: "queued",
+      depth: project.contentDepth ?? DEFAULT_CONTENT_DEPTH,
+      learningScope: proposal.scope,
+      providerId: contentSelection.providerId,
+      generationModel: contentSelection.model,
+      generationEffort: contentSelection.effort,
+      importedPages: 0,
       createdAt: now,
       updatedAt: now,
     })

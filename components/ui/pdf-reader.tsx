@@ -1,7 +1,7 @@
 "use client"
 
 /**
- * Renders a bounded PDF page with navigation and highlights matching extracted citation text.
+ * Renders a continuous, lazy-loaded PDF with navigation and citation highlights.
  *
  * Manages PDF.js document and worker lifecycles safely, ensuring loading task destruction
  * is properly awaited across remounts and tab switches to prevent worker race conditions.
@@ -55,24 +55,30 @@ export function PdfReader({
   initialPage: number
   quote: string
 }) {
-  const canvasRef = useRef<HTMLCanvasElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
-  const renderTaskRef = useRef<RenderTask | null>(null)
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const canvasRefs = useRef(new Map<number, HTMLCanvasElement>())
+  const pageRefs = useRef(new Map<number, HTMLDivElement>())
+  const renderTasksRef = useRef(new Map<number, RenderTask>())
+  const renderSettingsRef = useRef("")
 
   const [pdfDoc, setPdfDoc] = useState<PDFDocumentProxy | null>(null)
   const [prevInitialPage, setPrevInitialPage] = useState(initialPage)
-  const [page, setPage] = useState(initialPage)
   const [pageInput, setPageInput] = useState(String(initialPage))
   const [count, setCount] = useState<number>()
+  const [pageSizes, setPageSizes] = useState<Record<number, number>>({})
+  const [visiblePages, setVisiblePages] = useState<number[]>([])
+  const [activePage, setActivePage] = useState(initialPage)
   const [status, setStatus] = useState("Loading PDF…")
   const [attempt, setAttempt] = useState(0)
   const [width, setWidth] = useState(400)
+  const [zoom, setZoom] = useState(1)
 
   // Synchronize internal page state when initialPage prop changes without an extra effect cycle
   if (prevInitialPage !== initialPage) {
     setPrevInitialPage(initialPage)
-    setPage(initialPage)
     setPageInput(String(initialPage))
+    setActivePage(initialPage)
   }
 
   // Track container width while ignoring 0-width rects when hidden in inactive tabs
@@ -97,6 +103,8 @@ export function PdfReader({
     /** Loads and initializes the PDF document for the given URL. */
     async function loadDocument() {
       setStatus("Loading PDF…")
+      setPageSizes({})
+      setVisiblePages([])
       try {
         const pdfjs = await import("pdfjs-dist/legacy/webpack.mjs")
         // Await any pending loading task destruction to avoid worker destruction collisions
@@ -136,44 +144,89 @@ export function PdfReader({
     }
   }, [url, attempt])
 
-  // Renders the selected physical page whenever the document, page, width, or highlight quote changes
+  // Loads page aspect ratios to reserve continuous-scroll space before visible pages render.
   useEffect(() => {
     let cancelled = false
-
-    /** Loads and renders the selected physical page, ignoring cancelled selections and resizes. */
-    async function renderPage() {
+    /** Measures every page so scrolling remains stable as canvases render lazily. */
+    async function measurePages() {
       if (!pdfDoc) return
-      const canvas = canvasRef.current
-      if (!canvas || width <= 0) return
-
-      // Cancel any previous in-flight render task on this canvas before starting a new one
-      if (renderTaskRef.current) {
-        try {
-          renderTaskRef.current.cancel()
-        } catch {
-          // Ignore cancellation errors
-        }
-        renderTaskRef.current = null
+      const sizes: Record<number, number> = {}
+      for (let number = 1; number <= pdfDoc.numPages; number += 1) {
+        const pdfPage = await pdfDoc.getPage(number)
+        const viewport = pdfPage.getViewport({ scale: 1 })
+        sizes[number] = viewport.height / viewport.width
+        pdfPage.cleanup()
+        if (cancelled) return
       }
+      setPageSizes(sizes)
+    }
+    void measurePages()
+    return () => {
+      cancelled = true
+    }
+  }, [pdfDoc])
 
+  // Starts cited source views at the referenced page after all page placeholders exist.
+  useEffect(() => {
+    const target = pageRefs.current.get(initialPage)
+    const scroller = scrollRef.current
+    if (!target || !scroller || !pageSizes[initialPage]) return
+    scroller.scrollTop +=
+      target.getBoundingClientRect().top - scroller.getBoundingClientRect().top
+  }, [initialPage, pageSizes])
+
+  // Tracks pages near the scroll viewport so only nearby canvases need rendering.
+  useEffect(() => {
+    const root = scrollRef.current
+    if (!root || !count || Object.keys(pageSizes).length !== count) return
+    const observer = new IntersectionObserver(
+      (entries) => {
+        setVisiblePages((current) => {
+          const next = new Set(current)
+          for (const entry of entries) {
+            const number = Number((entry.target as HTMLElement).dataset.page)
+            if (entry.isIntersecting) next.add(number)
+            else next.delete(number)
+          }
+          const updated = [...next].sort((a, b) => a - b)
+          return updated.length === current.length &&
+            updated.every((number, index) => number === current[index])
+            ? current
+            : updated
+        })
+      },
+      { root, rootMargin: "300px 0px", threshold: [0, 0.25, 0.5, 0.75] }
+    )
+    for (const node of pageRefs.current.values()) observer.observe(node)
+    return () => observer.disconnect()
+  }, [count, pageSizes])
+
+  // Renders only pages near the viewport, keeping long PDFs from allocating every canvas at once.
+  useEffect(() => {
+    let cancelled = false
+    const renderSettings = `${width}:${zoom}:${window.devicePixelRatio || 1}:${quote}`
+    if (renderSettingsRef.current !== renderSettings) {
+      for (const canvas of canvasRefs.current.values()) {
+        delete canvas.dataset.renderSettings
+      }
+      renderSettingsRef.current = renderSettings
+    }
+
+    /** Renders a visible page and overlays matching citation text when present. */
+    async function renderPage(number: number) {
+      const canvas = canvasRefs.current.get(number)
+      if (!pdfDoc || !canvas || width <= 0) return
       try {
-        if (page < 1 || (pdfDoc.numPages && page > pdfDoc.numPages)) {
-          throw new Error(
-            `This PDF has ${pdfDoc.numPages} pages. Choose a page within that range.`
-          )
-        }
-
         const pdfjs = await import("pdfjs-dist/legacy/webpack.mjs")
         if (cancelled) return
-
-        const pdfPage = await pdfDoc.getPage(page)
+        const pdfPage = await pdfDoc.getPage(number)
         if (cancelled) {
           pdfPage.cleanup()
           return
         }
 
         const rawViewport = pdfPage.getViewport({ scale: 1 })
-        const scale = width / rawViewport.width
+        const scale = (width / rawViewport.width) * zoom
         const viewport = pdfPage.getViewport({ scale })
 
         const ratio = window.devicePixelRatio || 1
@@ -194,10 +247,10 @@ export function PdfReader({
           viewport,
           transform: [ratio, 0, 0, ratio, 0, 0],
         })
-        renderTaskRef.current = renderTask
+        renderTasksRef.current.set(number, renderTask)
 
         await renderTask.promise
-        renderTaskRef.current = null
+        renderTasksRef.current.delete(number)
         if (cancelled) {
           pdfPage.cleanup()
           return
@@ -247,11 +300,14 @@ export function PdfReader({
           context.restore()
         }
 
-        setStatus(
-          match < 0 && page === initialPage
-            ? "Read the Passage tab for the exact cited text."
-            : ""
-        )
+        if (number === initialPage) {
+          setStatus(
+            needle && match < 0
+              ? "Read the Passage tab for the exact cited text."
+              : ""
+          )
+        }
+        canvas.dataset.renderSettings = renderSettings
         pdfPage.cleanup()
       } catch (error) {
         if (
@@ -272,25 +328,83 @@ export function PdfReader({
       }
     }
 
-    void renderPage()
+    const renderTasks = renderTasksRef.current
+    for (const task of renderTasks.values()) {
+      try {
+        task.cancel()
+      } catch {
+        /* Ignore cancellation errors. */
+      }
+    }
+    renderTasks.clear()
+    const keepFrom = visiblePages.length ? Math.max(1, visiblePages[0] - 2) : 1
+    const keepThrough = visiblePages.length
+      ? visiblePages[visiblePages.length - 1] + 2
+      : 0
+    for (const [number, canvas] of canvasRefs.current) {
+      if (number < keepFrom || number > keepThrough) {
+        canvas.width = 0
+        canvas.height = 0
+        delete canvas.dataset.renderSettings
+      }
+    }
+    const pagesToRender = [...visiblePages]
+    for (const pageNumber of pagesToRender) {
+      const canvas = canvasRefs.current.get(pageNumber)
+      if (canvas?.dataset.renderSettings !== renderSettings) {
+        void renderPage(pageNumber)
+      }
+    }
 
     return () => {
       cancelled = true
-      if (renderTaskRef.current) {
+      for (const task of renderTasks.values()) {
         try {
-          renderTaskRef.current.cancel()
+          task.cancel()
         } catch {
-          // Ignore cancellation errors
+          /* Ignore cancellation errors. */
         }
-        renderTaskRef.current = null
       }
+      renderTasks.clear()
     }
-  }, [pdfDoc, page, width, quote, initialPage])
+  }, [pdfDoc, visiblePages, width, zoom, quote, initialPage])
 
   /** Navigates to a known page and keeps the editable page control synchronized. */
   function navigate(value: number) {
-    setPage(value)
+    setActivePage(value)
     setPageInput(String(value))
+    pageRefs.current
+      .get(value)
+      ?.scrollIntoView({ behavior: "smooth", block: "start" })
+  }
+
+  /** Keeps page navigation synchronized with the page at the viewer's vertical midpoint. */
+  function updateActivePage() {
+    const scroller = scrollRef.current
+    if (!scroller) return
+    const midpoint =
+      scroller.getBoundingClientRect().top + scroller.clientHeight / 2
+    let closestPage = activePage
+    let closestDistance = Number.POSITIVE_INFINITY
+    for (const [number, node] of pageRefs.current) {
+      const bounds = node.getBoundingClientRect()
+      if (bounds.top <= midpoint && bounds.bottom >= midpoint) {
+        closestPage = number
+        break
+      }
+      const distance = Math.min(
+        Math.abs(bounds.top - midpoint),
+        Math.abs(bounds.bottom - midpoint)
+      )
+      if (distance < closestDistance) {
+        closestDistance = distance
+        closestPage = number
+      }
+    }
+    if (closestPage !== activePage) {
+      setActivePage(closestPage)
+      setPageInput(String(closestPage))
+    }
   }
 
   return (
@@ -308,16 +422,30 @@ export function PdfReader({
             navigate(value)
         }}
       >
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          disabled={page <= 1}
-          onClick={() => navigate(page - 1)}
-          aria-label="Previous PDF page"
-        >
-          Previous
-        </Button>
+        <div className="flex items-center gap-1">
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-lg"
+            className="size-10 text-2xl"
+            disabled={activePage <= 1}
+            onClick={() => navigate(activePage - 1)}
+            aria-label="Previous PDF page"
+          >
+            ‹
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-lg"
+            className="size-10 text-2xl"
+            disabled={!count || activePage >= count}
+            onClick={() => navigate(activePage + 1)}
+            aria-label="Next PDF page"
+          >
+            ›
+          </Button>
+        </div>
         <label className="flex items-center gap-2 text-xs">
           Page{" "}
           <Input
@@ -335,15 +463,48 @@ export function PdfReader({
         <Button type="submit" variant="ghost" size="sm">
           Go
         </Button>
+        <span className="mx-1 h-5 border-l border-border" aria-hidden="true" />
         <Button
           type="button"
           variant="outline"
           size="sm"
-          disabled={!count || page >= count}
-          onClick={() => navigate(page + 1)}
-          aria-label="Next PDF page"
+          disabled={zoom <= 0.5}
+          onClick={() =>
+            setZoom((value) =>
+              Math.max(0.5, Math.round((value - 0.1) * 10) / 10)
+            )
+          }
+          aria-label="Zoom out"
         >
-          Next
+          −
+        </Button>
+        <span
+          className="min-w-12 text-center text-xs tabular-nums"
+          aria-live="polite"
+        >
+          {Math.round(zoom * 100)}%
+        </span>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          disabled={zoom >= 2}
+          onClick={() =>
+            setZoom((value) => Math.min(2, Math.round((value + 0.1) * 10) / 10))
+          }
+          aria-label="Zoom in"
+        >
+          +
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          disabled={zoom === 1}
+          onClick={() => setZoom(1)}
+          aria-label="Reset zoom to fit width"
+        >
+          Fit
         </Button>
       </form>
       {status ? (
@@ -360,12 +521,48 @@ export function PdfReader({
           ) : null}
         </div>
       ) : null}
-      <canvas
-        ref={canvasRef}
-        className="max-w-full bg-white"
-        aria-label={`Original PDF page ${page}. The Passage tab contains accessible source text.`}
-        role="img"
-      />
+      <div
+        ref={scrollRef}
+        onScroll={updateActivePage}
+        className="max-h-[80svh] min-h-[50svh] space-y-3 overflow-auto rounded-lg border border-border bg-muted/30 p-2"
+      >
+        {count
+          ? Array.from({ length: count }, (_, index) => {
+              const number = index + 1
+              const aspect = pageSizes[number] ?? 1.3
+              return (
+                <div
+                  key={number}
+                  ref={(node) => {
+                    if (node) pageRefs.current.set(number, node)
+                    else pageRefs.current.delete(number)
+                  }}
+                  data-page={number}
+                  className="mx-auto overflow-hidden bg-white shadow-sm"
+                  style={{
+                    width: `${width * zoom}px`,
+                    aspectRatio: `1 / ${aspect}`,
+                  }}
+                  aria-label={`PDF page ${number}`}
+                >
+                  <canvas
+                    ref={(node) => {
+                      if (node) canvasRefs.current.set(number, node)
+                      else canvasRefs.current.delete(number)
+                    }}
+                    className="mx-auto block bg-white"
+                    aria-label={
+                      quote.trim()
+                        ? `Original PDF page ${number}. The Passage tab contains accessible source text.`
+                        : `Original PDF page ${number}. Extracted text is available in the adjacent tab.`
+                    }
+                    role="img"
+                  />
+                </div>
+              )
+            })
+          : null}
+      </div>
     </div>
   )
 }

@@ -338,8 +338,34 @@ export const getWorkContext = query({
       conversation.projectId,
       conversation.itemId
     )
-    if (!item.sourceChunkId)
-      throw new Error("Card source chunk is not available for chat")
+    if (!item.sourceChunkId) {
+      const sourceId =
+        item.sourceReferences?.[0]?.sourceId ?? item.sourceIds[0]
+      const source = sourceId ? await ctx.db.get(sourceId) : null
+      if (!source || source.projectId !== conversation.projectId)
+        throw new Error("Card source is not available for chat")
+      return {
+        projectId: conversation.projectId,
+        itemId: item._id,
+        item: {
+          id: String(item._id),
+          title: item.title,
+          body: item.body,
+          ...(item.question === undefined ? {} : { question: item.question }),
+          ...(item.options === undefined
+            ? {}
+            : { options: item.options.map((option) => option.text) }),
+          sourceLabel: source.filename,
+        },
+        source: {
+          id: String(source._id),
+          filename: source.filename,
+          kind: source.kind,
+          extractedText: source.extractedText.slice(0, 48_000),
+        },
+        question: message.question,
+      }
+    }
     const chunk = await ctx.db.get(item.sourceChunkId)
     if (!chunk) throw new Error("Card source chunk was not found")
     const job = await ctx.db.get(chunk.jobId)

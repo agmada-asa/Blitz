@@ -40,7 +40,6 @@ export function AppShell({ children }: AppShellProps) {
   const isChatRoute = pathname === "/chat"
   const isFullHeightMobileRoute = isHomeRoute || isChatRoute
   const [collapsed, setCollapsed] = useState(true)
-  const isStudyRoute = /\/(study|practice|test|write)$/.test(pathname)
   const links: NavLink[] = [
     {
       href: "/",
@@ -54,7 +53,7 @@ export function AppShell({ children }: AppShellProps) {
       icon: Folder01Icon,
       active:
         pathname === "/library" ||
-        (pathname.startsWith("/projects/") && !isStudyRoute),
+        pathname.startsWith("/projects/"),
     },
     {
       href: "/chat",
@@ -77,7 +76,7 @@ export function AppShell({ children }: AppShellProps) {
     },
   ]
 
-  if (isPreviewRoute || isStudyRoute) {
+  if (isPreviewRoute) {
     return <>{children}</>
   }
 

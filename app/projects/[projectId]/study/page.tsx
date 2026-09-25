@@ -1,14 +1,18 @@
-/** Resolves the dynamic project route and renders its interactive study feed. */
+/** Sends the retired study deck route to the project's Practice hub. */
 
-import { StudyFeed } from "@/components/study/study-feed"
+import { redirect } from "next/navigation"
 
-/** Awaits the Next.js 16 route params and passes the project ID to the client feed. */
+/** Redirects legacy study links into the current project learning choices. */
 export default async function StudyPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ projectId: string }>
+  searchParams: Promise<{ topicId?: string }>
 }) {
-  const { projectId } = await params
-
-  return <StudyFeed projectId={projectId} />
+  const [{ projectId }, query] = await Promise.all([params, searchParams])
+  const topic = query.topicId
+    ? `?topicId=${encodeURIComponent(query.topicId)}`
+    : ""
+  redirect(`/projects/${encodeURIComponent(projectId)}/practice${topic}`)
 }

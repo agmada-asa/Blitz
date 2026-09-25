@@ -493,7 +493,6 @@ export const startTurn = mutation({
     }
     if (rawMessage.length > 4_000) throw new Error("Message is too long")
     const message = rawMessage
-    if (args.attachments.length > 8) throw new Error("Attach at most 8 items")
     if (args.continuationOf && args.attachments.length)
       throw new Error("A continued response cannot add context")
     const cardAttachments = args.attachments.filter(

@@ -1,6 +1,6 @@
 "use client"
 
-/** Owns the approval-first research proposal dialog for one project. */
+/** Owns the project research proposal and source selection flow. */
 
 import Link from "next/link"
 import { useCallback, useEffect, useRef, useState } from "react"
@@ -9,13 +9,6 @@ import { useQuery } from "convex/react"
 import { useBackgroundNotice } from "@/components/background-notices"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
-import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog"
 import { Textarea } from "@/components/ui/textarea"
 import { api } from "@/convex/_generated/api"
 import type { Id } from "@/convex/_generated/dataModel"
@@ -43,7 +36,7 @@ type ProposalSource = {
   verification: "suggested-unverified" | "checked"
 }
 
-/** Describes a proposed note outline; this dialog does not create notes. */
+/** Describes a proposed note outline; this panel does not create notes. */
 type PlannedNote = {
   label: "generated"
   title: string
@@ -105,17 +98,19 @@ function ImportPreparationStatus({
 
   if (jobs === undefined || !jobs.length)
     return (
-      <span className="text-white/50">Downloaded · preparation queued</span>
+      <span className="text-muted-foreground">
+        Downloaded · preparation queued
+      </span>
     )
 
   const failed = jobs.find((job) => job.status === "failed")
   if (failed)
     return (
-      <span className="text-red-200">
+      <span className="text-destructive">
         Needs retry
         <Link
           href="/notifications"
-          className="ml-2 underline underline-offset-2 hover:text-white"
+          className="ml-2 underline underline-offset-2 hover:text-foreground"
         >
           View preparation
         </Link>
@@ -132,7 +127,7 @@ function ImportPreparationStatus({
         ? Math.min(job.nextChunkOrdinal + 1, job.totalChunks)
         : undefined
       return (
-        <span className="text-white/50">
+        <span className="text-muted-foreground">
           {job.status === "queued"
             ? "Queued for preparation"
             : currentSection && job.totalChunks
@@ -142,7 +137,7 @@ function ImportPreparationStatus({
       )
     }
     return (
-      <span className="text-white/50">
+      <span className="text-muted-foreground">
         {active.some((job) => job.status === "leased")
           ? "Preparing cards"
           : "Queued for preparation"}
@@ -151,7 +146,7 @@ function ImportPreparationStatus({
   }
 
   if (sourceIds.length > 20)
-    return <span className="text-white/50">Preparation continues</span>
+    return <span className="text-muted-foreground">Preparation continues</span>
 
   const completed = jobs.filter((job) => job.status === "completed")
   if (
@@ -161,15 +156,19 @@ function ImportPreparationStatus({
         typeof job.generatedItemCount === "number" && job.generatedItemCount > 0
     )
   )
-    return <span className="text-emerald-200">Ready</span>
+    return <span className="text-emerald-700 dark:text-emerald-300">Ready</span>
   if (
     completed.length === sourceIds.length &&
     completed.some((job) => job.generatedItemCount === 0)
   )
-    return <span className="text-amber-200">No study content</span>
+    return (
+      <span className="text-amber-700 dark:text-amber-300">
+        No study content
+      </span>
+    )
   if (completed.length === sourceIds.length)
-    return <span className="text-white/50">Preparation complete</span>
-  return <span className="text-white/50">Preparing cards</span>
+    return <span className="text-muted-foreground">Preparation complete</span>
+  return <span className="text-muted-foreground">Preparing cards</span>
 }
 
 type ApplyState =
@@ -270,7 +269,7 @@ function activityElapsed(event: ResearchActivity | undefined, now: number) {
   )
 }
 
-/** Gives each persisted activity stage a short label suitable for the dialog. */
+/** Gives each persisted activity stage a short status label. */
 function activityStageLabel(stage: ResearchActivityStage): string {
   if (stage === "searching") return "Searching"
   if (stage === "synthesizing") return "Preparing sources"
@@ -283,19 +282,19 @@ function activityStageLabel(stage: ResearchActivityStage): string {
 /** Renders the bounded server activity trace without exposing worker internals. */
 function ActivityDetails({ activity }: { activity: ResearchActivity[] }) {
   return (
-    <details className="rounded-xl border border-white/10 bg-white/[0.025] px-3">
-      <summary className="flex min-h-11 cursor-pointer items-center text-sm text-white/70">
+    <details className="rounded-xl border border-border bg-muted/30 px-3">
+      <summary className="flex min-h-11 cursor-pointer items-center text-sm text-muted-foreground">
         Activity details
       </summary>
       <ol className="space-y-2 pb-3">
         {activity.map((event, index) => (
           <li
             key={`${event.occurredAt}-${index}`}
-            className="text-xs leading-relaxed text-white/60"
+            className="text-xs leading-relaxed text-muted-foreground"
           >
             <span>{event.label ?? activityStageLabel(event.stage)}</span>
             {event.query ? ` · ${event.query}` : null}
-            <span className="block text-white/40">
+            <span className="block text-muted-foreground/70">
               {formatElapsed(event.elapsedMs)}
             </span>
           </li>
@@ -309,14 +308,15 @@ function ActivityDetails({ activity }: { activity: ResearchActivity[] }) {
 export type ResearchPanelProps = {
   projectId: string
   initialRequestId?: string
+  active: boolean
 }
 
-/** Renders the collapsed research entry and its approval dialog. */
+/** Renders the research request and source review inside Add sources. */
 export function ResearchPanel({
   projectId,
   initialRequestId,
+  active,
 }: ResearchPanelProps) {
-  const [open, setOpen] = useState(Boolean(initialRequestId))
   const [requestText, setRequestText] = useState("")
   const [requestId, setRequestId] = useState<string | undefined>(
     initialRequestId
@@ -337,7 +337,7 @@ export function ResearchPanel({
   const projectGeneration = useRef(0)
   const selectedRequestId = useRef<string | undefined>(undefined)
   const requestIdsByText = useRef(new Map<string, string>())
-  const openRef = useRef(open)
+  const activeRef = useRef(active)
   const backgroundNoticeKeys = useRef(new Set<string>())
   const notifyBackground = useBackgroundNotice()
   const hasActiveImports = imports.some(
@@ -346,8 +346,8 @@ export function ResearchPanel({
   )
 
   useEffect(() => {
-    openRef.current = open
-  }, [open])
+    activeRef.current = active
+  }, [active])
 
   useEffect(() => {
     projectGeneration.current += 1
@@ -371,7 +371,7 @@ export function ResearchPanel({
     }
   }, [])
 
-  /** Sends one durable acknowledgement for work that continues off dialog. */
+  /** Sends one durable acknowledgement for work that continues off tab. */
   function notifyBackgroundWork(
     key: string,
     message: string,
@@ -380,33 +380,6 @@ export function ResearchPanel({
     if (backgroundNoticeKeys.current.has(key)) return
     backgroundNoticeKeys.current.add(key)
     notifyBackground(message, href, "View project")
-  }
-
-  /** Records active research and import work when the dialog closes. */
-  function notifyActiveWork(): void {
-    if (
-      proposal &&
-      (proposal.status === "queued" || proposal.status === "running")
-    )
-      notifyBackgroundWork(
-        `research:${proposal.requestId}`,
-        "Finding sources in background"
-      )
-    const activeImports = imports.filter(
-      (importRow) =>
-        importRow.status === "queued" || importRow.status === "running"
-    )
-    if (activeImports.length && requestId)
-      notifyBackgroundWork(
-        `imports:${requestId}`,
-        "Importing sources in background"
-      )
-  }
-
-  /** Closes the dialog and acknowledges any persisted work that continues. */
-  function handleOpenChange(nextOpen: boolean): void {
-    if (!nextOpen) notifyActiveWork()
-    setOpen(nextOpen)
   }
 
   useEffect(() => {
@@ -593,7 +566,7 @@ export function ResearchPanel({
       if (next.requestId !== stableRequestId) return
       showProposal(next)
       if (
-        !openRef.current &&
+        !activeRef.current &&
         (next.status === "queued" || next.status === "running")
       )
         notifyBackgroundWork(
@@ -692,7 +665,7 @@ export function ResearchPanel({
       if (body.imports)
         setImports((current) => mergeImportRows(current, body.imports ?? []))
       if (
-        !openRef.current &&
+        !activeRef.current &&
         body.imports?.some(
           (row) => row.status === "queued" || row.status === "running"
         )
@@ -762,7 +735,7 @@ export function ResearchPanel({
       if (body.imports)
         setImports((current) => mergeImportRows(current, body.imports ?? []))
       if (
-        !openRef.current &&
+        !activeRef.current &&
         body.imports?.some(
           (row) => row.status === "queued" || row.status === "running"
         )
@@ -818,285 +791,214 @@ export function ResearchPanel({
     applyState.status !== "pending"
 
   const latestProposalActivity = latestActivity(proposal?.activity)
-  const proposalIsActive =
-    proposal?.status === "queued" || proposal?.status === "running"
-  const activeImports = imports.filter(
-    (importRow) =>
-      importRow.status === "queued" || importRow.status === "running"
-  )
-  const importStartedAt = activeImports.length
-    ? Math.min(...activeImports.map((importRow) => importRow.createdAt))
-    : undefined
-  const backgroundStatus = !open
-    ? proposalIsActive
-      ? `Finding sources · ${formatElapsed(
-          activityElapsed(latestProposalActivity, now) ||
-            Math.max(0, now - (proposal?.createdAt ?? now))
-        )}`
-      : importStartedAt !== undefined
-        ? `Importing · ${formatElapsed(Math.max(0, now - importStartedAt))}`
-        : undefined
-    : undefined
 
   return (
-    <>
-      <div className="flex flex-wrap items-center gap-3">
+    <div className="min-w-0 space-y-5">
+      <div className="space-y-3">
+        <label htmlFor="research-request" className="text-sm text-foreground">
+          What do you want to learn?
+        </label>
+        <Textarea
+          id="research-request"
+          value={requestText}
+          onChange={(event) => {
+            setRequestText(event.target.value)
+            setRequestError("")
+          }}
+          maxLength={2_000}
+          rows={4}
+          placeholder="e.g. Learn the basics of sound design"
+          className="resize-none"
+        />
+      </div>
+
+      <div className="flex items-center justify-between gap-3">
         <Button
           type="button"
-          variant="outline"
-          onClick={() => setOpen(true)}
-          className="h-11 rounded-full"
+          onClick={() => void proposeSources()}
+          disabled={
+            !requestText.trim() ||
+            requestPending ||
+            applyState.status === "pending"
+          }
+          className="h-11 bg-brand text-brand-foreground hover:bg-brand/85"
         >
-          Find sources
+          {requestPending ? "Searching…" : "Find sources"}
         </Button>
-        {backgroundStatus ? (
+        {proposal?.status === "queued" || proposal?.status === "running" ? (
           <p className="text-sm text-muted-foreground" role="status">
-            {backgroundStatus}
+            {activityStageLabel(
+              latestProposalActivity?.stage ?? proposal.status
+            )}
+            {latestProposalActivity
+              ? ` · ${formatElapsed(
+                  activityElapsed(latestProposalActivity, now)
+                )}`
+              : null}
           </p>
         ) : null}
       </div>
 
-      <Dialog open={open} onOpenChange={handleOpenChange}>
-        <DialogContent
-          aria-describedby={undefined}
-          showCloseButton={false}
-          className="dark flex max-h-[min(88svh,720px)] flex-col overflow-hidden border-white/10 bg-[#151515] text-white selection:bg-brand selection:text-brand-foreground sm:max-w-xl"
-        >
-          <DialogHeader>
-            <DialogTitle className="font-sans text-white">
-              Find sources
-            </DialogTitle>
-          </DialogHeader>
+      {requestError ? (
+        <p className="text-sm text-destructive" role="alert">
+          {requestError}
+        </p>
+      ) : null}
 
-          <div className="-mx-1 min-h-0 space-y-5 overflow-y-auto px-1">
-            <div className="space-y-3">
-              <label
-                htmlFor="research-request"
-                className="text-sm text-white/72"
-              >
-                What do you want to learn?
-              </label>
-              <Textarea
-                id="research-request"
-                value={requestText}
-                onChange={(event) => {
-                  setRequestText(event.target.value)
-                  setRequestError("")
-                }}
-                maxLength={2_000}
-                rows={4}
-                placeholder="e.g. Learn the basics of sound design"
-                className="resize-none border-white/10 bg-white/[0.045] text-white placeholder:text-white/30 focus-visible:border-brand focus-visible:ring-brand/30"
-              />
-            </div>
+      {proposal?.activity?.length ? (
+        <ActivityDetails activity={proposal.activity} />
+      ) : null}
 
-            <div className="flex items-center justify-between gap-3">
-              <Button
-                type="button"
-                onClick={() => void proposeSources()}
-                disabled={
-                  !requestText.trim() ||
-                  requestPending ||
-                  applyState.status === "pending"
-                }
-                className="h-11 bg-brand text-brand-foreground hover:bg-brand/85 focus-visible:ring-brand/50"
-              >
-                {requestPending ? "Preparing…" : "Propose sources"}
-              </Button>
-              {proposal?.status === "queued" ||
-              proposal?.status === "running" ? (
-                <p className="text-sm text-white/50" role="status">
-                  {activityStageLabel(
-                    latestProposalActivity?.stage ?? proposal.status
-                  )}
-                  {latestProposalActivity
-                    ? ` · ${formatElapsed(
-                        activityElapsed(latestProposalActivity, now)
-                      )}`
-                    : null}
-                </p>
-              ) : null}
-            </div>
+      {proposal?.status === "failed" ? (
+        <div className="flex items-center justify-between gap-3 rounded-xl border border-destructive/20 bg-destructive/5 p-3">
+          <p className="text-sm text-destructive">
+            {proposal.error || "Research could not be prepared."}
+          </p>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => void retryProposal()}
+            disabled={requestPending}
+            className="shrink-0"
+          >
+            Retry
+          </Button>
+        </div>
+      ) : null}
 
-            {requestError ? (
-              <p className="text-sm text-red-200" role="alert">
-                {requestError}
+      {activeProposal && activePlan ? (
+        <div className="space-y-6 border-t border-border pt-5">
+          <section className="space-y-2">
+            <p className="text-sm leading-relaxed text-muted-foreground">
+              {activePlan.scope}
+            </p>
+            {activePlan.topics.length ? (
+              <p className="text-xs leading-relaxed text-muted-foreground">
+                {activePlan.topics.join(" · ")}
               </p>
             ) : null}
+          </section>
 
-            {proposal?.activity?.length ? (
-              <ActivityDetails activity={proposal.activity} />
-            ) : null}
-
-            {proposal?.status === "failed" ? (
-              <div className="flex items-center justify-between gap-3 rounded-xl border border-red-300/20 bg-red-300/5 p-3">
-                <p className="text-sm text-red-200">
-                  {proposal.error || "Research could not be prepared."}
-                </p>
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => void retryProposal()}
-                  disabled={requestPending}
-                  className="shrink-0 border-white/15 bg-transparent text-white/75 hover:bg-white/[0.07] hover:text-white"
-                >
-                  Retry
-                </Button>
-              </div>
-            ) : null}
-
-            {activeProposal && activePlan ? (
-              <div className="space-y-6 border-t border-white/10 pt-5">
-                <section className="space-y-2">
-                  <p className="text-sm leading-relaxed text-white/65">
-                    {activePlan.scope}
-                  </p>
-                  {activePlan.topics.length ? (
-                    <p className="text-xs leading-relaxed text-white/50">
-                      {activePlan.topics.join(" · ")}
-                    </p>
-                  ) : null}
-                </section>
-
-                <section className="space-y-3">
-                  <p className="text-sm font-medium text-white">
-                    Suggested sources · not checked yet
-                  </p>
-                  <div className="space-y-2">
-                    {activePlan.sources.map((source, sourceIndex) => {
-                      const importRow = importsBySource.get(sourceIndex)
-                      const locked = isImportLocked(importRow?.status)
-                      return (
-                        <div
-                          key={`${source.url}-${sourceIndex}`}
-                          className="flex gap-3 rounded-xl border border-white/10 bg-white/[0.035] p-3"
+          <section className="space-y-3">
+            <p className="text-sm font-medium text-foreground">
+              Suggested sources
+            </p>
+            <div className="space-y-2">
+              {activePlan.sources.map((source, sourceIndex) => {
+                const importRow = importsBySource.get(sourceIndex)
+                const locked = isImportLocked(importRow?.status)
+                return (
+                  <div
+                    key={`${source.url}-${sourceIndex}`}
+                    className="flex gap-3 rounded-xl border border-border bg-muted/30 p-3"
+                  >
+                    <Checkbox
+                      checked={selectedSources.has(sourceIndex) && !locked}
+                      disabled={locked || applyState.status === "pending"}
+                      onCheckedChange={() => toggleSource(sourceIndex)}
+                      aria-label={`Select ${source.title}`}
+                      className="mt-1 data-[state=checked]:border-brand data-[state=checked]:bg-brand data-[state=checked]:text-brand-foreground"
+                    />
+                    <span className="min-w-0 flex-1 space-y-1">
+                      <a
+                        href={source.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="block text-sm text-foreground underline-offset-2 hover:underline"
+                      >
+                        {source.title}
+                      </a>
+                      <span className="block text-xs leading-relaxed text-muted-foreground">
+                        {source.reason}
+                      </span>
+                      {importRow ? (
+                        <span
+                          className={`block text-xs ${
+                            importRow.status === "failed"
+                              ? "text-destructive"
+                              : "text-muted-foreground"
+                          }`}
+                          role={
+                            importRow.status === "failed" ? "alert" : "status"
+                          }
                         >
-                          <Checkbox
-                            checked={
-                              selectedSources.has(sourceIndex) && !locked
-                            }
-                            disabled={locked || applyState.status === "pending"}
-                            onCheckedChange={() => toggleSource(sourceIndex)}
-                            aria-label={`Select ${source.title}`}
-                            className="mt-1 border-white/35 data-[state=checked]:border-brand data-[state=checked]:bg-brand data-[state=checked]:text-brand-foreground"
-                          />
-                          <span className="min-w-0 flex-1 space-y-1">
-                            <a
-                              href={source.url}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="block text-sm text-brand underline-offset-2 hover:underline"
-                            >
-                              {source.title}
-                            </a>
-                            <span className="block text-xs leading-relaxed text-white/55">
-                              {source.reason}
-                            </span>
-                            {importRow ? (
-                              <span
-                                className={`block text-xs ${
-                                  importRow.status === "failed"
-                                    ? "text-red-200"
-                                    : "text-white/50"
-                                }`}
-                                role={
-                                  importRow.status === "failed"
-                                    ? "alert"
-                                    : "status"
-                                }
-                              >
-                                {importRow.status === "imported"
-                                  ? null
-                                  : importStatusLabel(importRow.status)}
-                                {importRow.status === "failed"
-                                  ? `: ${importFailureLabel(importRow)}`
-                                  : null}
-                                {importRow.status === "imported" ? (
-                                  <ImportPreparationStatus
-                                    projectId={projectId}
-                                    sourceIds={[
-                                      ...(importRow.sourceIds ??
-                                        importRow.partSourceIds ??
-                                        (importRow.sourceId
-                                          ? [importRow.sourceId]
-                                          : [])),
-                                    ]}
-                                  />
-                                ) : null}
-                              </span>
-                            ) : null}
-                          </span>
-                          {importRow?.status === "failed" ? (
-                            <Button
-                              type="button"
-                              variant="outline"
-                              onClick={() =>
-                                void retryFailedImport(sourceIndex)
-                              }
-                              disabled={applyState.status === "pending"}
-                              className="h-11 shrink-0 border-white/15 bg-transparent px-2 text-xs text-white/75 hover:bg-white/[0.07] hover:text-white"
-                            >
-                              {retryingSourceIndex === sourceIndex
-                                ? "Retrying…"
-                                : "Retry"}
-                            </Button>
+                          {importRow.status === "imported"
+                            ? null
+                            : importStatusLabel(importRow.status)}
+                          {importRow.status === "failed"
+                            ? `: ${importFailureLabel(importRow)}`
+                            : null}
+                          {importRow.status === "imported" ? (
+                            <ImportPreparationStatus
+                              projectId={projectId}
+                              sourceIds={[
+                                ...(importRow.sourceIds ??
+                                  importRow.partSourceIds ??
+                                  (importRow.sourceId
+                                    ? [importRow.sourceId]
+                                    : [])),
+                              ]}
+                            />
                           ) : null}
-                        </div>
-                      )
-                    })}
+                        </span>
+                      ) : null}
+                    </span>
+                    {importRow?.status === "failed" ? (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => void retryFailedImport(sourceIndex)}
+                        disabled={applyState.status === "pending"}
+                        className="h-11 shrink-0 px-2 text-xs"
+                      >
+                        {retryingSourceIndex === sourceIndex
+                          ? "Retrying…"
+                          : "Retry"}
+                      </Button>
+                    ) : null}
                   </div>
-                </section>
+                )
+              })}
+            </div>
+          </section>
 
-                {activePlan.generatedNotes.length ? (
-                  <section className="space-y-3">
-                    <h2 className="text-sm font-medium text-white">
-                      Planned notes
-                    </h2>
-                    <ul className="space-y-3">
-                      {activePlan.generatedNotes.map((note) => (
-                        <li key={note.title} className="space-y-1">
-                          <p className="text-sm text-white/80">{note.title}</p>
-                          <p className="text-xs leading-relaxed text-white/52">
-                            {note.description}
-                          </p>
-                        </li>
-                      ))}
-                    </ul>
-                  </section>
-                ) : null}
+          {activePlan.generatedNotes.length ? (
+            <section className="space-y-3">
+              <h3 className="text-sm font-medium text-foreground">
+                Planned notes
+              </h3>
+              <ul className="space-y-3">
+                {activePlan.generatedNotes.map((note) => (
+                  <li key={note.title} className="space-y-1">
+                    <p className="text-sm text-foreground">{note.title}</p>
+                    <p className="text-xs leading-relaxed text-muted-foreground">
+                      {note.description}
+                    </p>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ) : null}
 
-                {applyState.status === "error" ? (
-                  <p className="text-sm text-red-200" role="alert">
-                    {applyState.message}
-                  </p>
-                ) : null}
-              </div>
-            ) : null}
-          </div>
-          <DialogFooter className="shrink-0 sm:flex-row sm:justify-end">
+          {applyState.status === "error" ? (
+            <p className="text-sm text-destructive" role="alert">
+              {applyState.message}
+            </p>
+          ) : null}
+          <div className="flex justify-end">
             <Button
               type="button"
-              variant="outline"
-              onClick={() => setOpen(false)}
-              className="h-11 border-white/15 bg-transparent text-white/75 hover:bg-white/[0.07] hover:text-white"
+              onClick={() => void importSelected()}
+              disabled={!canApply}
+              className="h-11 bg-brand text-brand-foreground hover:bg-brand/85"
             >
-              Close
+              {applyState.status === "pending"
+                ? "Starting…"
+                : "Import selected"}
             </Button>
-            {activeProposal && activePlan ? (
-              <Button
-                type="button"
-                onClick={() => void importSelected()}
-                disabled={!canApply}
-                className="h-11 bg-brand text-brand-foreground hover:bg-brand/85 focus-visible:ring-brand/50"
-              >
-                {applyState.status === "pending"
-                  ? "Starting…"
-                  : "Import selected"}
-              </Button>
-            ) : null}
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </>
+          </div>
+        </div>
+      ) : null}
+    </div>
   )
 }

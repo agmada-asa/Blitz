@@ -42,7 +42,7 @@ export interface StudySessionProps {
 /** Renders the deliberate session shell and its current question. */
 export function StudySession({ projectId, mode, topicId }: StudySessionProps) {
   const [sessionId] = useState(createLocalSessionId)
-  const [startedAt] = useState(() => Date.now())
+  const [startedAt, setStartedAt] = useState(() => Date.now())
   const [deck, setDeck] = useState<SessionQuestionPage>()
   const [loadedKey, setLoadedKey] = useState<string>()
   const [loadError, setLoadError] = useState<string>()
@@ -60,6 +60,7 @@ export function StudySession({ projectId, mode, topicId }: StudySessionProps) {
   const [submitting, setSubmitting] = useState(false)
   const [finishing, setFinishing] = useState(false)
   const [finished, setFinished] = useState(false)
+  const [testStarted, setTestStarted] = useState(false)
   const [testLocked, setTestLocked] = useState(false)
   const [complete, setComplete] = useState(false)
   const [requestError, setRequestError] = useState<string>()
@@ -213,6 +214,12 @@ export function StudySession({ projectId, mode, topicId }: StudySessionProps) {
     }
   }
 
+  /** Starts the test timer only after the learner chooses to begin. */
+  function startTest(): void {
+    setStartedAt(Date.now())
+    setTestStarted(true)
+  }
+
   if (loadedKey !== requestKey)
     return <SessionStatus message="Loading questions…" />
   if (deck === undefined)
@@ -260,10 +267,18 @@ export function StudySession({ projectId, mode, topicId }: StudySessionProps) {
         projectId={projectId}
       />
     )
+  if (mode === "test" && !testStarted)
+    return (
+      <TestSetup
+        projectId={projectId}
+        questionCount={questions.length}
+        onStart={startTest}
+      />
+    )
   if (mode === "practice" && complete)
     return (
       <SessionStatus
-        message="Practice session complete."
+        message="Questions complete."
         projectId={projectId}
       />
     )
@@ -280,30 +295,30 @@ export function StudySession({ projectId, mode, topicId }: StudySessionProps) {
   const isLast = currentIndex === questions.length - 1
 
   return (
-    <main className="flex min-h-svh flex-col bg-[#080808] font-sans text-white selection:bg-[#ff8065] selection:text-[#1b0d0a]">
+    <main className="flex min-h-svh flex-col bg-background font-sans text-foreground selection:bg-brand selection:text-brand-foreground">
       <header className="mx-auto flex w-full max-w-3xl items-center justify-between px-5 py-5 sm:px-8">
         <Button
           asChild
           variant="ghost"
           size="sm"
-          className="h-10 rounded-[20px] bg-white/[0.045] px-3.5 text-sm text-white/65 ring-1 ring-white/10 hover:bg-white/[0.09] hover:text-white"
+          className="h-10 px-3.5 text-sm"
         >
           <Link href={`/projects/${encodeURIComponent(projectId)}`}>Exit</Link>
         </Button>
-        <p className="text-sm text-muted-foreground">
-          {mode === "practice" ? "Study" : "Test"} · {currentIndex + 1} of{" "}
-          {questions.length}
+        <p className="text-xs text-muted-foreground">
+          {mode === "practice" ? "Questions" : "Test"} · {currentIndex + 1} of {questions.length}
+          {mode === "test" ? " · Results at the end" : ""}
         </p>
         <span className="w-12" aria-hidden="true" />
       </header>
 
       <section className="mx-auto flex w-full max-w-3xl flex-1 flex-col justify-center px-5 pb-12 sm:px-8">
-        <h1 className="max-w-[620px] text-[clamp(2rem,7vw,3.75rem)] leading-[0.99] font-medium tracking-[-0.045em] text-white sm:text-[clamp(2rem,5vw,2.5rem)]">
+        <h1 className="max-w-[620px] text-[clamp(1.8rem,6vw,3rem)] leading-[1.05] font-medium tracking-[-0.04em]">
           {question.prompt}
         </h1>
 
         {question.type === "multiple-answer" ? (
-          <p className="mt-5 text-sm text-white/60">Select all that apply</p>
+          <p className="mt-4 text-sm text-muted-foreground">Select all that apply</p>
         ) : null}
         <div
           className="mt-6 space-y-2.5"
@@ -376,7 +391,7 @@ export function StudySession({ projectId, mode, topicId }: StudySessionProps) {
         ) : null}
         {practiceResult ? <AnswerFeedback result={practiceResult} /> : null}
 
-        <div className="mt-9 flex flex-wrap items-center justify-between gap-3">
+        <div className="mt-7 flex flex-wrap items-center justify-between gap-3">
           {mode === "test" && currentIndex > 0 ? (
             <Button
               variant="ghost"
@@ -428,6 +443,36 @@ export function StudySession({ projectId, mode, topicId }: StudySessionProps) {
   )
 }
 
+/** Shows the number of loaded test questions before starting the timed session. */
+function TestSetup({
+  projectId,
+  questionCount,
+  onStart,
+}: {
+  projectId: string
+  questionCount: number
+  onStart: () => void
+}) {
+  return (
+    <main className="flex min-h-svh flex-col bg-background px-5 py-5 font-sans text-foreground sm:px-8 sm:py-6">
+      <header className="mx-auto flex w-full max-w-3xl items-center justify-between border-b border-border pb-3">
+        <h1 className="text-sm font-medium">Test</h1>
+        <Button asChild variant="ghost" size="sm">
+          <Link href={`/projects/${encodeURIComponent(projectId)}`}>Exit</Link>
+        </Button>
+      </header>
+      <section className="mx-auto flex w-full max-w-3xl flex-1 flex-col justify-center px-0 pb-12">
+        <h2 className="font-heading text-3xl font-medium tracking-tight">
+          {questionCount} questions
+        </h2>
+        <Button onClick={onStart} className="mt-6 min-h-11 w-fit">
+          Start test
+        </Button>
+      </section>
+    </main>
+  )
+}
+
 /** Renders a status or empty state without inventing progress data. */
 function SessionStatus({
   message,
@@ -439,9 +484,9 @@ function SessionStatus({
   onRetry?: () => void
 }) {
   return (
-    <main className="flex min-h-svh items-center justify-center bg-[#080808] px-5 text-center font-sans text-white">
+    <main className="flex min-h-svh items-center justify-center bg-background px-5 text-center font-sans text-foreground">
       <div className="max-w-md space-y-5">
-        <p className="text-sm text-white/62">{message}</p>
+      <p className="text-sm text-muted-foreground">{message}</p>
         <div className="flex justify-center gap-2">
           {onRetry ? (
             <Button variant="outline" onClick={onRetry}>
@@ -468,8 +513,8 @@ function AnswerFeedback({ result }: { result: SessionAnswerResult }) {
       <p
         className={
           result.status === "correct"
-            ? "text-sm font-medium text-emerald-300"
-            : "text-sm font-medium text-red-300"
+          ? "text-sm font-medium text-emerald-600 dark:text-emerald-300"
+          : "text-sm font-medium text-destructive"
         }
       >
         {result.status === "correct"
@@ -479,7 +524,7 @@ function AnswerFeedback({ result }: { result: SessionAnswerResult }) {
             : "Answer could not be scored"}
       </p>
       {result.feedback?.body ? (
-        <p className="text-sm leading-relaxed text-white/52">
+        <p className="text-sm leading-relaxed text-muted-foreground">
           {result.feedback.body}
         </p>
       ) : null}
@@ -509,34 +554,33 @@ function TestResults({
     progress.unanswered
   )
   return (
-    <main className="min-h-svh bg-[#080808] px-5 py-8 font-sans text-white sm:px-8 sm:py-12">
+    <main className="min-h-svh bg-background px-5 py-8 font-sans text-foreground sm:px-8 sm:py-12">
       <div className="mx-auto max-w-3xl">
         <Button
           asChild
           variant="ghost"
           size="sm"
-          className="h-10 rounded-[20px] bg-white/[0.045] px-3.5 text-sm text-white/65 ring-1 ring-white/10 hover:bg-white/[0.09] hover:text-white"
+          className="h-10 px-3.5 text-sm"
         >
           <Link href={`/projects/${encodeURIComponent(projectId)}`}>Exit</Link>
         </Button>
-        <h1 className="mt-12 text-3xl font-medium tracking-tight">
+        <h1 className="mt-8 text-3xl font-medium tracking-tight">
           Test results
         </h1>
-        <p className="mt-3 text-sm text-white/62">
+        <p className="mt-2 text-sm text-muted-foreground">
           {summary.correct} correct · {summary.incorrect} incorrect ·{" "}
           {summary.unanswered} unanswered
         </p>
         <div className="mt-10 space-y-7">
-          {questions.map((question, index) => {
+          {questions.map((question) => {
             const result = results[question.itemId]
             return (
               <article
                 key={question.itemId}
-                className="border-t border-white/10 pt-5"
+                className="border-t border-border py-4"
               >
-                <p className="text-xs text-white/45">Question {index + 1}</p>
-                <h2 className="mt-2 font-medium">{question.prompt}</h2>
-                <p className="mt-2 text-sm text-white/62">
+                <h2 className="font-medium">{question.prompt}</h2>
+                <p className="mt-1 text-sm text-muted-foreground">
                   {result
                     ? result.status === "correct"
                       ? "Correct"
@@ -606,7 +650,7 @@ function TestResults({
                   </div>
                 ) : null}
                 {result?.feedback?.body ? (
-                  <p className="mt-2 text-sm leading-relaxed text-white/52">
+                  <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
                     {result.feedback.body}
                   </p>
                 ) : null}
@@ -614,6 +658,11 @@ function TestResults({
             )
           })}
         </div>
+        <Button asChild className="mt-7">
+          <Link href={`/projects/${encodeURIComponent(projectId)}/practice`}>
+            Back to Practice
+          </Link>
+        </Button>
       </div>
     </main>
   )
@@ -665,17 +714,17 @@ function sessionOptionClass(
 ): string {
   const showFeedback = Boolean(result?.feedback)
   return cn(
-    "flex h-auto min-h-14 w-full items-center justify-start gap-3 rounded-2xl border border-white/10 bg-white/[0.045] px-4 py-3 text-left text-sm whitespace-normal text-white/80 disabled:cursor-default disabled:opacity-100",
+    "flex h-auto min-h-14 w-full cursor-pointer items-center justify-start gap-3 rounded-xl border border-border bg-card px-4 py-3 text-left text-sm whitespace-normal text-card-foreground transition-colors hover:border-brand/50 hover:bg-brand/10 disabled:cursor-default disabled:opacity-100",
     selected &&
       !showFeedback &&
-      "border-[#ff8065]/65 bg-[#ff8065]/10 text-white",
+      "border-brand/70 bg-brand/15 text-foreground hover:border-brand/80 hover:bg-brand/25",
     showFeedback &&
       correct &&
-      "border-emerald-400/65 bg-emerald-400/10 text-emerald-100",
+      "border-emerald-500/60 bg-emerald-500/10 text-foreground",
     showFeedback &&
       selected &&
       !correct &&
-      "border-red-300/60 bg-red-300/10 text-red-100"
+      "border-destructive/60 bg-destructive/10 text-foreground"
   )
 }
 

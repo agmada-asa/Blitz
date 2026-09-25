@@ -8,6 +8,7 @@ import {
   Chat01Icon,
   CheckUnread01Icon,
   Copy01Icon,
+  Download01Icon,
   Delete02Icon,
   File01Icon,
   Folder01Icon,
@@ -59,6 +60,7 @@ import {
   writeCachedAgentAutonomy,
 } from "@/components/chat/chat-agent-controls"
 import { AnnotatedAssistantMessage } from "@/components/chat/annotated-assistant-message"
+import { ReadAloudButton } from "@/components/chat/read-aloud-button"
 import { type FloatingAnnotation } from "@/components/chat/floating-annotation-chip"
 import { ReplyModelPicker } from "@/components/chat/reply-model-picker"
 import { Markdown } from "@/components/ui/markdown"
@@ -85,9 +87,13 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover"
-import { SourcePane } from "@/components/chat/source-pane"
+import {
+  SourcePane,
+  type SourceSelection,
+} from "@/components/chat/source-pane"
 import { ThoughtTrace } from "@/components/chat/thought-trace"
 import { Textarea } from "@/components/ui/textarea"
+import { Checkbox } from "@/components/ui/checkbox"
 import { CancelIcon, LoadingIcon, SparklesIcon } from "@/components/ui/icon"
 import { api } from "@/convex/_generated/api"
 import type { Id } from "@/convex/_generated/dataModel"
@@ -101,11 +107,8 @@ import type { ProviderActivityEvent } from "@/lib/provider-activity"
 import {
   clipboardImageFiles,
   droppedFiles,
-  limitComposerFiles,
 } from "@/lib/client/chat-composer-input"
 
-/** Maximum context items accepted with one message. */
-const MAX_ATTACHMENTS = 8
 /** Maximum project collections accepted with one message. */
 const MAX_PROJECT_ATTACHMENTS = 3
 /** Maximum extracted characters retained for one browser-owned attachment. */
@@ -169,6 +172,10 @@ type ChatWorkspaceProps = {
   /** Optional unsent prompt used when a card starts a focused chat. */
   initialPrompt?: string
   initialProject?: ChatAgentProject
+  /** Removes the full-page history rail and fits chat inside another panel. */
+  embedded?: boolean
+  /** Lets an owning panel open citations in its own source tab. */
+  onOpenSource?: (selection: SourceSelection) => void
 }
 
 /** Optional overrides for standard, edited, and continued chat submissions. */
@@ -213,6 +220,15 @@ function messageForError(error: unknown, fallback: string): string {
   return error instanceof Error && error.message.trim()
     ? error.message
     : fallback
+}
+
+/** Formats a message creation time as a local 24-hour clock value. */
+function formatMessageTime(timestamp: number): string {
+  return new Intl.DateTimeFormat(undefined, {
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).format(timestamp)
 }
 
 /** Converts persisted or streamed data into a safe composer request envelope. */
@@ -443,6 +459,8 @@ export function ChatWorkspace({
   initialCard,
   initialPrompt,
   initialProject,
+  embedded = false,
+  onOpenSource,
 }: ChatWorkspaceProps) {
   const projects = useQuery(api.projects.listProjects)
   const chats = useQuery(api.workspaceChats.list, { archived: false }) as
@@ -521,6 +539,9 @@ export function ChatWorkspace({
   const [renameChatId, setRenameChatId] = useState<Id<"workspaceChats">>()
   const [renameDraft, setRenameDraft] = useState("")
   const [deleteChatId, setDeleteChatId] = useState<Id<"workspaceChats">>()
+  const [exportDialogOpen, setExportDialogOpen] = useState(false)
+  const [includeAgentActivity, setIncludeAgentActivity] = useState(true)
+  const [exportNotice, setExportNotice] = useState("")
   const [deletingChat, setDeletingChat] = useState(false)
   const [archivedDialogOpen, setArchivedDialogOpen] = useState(false)
   const [chatActionPending, setChatActionPending] = useState(false)
@@ -550,7 +571,76 @@ export function ChatWorkspace({
   const [linkUrl, setLinkUrl] = useState("")
   const [importingLink, setImportingLink] = useState(false)
   const persistedAttachments = activeChat?.attachments ?? []
+  const contextualAttachments = [
+    ...attachments.filter(
+      (attachment) =>
+        attachment.kind === "card" || attachment.kind === "project"
+    ),
+    ...persistedAttachments.filter(
+      (attachment) =>
+        attachment.kind === "card" || attachment.kind === "project"
+    ),
+  ].filter(
+    (attachment, index, all) =>
+      all.findIndex(
+        (candidate) =>
+          candidate.kind === attachment.kind &&
+          (candidate.itemId ?? candidate.projectId) ===
+            (attachment.itemId ?? attachment.projectId)
+      ) === index
+  )
   const messages = activeChat?.messages ?? []
+  /** Formats the loaded conversation as Markdown with optional agent activity. */
+  const exportChatMarkdown = (): string => {
+    const title = activeChat?.title?.trim() || "Chat"
+    const sections = [`# ${title}`]
+    for (const message of messages) {
+      const heading = message.role === "user" ? "You" : "Blitz"
+      sections.push(`## ${heading}\n\n${message.content || "_(No message text)_"}`)
+      if (!includeAgentActivity || message.role !== "assistant") continue
+
+      const thought = "thought" in message ? message.thought : undefined
+      if (thought?.trim()) sections.push(`### Agent working\n\n${thought.trim()}`)
+
+      const events = "providerEvents" in message && Array.isArray(message.providerEvents)
+        ? (message.providerEvents as ProviderActivityEvent[])
+        : []
+      for (const event of events) {
+        const detail = event.detail?.trim()
+        sections.push(`### Tool: ${event.title} (${event.status})${detail ? `\n\n${detail}` : ""}`)
+      }
+
+      const requests = "agentRequests" in message && Array.isArray(message.agentRequests)
+        ? message.agentRequests.map((value) => agentRequestFromValue(value)).filter((value): value is AgentRequest => value !== undefined)
+        : []
+      for (const request of requests) {
+        sections.push(`### Agent request: ${request.title || request.method} (${request.status})\n\n${request.details}`)
+      }
+    }
+    return `${sections.join("\n\n---\n\n")}\n`
+  }
+
+  /** Copies the chosen transcript to the clipboard and reports recoverable errors. */
+  const copyExport = async (): Promise<void> => {
+    try {
+      await navigator.clipboard.writeText(exportChatMarkdown())
+      setExportNotice("Chat copied to clipboard.")
+    } catch {
+      setExportNotice("Clipboard access failed. Try downloading the Markdown file.")
+    }
+  }
+
+  /** Downloads the chosen transcript as a Markdown file. */
+  const downloadExport = (): void => {
+    const blob = new Blob([exportChatMarkdown()], { type: "text/markdown;charset=utf-8" })
+    const url = URL.createObjectURL(blob)
+    const anchor = document.createElement("a")
+    anchor.href = url
+    anchor.download = `${(activeChat?.title || "chat").replace(/[^a-z0-9-_]+/gi, "-").replace(/^-|-$/g, "") || "chat"}.md`
+    anchor.click()
+    URL.revokeObjectURL(url)
+    setExportNotice("Markdown file downloaded.")
+  }
   const userClientMessageIds = useMemo(
     () =>
       new Set(
@@ -563,6 +653,13 @@ export function ChatWorkspace({
   const hasOrphanPersistedAttachments =
     persistedAttachments.length > 0 &&
     !messages.some((m) => m.role === "user")
+  const composerAttachments = [
+    ...(hasOrphanPersistedAttachments ? persistedAttachments : []),
+    ...attachments,
+  ].filter(
+    (attachment) =>
+      attachment.kind !== "card" && attachment.kind !== "project"
+  )
   const latestMessage = messages[messages.length - 1]
   const continuableMessage =
     latestMessage?.role === "assistant" &&
@@ -659,6 +756,26 @@ export function ChatWorkspace({
   const selectedCard = attachments.find(
     (attachment) => attachment.kind === "card" && attachment.itemId
   )
+  const contextualCard =
+    selectedCard ??
+    persistedAttachments.find(
+      (attachment) => attachment.kind === "card" && attachment.itemId
+    )
+  const contextualProject =
+    selectedProject ??
+    persistedAttachments.find(
+      (attachment) => attachment.kind === "project" && attachment.projectId
+    )
+  const contextProjectId =
+    contextualCard?.projectId ??
+    contextualProject?.projectId ??
+    activeChat?.projectId ??
+    newChatProjectId
+  const contextProject = projects?.find(
+    (project) => project._id === contextProjectId
+  )
+  const contextProjectLabel =
+    contextProject?.title ?? contextualProject?.label ?? "Project"
   const isStreaming = sending || activeChat?.status === "running"
   const isRunning =
     uploadingFiles ||
@@ -692,9 +809,7 @@ export function ChatWorkspace({
   const visibleComposerRequest = activeChatId
     ? composerAgentRequestEntry
     : undefined
-  const canAttach = attachments.length < MAX_ATTACHMENTS
   const canAttachProject =
-    canAttach &&
     attachments.filter((attachment) => attachment.kind === "project").length <
       MAX_PROJECT_ATTACHMENTS
   const renameTarget =
@@ -726,20 +841,6 @@ export function ChatWorkspace({
   const effectiveWorkingProjectId = agentSettingsTouched
     ? workingProjectId
     : (persistedAgentSettings?.workingProjectId ?? workingProjectId)
-  const welcomeProjectId =
-    selectedCard?.projectId ??
-    selectedProject?.projectId ??
-    activeChat?.projectId ??
-    newChatProjectId
-  const welcomeProject = projects?.find(
-    (project) => project._id === welcomeProjectId
-  )
-  const welcomeProjectLabel =
-    welcomeProject?.title ??
-    (selectedProject && selectedProject.projectId === welcomeProjectId
-      ? selectedProject.label
-      : undefined)
-
   useEffect(() => {
     messageEndRef.current?.scrollIntoView({ block: "end" })
   }, [messages.length, lastMessageContent])
@@ -811,11 +912,12 @@ export function ChatWorkspace({
     setAgentAutonomy(undefined)
     setAgentSettingsTouched(false)
     setHistoryOpen(false)
-    window.history.replaceState(
-      null,
-      "",
-      `/chat?chatId=${encodeURIComponent(chatId)}`
-    )
+    if (!embedded)
+      window.history.replaceState(
+        null,
+        "",
+        `/chat?chatId=${encodeURIComponent(chatId)}`
+      )
   }
 
   /** Clears the active conversation and starts a new standalone chat. */
@@ -843,7 +945,7 @@ export function ChatWorkspace({
     setAgentSettingsTouched(false)
     setHistoryOpen(false)
     setNewChatDialogOpen(false)
-    window.history.replaceState(null, "", "/chat")
+    if (!embedded) window.history.replaceState(null, "", "/chat")
   }
 
   /** Clears the composer and assigns the selected project to the pending chat. */
@@ -875,11 +977,12 @@ export function ChatWorkspace({
     setAgentSettingsTouched(false)
     setHistoryOpen(false)
     setNewChatDialogOpen(false)
-    window.history.replaceState(
-      null,
-      "",
-      `/chat?projectId=${encodeURIComponent(project._id)}`
-    )
+    if (!embedded)
+      window.history.replaceState(
+        null,
+        "",
+        `/chat?projectId=${encodeURIComponent(project._id)}`
+      )
   }
 
   /** Queues the draft message and attachments to send automatically once the active response completes. */
@@ -1026,7 +1129,6 @@ export function ChatWorkspace({
   /** Adds an unsent attachment unless the same project or URL is already selected. */
   const addAttachment = (attachment: DraftAttachment): void => {
     setAttachments((current) => {
-      if (current.length >= MAX_ATTACHMENTS) return current
       if (
         current.some(
           (item) =>
@@ -1050,15 +1152,10 @@ export function ChatWorkspace({
     if (uploadingFiles) return
     setUploadingFiles(true)
     setError("")
-    const selected = limitComposerFiles(
-      files,
-      MAX_ATTACHMENTS - attachments.length
-    )
+    const selected = files
     const uploadProjectId = activeChat?.projectId ?? newChatProjectId ?? selectedProject?.projectId
     for (const file of selected) {
       try {
-        if (file.size > 50_000_000)
-          throw new Error("Chat files must be under 50 MB.")
         const response = await fetch("/api/chat/files", {
           method: "POST",
           headers: {
@@ -1104,7 +1201,7 @@ export function ChatWorkspace({
     if (!files.length) return
     event.preventDefault()
     setDraggingFiles(false)
-    if (!isRunning && canAttach) void chooseFiles(files)
+    if (!isRunning) void chooseFiles(files)
   }
 
   /** Handles clipboard screenshots without changing ordinary multiline text paste. */
@@ -1112,7 +1209,7 @@ export function ChatWorkspace({
     event: ClipboardEvent<HTMLTextAreaElement>
   ): void => {
     const files = Array.from(event.clipboardData.files)
-    if (!files.length || isRunning || !canAttach) return
+    if (!files.length || isRunning) return
     const images = clipboardImageFiles(files)
     if (!images.length) return
     event.preventDefault()
@@ -1122,7 +1219,7 @@ export function ChatWorkspace({
   /** Fetches a public source through the protected route and attaches extracted text. */
   const attachLink = async (): Promise<void> => {
     const url = linkUrl.trim()
-    if (!url || importingLink || !canAttach) return
+    if (!url || importingLink) return
     setImportingLink(true)
     setError("")
     try {
@@ -1701,11 +1798,18 @@ export function ChatWorkspace({
   )
 
   return (
-    <main className="flex h-[calc(100svh-68px-env(safe-area-inset-bottom))] min-h-0 w-full overflow-hidden md:h-svh md:min-h-0">
+    <main
+      className={cn(
+        "flex min-h-0 w-full overflow-hidden",
+        embedded
+          ? "h-full"
+          : "h-[calc(100svh-68px-env(safe-area-inset-bottom))] md:h-svh"
+      )}
+    >
       <aside
         className={cn(
           "hidden w-[276px] shrink-0 border-r border-border/70 bg-card/40 md:block",
-          sourceSelection && "md:hidden"
+          (embedded || sourceSelection) && "md:hidden"
         )}
       >
         {history}
@@ -1713,7 +1817,8 @@ export function ChatWorkspace({
 
       <div
         className={cn(
-          "relative flex min-w-0 flex-1 flex-col px-4 sm:px-8",
+          "relative flex min-w-0 flex-1 flex-col",
+          embedded ? "px-3" : "px-4 sm:px-8",
           draggingFiles && "bg-brand/5"
         )}
         onDragEnter={(event) => {
@@ -1743,114 +1848,136 @@ export function ChatWorkspace({
             </div>
           </div>
         )}
-        <header className="flex h-16 shrink-0 items-center justify-between gap-3">
-          <div className="flex min-w-0 items-center gap-2">
+        <header className="shrink-0">
+          <div className="flex h-16 items-center justify-between gap-3">
+            <div className="flex min-w-0 flex-1 items-center gap-2">
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                className={cn("shrink-0 rounded-full", !embedded && "md:hidden")}
+                aria-label="Open chat history"
+                onClick={() => setHistoryOpen(true)}
+              >
+                <HugeiconsIcon icon={Menu01Icon} size={18} strokeWidth={1.8} />
+              </Button>
+              <h1 className="min-w-0 flex-1 truncate text-xl font-medium tracking-tight">
+                {activeChat?.title ?? "New chat"}
+              </h1>
+              <DropdownMenu>
+                {activeChat ? (
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon-xs"
+                      className="size-7 shrink-0 rounded-lg text-muted-foreground hover:text-foreground"
+                      aria-label={`Actions for ${activeChat.title}`}
+                    >
+                      <HugeiconsIcon icon={MoreHorizontalIcon} size={16} />
+                    </Button>
+                  </DropdownMenuTrigger>
+                ) : null}
+                {activeChat ? (
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem
+                      onSelect={() => openRenameChat(activeChat.id)}
+                    >
+                      <HugeiconsIcon icon={PencilEdit02Icon} size={15} aria-hidden="true" />
+                      Rename chat
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      onSelect={() => {
+                        setIncludeAgentActivity(true)
+                        setExportNotice("")
+                        setExportDialogOpen(true)
+                      }}
+                    >
+                      <HugeiconsIcon icon={Download01Icon} size={15} aria-hidden="true" />
+                      Export chat
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      onSelect={() =>
+                        toggleChatUnread(
+                          activeChat.id,
+                          !(activeChatTarget?.isUnread ?? activeChat.isUnread)
+                        )
+                      }
+                    >
+                      <HugeiconsIcon icon={CheckUnread01Icon} size={15} aria-hidden="true" />
+                      {activeChatTarget?.isUnread ?? activeChat.isUnread ? "Mark as read" : "Mark as unread"}
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      onSelect={() => toggleChatPinned(activeChat.id, !activeChatTarget?.isPinned)}
+                    >
+                      <HugeiconsIcon icon={Pin02Icon} size={15} aria-hidden="true" />
+                      {activeChatTarget?.isPinned ? "Unpin chat" : "Pin chat"}
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      onSelect={() => toggleChatArchived(activeChat.id, !activeChat.isArchived)}
+                    >
+                      <HugeiconsIcon icon={Archive02Icon} size={15} aria-hidden="true" />
+                      {activeChat.isArchived ? "Restore chat" : "Archive chat"}
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem className="text-destructive focus:text-destructive" onSelect={() => setDeleteChatId(activeChat.id)}>
+                      <HugeiconsIcon icon={Delete02Icon} size={15} aria-hidden="true" />
+                      Delete chat
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                ) : null}
+              </DropdownMenu>
+            </div>
             <Button
               type="button"
-              variant="ghost"
-              size="icon-sm"
-              className="rounded-full md:hidden"
-              aria-label="Open chat history"
-              onClick={() => setHistoryOpen(true)}
+              variant="outline"
+              className="shrink-0 rounded-full px-3 md:hidden"
+              disabled={isRunning}
+              onClick={startNewChat}
             >
-              <HugeiconsIcon icon={Menu01Icon} size={18} strokeWidth={1.8} />
+              New chat
             </Button>
-            <h1 className="truncate text-xl font-medium tracking-tight">
-              {activeChat?.title ?? "New chat"}
-            </h1>
-            {activeChat && (
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon-xs"
-                    className="size-7 rounded-lg text-muted-foreground hover:text-foreground"
-                    aria-label={`Actions for ${activeChat.title}`}
-                  >
-                    <HugeiconsIcon icon={MoreHorizontalIcon} size={16} />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="start">
-                  <DropdownMenuItem
-                    onSelect={() => openRenameChat(activeChat.id)}
-                  >
-                    <HugeiconsIcon
-                      icon={PencilEdit02Icon}
-                      size={15}
-                      aria-hidden="true"
-                    />
-                    Rename chat
-                  </DropdownMenuItem>
-                  <DropdownMenuItem
-                    onSelect={() =>
-                      toggleChatUnread(
-                        activeChat.id,
-                        !(activeChatTarget?.isUnread ?? activeChat.isUnread)
-                      )
-                    }
-                  >
-                    <HugeiconsIcon
-                      icon={CheckUnread01Icon}
-                      size={15}
-                      aria-hidden="true"
-                    />
-                    {activeChatTarget?.isUnread ?? activeChat.isUnread
-                      ? "Mark as read"
-                      : "Mark as unread"}
-                  </DropdownMenuItem>
-                  <DropdownMenuItem
-                    onSelect={() =>
-                      toggleChatPinned(
-                        activeChat.id,
-                        !activeChatTarget?.isPinned
-                      )
-                    }
-                  >
-                    <HugeiconsIcon
-                      icon={Pin02Icon}
-                      size={15}
-                      aria-hidden="true"
-                    />
-                    {activeChatTarget?.isPinned ? "Unpin chat" : "Pin chat"}
-                  </DropdownMenuItem>
-                  <DropdownMenuItem
-                    onSelect={() =>
-                      toggleChatArchived(activeChat.id, !activeChat.isArchived)
-                    }
-                  >
-                    <HugeiconsIcon
-                      icon={Archive02Icon}
-                      size={15}
-                      aria-hidden="true"
-                    />
-                    {activeChat.isArchived ? "Restore chat" : "Archive chat"}
-                  </DropdownMenuItem>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem
-                    className="text-destructive focus:text-destructive"
-                    onSelect={() => setDeleteChatId(activeChat.id)}
-                  >
-                    <HugeiconsIcon
-                      icon={Delete02Icon}
-                      size={15}
-                      aria-hidden="true"
-                    />
-                    Delete chat
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            )}
           </div>
-          <Button
-            type="button"
-            variant="outline"
-            className="rounded-full md:hidden"
-            disabled={isRunning}
-            onClick={startNewChat}
-          >
-            New chat
-          </Button>
+          {contextualAttachments.length || contextProjectId ? (
+            <div className="flex min-h-9 items-center justify-between gap-2 border-b border-border/60 px-1 pb-2">
+              {contextProjectId ? (
+                <Button asChild type="button" variant="ghost" size="sm" className="h-8 shrink-0 px-2 text-xs">
+                  <Link href={contextualCard
+                    ? `/projects/${encodeURIComponent(contextProjectId)}/learn?resume=1`
+                    : `/projects/${encodeURIComponent(contextProjectId)}`}>
+                    ← {contextualCard ? "Lesson" : "Project"}
+                  </Link>
+                </Button>
+              ) : null}
+              {contextualAttachments.length ? (
+                <ul aria-label="Chat context" className="flex min-w-0 flex-wrap items-center gap-1.5">
+                  {contextualAttachments.map((attachment) => {
+                    const isDraft = attachments.some(
+                      (item) => item.id === attachment.id
+                    )
+                    return (
+                      <AttachmentChip
+                        key={`${attachment.kind}:${attachment.itemId ?? attachment.projectId}`}
+                        kind={attachment.kind}
+                        label={attachment.label}
+                        onRemove={isDraft ? () => {
+                          setAttachments((current) => current.filter((item) => item.id !== attachment.id))
+                          if (attachment.kind === "project" && attachment.projectId === newChatProjectId)
+                            setNewChatProjectId(undefined)
+                        } : undefined}
+                      />
+                    )
+                  })}
+                </ul>
+              ) : (
+                <p className="min-w-0 truncate text-xs text-muted-foreground">
+                  <span className="font-medium text-foreground">Project</span>
+                  <span aria-hidden="true"> · </span>
+                  {contextProjectLabel}
+                </p>
+              )}
+            </div>
+          ) : null}
         </header>
 
         <section
@@ -1903,44 +2030,12 @@ export function ChatWorkspace({
                 <HugeiconsIcon icon={Chat01Icon} size={25} strokeWidth={1.8} />
               </span>
               <h2 className="mt-5 text-2xl font-medium tracking-tight">
-                {selectedCard?.itemId ? (
-                  <>
-                    Ask about {selectedCard.label}
-                    {welcomeProjectId && welcomeProjectLabel ? (
-                      <>
-                        {" "}
-                        in{" "}
-                        <Link
-                          href={`/projects/${encodeURIComponent(welcomeProjectId)}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-brand underline decoration-brand/35 underline-offset-4 hover:decoration-brand focus-visible:rounded-sm focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
-                        >
-                          {welcomeProjectLabel}
-                        </Link>
-                      </>
-                    ) : null}
-                  </>
-                ) : selectedProject?.projectId ? (
-                  <>
-                    Ask about{" "}
-                    <Link
-                      href={`/projects/${encodeURIComponent(selectedProject.projectId)}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-brand underline decoration-brand/35 underline-offset-4 hover:decoration-brand focus-visible:rounded-sm focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
-                    >
-                      {selectedProject.label}
-                    </Link>
-                  </>
-                ) : (
-                  "Ask about anything"
-                )}
+                {contextualCard
+                  ? `Ask about ${contextualCard.label}`
+                  : contextualProject
+                    ? `Ask about ${contextualProject.label}`
+                    : "Ask Blitz"}
               </h2>
-              <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-muted-foreground">
-                Attach any file, project, or public link. Blitz will use that
-                material as context for the conversation.
-              </p>
             </div>
           ) : (
             <div
@@ -2001,10 +2096,10 @@ export function ChatWorkspace({
                   <article
                     key={message.id}
                     className={cn(
-                      "max-w-[88%] text-sm leading-6 sm:max-w-[78%]",
+                      "group text-sm leading-6",
                       message.role === "user"
-                        ? "ml-auto flex flex-col items-end"
-                        : "mr-auto min-w-0"
+                        ? "ml-auto flex max-w-[88%] flex-col items-end sm:max-w-[78%]"
+                        : "mr-auto w-full min-w-0"
                     )}
                   >
                     {message.role === "user" && messageAttachments.length > 0 ? (
@@ -2063,12 +2158,14 @@ export function ChatWorkspace({
                               isReadOnly={isRunning}
                               onToggleExpand={toggleExpandAnnotation}
                               onCitation={(citation) => {
-                                if (activeChatId)
-                                  setSourceSelection({
+                                if (!activeChatId) return
+                                const selection: SourceSelection = {
                                     chatId: activeChatId,
                                     messageId: message.id,
                                     citationId: citation.id,
-                                  })
+                                }
+                                if (onOpenSource) onOpenSource(selection)
+                                else setSourceSelection(selection)
                               }}
                               onAddAnnotation={(selectedText) =>
                                 addAnnotation(message.id, selectedText)
@@ -2158,12 +2255,13 @@ export function ChatWorkspace({
                     </div>
 
                     {!editing ? (
-                      <div
-                        className={cn(
-                          "mt-1 flex flex-wrap items-center gap-1 text-muted-foreground",
-                          message.role === "user" && "justify-end"
-                        )}
-                      >
+                      <div className="mt-1 flex w-full items-center justify-between gap-2">
+                        <div
+                          className={cn(
+                            "flex min-w-0 flex-wrap items-center gap-1 text-muted-foreground",
+                            message.role === "user" && "justify-end"
+                          )}
+                        >
                         {message.content ? (
                           <Button
                             type="button"
@@ -2204,6 +2302,9 @@ export function ChatWorkspace({
                           <>
                             {message.content ? (
                               <>
+                                {message.status !== "running" ? (
+                                  <ReadAloudButton text={message.content} />
+                                ) : null}
                                 <Button
                                   type="button"
                                   variant="ghost"
@@ -2257,6 +2358,16 @@ export function ChatWorkspace({
                             ) : null}
                           </>
                         )}
+                        </div>
+                        {typeof message.createdAt === "number" ? (
+                          <time
+                            dateTime={new Date(message.createdAt).toISOString()}
+                            aria-label={`Sent at ${formatMessageTime(message.createdAt)}`}
+                            className="shrink-0 select-none whitespace-nowrap text-right text-[11px] leading-4 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100"
+                          >
+                            {formatMessageTime(message.createdAt)}
+                          </time>
+                        ) : null}
                       </div>
                     ) : null}
                   </article>
@@ -2268,8 +2379,7 @@ export function ChatWorkspace({
         </section>
 
         <div className="mx-auto w-full max-w-3xl shrink-0 pb-3">
-          {hasOrphanPersistedAttachments ||
-          attachments.length ||
+          {composerAttachments.length ||
           draftAnnotations.length ? (
             <div className="mb-2 flex min-w-0 flex-wrap items-center gap-1.5 px-1">
               <ul
@@ -2277,7 +2387,13 @@ export function ChatWorkspace({
                 className="flex min-w-0 flex-wrap items-center gap-1.5"
               >
                 {hasOrphanPersistedAttachments
-                  ? persistedAttachments.map((attachment) => (
+                  ? persistedAttachments
+                      .filter(
+                        (attachment) =>
+                          attachment.kind !== "card" &&
+                          attachment.kind !== "project"
+                      )
+                      .map((attachment) => (
                       <AttachmentChip
                         key={attachment.id}
                         kind={attachment.kind}
@@ -2296,7 +2412,13 @@ export function ChatWorkspace({
                       />
                     ))
                   : null}
-                {attachments.map((attachment) => (
+                {attachments
+                  .filter(
+                    (attachment) =>
+                      attachment.kind !== "card" &&
+                      attachment.kind !== "project"
+                  )
+                  .map((attachment) => (
                   <AttachmentChip
                     key={attachment.id}
                     kind={attachment.kind}
@@ -2448,11 +2570,13 @@ export function ChatWorkspace({
             />
             <div className="flex items-center justify-between gap-2 pt-1">
               <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
-                <input
+                <Input
                   ref={fileInputRef}
                   className="sr-only"
                   type="file"
                   multiple
+                  tabIndex={-1}
+                  aria-hidden="true"
                   onChange={(event) =>
                     void chooseFiles(Array.from(event.target.files ?? []))
                   }
@@ -2462,9 +2586,7 @@ export function ChatWorkspace({
                   variant="ghost"
                   size="icon"
                   className="rounded-full"
-                  disabled={
-                    isRunning || !canAttach || Boolean(continuableMessage)
-                  }
+                  disabled={isRunning || Boolean(continuableMessage)}
                   aria-label="Upload file"
                   onClick={() => fileInputRef.current?.click()}
                 >
@@ -2474,30 +2596,57 @@ export function ChatWorkspace({
                     strokeWidth={1.8}
                   />
                 </Button>
-                <ReplyModelPicker
-                  disabled={isRunning || Boolean(continuableMessage)}
-                  onSaveStateChange={setSavingReplySettings}
-                />
-                <ChatAgentControls
-                  autonomy={effectiveAgentAutonomy}
-                  additionalInstructions={effectiveAgentInstructions}
-                  workingProjectId={effectiveWorkingProjectId}
-                  projects={projects}
-                  disabled={isRunning || Boolean(continuableMessage)}
-                  onAutonomyChange={(value) => {
-                    setAgentSettingsTouched(true)
-                    setAgentAutonomy(value)
-                    writeCachedAgentAutonomy(value)
-                  }}
-                  onInstructionsChange={(value) => {
-                    setAgentSettingsTouched(true)
-                    setAgentInstructions(value)
-                  }}
-                  onWorkingProjectChange={(value) => {
-                    setAgentSettingsTouched(true)
-                    setWorkingProjectId(value)
-                  }}
-                />
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-9 shrink-0 rounded-full px-3 text-xs"
+                      disabled={isRunning || Boolean(continuableMessage)}
+                    >
+                      Options
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent
+                    side="top"
+                    align="start"
+                    className="max-h-[min(70svh,32rem)] w-[min(24rem,calc(100vw-2rem))] overflow-y-auto rounded-xl p-4"
+                  >
+                    <div className="space-y-4">
+                      <section className="space-y-2">
+                        <h2 className="text-sm font-medium">Reply model</h2>
+                        <ReplyModelPicker
+                          disabled={isRunning || Boolean(continuableMessage)}
+                          onSaveStateChange={setSavingReplySettings}
+                        />
+                      </section>
+                      <section className="space-y-2 border-t pt-3">
+                        <h2 className="text-sm font-medium">Working project</h2>
+                        <ChatAgentControls
+                          autonomy={effectiveAgentAutonomy}
+                          additionalInstructions={effectiveAgentInstructions}
+                          workingProjectId={effectiveWorkingProjectId}
+                          projects={projects}
+                          disabled={isRunning || Boolean(continuableMessage)}
+                          onAutonomyChange={(value) => {
+                            setAgentSettingsTouched(true)
+                            setAgentAutonomy(value)
+                            writeCachedAgentAutonomy(value)
+                          }}
+                          onInstructionsChange={(value) => {
+                            setAgentSettingsTouched(true)
+                            setAgentInstructions(value)
+                          }}
+                          onWorkingProjectChange={(value) => {
+                            setAgentSettingsTouched(true)
+                            setWorkingProjectId(value)
+                          }}
+                        />
+                      </section>
+                    </div>
+                  </PopoverContent>
+                </Popover>
               </div>
               {(() => {
                 if (isStreaming) {
@@ -2626,7 +2775,7 @@ export function ChatWorkspace({
         </div>
       </div>
 
-      {sourceSelection ? (
+      {!embedded && sourceSelection ? (
         <SourcePane
           key={`${sourceSelection.messageId}:${sourceSelection.citationId}`}
           selection={sourceSelection}
@@ -2637,6 +2786,7 @@ export function ChatWorkspace({
       <Dialog open={historyOpen} onOpenChange={setHistoryOpen}>
         <DialogContent
           className="h-[min(680px,calc(100svh-2rem))] min-w-0 overflow-hidden p-0 sm:max-w-sm"
+          showCloseButton={false}
           aria-describedby={undefined}
         >
           <DialogTitle className="sr-only">Chat history</DialogTitle>
@@ -2719,6 +2869,39 @@ export function ChatWorkspace({
               </Button>
             </DialogFooter>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={exportDialogOpen} onOpenChange={setExportDialogOpen}>
+        <DialogContent aria-describedby="export-chat-description">
+          <DialogHeader>
+            <DialogTitle>Export chat</DialogTitle>
+            <DialogDescription id="export-chat-description">
+              Export the full conversation as Markdown, including your messages and replies.
+            </DialogDescription>
+          </DialogHeader>
+          <label className="flex cursor-pointer items-start gap-3 rounded-lg border p-3 text-sm">
+            <Checkbox
+              checked={includeAgentActivity}
+              onCheckedChange={(checked) => setIncludeAgentActivity(checked === true)}
+              className="mt-0.5"
+            />
+            <span className="grid gap-1">
+              <span className="font-medium">Include agent working and tool calls</span>
+              <span className="text-muted-foreground">Adds available working notes, tool activity, and agent requests.</span>
+            </span>
+          </label>
+          <p aria-live="polite" className="min-h-5 text-sm text-muted-foreground">{exportNotice}</p>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => void copyExport()}>
+              <HugeiconsIcon icon={Copy01Icon} size={15} aria-hidden="true" />
+              Copy to clipboard
+            </Button>
+            <Button type="button" onClick={downloadExport}>
+              <HugeiconsIcon icon={Download01Icon} size={15} aria-hidden="true" />
+              Export as Markdown
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 

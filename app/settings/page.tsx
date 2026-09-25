@@ -1,6 +1,7 @@
 /** Presents application-wide appearance and AI settings for Blitz. */
 
 import { AppearanceSettings } from "@/components/settings/appearance-settings"
+import { KokoroVoiceSettings } from "@/components/settings/kokoro-voice-settings"
 import { ModelSettingsForm } from "@/components/settings/model-settings-form"
 import { ProviderConnections } from "@/components/settings/provider-connections"
 
@@ -13,8 +14,7 @@ export default function SettingsPage() {
           Settings
         </h1>
         <p className="mt-2 text-sm leading-6 text-muted-foreground">
-          Customize how Blitz looks and choose the models behind your study
-          tools.
+          Customize how Blitz looks, sounds, and helps you study.
         </p>
       </div>
       <div className="space-y-10">
@@ -32,6 +32,20 @@ export default function SettingsPage() {
           </div>
           <AppearanceSettings />
         </section>
+        <section aria-labelledby="audio-settings-heading" className="space-y-4">
+          <div>
+            <h2
+              id="audio-settings-heading"
+              className="font-heading text-xl font-medium tracking-tight"
+            >
+              Audio
+            </h2>
+            <p className="mt-1 text-sm leading-5 text-muted-foreground">
+              Choose the voices for narrated study material and podcasts.
+            </p>
+          </div>
+          <KokoroVoiceSettings />
+        </section>
         <section aria-labelledby="ai-settings-heading" className="space-y-4">
           <div>
             <h2
@@ -42,7 +56,7 @@ export default function SettingsPage() {
             </h2>
             <p className="mt-1 text-sm leading-5 text-muted-foreground">
               Choose the models and reasoning levels Blitz uses for research,
-              card generation, and replies.
+              content generation, and replies.
             </p>
           </div>
           <ProviderConnections />

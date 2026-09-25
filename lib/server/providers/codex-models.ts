@@ -11,21 +11,19 @@ import type { ProviderModelOption } from "./types.ts"
 const MAX_MODEL_PAGES = 20
 const MODEL_PAGE_SIZE = 100
 const MODEL_CACHE_TTL_MS = 30_000
-const KNOWN_REASONING_EFFORTS = new Set([
-  "none",
-  "minimal",
-  "low",
-  "medium",
-  "high",
-  "xhigh",
-  "max",
-  "ultra",
-  "default",
-])
+const REASONING_EFFORT_PATTERN = /^[a-z][a-z0-9_-]{0,63}$/
 
 type CodexModelCacheEntry = {
   readonly expiresAt: number
   readonly models: readonly ProviderModelOption[]
+}
+
+/** Normalizes a provider effort token while preserving newly added values. */
+function normalizeReasoningEffort(value: string): AiReasoningEffort | undefined {
+  const effort = value.trim().toLowerCase()
+  return REASONING_EFFORT_PATTERN.test(effort)
+    ? (effort as AiReasoningEffort)
+    : undefined
 }
 
 const modelCache = new Map<string, CodexModelCacheEntry>()
@@ -43,18 +41,11 @@ export function normalizeCodexModel(
   const id = model.model.trim() || model.id.trim()
   if (!id) return undefined
   const reasoningEfforts = model.supportedReasoningEfforts
-    .map((option) => option.reasoningEffort.trim().toLowerCase())
-    .filter((effort): effort is AiReasoningEffort =>
-      KNOWN_REASONING_EFFORTS.has(effort)
-    )
+    .map((option) => normalizeReasoningEffort(option.reasoningEffort))
+    .filter((effort): effort is AiReasoningEffort => effort !== undefined)
   const uniqueReasoningEfforts = [...new Set(reasoningEfforts)]
-  const defaultReasoningEffort = model.defaultReasoningEffort
-    ?.trim()
-    .toLowerCase()
-  const fallbackReasoningEffort = KNOWN_REASONING_EFFORTS.has(
-    defaultReasoningEffort ?? ""
-  )
-    ? (defaultReasoningEffort as AiReasoningEffort)
+  const fallbackReasoningEffort = model.defaultReasoningEffort
+    ? (normalizeReasoningEffort(model.defaultReasoningEffort) ?? "default")
     : "default"
   return {
     id,

@@ -30,8 +30,24 @@ async function requirePreparedCard(
   const item = await ctx.db.get(itemId)
   if (!item || item.projectId !== projectId)
     throw new Error("Learning item does not belong to project")
-  if (!item.sourceChunkId)
-    throw new Error("Card source chunk is not available for chat")
+  if (!item.sourceChunkId) {
+    const sourceId = item.sourceReferences?.[0]?.sourceId ?? item.sourceIds[0]
+    const source = sourceId ? await ctx.db.get(sourceId) : null
+    if (!source || source.projectId !== projectId)
+      throw new Error("Card source is not available for chat")
+    return {
+      projectId,
+      item,
+      source: {
+        filename: source.filename,
+        kind: source.kind,
+        extractedText: source.extractedText.slice(
+          0,
+          MAX_CARD_CONTEXT_CHARACTERS
+        ),
+      },
+    }
+  }
   const chunk = await ctx.db.get(item.sourceChunkId)
   if (!chunk) throw new Error("Card source chunk was not found")
   const job = await ctx.db.get(chunk.jobId)

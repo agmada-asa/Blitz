@@ -36,8 +36,7 @@ export const createDocument = mutation({
       new TextEncoder().encode(args.text).length > 500_000 ||
       args.filename.length > 255 ||
       !Number.isSafeInteger(args.sizeBytes) ||
-      args.sizeBytes < 1 ||
-      args.sizeBytes > 50_000_000
+      args.sizeBytes < 1
     )
       throw new Error("Chat upload is invalid")
     return ctx.db.insert("chatDocuments", { ...args, createdAt: Date.now() })

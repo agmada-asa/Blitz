@@ -62,6 +62,8 @@ export default defineSchema({
       v.union(v.literal("approval"), v.literal("project"), v.literal("full"))
     ),
     agentInstructions: v.optional(v.string()),
+    /** Five-step length preference copied into each new content generation job. */
+    contentDepth: v.optional(v.number()),
     title: v.string(),
     createdAt: v.number(),
     /** Optional stable key for the project-local desktop workspace. */
@@ -148,12 +150,42 @@ export default defineSchema({
     projectId: v.id("projects"),
     topicId: v.optional(v.id("topics")),
     title: v.string(),
+    /** Other source terms that refer to this same taught idea. */
+    aliases: v.optional(v.array(v.string())),
     sourceIds: v.array(v.id("sources")),
     createdAt: v.number(),
   })
     .index("by_project", ["projectId"])
     .index("by_project_title", ["projectId", "title"])
     .index("by_project_topic", ["projectId", "topicId"]),
+
+  /** One source-supported connection between two concepts in a project. */
+  conceptRelationships: defineTable({
+    projectId: v.id("projects"),
+    sourceId: v.id("sources"),
+    fromConceptId: v.id("concepts"),
+    toConceptId: v.id("concepts"),
+    kind: v.union(
+      v.literal("prerequisite_for"),
+      v.literal("part_of"),
+      v.literal("causes"),
+      v.literal("contrasts_with"),
+      v.literal("applies_to"),
+      v.literal("related_to")
+    ),
+    explanation: v.string(),
+    evidence: v.array(
+      v.object({
+        sectionId: v.optional(v.string()),
+        locator: v.string(),
+      })
+    ),
+    createdAt: v.number(),
+  })
+    .index("by_project", ["projectId"])
+    .index("by_project_source", ["projectId", "sourceId"])
+    .index("by_project_from", ["projectId", "fromConceptId"])
+    .index("by_project_to", ["projectId", "toConceptId"]),
 
   learningItems: defineTable({
     projectId: v.id("projects"),
@@ -164,6 +196,15 @@ export default defineSchema({
     body: v.string(),
     /** Optional longer explanation for the walkthrough card's back face. */
     deepExplanation: v.optional(v.string()),
+    /** Last lesson rewrite; answer events continue to refer to this stable item. */
+    updatedAt: v.optional(v.number()),
+    /** Superseded lessons stay stored for study history but leave live views. */
+    archivedAt: v.optional(v.number()),
+    /** Source locations supplied by the agent for this lesson. */
+    sourceReferences: v.optional(v.array(v.object({
+      sourceId: v.id("sources"),
+      locator: v.string(),
+    }))),
     question: v.optional(v.string()),
     options: v.optional(v.array(learningOption)),
     correctOptionId: v.optional(v.string()),
@@ -178,6 +219,24 @@ export default defineSchema({
     .index("by_project_order", ["projectId", "order"])
     .index("by_project_concept_order", ["projectId", "conceptId", "order"])
     .index("by_concept_order", ["conceptId", "order"]),
+
+  /** Previous explanation text retained when a new source revises a lesson. */
+  lessonPageRevisions: defineTable({
+    projectId: v.id("projects"),
+    itemId: v.id("learningItems"),
+    jobId: v.id("contentGenerationJobs"),
+    title: v.string(),
+    body: v.string(),
+    deepExplanation: v.optional(v.string()),
+    sourceIds: v.array(v.id("sources")),
+    sourceReferences: v.optional(v.array(v.object({
+      sourceId: v.id("sources"),
+      locator: v.string(),
+    }))),
+    replacedAt: v.number(),
+  })
+    .index("by_project", ["projectId"])
+    .index("by_item_replacedAt", ["itemId", "replacedAt"]),
 
   writingActivities: defineTable({
     projectId: v.id("projects"),
@@ -218,6 +277,8 @@ export default defineSchema({
   conceptReviews: defineTable({
     projectId: v.id("projects"),
     conceptId: v.id("concepts"),
+    /** Distinct question items with at least one valid recorded answer. */
+    answeredQuestionCount: v.optional(v.number()),
     attemptCount: v.number(),
     correctCount: v.number(),
     incorrectCount: v.number(),
@@ -272,6 +333,85 @@ export default defineSchema({
     .index("by_status_createdAt", ["status", "createdAt"])
     .index("by_leaseToken", ["leaseToken"]),
 
+  /** Agent-led content work for one source, with durable page import progress. */
+  contentGenerationJobs: defineTable({
+    projectId: v.id("projects"),
+    sourceId: v.id("sources"),
+    status: v.union(
+      v.literal("queued"),
+      v.literal("leased"),
+      v.literal("failed"),
+      v.literal("completed")
+    ),
+    depth: v.number(),
+    /** Approved research scope restricts what imported references may teach. */
+    learningScope: v.optional(v.string()),
+    providerId: v.optional(v.string()),
+    providerInstanceId: v.optional(v.string()),
+    generationModel: v.optional(v.string()),
+    generationEffort: v.optional(v.string()),
+    /** Current worker step, shown while lessons are being prepared. */
+    stage: v.optional(
+      v.union(
+        v.literal("preparing"),
+        v.literal("generating"),
+        v.literal("validating"),
+        v.literal("importing")
+      )
+    ),
+    /** Bounded provider commentary and tool activity for the source detail view. */
+    thought: v.optional(v.string()),
+    activity: v.optional(
+      v.array(
+        v.object({
+          id: v.string(),
+          type: v.literal("tool"),
+          title: v.string(),
+          status: v.union(
+            v.literal("running"),
+            v.literal("completed"),
+            v.literal("failed")
+          ),
+          detail: v.optional(v.string()),
+          startedAt: v.optional(v.number()),
+          completedAt: v.optional(v.number()),
+        })
+      )
+    ),
+    startedAt: v.optional(v.number()),
+    durationMs: v.optional(v.number()),
+    totalPages: v.optional(v.number()),
+    /** Section accounting retained after temporary agent draft files are removed. */
+    coverage: v.optional(v.array(v.object({
+      sectionId: v.string(),
+      status: v.union(v.literal("included"), v.literal("skipped")),
+      pageKeys: v.array(v.string()),
+      reason: v.optional(v.string()),
+    }))),
+    importedPages: v.number(),
+    leaseToken: v.optional(v.string()),
+    leaseExpiresAt: v.optional(v.number()),
+    error: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_project_source", ["projectId", "sourceId"])
+    .index("by_status_createdAt", ["status", "createdAt"])
+    /** Finds a project's active lease before another source starts generating. */
+    .index("by_project_status_lease", ["projectId", "status", "leaseExpiresAt"])
+    /** Finds expired leases without active jobs hiding them in the queue. */
+    .index("by_status_lease", ["status", "leaseExpiresAt"]),
+
+  /** Idempotent page commits allow a large agent draft to resume after a failed import. */
+  contentPageCommits: defineTable({
+    jobId: v.id("contentGenerationJobs"),
+    pageKey: v.string(),
+    /** Saved concept lets a resumed job resolve links after page imports. */
+    conceptId: v.optional(v.id("concepts")),
+    payloadHash: v.string(),
+    createdAt: v.number(),
+  }).index("by_job_page", ["jobId", "pageKey"]),
+
   preparationChunks: defineTable({
     jobId: v.id("preparationJobs"),
     sourceId: v.id("sources"),
@@ -309,6 +449,8 @@ export default defineSchema({
   sourceChunks: defineTable({
     projectId: v.id("projects"),
     sourceId: v.id("sources"),
+    /** Denormalized label avoids reading the large source body during retrieval. */
+    sourceFilename: v.optional(v.string()),
     ingestionJobId: v.optional(v.id("ingestionJobs")),
     ordinal: v.number(),
     text: v.string(),
@@ -408,6 +550,21 @@ export default defineSchema({
     researchEffort: v.optional(v.string()),
     replyEffort: v.optional(v.string()),
     cardGenerationEffort: v.optional(v.string()),
+    updatedAt: v.number(),
+  }).index("by_scope", ["scope"]),
+
+  /** One global record for the ordered Kokoro voices used as podcast hosts. */
+  audioVoiceSettings: defineTable({
+    scope: v.literal("global"),
+    voiceIds: v.array(
+      v.union(
+        v.literal("af_heart"),
+        v.literal("af_bella"),
+        v.literal("af_nicole"),
+        v.literal("am_fenrir"),
+        v.literal("am_puck")
+      )
+    ),
     updatedAt: v.number(),
   }).index("by_scope", ["scope"]),
 

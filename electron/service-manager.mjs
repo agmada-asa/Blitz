@@ -1,6 +1,9 @@
 /** Supervises Blitz's local Next, Convex, and worker processes for the desktop host. */
 
 import { spawn } from "node:child_process"
+import { readFile } from "node:fs/promises"
+import { createServer } from "node:net"
+import { join } from "node:path"
 
 /** @typedef {import("node:events").EventEmitter & {pid?: number, kill?: (signal?: string) => void}} ManagedChild */
 /** @typedef {(command: string, args: string[], options: object) => ManagedChild} SpawnProcess */
@@ -10,9 +13,75 @@ import { spawn } from "node:child_process"
 const workerDefinitions = [
   ["ingestion", "worker:ingestion"],
   ["preparation", "worker"],
+  ["content", "worker:content"],
   ["chat", "worker:chat"],
   ["research", "worker:research"],
 ]
+
+/**
+ * Reads the saved Blitz port pair, then checks upward by pairs when occupied.
+ * @param {string} cwd Blitz's repository root containing the local Convex config.
+ * @param {NodeJS.ProcessEnv} environment Optional port preferences for this launch.
+ * @returns {Promise<{cloud: number, site: number}>} Ports reserved for Blitz startup.
+ * @throws When no free pair is found before the bounded search ends.
+ */
+export async function resolveLocalConvexPorts(cwd, environment = process.env) {
+  const savedConfigPath = join(
+    cwd,
+    ".convex",
+    "local",
+    "default",
+    "config.json"
+  )
+  let savedCloudPort = 3220
+  let savedSitePort = 3221
+  try {
+    const savedConfig = JSON.parse(await readFile(savedConfigPath, "utf8"))
+    savedCloudPort = Number(savedConfig.ports?.cloud) || savedCloudPort
+    savedSitePort = Number(savedConfig.ports?.site) || savedSitePort
+  } catch {
+    // A fresh local deployment uses Blitz's dedicated pair instead of 3210/3211.
+  }
+
+  const preferredCloudPort =
+    Number(environment.BLITZ_CONVEX_CLOUD_PORT) || savedCloudPort
+  const preferredSitePort =
+    Number(environment.BLITZ_CONVEX_SITE_PORT) || savedSitePort
+  if (
+    !Number.isInteger(preferredCloudPort) ||
+    !Number.isInteger(preferredSitePort) ||
+    preferredCloudPort < 1024 ||
+    preferredSitePort < 1024 ||
+    preferredCloudPort > 65535 ||
+    preferredSitePort > 65535
+  ) {
+    throw new Error("Blitz Convex ports must be valid TCP ports above 1023.")
+  }
+  for (let offset = 0; offset <= 100; offset += 2) {
+    const cloud = preferredCloudPort + offset
+    const site = preferredSitePort + offset
+    if (cloud > 65535 || site > 65535) break
+    if ((await isPortAvailable(cloud)) && (await isPortAvailable(site))) {
+      return { cloud, site }
+    }
+  }
+  throw new Error("Could not find a free adjacent port pair for Blitz Convex.")
+}
+
+/**
+ * Checks whether a loopback port is free and closes its temporary probe socket.
+ * @param {number} port The local TCP port to check.
+ * @returns {Promise<boolean>} Whether the port was available during the probe.
+ */
+function isPortAvailable(port) {
+  return new Promise((resolve) => {
+    const server = createServer()
+    server.once("error", () => resolve(false))
+    server.listen({ host: "127.0.0.1", port, exclusive: true }, () => {
+      server.close(() => resolve(true))
+    })
+  })
+}
 
 /** Manages process groups, health checks, and one bounded worker restart. */
 export class ServiceManager {
@@ -46,18 +115,17 @@ export class ServiceManager {
     this.shutdownGraceMs = shutdownGraceMs
   }
 
-  /** Starts the local services and waits until Next responds over loopback. */
+  /** Resolves Blitz's local Convex ports, starts services, and waits for Next. */
   async start() {
+    const convexPorts = await resolveLocalConvexPorts(this.cwd)
+    const convexHost = process.env.BLITZ_LAN_ADDRESS || "127.0.0.1"
     const environment = {
       ...process.env,
       BLITZ_PORT: String(this.port),
       BLITZ_SERVER_URL: `http://127.0.0.1:${this.port}`,
-      BLITZ_CONVEX_URL: process.env.BLITZ_CONVEX_URL || "http://127.0.0.1:3210",
-      NEXT_PUBLIC_CONVEX_URL:
-        process.env.NEXT_PUBLIC_CONVEX_URL ||
-        `http://${process.env.BLITZ_LAN_ADDRESS || "127.0.0.1"}:3210`,
-      NEXT_PUBLIC_CONVEX_SITE_URL:
-        process.env.NEXT_PUBLIC_CONVEX_SITE_URL || "http://127.0.0.1:3211",
+      BLITZ_CONVEX_URL: `http://127.0.0.1:${convexPorts.cloud}`,
+      NEXT_PUBLIC_CONVEX_URL: `http://${convexHost}:${convexPorts.cloud}`,
+      NEXT_PUBLIC_CONVEX_SITE_URL: `http://${convexHost}:${convexPorts.site}`,
       BLITZ_DESKTOP: "1",
       BLITZ_NEXT_DIST_DIR: process.env.BLITZ_NEXT_DIST_DIR || ".next-desktop",
     }
@@ -66,7 +134,16 @@ export class ServiceManager {
       this.startService(
         "convex",
         "npx",
-        ["convex", "dev", "--tail-logs", "disable"],
+        [
+          "convex",
+          "dev",
+          "--tail-logs",
+          "disable",
+          "--local-cloud-port",
+          String(convexPorts.cloud),
+          "--local-site-port",
+          String(convexPorts.site),
+        ],
         environment
       )
     this.startService(
@@ -161,7 +238,7 @@ export class ServiceManager {
         if (response.ok || response.status < 500) {
           if (process.env.BLITZ_DESKTOP_SKIP_CONVEX !== "1") {
             const convexResponse = await this.fetchImpl(
-              this.environment?.BLITZ_CONVEX_URL || "http://127.0.0.1:3210",
+              this.environment?.BLITZ_CONVEX_URL || "http://127.0.0.1:3220",
               { signal: AbortSignal.timeout(1_500) }
             )
             if (convexResponse.status >= 500) {

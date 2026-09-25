@@ -274,6 +274,27 @@ export async function readProjectFileBytes(
   }
 }
 
+/** Opens a project file without following symlinks and streams its original bytes. */
+export async function streamProjectFile(
+  projectId: string,
+  key: string
+): Promise<{ body: ReadableStream<Uint8Array>; size: number }> {
+  const path = await resolveProjectFile(projectId, key)
+  const handle = await fs.open(path, constants.O_RDONLY | constants.O_NOFOLLOW)
+  try {
+    const info = await handle.stat()
+    if (!info.isFile()) throw new Error("File is not a regular file")
+    const stream = handle.createReadStream({ autoClose: true })
+    return {
+      body: Readable.toWeb(stream) as ReadableStream<Uint8Array>,
+      size: info.size,
+    }
+  } catch (error) {
+    await handle.close()
+    throw error
+  }
+}
+
 /** Removes one previously stored file after a failed ingestion step. */
 export async function removeProjectFile(
   projectId: string,

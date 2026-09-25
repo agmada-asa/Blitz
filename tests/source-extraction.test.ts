@@ -94,6 +94,24 @@ test("extracts a stored PDF larger than the research download limit", async () =
   }
 })
 
+test("extracts a stored JSON file through the text helper", async () => {
+  const root = await mkdtemp(join(tmpdir(), "blitz-stored-json-"))
+  const path = join(root, "notes.json")
+  const text = '{"topic":"Learning"}'
+  try {
+    await writeFile(path, text)
+    const result = await extractStoredSource({
+      path,
+      filename: "notes.json",
+      contentType: "application/json",
+      sizeBytes: Buffer.byteLength(text),
+    })
+    assert.equal(result.extractedText, text)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 /** Covers book-sized extraction and splitting together so the old cap cannot return upstream. */
 test("extracts and splits a PDF longer than one source document", async () => {
   const pages = Array.from(

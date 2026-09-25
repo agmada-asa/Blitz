@@ -34,6 +34,21 @@ test("parseWorkspaceChatRequest accepts mixed attachment context", () => {
   assert.equal(result.attachments[0]?.kind, "link")
 })
 
+test("parseWorkspaceChatRequest accepts more than eight saved files", () => {
+  const attachments = Array.from({ length: 12 }, (_, index) => ({
+    kind: "file",
+    label: `source-${index}.xlsx`,
+    documentId: `document-${index}`,
+  }))
+  const result = parseWorkspaceChatRequest({
+    message: "Compare these files",
+    clientMessageId: "message-many-files",
+    projectIds: [],
+    attachments,
+  })
+  assert.equal(result.attachments.length, attachments.length)
+})
+
 test("parseWorkspaceChatRequest ignores non-native MIME metadata for text files", () => {
   const result = parseWorkspaceChatRequest({
     message: "Read this PDF",

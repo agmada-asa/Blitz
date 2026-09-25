@@ -110,6 +110,7 @@ async function handlers() {
         { _handler: Handler }
       >
     return {
+      createDocument: citations.createDocument._handler,
       prepare: citations.prepare._handler,
       read: citations.read._handler,
       branch: chats.branch._handler,
@@ -119,6 +120,24 @@ async function handlers() {
     hook.deregister()
   }
 }
+
+test("chat document metadata accepts originals above the former 50 MB cap", async () => {
+  const api = await handlers()
+  const db = new MemoryDb()
+  const projectId = db.seed("projects", { title: "Study project" })
+  const documentId = await api.createDocument(
+    { db },
+    {
+      projectId,
+      filename: "data.xlsx",
+      relativeKey: `Sources/${"a".repeat(64)}-data.xlsx`,
+      mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      text: "[Attached file: data.xlsx]",
+      sizeBytes: 50_000_001,
+    }
+  )
+  assert.ok(await db.get(String(documentId)))
+})
 
 test("ad hoc passages survive completion, follow-up, and branching; cross-chat reads fail", async () => {
   const api = await handlers()

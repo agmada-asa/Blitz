@@ -13,7 +13,7 @@ npm ci
 npm run dev:lan
 ```
 
-The launcher starts Next.js, local Convex, the preparation, card chat, and research workers. Open the printed LAN address on a phone connected to the same Wi-Fi. Keep the process running while using the web app. Pressing `Ctrl+C` stops every process group; a service that does not exit within three seconds is killed so it cannot retain a development port. Set `BLITZ_PORT` to change the web port from `3001`.
+The launcher starts Next.js, local Convex, content generation, and the other background workers. Open the printed LAN address on a phone connected to the same Wi-Fi. Keep the process running while using the web app. Pressing `Ctrl+C` or closing its terminal stops every process group; a service that does not exit within three seconds is killed so it cannot retain a development port. The separate `npm run dev` launcher also stops Next when its terminal closes. Set `BLITZ_PORT` to change the web port from `3001`.
 
 For separate terminals:
 
@@ -22,6 +22,7 @@ npx convex dev
 npm run dev
 npm run worker:ingestion
 npm run worker
+npm run worker:content
 npm run worker:chat
 npm run worker:research
 ```
@@ -68,7 +69,7 @@ The ACP client negotiates `session/load` and `session/resume`. If neither is sup
 
 ## Learn
 
-Create a project in Library and add files, pasted notes, or a public link. Preparation runs in the background and can resume from a saved section. The home feed mixes projects; Filter narrows it to a project or topic.
+Create a project in Library and add files, pasted notes, or a public link. Content generation runs in the background and can resume from saved lesson drafts. The home feed mixes projects; Filter narrows it to a project or topic.
 
 Open a project or topic for a focused feed, Study with immediate feedback, or a Test with results at the end. Topics can be renamed or excluded from the mixed feed.
 

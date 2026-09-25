@@ -58,9 +58,9 @@ test("falls back to the legacy model and then Blitz defaults", () => {
 test("validates complete model and reasoning settings", () => {
   assert.deepEqual(
     validateAiModelSettings({
-      researchModel: " gpt-5.6-luna ",
-      replyModel: "gpt-5.6-luna",
-      cardGenerationModel: "gpt-5.6-luna",
+      researchModel: " gpt-6-luna ",
+      replyModel: "gpt-6-luna",
+      cardGenerationModel: "gpt-6-luna",
       researchEffort: "medium",
       replyEffort: "low",
       cardGenerationEffort: "medium",
@@ -100,7 +100,7 @@ test("validates provider-aware task selections", () => {
 
 /** Confirms switching providers starts with a model owned by the new provider. */
 test("selects a provider-owned default model", () => {
-  assert.equal(getDefaultAiModelOption("codex").id, "gpt-5.6-luna")
+  assert.equal(getDefaultAiModelOption("codex").id, "gpt-6-luna")
   assert.equal(getDefaultAiModelOption("claude-code").id, "sonnet")
   assert.equal(getDefaultAiModelOption("opencode").id, "opencode/big-pickle")
   assert.equal(getDefaultAiModelOption("antigravity").id, "antigravity/default")
@@ -154,13 +154,20 @@ test("rejects an unsupported model and reasoning combination", () => {
         researchEffort: "ultra",
         replyEffort: "medium",
         cardGenerationEffort: "medium",
+      }, {
+        codex: [
+          {
+            id: "gpt-5.6-luna",
+            reasoningEfforts: ["low", "medium", "high", "xhigh", "max"],
+          },
+        ],
       }),
     /not available/
   )
 })
 
-/** Confirms provider-specific reasoning controls are rejected before persistence. */
-test("rejects reasoning unsupported by the selected provider", () => {
+/** Confirms settings reject malformed reasoning effort tokens. */
+test("rejects malformed reasoning effort values", () => {
   assert.throws(
     () =>
       validateAiModelSettings({
@@ -168,7 +175,7 @@ test("rejects reasoning unsupported by the selected provider", () => {
         replyModel: "claude-sonnet",
         cardGenerationModel: "opencode/big-pickle",
         researchEffort: "medium",
-        replyEffort: "xhigh",
+        replyEffort: "high effort",
         cardGenerationEffort: "medium",
         replyProvider: "claude-code",
         cardGenerationProvider: "opencode",
@@ -220,7 +227,7 @@ test("groups models by major and minor generation with dividers", () => {
   const gpt6Group = groups.find((g) => g.generation === "GPT-6")
   assert.deepEqual(
     gpt6Group?.options.map((opt) => opt.id),
-    ["gpt-6-astra"]
+    ["gpt-6-astra", "gpt-6-sol", "gpt-6-luna"]
   )
 
   const gpt56Group = groups.find((g) => g.generation === "GPT-5.6")

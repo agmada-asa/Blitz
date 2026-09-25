@@ -6,7 +6,7 @@ import { pathToFileURL } from "node:url"
 import { getDocument } from "pdfjs-dist/legacy/build/pdf.mjs"
 import { unzipSync } from "fflate"
 import { SourceIngestionError } from "./errors.ts"
-import { MAX_ORIGINAL_SOURCE_BYTES } from "../source-files.ts"
+import { pdfPageReadingOrder } from "./pdf-reading-order.ts"
 
 /** Maximum downloaded bytes accepted by the research extraction boundary. */
 export const MAX_DOWNLOADED_SOURCE_BYTES = 5_000_000
@@ -49,7 +49,7 @@ export interface StoredSourceInput {
   readonly filename: string
   /** Media type reported when the original upload was stored. */
   readonly contentType: string | null
-  /** Stored byte count used to reject files beyond the upload boundary. */
+  /** Stored byte count used to keep in-memory parsers within their own bounds. */
   readonly sizeBytes: number
 }
 
@@ -264,13 +264,10 @@ async function extractPdfText(
         const content = await page.getTextContent({
           includeMarkedContent: false,
         })
-        const pageText = content.items
-          .map((item) =>
-            "str" in item && typeof item.str === "string" ? item.str : ""
-          )
-          .join(" ")
-          .replace(/\s+/g, " ")
-          .trim()
+        const pageText = pdfPageReadingOrder(
+          content.items.filter((item) => "str" in item),
+          page.view[2] - page.view[0]
+        )
         if (pageText) readablePageFound = true
         const pageOutput = `[Page ${pageNumber}]${pageText ? `\n${pageText}` : ""}`
         const separatorLength = pages.length ? 2 : 0
@@ -352,16 +349,6 @@ export async function extractStoredSource(
       "invalid-input",
       "Stored source metadata is required"
     )
-  if (input.sizeBytes > MAX_ORIGINAL_SOURCE_BYTES)
-    throw new SourceIngestionError(
-      "input-too-large",
-      "Stored source exceeds the 1 GB import limit",
-      {
-        byteCount: input.sizeBytes,
-        maxBytes: MAX_ORIGINAL_SOURCE_BYTES,
-      }
-    )
-
   const url = `https://local.invalid/${encodeURIComponent(input.filename)}`
   const header = await readStoredSourceHeader(input.path)
   const format = detectFormat(header, input.contentType, url)
@@ -445,7 +432,15 @@ function detectFormat(
     new TextDecoder().decode(bytes.slice(0, 5)) === "%PDF-"
   )
     return "pdf"
-  if (mediaType === "text/plain" || mediaType === "text/csv" || !mediaType)
+  if (
+    mediaType === "text/plain" ||
+    mediaType === "text/csv" ||
+    mediaType === "application/json" ||
+    /\.(txt|csv|json|xml|ya?ml|toml|py|tsx?|jsx?|css|scss|sql|sh|bash|zsh|rs|go|c|cpp|h|java|kt|rb|php)$/i.test(
+      pathname
+    ) ||
+    !mediaType
+  )
     return "text"
   throw new SourceIngestionError(
     "invalid-input",

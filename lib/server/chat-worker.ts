@@ -61,8 +61,8 @@ export interface ChatWorkContext {
     filename: string
     kind: "pdf" | "markdown" | "text" | "paste"
     extractedText: string
-    chunkOrdinal: number
-    chunkId: string
+    chunkOrdinal?: number
+    chunkId?: string
   }
   question: string
 }
@@ -201,8 +201,14 @@ export async function runChatWorkerStep(
       chunkSize: 5_000,
       overlap: 400,
     })
-    const chunk = chunks[context.source.chunkOrdinal]
-    if (!chunk || chunk.id !== context.source.chunkId)
+    const chunk =
+      context.source.chunkOrdinal !== undefined
+        ? chunks[context.source.chunkOrdinal]
+        : chunks[0]
+    if (
+      context.source.chunkId &&
+      (!chunk || chunk.id !== context.source.chunkId)
+    )
       throw new Error(
         "Card source chunk no longer matches its preparation snapshot"
       )
@@ -238,13 +244,13 @@ export async function runChatWorkerStep(
         source: {
           id: context.source.id,
           filename: context.source.filename,
-          extractedText: chunk.text,
+          extractedText: chunk?.text ?? context.source.extractedText,
         },
         model:
           claim.providerModel ??
           options.model ??
           process.env.BLITZ_CODEX_MODEL ??
-          "gpt-5.6-luna",
+          "gpt-6-luna",
         ...((claim.providerEffort ?? options.effort)
           ? { effort: claim.providerEffort ?? options.effort }
           : {}),

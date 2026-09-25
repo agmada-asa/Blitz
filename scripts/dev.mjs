@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url"
 import {
   killProcessGroups,
   processGroupExists,
+  registerLauncherShutdown,
   terminateProcessGroups,
 } from "./process-groups.mjs"
 
@@ -24,8 +25,7 @@ const processGroups = new Set(
 )
 let stopping = false
 
-process.on("SIGINT", () => stop("SIGINT"))
-process.on("SIGTERM", () => stop("SIGTERM"))
+registerLauncherShutdown(processGroups, stop)
 
 child.once("error", () => {
   console.error("Could not start the Next.js development server.")
