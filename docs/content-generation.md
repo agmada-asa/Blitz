@@ -25,8 +25,8 @@ sections while reading the original and reports that coverage itself. That
 case is reviewable but cannot provide the same mechanical omission check.
 Draft validation checks file bounds, paths, source ownership, page length,
 answer references, and complete coverage of known section IDs before any
-page is imported. Markdown renders as semantic elements without executing
-generated HTML.
+page is imported. Raw HTML and remote images are rejected. Markdown renders
+as semantic elements without executing generated HTML.
 
 Convex remains the published source of truth. Page imports are idempotent
 checkpoints. An updated lesson keeps its learning-item ID, stores its prior

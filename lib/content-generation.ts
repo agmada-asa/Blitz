@@ -1,6 +1,7 @@
 /** Defines the bounded agent draft contract shared by the worker and Convex. */
 
 import { z } from "zod"
+import { lexer, type Token } from "marked"
 
 /** Visible lesson depth; three is the default two-paragraph treatment. */
 export const DEFAULT_CONTENT_DEPTH = 3
@@ -116,6 +117,22 @@ export type LessonDraft = z.infer<typeof lessonDraftSchema>
 /** A validated manifest of agent-written lesson files. */
 export type ContentManifest = z.infer<typeof contentManifestSchema>
 
+/** Rejects generated HTML and remote images before the shared Markdown view sees them. */
+function containsUnsupportedMedia(tokens: Token[]): boolean {
+  return tokens.some((token) => {
+    if (token.type === "html" || token.type === "image") return true
+    const nested = token as Token & {
+      tokens?: Token[]
+      items?: Array<{ tokens: Token[] }>
+    }
+    return (
+      (nested.tokens ? containsUnsupportedMedia(nested.tokens) : false) ||
+      (nested.items?.some((item) => containsUnsupportedMedia(item.tokens)) ??
+        false)
+    )
+  })
+}
+
 /** Checks page length, answer IDs, and source ownership using one source inventory. */
 export function validateLessonDraft(
   value: unknown,
@@ -141,6 +158,8 @@ export function validateLessonDraft(
     new Set(page.retireQuestionIds).size !== page.retireQuestionIds.length
   )
     throw new Error(`Page ${page.key} repeats a retired question`)
+  if (containsUnsupportedMedia(lexer(page.bodyMarkdown, { gfm: true })))
+    throw new Error(`Page ${page.key} contains unsupported HTML or images`)
   const words = page.bodyMarkdown.match(/\S+/g)?.length ?? 0
   if (words > contentDepth(depth).maxWords)
     throw new Error(`Page ${page.key} exceeds the selected depth`)

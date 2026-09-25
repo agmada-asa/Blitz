@@ -83,6 +83,21 @@ test("rejects duplicate retired question IDs in one lesson", () => {
   )
 })
 
+test("rejects generated remote images and raw HTML", () => {
+  for (const bodyMarkdown of [
+    "A fact with ![tracking](https://example.com/image.png).",
+    'A fact with <img src="https://example.com/image.png">.',
+  ])
+    assert.throws(() =>
+      validateLessonDraft(
+        { ...page(), bodyMarkdown },
+        3,
+        new Set(["source-1"]),
+        "source-1"
+      )
+    )
+})
+
 test("reads every manifest page and rejects a symlinked page directory", async () => {
   const directory = await mkdtemp(join(tmpdir(), "blitz-content-test-"))
   try {
