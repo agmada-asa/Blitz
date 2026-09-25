@@ -320,6 +320,36 @@ export default defineSchema({
     providerInstanceId: v.optional(v.string()),
     generationModel: v.optional(v.string()),
     generationEffort: v.optional(v.string()),
+    /** Current worker step, shown while lessons are being prepared. */
+    stage: v.optional(
+      v.union(
+        v.literal("preparing"),
+        v.literal("generating"),
+        v.literal("validating"),
+        v.literal("importing")
+      )
+    ),
+    /** Bounded provider commentary and tool activity for the source detail view. */
+    thought: v.optional(v.string()),
+    activity: v.optional(
+      v.array(
+        v.object({
+          id: v.string(),
+          type: v.literal("tool"),
+          title: v.string(),
+          status: v.union(
+            v.literal("running"),
+            v.literal("completed"),
+            v.literal("failed")
+          ),
+          detail: v.optional(v.string()),
+          startedAt: v.optional(v.number()),
+          completedAt: v.optional(v.number()),
+        })
+      )
+    ),
+    startedAt: v.optional(v.number()),
+    durationMs: v.optional(v.number()),
     totalPages: v.optional(v.number()),
     /** Section accounting retained after temporary agent draft files are removed. */
     coverage: v.optional(v.array(v.object({

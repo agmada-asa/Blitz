@@ -6,6 +6,7 @@ import Link from "next/link"
 import { useEffect, useState } from "react"
 import { useQuery } from "convex/react"
 import { Badge } from "@/components/ui/badge"
+import { ThoughtTrace } from "@/components/chat/thought-trace"
 import { Button } from "@/components/ui/button"
 import { PdfReader } from "@/components/ui/pdf-reader"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -18,6 +19,7 @@ import {
 } from "@/components/ui/icon"
 import { api } from "@/convex/_generated/api"
 import type { Id } from "@/convex/_generated/dataModel"
+import { contentGenerationStageLabel } from "@/lib/content-generation-progress"
 import type {} from "@/lib/client/desktop"
 
 /** Props identifying one source within its owning project. */
@@ -47,6 +49,10 @@ export function ProjectSourceDetail({
   const contentJobs = useQuery(api.contentGeneration.listForProject, {
     projectId: projectIdValue,
     sourceIds: [sourceIdValue],
+  })
+  const generationProgress = useQuery(api.contentGeneration.getProgress, {
+    projectId: projectIdValue,
+    sourceId: sourceIdValue,
   })
   const coverage = useQuery(api.contentGeneration.getCoverage, {
     projectId: projectIdValue,
@@ -237,6 +243,43 @@ export function ProjectSourceDetail({
         <p className="mb-4 rounded-lg bg-muted p-3 text-sm text-muted-foreground">
           The original is saved. Ask an agent to work with this file.
         </p>
+      ) : null}
+
+      {contentJob ? (
+        <section
+          className="mb-6 max-w-4xl"
+          aria-labelledby="generation-heading"
+        >
+          <h2
+            id="generation-heading"
+            className="font-heading text-lg font-medium"
+          >
+            Content generation
+          </h2>
+          <p className="mt-1 text-sm text-muted-foreground" role="status">
+            {contentJob.status === "queued"
+              ? "Queued for generation"
+              : contentJob.status === "leased"
+                ? contentGenerationStageLabel(contentJob.stage)
+                : contentJob.status === "failed"
+                  ? "Generation stopped. Review the activity and try again."
+                  : `Completed ${contentJob.importedPages} ${contentJob.importedPages === 1 ? "lesson" : "lessons"}.`}
+          </p>
+          <ThoughtTrace
+            className="mt-3"
+            thought={generationProgress?.thought}
+            events={generationProgress?.activity}
+            startedAt={generationProgress?.startedAt ?? undefined}
+            durationMs={generationProgress?.durationMs}
+            status={
+              contentJob.status === "leased"
+                ? "running"
+                : contentJob.status === "failed"
+                  ? "failed"
+                  : "completed"
+            }
+          />
+        </section>
       ) : null}
 
       {contentJob && coverage ? (

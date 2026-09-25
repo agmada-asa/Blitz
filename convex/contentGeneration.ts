@@ -12,6 +12,29 @@ import {
 } from "../lib/content-generation"
 import { resolveQueuedContentSelection } from "./ai_provider_settings"
 
+/** Worker steps that can be shown while a source is being processed. */
+const contentStage = v.union(
+  v.literal("preparing"),
+  v.literal("generating"),
+  v.literal("validating"),
+  v.literal("importing")
+)
+
+/** Bounded tool activity accepted from the same provider normalizer as chat. */
+const contentActivity = v.object({
+  id: v.string(),
+  type: v.literal("tool"),
+  title: v.string(),
+  status: v.union(
+    v.literal("running"),
+    v.literal("completed"),
+    v.literal("failed")
+  ),
+  detail: v.optional(v.string()),
+  startedAt: v.optional(v.number()),
+  completedAt: v.optional(v.number()),
+})
+
 /** Long enough for one file-reading agent turn and bounded draft import. */
 const LEASE_MS = 45 * 60_000
 
@@ -49,6 +72,11 @@ export const enqueue = mutation({
         await ctx.db.patch(existing._id, {
           status: "queued",
           error: undefined,
+          stage: undefined,
+          thought: undefined,
+          activity: undefined,
+          startedAt: undefined,
+          durationMs: undefined,
           leaseToken: undefined,
           leaseExpiresAt: undefined,
           updatedAt: Date.now(),
@@ -113,11 +141,35 @@ export const listForProject = query({
                   .length ?? null,
               leaseExpired:
                 job.status === "leased" && (job.leaseExpiresAt ?? 0) <= now,
+              stage: job.stage ?? null,
             }
           )
         })
       )
     ).filter((job) => job !== null)
+  },
+})
+
+/** Returns one source's bounded provider trace for its detail page. */
+export const getProgress = query({
+  args: { projectId: v.id("projects"), sourceId: v.id("sources") },
+  handler: async (ctx, args) => {
+    const source = await ctx.db.get(args.sourceId)
+    if (!source || source.projectId !== args.projectId) return null
+    const job = await ctx.db
+      .query("contentGenerationJobs")
+      .withIndex("by_project_source", (q) =>
+        q.eq("projectId", args.projectId).eq("sourceId", args.sourceId)
+      )
+      .first()
+    return job
+      ? {
+          thought: job.thought ?? null,
+          activity: job.activity ?? [],
+          startedAt: job.startedAt ?? job._creationTime,
+          durationMs: job.durationMs ?? null,
+        }
+      : null
   },
 })
 
@@ -162,6 +214,11 @@ export const claimNext = mutation({
       status: "leased",
       leaseToken: args.leaseToken,
       leaseExpiresAt: now + LEASE_MS,
+      stage: "preparing",
+      thought: undefined,
+      activity: undefined,
+      startedAt: now,
+      durationMs: undefined,
       updatedAt: now,
     })
     return {
@@ -182,6 +239,60 @@ export const claimNext = mutation({
       importedPages: job.importedPages,
       totalPages: job.totalPages ?? null,
     }
+  },
+})
+
+/** Saves a worker step and bounded provider trace only while its lease is current. */
+export const updateProgress = mutation({
+  args: {
+    jobId: v.id("contentGenerationJobs"),
+    leaseToken: v.string(),
+    stage: contentStage,
+    thought: v.string(),
+    activity: v.array(contentActivity),
+  },
+  handler: async (ctx, args) => {
+    const job = await ctx.db.get(args.jobId)
+    if (!job) throw new Error("Content job not found")
+    requireLease(job, args.leaseToken)
+    if (args.thought.length > 16_000 || args.activity.length > 64)
+      throw new Error("Content progress exceeds its size limit")
+    if (
+      args.activity.some(
+        (event) =>
+          event.id.length > 200 ||
+          event.title.length > 120 ||
+          (event.detail?.length ?? 0) > 500
+      )
+    )
+      throw new Error("Content activity exceeds its size limit")
+    await ctx.db.patch(job._id, {
+      stage: args.stage,
+      thought: args.thought,
+      activity: args.activity,
+      updatedAt: Date.now(),
+    })
+  },
+})
+
+/** Reopens a partial import when its local drafts disappeared before retry. */
+export const restartMissingDraft = mutation({
+  args: { jobId: v.id("contentGenerationJobs"), leaseToken: v.string() },
+  handler: async (ctx, args) => {
+    const job = await ctx.db.get(args.jobId)
+    if (!job) throw new Error("Content job not found")
+    requireLease(job, args.leaseToken)
+    const commits = await ctx.db
+      .query("contentPageCommits")
+      .withIndex("by_job_page", (q) => q.eq("jobId", job._id))
+      .collect()
+    for (const commit of commits) await ctx.db.delete(commit._id)
+    await ctx.db.patch(job._id, {
+      importedPages: 0,
+      totalPages: undefined,
+      coverage: undefined,
+      updatedAt: Date.now(),
+    })
   },
 })
 
@@ -511,11 +622,18 @@ export const finish = mutation({
     requireLease(job, args.leaseToken)
     if (job.totalPages === undefined || job.importedPages !== job.totalPages)
       throw new Error("Some lesson pages were not imported")
+    const now = Date.now()
     await ctx.db.patch(job._id, {
       status: "completed",
+      durationMs: job.startedAt ? now - job.startedAt : undefined,
+      activity: job.activity?.map((event) =>
+        event.status === "running"
+          ? { ...event, status: "completed" as const, completedAt: now }
+          : event
+      ),
       leaseToken: undefined,
       leaseExpiresAt: undefined,
-      updatedAt: Date.now(),
+      updatedAt: now,
       error: undefined,
     })
     await ctx.db.patch(job.sourceId, { status: "ready", error: undefined })
@@ -536,12 +654,19 @@ export const fail = mutation({
     const error =
       args.error.trim().slice(0, 400) ||
       "Content generation failed. Retry to resume."
+    const now = Date.now()
     await ctx.db.patch(job._id, {
       status: "failed",
+      durationMs: job.startedAt ? now - job.startedAt : undefined,
+      activity: job.activity?.map((event) =>
+        event.status === "running"
+          ? { ...event, status: "failed" as const, completedAt: now }
+          : event
+      ),
       leaseToken: undefined,
       leaseExpiresAt: undefined,
       error,
-      updatedAt: Date.now(),
+      updatedAt: now,
     })
     await ctx.db.patch(job.sourceId, { status: "failed", error })
   },

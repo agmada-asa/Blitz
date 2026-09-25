@@ -18,6 +18,10 @@ import {
   RotateLeftIcon,
 } from "@/components/ui/icon"
 import type { Id } from "@/convex/_generated/dataModel"
+import {
+  contentGenerationStageLabel,
+  type ContentGenerationStage,
+} from "@/lib/content-generation-progress"
 
 /** The source fields needed by the file browser; extra Convex fields are intentionally ignored. */
 export type ProjectFileSource = {
@@ -53,6 +57,10 @@ export type ProjectFilePreparation = {
   totalChunks?: number
   generatedItemCount?: number
   leaseExpired?: boolean
+  /** Current step for agent-led content generation. */
+  stage?: ContentGenerationStage
+  /** Distinguishes agent jobs from legacy preparation in the shared list. */
+  isContentGeneration?: boolean
 }
 
 /** Agent-created file metadata; file contents remain in the local project workspace. */
@@ -276,6 +284,26 @@ export function ProjectFiles({
                           aria-label={`Preparation ${Math.round(progress)} percent complete`}
                         />
                       </div>
+                    ) : null}
+                    {preparationJob?.status === "leased" &&
+                    preparationJob.stage ? (
+                      <p
+                        className="mt-2 text-xs text-muted-foreground"
+                        role="status"
+                      >
+                        {contentGenerationStageLabel(preparationJob.stage)}
+                      </p>
+                    ) : null}
+                    {preparationJob?.isContentGeneration &&
+                    (preparationJob.status === "queued" ||
+                      preparationJob.status === "leased" ||
+                      preparationJob.status === "failed") ? (
+                      <Link
+                        href={`/projects/${encodeURIComponent(String(projectId))}/sources/${encodeURIComponent(String(source._id))}`}
+                        className="mt-2 inline-block text-xs font-medium text-brand hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+                      >
+                        View generation activity
+                      </Link>
                     ) : null}
                     {source.unsupported && !preparationJob ? (
                       <p className="mt-3 rounded-md bg-muted/60 px-3 py-2 text-sm text-muted-foreground">

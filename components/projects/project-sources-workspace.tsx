@@ -155,6 +155,8 @@ export function ProjectSourcesWorkspace({
     nextChunkOrdinal: job.importedPages,
     totalChunks: job.totalPages ?? undefined,
     leaseExpired: job.leaseExpired,
+    stage: job.stage ?? undefined,
+    isContentGeneration: true,
   })) ?? []
   const preparationJobs = [
     ...(legacyJobs ?? []).filter((job) => !agentJobs.some((agent) => agent.sourceId === job.sourceId)),

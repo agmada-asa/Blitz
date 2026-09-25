@@ -8,9 +8,8 @@ checkpoint IDs and queue the agent for learning content.
 The project has a five-step lesson detail preference. Each new job snapshots
 that preference and the selected content-generation provider. Changing the
 preference affects later jobs; it does not rewrite pages already published.
-File-based generation currently uses Codex's workspace write sandbox. If a
-different provider is selected for legacy preparation, new lessons use the
-default Codex model; Settings explains this beside that choice.
+The worker runs the provider snapshot with a project workspace write policy
+and without network access.
 
 The local worker gives the agent the new source, a source-ID inventory, and a
 paginated export of existing learning items. It also supplies extracted source
@@ -18,6 +17,14 @@ sections when deterministic extraction succeeds. The agent writes
 `manifest.json` and one JSON draft per lesson under its job's temporary
 `Learning drafts/` directory. Each lesson draft contains Markdown teaching
 content, exact source locations, and optional new structured questions.
+The worker saves bounded provider commentary and tool activity on the leased
+job. The source detail page subscribes to that trace and shows the current
+reading, writing, validation, or import step. The source list links to the
+trace while a job is active or needs a retry. If the model finishes without a
+manifest, the worker asks the same session once to write the required files.
+If drafts from a partial import have disappeared before retry, the worker
+clears that job's page checkpoints and regenerates them; the already published
+lessons remain available while it does so.
 
 The manifest accounts for each extracted section as included in a page or
 skipped with a reason. If extraction is unavailable, the agent identifies

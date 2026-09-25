@@ -145,6 +145,15 @@ test("reads every manifest page and rejects a symlinked page directory", async (
   }
 })
 
+test("reports a missing draft directory as a retryable generation error", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "blitz-content-missing-"))
+  await rm(directory, { recursive: true })
+  await assert.rejects(
+    readContentDrafts(directory, "source-1", 3, new Set(["source-1"])),
+    /Generated lesson drafts are missing\. Try again\./
+  )
+})
+
 test("rejects a manifest that leaves an extracted section unaccounted for", async () => {
   const directory = await mkdtemp(join(tmpdir(), "blitz-content-coverage-"))
   try {

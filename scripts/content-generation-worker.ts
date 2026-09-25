@@ -1,7 +1,7 @@
 /** Runs the local file-reading agent and imports its lesson drafts one page at a time. */
 
 import { createHash, randomUUID } from "node:crypto"
-import { mkdir, rm, stat, writeFile } from "node:fs/promises"
+import { access, mkdir, rm, stat, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { setTimeout as pause } from "node:timers/promises"
 import { fileURLToPath } from "node:url"
@@ -12,6 +12,12 @@ import { contentDepth } from "../lib/content-generation.ts"
 import { prepareProjectAgentWorkspace } from "../lib/server/project-agent.ts"
 import { readContentDrafts } from "../lib/server/content-generation-drafts.ts"
 import { runProviderTextTurn } from "../lib/server/providers/run-text-turn.ts"
+import type { CardChatEvent } from "../lib/server/card-chat.ts"
+import {
+  MAX_PROVIDER_ACTIVITY_EVENTS,
+  normalizeProviderActivity,
+  type ProviderActivityEvent,
+} from "../lib/provider-activity.ts"
 import { isAiProviderId } from "../lib/ai-model-settings.ts"
 import { extractStoredSource } from "../lib/server/source-ingestion/extract.ts"
 import { normalizeSourceDocument } from "../lib/server/source-ingestion/normalize.ts"
@@ -126,6 +132,73 @@ async function sourceSections(input: {
   }))
 }
 
+/** Reports provider commentary and tool steps through the leased Convex job. */
+function createProgressReporter(
+  client: ConvexHttpClient,
+  jobId: Id<"contentGenerationJobs">,
+  leaseToken: string
+) {
+  let stage: "preparing" | "generating" | "validating" | "importing" =
+    "preparing"
+  let thought = ""
+  let activity: ProviderActivityEvent[] = []
+  let timer: ReturnType<typeof setTimeout> | undefined
+  let pending: Promise<void> = Promise.resolve()
+
+  /** Sends the latest bounded snapshot in order, including a pending timer's data. */
+  function flush(): Promise<void> {
+    if (timer) clearTimeout(timer)
+    timer = undefined
+    const snapshot = { jobId, leaseToken, stage, thought, activity }
+    pending = pending.then(async () => {
+      await client.mutation(api.contentGeneration.updateProgress, snapshot)
+    })
+    return pending
+  }
+
+  /** Retains only the same safe provider trace that the chat UI understands. */
+  function onEvent(event: CardChatEvent): void {
+    if (event.type === "thought-delta") {
+      thought = (thought + event.delta).slice(-16_000)
+    } else if (event.type === "activity") {
+      const next = normalizeProviderActivity(event, activity)
+      if (!next) return
+      const index = activity.findIndex((item) => item.id === next.id)
+      if (index >= 0) activity[index] = next
+      else activity = [...activity, next].slice(-MAX_PROVIDER_ACTIVITY_EVENTS)
+    } else return
+    if (!timer)
+      timer = setTimeout(() => {
+        void flush().catch(() => undefined)
+      }, 750)
+  }
+
+  /** Publishes a worker step after any earlier provider events. */
+  async function setStage(next: typeof stage): Promise<void> {
+    stage = next
+    await flush()
+  }
+
+  /** Uses a provider's final trace when it did not stream thought deltas. */
+  function captureFinalThought(finalThought?: string): void {
+    if (!thought.trim() && finalThought?.trim())
+      thought = finalThought.trim().slice(-16_000)
+  }
+
+  return { onEvent, setStage, flush, captureFinalThought }
+}
+
+/** Checks for an agent-written manifest without hiding other file errors. */
+async function hasDraftManifest(draftDirectory: string): Promise<boolean> {
+  try {
+    await access(join(draftDirectory, "manifest.json"))
+    return true
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false
+    throw error
+  }
+}
+
 /** Completes one queued source, reusing saved drafts after a partial import. */
 async function processJob(
   client: ConvexHttpClient,
@@ -137,6 +210,7 @@ async function processJob(
   })
   if (!claim) return false
   const jobId = claim.jobId as Id<"contentGenerationJobs">
+  const progress = createProgressReporter(client, jobId, leaseToken)
   try {
     const workspace = await prepareProjectAgentWorkspace(
       String(claim.projectId),
@@ -182,8 +256,15 @@ async function processJob(
     )
     if (!isAiProviderId(claim.providerId))
       throw new Error("Generation provider is invalid")
-    if (claim.importedPages === 0) {
-      await runProviderTextTurn({
+    const draftExists = await hasDraftManifest(draftDirectory)
+    if (claim.importedPages > 0 && !draftExists)
+      await client.mutation(api.contentGeneration.restartMissingDraft, {
+        jobId,
+        leaseToken,
+      })
+    if (claim.importedPages === 0 || !draftExists) {
+      await progress.setStage("generating")
+      const providerRequest = {
         providerId: claim.providerId,
         ...(claim.providerInstanceId
           ? { providerInstanceId: claim.providerInstanceId }
@@ -208,8 +289,29 @@ async function processJob(
         approvalPolicy: "never",
         signal,
         timeoutMs: 30 * 60_000,
+      } as const
+      const result = await runProviderTextTurn(providerRequest, {
+        onEvent: progress.onEvent,
       })
+      progress.captureFinalThought(result.thought)
+      await progress.flush()
+      if (!(await hasDraftManifest(draftDirectory))) {
+        // A model can finish its chat turn without writing the required files.
+        // Give the same session one focused chance to repair that omission.
+        await mkdir(join(draftDirectory, "pages"), { recursive: true })
+        const repair = await runProviderTextTurn(
+          {
+            ...providerRequest,
+            threadId: result.threadId,
+            prompt: `The required manifest.json is missing from ${JSON.stringify(draftDirectory)}. Write the lesson JSON files and a valid manifest.json there now. Check that every listed page file exists. Your final reply alone cannot complete this job.`,
+          },
+          { onEvent: progress.onEvent }
+        )
+        progress.captureFinalThought(repair.thought)
+        await progress.flush()
+      }
     }
+    await progress.setStage("validating")
     const drafts = await readContentDrafts(
       draftDirectory,
       String(claim.sourceId),
@@ -222,6 +324,7 @@ async function processJob(
       leaseToken,
       manifest: drafts.manifest,
     })
+    await progress.setStage("importing")
     for (const page of drafts.pages) {
       signal.throwIfAborted()
       const payloadHash = createHash("sha256")
@@ -241,15 +344,23 @@ async function processJob(
     )
     return true
   } catch (error) {
+    await progress.flush().catch(() => undefined)
     await client
       .mutation(api.contentGeneration.fail, {
         jobId,
         leaseToken,
         error:
           error instanceof Error &&
-          /invalid|validation|manifest|page|source|depth/i.test(error.message)
-            ? "Generated content could not be validated. Retry to resume."
-            : "Content generation was interrupted. Retry to resume.",
+          /lesson drafts are missing|lesson manifest is missing/i.test(
+            error.message
+          )
+            ? error.message
+            : error instanceof Error &&
+                /invalid|validation|manifest|page|source|depth|ENOENT/i.test(
+                  error.message
+                )
+              ? "Generated content could not be validated. Retry to resume."
+              : "Content generation was interrupted. Retry to resume.",
       })
       .catch(() => undefined)
     throw error

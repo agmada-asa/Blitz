@@ -35,7 +35,13 @@ export async function readContentDrafts(
   expectedSectionIds: ReadonlySet<string> = new Set()
 ): Promise<{ manifest: ContentManifest; pages: LessonDraft[] }> {
   for (const directory of [draftDirectory, join(draftDirectory, "pages")]) {
-    const stat = await fs.lstat(directory)
+    const stat = await fs
+      .lstat(directory)
+      .catch((error: NodeJS.ErrnoException) => {
+        if (error.code === "ENOENT")
+          throw new Error("Generated lesson drafts are missing. Try again.")
+        throw error
+      })
     if (!stat.isDirectory() || stat.isSymbolicLink())
       throw new Error("Generated content directory is invalid")
   }
@@ -43,7 +49,11 @@ export async function readContentDrafts(
     await readBoundedJson(
       join(draftDirectory, "manifest.json"),
       MAX_MANIFEST_BYTES
-    )
+    ).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT")
+        throw new Error("Generated lesson manifest is missing. Try again.")
+      throw error
+    })
   )
   if (manifest.sourceId !== sourceId)
     throw new Error("Content manifest belongs to another source")
