@@ -72,7 +72,7 @@ test("treats an exited process group as absent", () => {
 })
 
 test("terminal loss requests shutdown and exit kills surviving groups", () => {
-  const runtime = new EventEmitter()
+  const runtime = new EventEmitter() as unknown as NodeJS.Process
   const stops: Array<[string, number | undefined]> = []
   const signals: Array<[number, string]> = []
 
@@ -92,7 +92,7 @@ test("terminal loss requests shutdown and exit kills surviving groups", () => {
   runtime.emit("SIGHUP")
   assert.deepEqual(stops, [["SIGTERM", 129]])
 
-  runtime.emit("exit")
+  runtime.emit("exit", 0)
   assert.deepEqual(signals, [
     [-401, "SIGKILL"],
     [-402, "SIGKILL"],
@@ -100,7 +100,7 @@ test("terminal loss requests shutdown and exit kills surviving groups", () => {
 })
 
 test("unexpected launcher exit kills its child group without a prior signal", () => {
-  const runtime = new EventEmitter()
+  const runtime = new EventEmitter() as unknown as NodeJS.Process
   const signals: Array<[number, string]> = []
 
   registerLauncherShutdown(new Set([501]), () => {}, {
@@ -112,6 +112,6 @@ test("unexpected launcher exit kills its child group without a prior signal", ()
     },
   })
 
-  runtime.emit("exit")
+  runtime.emit("exit", 0)
   assert.deepEqual(signals, [[-501, "SIGKILL"]])
 })

@@ -449,6 +449,8 @@ export default defineSchema({
   sourceChunks: defineTable({
     projectId: v.id("projects"),
     sourceId: v.id("sources"),
+    /** Denormalized label avoids reading the large source body during retrieval. */
+    sourceFilename: v.optional(v.string()),
     ingestionJobId: v.optional(v.id("ingestionJobs")),
     ordinal: v.number(),
     text: v.string(),
