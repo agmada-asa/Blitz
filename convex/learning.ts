@@ -67,6 +67,7 @@ export const getProjectPath = query({
       ctx.db
         .query("learningItems")
         .withIndex("by_project_order", (q) => q.eq("projectId", args.projectId))
+        .filter((q) => q.eq(q.field("archivedAt"), undefined))
         .order("asc")
         .take(PROJECT_PATH_LIMIT),
       ctx.db
@@ -104,7 +105,7 @@ export const getProjectPath = query({
             ? ("practicing" as const)
             : ("new" as const)
       const hasNewMaterial = Boolean(
-        review && conceptItems.some((item) => item.createdAt > review.updatedAt)
+        review && conceptItems.some((item) => (item.updatedAt ?? item.createdAt) > review.updatedAt)
       )
       return {
         id: String(concept._id),
@@ -125,9 +126,16 @@ export const getProjectPath = query({
             : {}),
           ...(item.type !== "explain" ? { question: item.question ?? "" } : {}),
           ...(item.options ? { options: item.options } : {}),
-          sourceLabels: item.sourceIds
-            .map((sourceId) => sourceLabels.get(String(sourceId)))
-            .filter((label): label is string => Boolean(label)),
+          sourceLabels: item.sourceReferences?.length
+            ? item.sourceReferences
+                .map((reference) => {
+                  const filename = sourceLabels.get(String(reference.sourceId))
+                  return filename ? `${filename}, ${reference.locator}` : undefined
+                })
+                .filter((label): label is string => Boolean(label))
+            : item.sourceIds
+                .map((sourceId) => sourceLabels.get(String(sourceId)))
+                .filter((label): label is string => Boolean(label)),
         })),
       }
     }
@@ -758,6 +766,7 @@ export const listLearningFeedCandidates = query({
     const items = page.page
     const candidates = []
     for (const item of items) {
+      if (item.archivedAt) continue
       const concept = await ctx.db.get(item.conceptId)
       if (
         !concept ||
@@ -973,7 +982,7 @@ export const getLearningFeed = query({
       nextItemAnchors[projectIndex] = itemPage.at(-1)?._creationTime ?? null
       nextItemDone[projectIndex] = page.length <= scanCount
       for (const item of itemPage) {
-        if (item.type === "explain") continue
+        if (item.type === "explain" || item.archivedAt) continue
         const concept = await ctx.db.get(item.conceptId)
         if (!concept) continue
         if (requestedTopic && concept.topicId !== requestedTopic._id) continue

@@ -5,7 +5,8 @@ import { mutation, query, type QueryCtx } from "./_generated/server"
 import type { Id } from "./_generated/dataModel"
 import { v } from "convex/values"
 import { sourceImportFingerprint } from "../lib/source-fingerprint"
-import { resolveQueuedAiSelection } from "./ai_provider_settings"
+import { DEFAULT_CONTENT_DEPTH } from "../lib/content-generation"
+import { resolveQueuedAiSelection, resolveQueuedContentSelection } from "./ai_provider_settings"
 
 /** Validator for source formats accepted by the extraction interface. */
 const sourceKind = v.union(
@@ -431,43 +432,37 @@ export const completeOriginalIngestion = mutation({
       (job.leaseExpiresAt ?? 0) <= Date.now()
     )
       throw new Error("Ingestion lease expired")
-    if (args.status === "completed" && !args.unsupported) {
-      if (
+    if (args.status === "completed") {
+      if (!args.unsupported && (
         !args.extractedText.trim() ||
         new TextEncoder().encode(args.extractedText).byteLength > 500_000
-      )
-        throw new Error("Extracted source text is empty or exceeds 500 KB")
-      // Completion and card preparation share one transaction, so a restart
-      // cannot leave an indexed source without its resumable preparation job.
-      const existing = await ctx.db
-        .query("preparationJobs")
+      )) throw new Error("Extracted source text is empty or exceeds 500 KB")
+      const existing = await ctx.db.query("contentGenerationJobs")
         .withIndex("by_project_source", (q) =>
           q.eq("projectId", source.projectId).eq("sourceId", source._id)
-        )
-        .first()
+        ).first()
       if (!existing) {
-        const selection = await resolveQueuedAiSelection(ctx, "cardGeneration")
-        await ctx.db.insert("preparationJobs", {
+        const project = await ctx.db.get(source.projectId)
+        if (!project) throw new Error("Project not found")
+        const selection = await resolveQueuedContentSelection(ctx)
+        const now = Date.now()
+        await ctx.db.insert("contentGenerationJobs", {
           projectId: source.projectId,
           sourceId: source._id,
-          sourceTextSnapshot: args.extractedText,
-          sourceFilename: source.filename,
-          sourceKind: source.kind,
           status: "queued",
-          nextChunkOrdinal: 0,
+          depth: project.contentDepth ?? DEFAULT_CONTENT_DEPTH,
           providerId: selection.providerId,
           generationModel: selection.model,
           generationEffort: selection.effort,
-          generatedItemCount: 0,
-          attemptCount: 0,
-          createdAt: Date.now(),
-          updatedAt: Date.now(),
+          importedPages: 0,
+          createdAt: now,
+          updatedAt: now,
         })
       }
     }
     await ctx.db.patch(source._id, {
       extractedText: args.extractedText,
-      status: args.status === "completed" ? "ready" : "failed",
+      status: args.status === "completed" ? "processing" : "failed",
       unsupported: args.unsupported ?? false,
       error: args.error ? args.error.slice(0, 500) : undefined,
     })

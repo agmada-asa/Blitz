@@ -46,8 +46,9 @@ searchable evidence.
 
 `worker:ingestion` recovers queued uploads and expired five-minute ingestion
 leases through `/api/sources/retry`. Failed files require an explicit retry.
-Ingestion completion and resumable card preparation are recorded in the same
-Convex transaction. The preparation worker walks every source chunk.
+Ingestion completion and a resumable content job are recorded in the same
+Convex transaction. The content worker reads the original and imports validated
+lesson pages; older preparation jobs continue through their original worker.
 
 Chat searches indexed chunks for each question, including projects attached in
 earlier turns. Context is bounded and retains filename and location citations.

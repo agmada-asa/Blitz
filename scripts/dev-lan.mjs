@@ -96,6 +96,11 @@ start(
 )
 start(
   process.execPath,
+  ["--experimental-strip-types", "scripts/content-generation-worker.ts"],
+  sharedEnvironment
+)
+start(
+  process.execPath,
   ["--experimental-strip-types", "scripts/ingestion-worker.ts"],
   sharedEnvironment
 )

@@ -62,6 +62,8 @@ export default defineSchema({
       v.union(v.literal("approval"), v.literal("project"), v.literal("full"))
     ),
     agentInstructions: v.optional(v.string()),
+    /** Five-step length preference copied into each new content generation job. */
+    contentDepth: v.optional(v.number()),
     title: v.string(),
     createdAt: v.number(),
     /** Optional stable key for the project-local desktop workspace. */
@@ -164,6 +166,15 @@ export default defineSchema({
     body: v.string(),
     /** Optional longer explanation for the walkthrough card's back face. */
     deepExplanation: v.optional(v.string()),
+    /** Last lesson rewrite; answer events continue to refer to this stable item. */
+    updatedAt: v.optional(v.number()),
+    /** Superseded lessons stay stored for study history but leave live views. */
+    archivedAt: v.optional(v.number()),
+    /** Source locations supplied by the agent for this lesson. */
+    sourceReferences: v.optional(v.array(v.object({
+      sourceId: v.id("sources"),
+      locator: v.string(),
+    }))),
     question: v.optional(v.string()),
     options: v.optional(v.array(learningOption)),
     correctOptionId: v.optional(v.string()),
@@ -178,6 +189,24 @@ export default defineSchema({
     .index("by_project_order", ["projectId", "order"])
     .index("by_project_concept_order", ["projectId", "conceptId", "order"])
     .index("by_concept_order", ["conceptId", "order"]),
+
+  /** Previous explanation text retained when a new source revises a lesson. */
+  lessonPageRevisions: defineTable({
+    projectId: v.id("projects"),
+    itemId: v.id("learningItems"),
+    jobId: v.id("contentGenerationJobs"),
+    title: v.string(),
+    body: v.string(),
+    deepExplanation: v.optional(v.string()),
+    sourceIds: v.array(v.id("sources")),
+    sourceReferences: v.optional(v.array(v.object({
+      sourceId: v.id("sources"),
+      locator: v.string(),
+    }))),
+    replacedAt: v.number(),
+  })
+    .index("by_project", ["projectId"])
+    .index("by_item_replacedAt", ["itemId", "replacedAt"]),
 
   writingActivities: defineTable({
     projectId: v.id("projects"),
@@ -218,6 +247,8 @@ export default defineSchema({
   conceptReviews: defineTable({
     projectId: v.id("projects"),
     conceptId: v.id("concepts"),
+    /** Distinct question items with at least one valid recorded answer. */
+    answeredQuestionCount: v.optional(v.number()),
     attemptCount: v.number(),
     correctCount: v.number(),
     incorrectCount: v.number(),
@@ -271,6 +302,49 @@ export default defineSchema({
     .index("by_project_source", ["projectId", "sourceId"])
     .index("by_status_createdAt", ["status", "createdAt"])
     .index("by_leaseToken", ["leaseToken"]),
+
+  /** Agent-led content work for one source, with durable page import progress. */
+  contentGenerationJobs: defineTable({
+    projectId: v.id("projects"),
+    sourceId: v.id("sources"),
+    status: v.union(
+      v.literal("queued"),
+      v.literal("leased"),
+      v.literal("failed"),
+      v.literal("completed")
+    ),
+    depth: v.number(),
+    /** Approved research scope restricts what imported references may teach. */
+    learningScope: v.optional(v.string()),
+    providerId: v.optional(v.string()),
+    providerInstanceId: v.optional(v.string()),
+    generationModel: v.optional(v.string()),
+    generationEffort: v.optional(v.string()),
+    totalPages: v.optional(v.number()),
+    /** Section accounting retained after temporary agent draft files are removed. */
+    coverage: v.optional(v.array(v.object({
+      sectionId: v.string(),
+      status: v.union(v.literal("included"), v.literal("skipped")),
+      pageKeys: v.array(v.string()),
+      reason: v.optional(v.string()),
+    }))),
+    importedPages: v.number(),
+    leaseToken: v.optional(v.string()),
+    leaseExpiresAt: v.optional(v.number()),
+    error: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_project_source", ["projectId", "sourceId"])
+    .index("by_status_createdAt", ["status", "createdAt"]),
+
+  /** Idempotent page commits allow a large agent draft to resume after a failed import. */
+  contentPageCommits: defineTable({
+    jobId: v.id("contentGenerationJobs"),
+    pageKey: v.string(),
+    payloadHash: v.string(),
+    createdAt: v.number(),
+  }).index("by_job_page", ["jobId", "pageKey"]),
 
   preparationChunks: defineTable({
     jobId: v.id("preparationJobs"),

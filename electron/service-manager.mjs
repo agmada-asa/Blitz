@@ -13,6 +13,7 @@ import { join } from "node:path"
 const workerDefinitions = [
   ["ingestion", "worker:ingestion"],
   ["preparation", "worker"],
+  ["content", "worker:content"],
   ["chat", "worker:chat"],
   ["research", "worker:research"],
 ]

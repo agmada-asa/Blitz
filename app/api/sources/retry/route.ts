@@ -33,6 +33,25 @@ export async function POST(request: Request): Promise<Response> {
     })
     if (!source)
       return Response.json({ error: "Source not found" }, { status: 404 })
+    const contentJobs = await convex.query(api.contentGeneration.listForProject, {
+      projectId: body.projectId as never,
+      sourceIds: [body.sourceId as never],
+    })
+    const contentJob = contentJobs[0]
+    if (contentJob) {
+      if (contentJob.status === "failed" || contentJob.leaseExpired)
+        return Response.json(
+          await convex.mutation(api.contentGeneration.enqueue, {
+            projectId: body.projectId as never,
+            sourceId: body.sourceId as never,
+          }),
+          { headers: { "Cache-Control": "no-store" } }
+        )
+      return Response.json(
+        { jobId: contentJob.jobId, status: contentJob.status },
+        { headers: { "Cache-Control": "no-store" } }
+      )
+    }
     const jobs = await convex.query(api.preparation.listJobsForProject, {
       projectId: body.projectId as never,
       sourceIds: [body.sourceId as never],

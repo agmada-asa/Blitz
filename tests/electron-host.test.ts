@@ -49,7 +49,7 @@ test("restarts one failed worker and then bounds further recovery", async () => 
   })
 
   await manager.start()
-  assert.equal(children.length, 6)
+  assert.equal(children.length, 7)
   assert.ok(healthUrls.includes(`http://127.0.0.1:${convexPorts.cloud}`))
   assert.deepEqual(convexArgs?.slice(-4), [
     "--local-cloud-port",
@@ -59,9 +59,9 @@ test("restarts one failed worker and then bounds further recovery", async () => 
   ])
   children[2].emit("exit", 1, null)
   await new Promise((resolve) => setTimeout(resolve, 10))
-  assert.equal(children.length, 7)
+  assert.equal(children.length, 8)
   assert.equal(manager.snapshot().ingestion, "starting")
-  children[6].emit("exit", 1, null)
+  children[7].emit("exit", 1, null)
   await new Promise((resolve) => setTimeout(resolve, 10))
   assert.match(manager.snapshot().ingestion, /^stopped/)
   await manager.stop()
@@ -88,6 +88,6 @@ test("stops all managed child groups and marks them stopped", async () => {
   assert.deepEqual(
     Object.values(manager.snapshot()).filter((status) => status === "stopped")
       .length,
-    6
+    7
   )
 })
