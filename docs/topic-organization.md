@@ -7,9 +7,8 @@ concepts provide the section outline, and its explanation and question items
 form the central walkthrough.
 
 The desktop workspace keeps the learning path beside the walkthrough. Narrow
-layouts move the same list into a `Sections` dialog. Section rows show mastered
-concept counts and mark sections that gained learning items after a concept's
-last review.
+layouts move the same list into a `Sections` dialog. Concept rows show how many
+questions have been answered, and sections mark when new learning items arrive.
 
 Each topic remains available in the existing focused study flows:
 
@@ -30,5 +29,7 @@ existed.
 
 Topic edits affect future feed selection; they do not rewrite generated content
 or change source attribution. The walkthrough stores its last visible card in
-browser storage. Mastery remains server-owned through `conceptReviews`, so
-opening an explanation does not count as understanding it.
+browser storage. A concept completes when each distinct question has been
+answered, regardless of correctness. Repeating an answer, opening an
+explanation, or skipping a question does not advance that count. Correctness
+continues to inform the separate review schedule stored in `conceptReviews`.

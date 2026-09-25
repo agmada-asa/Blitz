@@ -38,6 +38,13 @@ then written to `conceptReviews` for fast feed queries. The rebuild uses the
 same bounded heuristic as the portable learning core, so it remains
 inspectable rather than claiming to predict mastery.
 
+The same summary stores the number of distinct question items with a valid
+answer. Re-answering one item does not increase that count, and either a
+correct or incorrect answer counts. A project concept is complete once its
+question items have all been answered. Reading explanations, exposure, and
+skips do not advance concept progress. Concepts without question items have no
+question work remaining and are shown as complete for this measure.
+
 `listLearningFeedCandidates` returns a bounded page with `items`, `isDone`, and
 `continueCursor`. Pass Convex `paginationOpts` to continue scanning a large
 project. The query scans no more than the requested result limit, capped at

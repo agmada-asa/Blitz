@@ -71,7 +71,7 @@ type WorkspaceModal = "sections" | "tools" | "sources" | "actions" | null
 function firstOpenSection(data?: MobileWorkspacePayload) {
   return (
     data?.path.sections.find(
-      (section) => section.masteredConcepts < section.concepts.length
+      (section) => section.completedConcepts < section.concepts.length
     ) ?? data?.path.sections[0]
   )
 }
@@ -178,9 +178,10 @@ export function ProjectWorkspaceScreen({
   )
   const activeStage = stageItems[activeItemIndex] ?? stageItems[0]
   const currentConcept = activeStage?.concept
-  const progress = data.path.stats.conceptCount
+  const progress = data.path.stats.questionCount
     ? Math.round(
-        (data.path.stats.masteredConceptCount / data.path.stats.conceptCount) *
+        (data.path.stats.answeredQuestionCount /
+          data.path.stats.questionCount) *
           100
       )
     : 0
@@ -229,7 +230,7 @@ export function ProjectWorkspaceScreen({
             sections.map((section, index) => {
               const complete =
                 section.concepts.length > 0 &&
-                section.masteredConcepts === section.concepts.length
+                section.completedConcepts === section.concepts.length
               const selected = section.id === activeSection?.id
               return (
                 <Pressable
@@ -250,11 +251,7 @@ export function ProjectWorkspaceScreen({
                     ]}
                   >
                     {complete ? (
-                      <WebCheckIcon
-                        size={16}
-                        color="#ff8065"
-                        strokeWidth={2}
-                      />
+                      <WebCheckIcon size={16} color="#ff8065" strokeWidth={2} />
                     ) : (
                       <Text
                         style={[
@@ -271,8 +268,8 @@ export function ProjectWorkspaceScreen({
                       {section.title}
                     </Text>
                     <Text style={styles.muted}>
-                      {section.masteredConcepts} of {section.concepts.length}{" "}
-                      concepts
+                      {section.completedConcepts} of {section.concepts.length}{" "}
+                      concepts completed
                     </Text>
                   </View>
                   {section.hasNewMaterial ? (
@@ -307,8 +304,12 @@ export function ProjectWorkspaceScreen({
             <View style={[styles.fill, { width: `${progress}%` }]} />
           </View>
           <Text style={styles.muted}>
-            {workspace.path.stats.masteredConceptCount} of{" "}
-            {workspace.path.stats.conceptCount} concepts mastered
+            {workspace.path.stats.questionCount > 0
+              ? workspace.path.stats.answeredQuestionCount +
+                " of " +
+                workspace.path.stats.questionCount +
+                " questions answered"
+              : "No questions to answer yet"}
           </Text>
           <View style={styles.sheetDivider} />
           <Text style={styles.sheetSectionTitle}>Study tools</Text>
@@ -362,6 +363,16 @@ export function ProjectWorkspaceScreen({
           <Text style={styles.currentConcept}>
             {currentConcept?.title ?? "Choose a section to begin"}
           </Text>
+          {currentConcept ? (
+            <Text style={styles.muted}>
+              {currentConcept.questionCount > 0
+                ? currentConcept.answeredQuestionCount +
+                  " of " +
+                  currentConcept.questionCount +
+                  " questions answered"
+                : "No questions"}
+            </Text>
+          ) : null}
           {currentConcept?.hasNewMaterial ? (
             <Text style={styles.accentText}>
               Updated with material from a newer source

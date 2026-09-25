@@ -45,10 +45,63 @@ export const hasLearningItems = query({
   },
 })
 
-/** Maximum records read while composing one project learning path. */
-const PROJECT_PATH_LIMIT = 500
+/** Reads a project source passage for a learning-path citation. */
+export const readSourceCitation = query({
+  args: {
+    projectId: v.id("projects"),
+    sourceId: v.id("sources"),
+    locator: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const source = await ctx.db.get(args.sourceId)
+    if (!source || source.projectId !== args.projectId) return null
+    const chunks = await ctx.db
+      .query("sourceChunks")
+      .withIndex("by_source_ordinal", (q) => q.eq("sourceId", source._id))
+      .take(PROJECT_PATH_LIMIT)
+    const locator = args.locator?.trim()
+    const matchingChunk = locator
+      ? chunks.find((chunk) =>
+          chunk.references.some(
+            (reference) =>
+              reference.value === locator ||
+              reference.label === locator ||
+              `${reference.label} ${reference.value}` === locator
+          )
+        )
+      : undefined
+    const text = matchingChunk?.text ?? source.extractedText
+    const citationText = matchingChunk?.text ?? source.extractedText
+    const pageValue = matchingChunk?.references.find(
+      (reference) => reference.kind === "page"
+    )?.value
+    const page = pageValue ? Number.parseInt(pageValue, 10) : undefined
+    return {
+      citation: {
+        filename: source.filename,
+        label: locator || (matchingChunk?.sectionTitle ?? "Source material"),
+        text: citationText,
+        ...(page && Number.isFinite(page) ? { page } : {}),
+      },
+      text,
+      startOffset: 0,
+      endOffset: citationText.length,
+      snapshotOnly: false,
+      fileUrl: source.relativeKey
+        ? `/api/sources/file?projectId=${encodeURIComponent(source.projectId)}&sourceId=${encodeURIComponent(source._id)}&inline=1`
+        : undefined,
+      mimeType:
+        source.mimeType ??
+        (source.kind === "pdf" ? "application/pdf" : "text/plain"),
+      originalUrl: source.originalUrl,
+    }
+  },
+})
 
-/** Returns a source-grounded project path without exposing stored answer keys. */
+/** Maximum records read while composing one project learning path. */
+const PROJECT_PATH_LIMIT = 2_000
+
+/** Returns a source-grounded project path with question-answer progress. */
 export const getProjectPath = query({
   args: { projectId: v.id("projects") },
   handler: async (ctx, args) => {
@@ -86,6 +139,27 @@ export const getProjectPath = query({
     const reviewsByConcept = new Map(
       reviews.map((review) => [String(review.conceptId), review])
     )
+    const legacyAnswerCounts = await Promise.all(
+      reviews
+        .filter((review) => review.answeredQuestionCount === undefined)
+        .map(async (review) => {
+          const events = await ctx.db
+            .query("studyEvents")
+            .withIndex("by_project_concept_occurredAt", (q) =>
+              q
+                .eq("projectId", args.projectId)
+                .eq("conceptId", review.conceptId)
+            )
+            .collect()
+          const answeredItems = new Set(
+            events
+              .filter((event) => event.eventType === "answer")
+              .map((event) => String(event.itemId))
+          )
+          return [String(review.conceptId), answeredItems.size] as const
+        })
+    )
+    const answeredCountsByConcept = new Map(legacyAnswerCounts)
     const itemsByConcept = new Map<string, typeof items>()
     for (const item of items) {
       const conceptId = String(item.conceptId)
@@ -94,10 +168,28 @@ export const getProjectPath = query({
       itemsByConcept.set(conceptId, current)
     }
 
-    /** Converts one concept to its safe card sequence and derived mastery state. */
+    /** Converts one concept to safe cards and question-answer progress. */
     function conceptForPath(concept: (typeof concepts)[number]) {
       const conceptItems = itemsByConcept.get(String(concept._id)) ?? []
       const review = reviewsByConcept.get(String(concept._id))
+      const questionItems = conceptItems.filter(
+        (item) => item.type !== "explain"
+      )
+      const answeredQuestionCount = Math.min(
+        questionItems.length,
+        review?.answeredQuestionCount ??
+          answeredCountsByConcept.get(String(concept._id)) ??
+          0
+      )
+      // Completion measures question coverage; correctness only affects review scheduling.
+      const completionStatus =
+        questionItems.length === 0 ||
+        answeredQuestionCount >= questionItems.length
+          ? ("completed" as const)
+          : answeredQuestionCount > 0
+            ? ("practicing" as const)
+            : ("new" as const)
+      // Preserve the old wire status until previously released mobile clients age out.
       const status =
         (review?.consecutiveCorrect ?? 0) >= 2
           ? ("mastered" as const)
@@ -111,10 +203,19 @@ export const getProjectPath = query({
         id: String(concept._id),
         title: concept.title,
         status,
+        completionStatus,
+        answeredQuestionCount,
+        questionCount: questionItems.length,
         hasNewMaterial,
         sourceLabels: concept.sourceIds
           .map((sourceId) => sourceLabels.get(String(sourceId)))
           .filter((label): label is string => Boolean(label)),
+        sourceCitations: concept.sourceIds.flatMap((sourceId) => {
+          const source = sources.find((item) => item._id === sourceId)
+          return source
+            ? [{ sourceId: String(sourceId), filename: source.filename }]
+            : []
+        }),
         items: conceptItems.map((item) => ({
           id: String(item._id),
           conceptId: String(item.conceptId),
@@ -136,6 +237,25 @@ export const getProjectPath = query({
             : item.sourceIds
                 .map((sourceId) => sourceLabels.get(String(sourceId)))
                 .filter((label): label is string => Boolean(label)),
+          sourceCitations: item.sourceReferences?.length
+            ? item.sourceReferences.flatMap((reference) => {
+                const source = sources.find(
+                  (candidate) => candidate._id === reference.sourceId
+                )
+                return source
+                  ? [{
+                      sourceId: String(reference.sourceId),
+                      filename: source.filename,
+                      locator: reference.locator,
+                    }]
+                  : []
+              })
+            : item.sourceIds.flatMap((sourceId) => {
+                const source = sources.find((candidate) => candidate._id === sourceId)
+                return source
+                  ? [{ sourceId: String(sourceId), filename: source.filename }]
+                  : []
+              }),
         })),
       }
     }
@@ -164,6 +284,10 @@ export const getProjectPath = query({
           hasNewMaterial: sectionConcepts.some(
             (concept) => concept.hasNewMaterial
           ),
+          completedConcepts: sectionConcepts.filter(
+            (concept) => concept.completionStatus === "completed"
+          ).length,
+          // Keep the old field while previously released mobile clients still read it.
           masteredConcepts: sectionConcepts.filter(
             (concept) => concept.status === "mastered"
           ).length,
@@ -172,14 +296,24 @@ export const getProjectPath = query({
       })
       .filter((section) => section.concepts.length > 0)
     const allConcepts = sections.flatMap((section) => section.concepts)
+    const completedConceptCount = allConcepts.filter(
+      (concept) => concept.completionStatus === "completed"
+    ).length
+    const masteredConceptCount = allConcepts.filter(
+      (concept) => concept.status === "mastered"
+    ).length
     return {
       sections,
       stats: {
         sectionCount: sections.length,
         conceptCount: allConcepts.length,
-        masteredConceptCount: allConcepts.filter(
-          (concept) => concept.status === "mastered"
-        ).length,
+        answeredQuestionCount: allConcepts.reduce(
+          (total, concept) => total + concept.answeredQuestionCount,
+          0
+        ),
+        completedConceptCount,
+        // Keep the old field while previously released mobile clients still read it.
+        masteredConceptCount,
         questionCount: allConcepts.reduce(
           (total, concept) =>
             total +
@@ -419,13 +553,16 @@ async function findEvent(
   return events[0] ?? null
 }
 
-/** Rebuilds one concept review from immutable server-scored event outcomes. */
+/** Rebuilds answer scheduling and distinct answered-question counts from events. */
 async function recomputeReview(
   ctx: ReadContext,
   projectId: Id<"projects">,
   conceptId: Id<"concepts">,
   now: number
-): Promise<ConceptReviewState> {
+): Promise<{
+  review: ConceptReviewState
+  answeredQuestionCount: number
+}> {
   const events = await ctx.db
     .query("studyEvents")
     .withIndex("by_project_concept_occurredAt", (q) =>
@@ -439,16 +576,20 @@ async function recomputeReview(
       outcome: "correct" | "incorrect"
     } => event.eventType === "answer" && event.outcome !== undefined
   )
-  return replayReviewEvents(
-    String(conceptId),
-    scored.map((event) => ({
-      occurredAt: event.occurredAt,
-      receivedAt: event.receivedAt,
-      eventId: String(event._id),
-      outcome: event.outcome,
-    })),
-    now
-  )
+  return {
+    review: replayReviewEvents(
+      String(conceptId),
+      scored.map((event) => ({
+        occurredAt: event.occurredAt,
+        receivedAt: event.receivedAt,
+        eventId: String(event._id),
+        outcome: event.outcome,
+      })),
+      now
+    ),
+    answeredQuestionCount: new Set(scored.map((event) => String(event.itemId)))
+      .size,
+  }
 }
 
 /** Converts a persisted review row into the portable core state shape. */
@@ -582,12 +723,13 @@ function nextLearningFeedCursor(
   } satisfies LearningFeedCursor)
 }
 
-/** Writes a recomputed review summary, replacing stale derived values. */
+/** Writes recomputed answer progress and review summaries for one concept. */
 async function saveReview(
   ctx: WriteContext,
   projectId: Id<"projects">,
   conceptId: Id<"concepts">,
   state: ConceptReviewState,
+  answeredQuestionCount: number,
   updatedAt: number
 ): Promise<Id<"conceptReviews">> {
   const existing = await ctx.db
@@ -599,6 +741,7 @@ async function saveReview(
   const value = {
     projectId,
     conceptId,
+    answeredQuestionCount,
     attemptCount: state.attemptCount,
     correctCount: state.correctCount,
     incorrectCount: state.incorrectCount,
@@ -1220,19 +1363,26 @@ export const recordAnswerEvent = mutation({
       answer: args.answer,
       outcome: evaluation.status,
     })
-    const review = await recomputeReview(
+    const reviewProgress = await recomputeReview(
       ctx,
       args.projectId,
       item.conceptId,
       receivedAt
     )
-    await saveReview(ctx, args.projectId, item.conceptId, review, receivedAt)
+    await saveReview(
+      ctx,
+      args.projectId,
+      item.conceptId,
+      reviewProgress.review,
+      reviewProgress.answeredQuestionCount,
+      receivedAt
+    )
     return {
       status: evaluation.status,
       isCorrect: evaluation.isCorrect,
       eventId,
       alreadyRecorded: false,
-      review,
+      review: reviewProgress.review,
       feedback: answerFeedbackForItem(item),
     }
   },

@@ -55,14 +55,15 @@ function LoadedProjectOverview({ project }: { project: Doc<"projects"> }) {
   const concepts = path?.sections.flatMap((section) => section.concepts) ?? []
   const nextConcept =
     concepts.find(
-      (concept) => concept.status !== "mastered" && concept.items.length > 0
+      (concept) =>
+        concept.completionStatus !== "completed" && concept.items.length > 0
     ) ?? concepts.find((concept) => concept.items.length > 0)
   const nextItem =
     nextConcept?.items.find((item) => item.type === "explain") ??
     nextConcept?.items[0]
-  const progress = path?.stats.conceptCount
+  const progress = path?.stats.questionCount
     ? Math.round(
-        (path.stats.masteredConceptCount / path.stats.conceptCount) * 100
+        (path.stats.answeredQuestionCount / path.stats.questionCount) * 100
       )
     : 0
   const hasSources = sources.length > 0
@@ -119,15 +120,15 @@ function LoadedProjectOverview({ project }: { project: Doc<"projects"> }) {
             </Button>
           </section>
 
-          {path && path.stats.conceptCount > 0 ? (
+          {path && path.stats.questionCount > 0 ? (
             <div className="mt-8 flex items-center gap-4">
               <span className="shrink-0 text-sm text-muted-foreground">
-                {path.stats.masteredConceptCount} / {path.stats.conceptCount}{" "}
-                concepts
+                {path.stats.answeredQuestionCount} / {path.stats.questionCount}{" "}
+                questions answered
               </span>
               <Progress
                 value={progress}
-                aria-label={`${path.stats.masteredConceptCount} of ${path.stats.conceptCount} concepts mastered`}
+                aria-label={`${path.stats.answeredQuestionCount} of ${path.stats.questionCount} questions answered`}
                 className="[&_[data-slot=progress-indicator]]:bg-brand"
               />
             </div>

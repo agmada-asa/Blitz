@@ -714,10 +714,10 @@ function sessionOptionClass(
 ): string {
   const showFeedback = Boolean(result?.feedback)
   return cn(
-    "flex h-auto min-h-14 w-full items-center justify-start gap-3 rounded-xl border border-border bg-card px-4 py-3 text-left text-sm whitespace-normal text-card-foreground disabled:cursor-default disabled:opacity-100",
+    "flex h-auto min-h-14 w-full cursor-pointer items-center justify-start gap-3 rounded-xl border border-border bg-card px-4 py-3 text-left text-sm whitespace-normal text-card-foreground transition-colors hover:border-brand/50 hover:bg-brand/10 disabled:cursor-default disabled:opacity-100",
     selected &&
       !showFeedback &&
-      "border-brand/70 bg-brand/10 text-foreground",
+      "border-brand/70 bg-brand/15 text-foreground hover:border-brand/80 hover:bg-brand/25",
     showFeedback &&
       correct &&
       "border-emerald-500/60 bg-emerald-500/10 text-foreground",
