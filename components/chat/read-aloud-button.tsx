@@ -1,6 +1,6 @@
 "use client"
 
-/** Speaks one completed Blitz reply with the user's first saved Kokoro voice. */
+/** Speaks one reply or learning item with the user's first saved Kokoro voice. */
 import { PauseIcon, PlayIcon } from "@hugeicons/core-free-icons"
 import { HugeiconsIcon } from "@hugeicons/react"
 import { useQuery } from "convex/react"
@@ -12,14 +12,17 @@ import { LoadingIcon } from "@/components/ui/icon"
 import { api } from "@/convex/_generated/api"
 import { markdownText, parseMarkdown } from "@/lib/markdown"
 
-/** Current local playback state for a single assistant reply. */
+/** Current local playback state for one readable item. */
 type PlaybackState = "idle" | "loading" | "playing" | "error"
 
-/** Keeps chat read aloud to one active reply at a time across message controls. */
+/** Keeps read aloud to one active reply or learning item across controls. */
 let activeReadAloudStop: { id: symbol; stop: () => void } | undefined
 
-/** Maximum text size sent to the speech endpoint in one request. */
-const MAX_SPEECH_CHARS = 12_000
+/** Keeps each speech section short enough to start playback without a long wait. */
+const SPEECH_SECTION_CHARS = 1_200
+
+/** Represents a completed speech request or its recoverable failure. */
+type SpeechRequestResult = { blob: Blob } | { error: unknown }
 
 /** Removes Markdown structure while keeping the visible prose and link labels. */
 function plainReplyText(markdown: string): string {
@@ -47,22 +50,22 @@ function plainReplyText(markdown: string): string {
   return collect(parseMarkdown(markdown)).join(" ").replace(/\s+/g, " ").trim()
 }
 
-/** Splits long narration at sentence or word boundaries within the route limit. */
+/** Splits narration into short sections at sentence or word boundaries. */
 function splitSpeechText(text: string): string[] {
   const chunks: string[] = []
   let remaining = text.trim()
-  while (remaining.length > MAX_SPEECH_CHARS) {
+  while (remaining.length > SPEECH_SECTION_CHARS) {
     let boundary = 0
     for (const marker of [". ", "? ", "! ", "; ", ": ", "\n"]) {
       const index = remaining.lastIndexOf(
         marker,
-        MAX_SPEECH_CHARS - marker.length
+        SPEECH_SECTION_CHARS - marker.length
       )
       boundary = Math.max(boundary, index < 0 ? 0 : index + marker.length)
     }
     if (!boundary) {
-      const space = remaining.lastIndexOf(" ", MAX_SPEECH_CHARS - 1)
-      boundary = space > 0 ? space + 1 : MAX_SPEECH_CHARS
+      const space = remaining.lastIndexOf(" ", SPEECH_SECTION_CHARS - 1)
+      boundary = space > 0 ? space + 1 : SPEECH_SECTION_CHARS
     }
     if (
       boundary < remaining.length &&
@@ -78,6 +81,32 @@ function splitSpeechText(text: string): string[] {
   }
   if (remaining) chunks.push(remaining)
   return chunks
+}
+
+/** Requests one WAV section and captures background errors until playback needs it. */
+function requestSpeechAudio(
+  text: string,
+  voiceId: string,
+  signal: AbortSignal
+): Promise<SpeechRequestResult> {
+  return (async () => {
+    const response = await fetch("/api/audio/speech", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ text, voiceId }),
+      signal,
+    })
+    if (!response.ok) {
+      const result = (await response.json().catch(() => null)) as {
+        error?: string
+      } | null
+      throw new Error(result?.error || "Audio could not be generated.")
+    }
+    return await response.blob()
+  })().then(
+    (blob) => ({ blob }),
+    (error: unknown) => ({ error })
+  )
 }
 
 /** Plays one audio element until it ends or the owning read aloud request stops. */
@@ -122,61 +151,60 @@ function playAudioUntilEnded(
   })
 }
 
-/** Adds a user initiated play or stop control to one assistant reply. */
+/** Adds a control to start or stop reading one item aloud. */
 export function ReadAloudButton({ text }: { text: string }) {
   const savedSettings = useQuery(api.audioSettings.get)
   const voiceId = savedSettings?.voiceIds?.[0] ?? "af_heart"
   const [state, setState] = useState<PlaybackState>("idle")
   const [error, setError] = useState("")
   const audioRef = useRef<HTMLAudioElement | undefined>(undefined)
-  const objectUrlRef = useRef<string | undefined>(undefined)
+  const objectUrlsRef = useRef(new Set<string>())
   const requestRef = useRef<AbortController | undefined>(undefined)
   const ownerRef = useRef<symbol | undefined>(undefined)
 
-  /** Stops local audio, cancels generation, and releases the generated WAV URL. */
+  /** Stops one audio element or all playback and releases its prepared URL. */
+  const releaseAudio = useCallback(
+    (audio?: HTMLAudioElement, url?: string) => {
+      if (!audio || audioRef.current === audio) {
+        audioRef.current?.pause()
+        if (audioRef.current) audioRef.current.src = ""
+        audioRef.current = undefined
+      }
+      if (url) {
+        URL.revokeObjectURL(url)
+        objectUrlsRef.current.delete(url)
+      } else {
+        for (const objectUrl of objectUrlsRef.current)
+          URL.revokeObjectURL(objectUrl)
+        objectUrlsRef.current.clear()
+      }
+    },
+    []
+  )
+
+  /** Stops local audio, cancels speech requests, and releases prepared WAV URLs. */
   const stopPlayback = useCallback(() => {
     requestRef.current?.abort()
     requestRef.current = undefined
-    if (audioRef.current) {
-      audioRef.current.pause()
-      audioRef.current.src = ""
-      audioRef.current = undefined
-    }
-    if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current)
-    objectUrlRef.current = undefined
+    releaseAudio()
     if (activeReadAloudStop?.id === ownerRef.current) {
       activeReadAloudStop = undefined
       ownerRef.current = undefined
     }
     setState("idle")
-  }, [])
-
-  /** Releases the current audio element and its temporary generated WAV URL. */
-  function releaseAudio() {
-    if (audioRef.current) {
-      audioRef.current.pause()
-      audioRef.current.src = ""
-      audioRef.current = undefined
-    }
-    if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current)
-    objectUrlRef.current = undefined
-  }
+  }, [releaseAudio])
 
   useEffect(
     () => () => {
       requestRef.current?.abort()
-      if (audioRef.current) {
-        audioRef.current.pause()
-        audioRef.current.src = ""
-      }
-      if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current)
+      releaseAudio()
       if (activeReadAloudStop?.id === ownerRef.current)
         activeReadAloudStop = undefined
     },
-    [stopPlayback]
+    [releaseAudio]
   )
 
-  /** Requests a local Kokoro WAV and starts playback, reporting recoverable failures. */
+  /** Requests short Kokoro WAV sections and plays each as soon as it is ready. */
   async function startPlayback() {
     const chunks = splitSpeechText(plainReplyText(text))
     if (!chunks.length) return
@@ -189,32 +217,30 @@ export function ReadAloudButton({ text }: { text: string }) {
     ownerRef.current = ownerId
     activeReadAloudStop = { id: ownerId, stop: stopPlayback }
     try {
-      for (const chunk of chunks) {
+      let nextSpeech = requestSpeechAudio(
+        chunks[0],
+        voiceId,
+        controller.signal
+      )
+      for (let index = 0; index < chunks.length; index += 1) {
         if (controller.signal.aborted) return
         setState("loading")
-        const response = await fetch("/api/audio/speech", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ text: chunk, voiceId }),
-          signal: controller.signal,
-        })
-        if (!response.ok) {
-          const result = (await response.json().catch(() => null)) as {
-            error?: string
-          } | null
-          throw new Error(result?.error || "Audio could not be generated.")
-        }
-        const url = URL.createObjectURL(await response.blob())
-        objectUrlRef.current = url
+        const result = await nextSpeech
+        if (controller.signal.aborted) return
+        if ("error" in result) throw result.error
+        const url = URL.createObjectURL(result.blob)
+        objectUrlsRef.current.add(url)
         const audio = new Audio(url)
         audioRef.current = audio
+        if (index + 1 < chunks.length)
+          nextSpeech = requestSpeechAudio(
+            chunks[index + 1],
+            voiceId,
+            controller.signal
+          )
         setState("playing")
         await playAudioUntilEnded(audio, controller.signal)
-        if (audioRef.current === audio) audioRef.current = undefined
-        if (objectUrlRef.current === url) {
-          URL.revokeObjectURL(url)
-          objectUrlRef.current = undefined
-        }
+        releaseAudio(audio, url)
       }
       setState("idle")
     } catch (caught) {
@@ -230,7 +256,7 @@ export function ReadAloudButton({ text }: { text: string }) {
     }
   }
 
-  /** Toggles playback for this reply without affecting other chat messages. */
+  /** Toggles playback for this item without affecting other read aloud controls. */
   function togglePlayback() {
     if (state === "loading" || state === "playing") stopPlayback()
     else void startPlayback()
