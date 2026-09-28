@@ -5,9 +5,7 @@ import { randomUUID } from "node:crypto"
 import { ConvexHttpClient } from "convex/browser"
 import { api } from "@/convex/_generated/api"
 import { resolveProjectFile } from "@/lib/server/project-files"
-import { extractStoredSource } from "@/lib/server/source-ingestion/extract"
-import { normalizeSourceDocument } from "@/lib/server/source-ingestion/normalize"
-import { segmentSourceDocument } from "@/lib/server/source-ingestion/segment"
+import { prepareStoredSource } from "@/lib/server/source-ingestion/prepare"
 
 /** Uses Node.js streams and the local filesystem for durable upload storage. */
 export const runtime = "nodejs"
@@ -118,23 +116,15 @@ export async function POST(request: Request): Promise<Response> {
       )
     }
     try {
-      const extracted = await extractStoredSource({
-        path: await resolveProjectFile(projectId, stored.key),
-        sizeBytes: stored.size,
-        filename: stored.filename,
-        contentType: stored.mimeType,
-      })
-      const normalized = normalizeSourceDocument({
-        sourceId: String(record.sourceId),
-        filename: stored.filename,
-        kind: extracted.kind,
-        text: extracted.extractedText,
-      })
-      if (Buffer.byteLength(normalized.text, "utf8") > 500_000)
-        throw new Error(
-          "Extracted text exceeds the automatic preparation boundary."
-        )
-      const chunks = segmentSourceDocument(normalized)
+      const { document: normalized, chunks } = await prepareStoredSource(
+        {
+          path: await resolveProjectFile(projectId, stored.key),
+          sizeBytes: stored.size,
+          filename: stored.filename,
+          contentType: stored.mimeType,
+        },
+        String(record.sourceId)
+      )
       await convex.mutation(api.sourceRetrieval.replaceChunks, {
         projectId: projectId as never,
         sourceId: record.sourceId,
