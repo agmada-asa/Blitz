@@ -17,7 +17,8 @@
     "worker:chat": "node --experimental-strip-types scripts/chat-worker.ts",
     "worker:research": "node --experimental-strip-types scripts/research-worker.ts",
     "worker:ingestion": "node --experimental-strip-types scripts/ingestion-worker.ts",
-    "worker:content": "node --experimental-strip-types scripts/content-generation-worker.ts"
+    "worker:content": "node --experimental-strip-types scripts/content-generation-worker.ts",
+    "eval:ingestion": "node --experimental-strip-types scripts/eval-ingestion.ts"
   },
   "dependencies": {
     "@fontsource-variable/instrument-sans": "^5.3.0",

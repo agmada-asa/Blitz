@@ -1,0 +1,22 @@
+{
+  "root": "~/Downloads",
+  "suites": [
+    {
+      "id": "bulk-out-of-order",
+      "description": "Numbered lecture slides and notes for one module, uploaded together",
+      "paths": ["MODULE_A"]
+    },
+    {
+      "id": "slides-and-transcripts",
+      "description": "Diagram-heavy slides with untimed lecture transcripts on the same topics",
+      "paths": ["MODULE_B"],
+      "exclude": ["Personal document.pdf"]
+    },
+    {
+      "id": "textbook-with-lectures",
+      "description": "Lecture slides plus a long textbook used only as supporting evidence",
+      "paths": ["MODULE_C"],
+      "reference": ["Textbook.pdf"]
+    }
+  ]
+}
