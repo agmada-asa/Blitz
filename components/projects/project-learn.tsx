@@ -871,7 +871,7 @@ function ProjectLearnContent({ projectId, resume = false }: ProjectLearnProps) {
         </div>
       </aside>
 
-      <section className="min-w-0 px-4 py-5 sm:px-7 sm:py-8 lg:min-h-0 lg:overflow-y-auto lg:px-0 lg:py-8">
+      <section className="min-w-0 px-4 py-5 sm:px-7 sm:py-8 lg:min-h-0 lg:overflow-y-auto lg:px-8 lg:py-8">
         {!sessionStarted ? (
           <>
             <div className="flex flex-wrap items-end justify-between gap-3">
