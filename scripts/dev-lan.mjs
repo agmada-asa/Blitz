@@ -14,7 +14,7 @@ import {
   terminateProcessGroups,
 } from "./process-groups.mjs"
 
-const port = process.env.BLITZ_PORT ?? "3001"
+const port = process.env.BLITZ_PORT ?? "3007"
 const lanAddress = process.env.BLITZ_LAN_ADDRESS?.trim() || findLanAddress()
 const convexPorts = await resolveLocalConvexPorts(process.cwd(), process.env)
 const defaultApkPath = fileURLToPath(
