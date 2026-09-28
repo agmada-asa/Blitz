@@ -12,6 +12,7 @@ import {
   type CardChatTransport,
 } from "./card-chat.ts"
 import { createHash } from "node:crypto"
+import { TUTOR_REPLY_GUIDANCE } from "../teaching-voice.ts"
 import { promises as fs } from "node:fs"
 import { isAbsolute, join, relative, resolve, sep } from "node:path"
 import {
@@ -118,7 +119,8 @@ export function projectAgentInstructions(
         ]
       : []),
     "Keep external findings distinct from project sources, and cite or link them when useful. Do not use the network for unrelated exploration, change application settings, or persist permission exceptions.",
-    "Finish by describing what changed and naming the files you created or edited.",
+    "When you change files, finish by describing what changed and naming the files you created or edited.",
+    `When the user asks you to explain a concept rather than change files: ${TUTOR_REPLY_GUIDANCE}`,
     ...(additionalInstructions.trim()
       ? [
           "Additional instructions supplied by the user for this project:",

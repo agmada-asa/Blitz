@@ -1,6 +1,7 @@
 /** Validates workspace chat requests and turns their attachments into a bounded Blitz prompt. */
 
 import type { Id } from "../../convex/_generated/dataModel.js"
+import { TUTOR_REPLY_GUIDANCE } from "../teaching-voice.ts"
 
 /** Maximum user message size accepted by workspace chat. */
 export const MAX_WORKSPACE_CHAT_MESSAGE_LENGTH = 4_000
@@ -470,7 +471,7 @@ export function mergeWorkspaceChatReplay(
   }
 }
 
-/** Builds a prompt that treats every attachment as untrusted reference material. */
+/** Builds a prompt that treats every attachment as untrusted reference material and answers concept questions in the shared tutor voice. */
 export function buildWorkspaceChatPrompt(
   request: WorkspaceChatRequest,
   projects: WorkspaceChatProjectContext[],
@@ -538,6 +539,7 @@ export function buildWorkspaceChatPrompt(
     "Use attached project sources and card context as the primary evidence and starting point.",
     "If the attached material cannot resolve the question, is incomplete or outdated, or another available tool would materially improve the answer, use that tool when the selected provider and access policy allow it. Web search is appropriate for missing or current information.",
     "Answer the user's message directly. Name the source or project when useful, and explain when you needed external information or when no available evidence resolves a claim.",
+    `When the message asks about a concept or how something works: ${TUTOR_REPLY_GUIDANCE}`,
     "Keep external findings distinct from attached material. Use bracketed citation labels only for supplied passages, and link or name external sources rather than attributing them to project sources. Never invent a citation.",
     "When answering user notes or annotations, you may quote or hyperlink to them using markdown links formatted as [Annotation N](annotation:N) (for example [Annotation 1](annotation:1)), which will open the user's note for inspection.",
     "Use available tools when they materially help answer or complete the request. Do not edit files or run commands unless the user asks for a project change, and never use tools just to explore.",
