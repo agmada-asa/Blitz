@@ -4,6 +4,7 @@
 
 import {
   Archive02Icon,
+  ArrowDown01Icon,
   BookTextIcon,
   Chat01Icon,
   CheckUnread01Icon,
@@ -471,6 +472,7 @@ export function ChatWorkspace({
   const archivedCount = archivedChats?.length ?? 0
   const fileInputRef = useRef<HTMLInputElement>(null)
   const messageEndRef = useRef<HTMLDivElement>(null)
+  const conversationRef = useRef<HTMLElement>(null)
   const requestControllerRef = useRef<AbortController | undefined>(undefined)
   const pausedByUserRef = useRef(false)
   const manuallyMarkedUnreadRef = useRef<Id<"workspaceChats"> | undefined>(
@@ -481,6 +483,7 @@ export function ChatWorkspace({
   const [queuedMessage, setQueuedMessage] = useState<QueuedChatMessage | undefined>(undefined)
   const queuedMessageRef = useRef<QueuedChatMessage | undefined>(undefined)
   const [dismissedContinuationId, setDismissedContinuationId] = useState<string>()
+  const [showScrollToBottom, setShowScrollToBottom] = useState(false)
   const isMac = useSyncExternalStore(
     subscribeToPlatform,
     getPlatformIsMac,
@@ -841,9 +844,32 @@ export function ChatWorkspace({
   const effectiveWorkingProjectId = agentSettingsTouched
     ? workingProjectId
     : (persistedAgentSettings?.workingProjectId ?? workingProjectId)
+  /** Tracks whether the reader is near the latest message without moving their scroll position. */
+  const updateScrollToBottomVisibility = useCallback((): void => {
+    const container = conversationRef.current
+    if (!container) return
+    const distanceFromBottom =
+      container.scrollHeight - container.scrollTop - container.clientHeight
+    setShowScrollToBottom(distanceFromBottom > 96)
+  }, [])
+
+  /** Follows new content only while the reader is already near the conversation bottom. */
   useEffect(() => {
-    messageEndRef.current?.scrollIntoView({ block: "end" })
-  }, [messages.length, lastMessageContent])
+    const container = conversationRef.current
+    if (!container) return
+    const distanceFromBottom =
+      container.scrollHeight - container.scrollTop - container.clientHeight
+    if (distanceFromBottom <= 96) {
+      messageEndRef.current?.scrollIntoView({ block: "end", behavior: "auto" })
+    }
+    updateScrollToBottomVisibility()
+  }, [messages.length, lastMessageContent, updateScrollToBottomVisibility])
+
+  /** Moves the conversation to its latest content and restores automatic following. */
+  const scrollToLatestMessage = (): void => {
+    messageEndRef.current?.scrollIntoView({ block: "end", behavior: "smooth" })
+    setShowScrollToBottom(false)
+  }
 
   const isCurrentChatUnread = Boolean(
     activeChatTarget?.isUnread ?? activeChat?.isUnread
@@ -1981,6 +2007,8 @@ export function ChatWorkspace({
         </header>
 
         <section
+          ref={conversationRef}
+          onScroll={updateScrollToBottomVisibility}
           aria-label="Conversation"
           className="flex min-h-0 flex-1 flex-col overflow-y-auto py-5"
         >
@@ -2378,7 +2406,29 @@ export function ChatWorkspace({
           )}
         </section>
 
-        <div className="mx-auto w-full max-w-3xl shrink-0 pb-3">
+        <div className="relative mx-auto w-full max-w-3xl shrink-0 pb-3">
+          {messages.length > 0 && (showScrollToBottom || isStreaming) ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="icon"
+              aria-label={isStreaming ? "Generating response" : "Scroll to latest message"}
+              title={isStreaming ? "Generating response" : "Scroll to latest message"}
+              disabled={isStreaming}
+              onClick={scrollToLatestMessage}
+              className="absolute -top-10 left-1/2 z-10 size-8 -translate-x-1/2 rounded-full bg-background/95 shadow-sm backdrop-blur"
+            >
+              {isStreaming ? (
+                <span className="flex items-center gap-0.5" aria-hidden="true">
+                  <span className="size-1 animate-bounce rounded-full bg-current motion-reduce:animate-none" />
+                  <span className="size-1 animate-bounce rounded-full bg-current [animation-delay:120ms] motion-reduce:animate-none" />
+                  <span className="size-1 animate-bounce rounded-full bg-current [animation-delay:240ms] motion-reduce:animate-none" />
+                </span>
+              ) : (
+                <HugeiconsIcon icon={ArrowDown01Icon} size={16} aria-hidden="true" />
+              )}
+            </Button>
+          ) : null}
           {composerAttachments.length ||
           draftAnnotations.length ? (
             <div className="mb-2 flex min-w-0 flex-wrap items-center gap-1.5 px-1">
