@@ -1,6 +1,7 @@
 /** Exposes bounded, same-origin text-to-speech through the local Kokoro runtime. */
 
 import { isKokoroVoiceId } from "@/lib/kokoro-voices"
+import { SPEECH_OPENING_CHARS } from "@/lib/speech-text"
 import {
   KOKORO_MAX_TEXT_LENGTH,
   KokoroUnavailableError,
@@ -71,6 +72,8 @@ export async function POST(request: Request): Promise<Response> {
     typeof body.text !== "string" ||
     !body.text.trim() ||
     body.text.length > KOKORO_MAX_TEXT_LENGTH ||
+    (body.preparation !== undefined && typeof body.preparation !== "boolean") ||
+    (body.preparation === true && body.text.length > SPEECH_OPENING_CHARS) ||
     !isKokoroVoiceId(body.voiceId)
   ) {
     return Response.json(
@@ -85,6 +88,8 @@ export async function POST(request: Request): Promise<Response> {
     const audio = await synthesizeKokoroWav({
       text: body.text,
       voiceId: body.voiceId,
+      signal: request.signal,
+      priority: body.preparation === true ? "preparation" : "playback",
     })
     return new Response(new Uint8Array(audio), {
       headers: {
@@ -95,6 +100,7 @@ export async function POST(request: Request): Promise<Response> {
       },
     })
   } catch (error) {
+    if (request.signal.aborted) return new Response(null, { status: 499 })
     const status = error instanceof KokoroUnavailableError ? 503 : 500
     return Response.json(
       {

@@ -56,6 +56,8 @@ def main() -> None:
     data_dir = Path(os.environ["BLITZ_KOKORO_DIR"]).expanduser()
     try:
         kokoro, soundfile = initialize(data_dir)
+        # Exercise phonemization and first inference before advertising readiness.
+        kokoro.create("Ready.", voice="af_heart", speed=1.0, lang="en-us")
     except Exception as error:
         print(json.dumps({"ready": False, "error": str(error)}), flush=True)
         return

@@ -4,6 +4,7 @@ import { createHash, randomUUID } from "node:crypto"
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process"
 import { createInterface } from "node:readline"
 import {
+  access,
   chmod,
   mkdtemp,
   mkdir,
@@ -18,6 +19,7 @@ import {
 import { homedir } from "node:os"
 import { dirname, join, resolve } from "node:path"
 import { isKokoroVoiceId, type KokoroVoiceId } from "@/lib/kokoro-voices"
+import { SpeechQueue, type SpeechQueueOptions } from "./speech-queue"
 
 /** Maximum text accepted by a single inference request; callers can submit multiple chunks. */
 export const KOKORO_MAX_TEXT_LENGTH = 12_000
@@ -60,13 +62,23 @@ const pythonExecutable =
   process.env.BLITZ_KOKORO_PYTHON?.trim() ||
   join(dataDirectory, "venv", "bin", "python3")
 
-let worker: ChildProcessWithoutNullStreams | undefined
-let workerReady: Promise<void> | undefined
-let serializedSynthesis: Promise<void> = Promise.resolve()
-let readAloudCacheMaintenance: Promise<void> = Promise.resolve()
-let readAloudCacheReady: Promise<boolean> | undefined
-/** Deduplicates simultaneous speech requests for the same text and voice. */
-const readAloudInFlight = new Map<string, Promise<Buffer>>()
+/** One process-wide runtime survives development reloads and shares startup with route bundles. */
+type KokoroState = {
+  worker?: ChildProcessWithoutNullStreams
+  workerReady?: Promise<void>
+  activeReply?: { resolve: () => void; reject: (error: Error) => void }
+  queue: SpeechQueue
+  readAloudCacheMaintenance: Promise<void>
+  readAloudCacheReady?: Promise<boolean>
+  exitHandlerInstalled?: boolean
+}
+const processState = globalThis as typeof globalThis & {
+  __blitzKokoro?: KokoroState
+}
+const state = (processState.__blitzKokoro ??= {
+  queue: new SpeechQueue(),
+  readAloudCacheMaintenance: Promise.resolve(),
+})
 
 /** Validates a request shared by API calls and trusted long form job code. */
 function validateRequest(
@@ -93,16 +105,20 @@ function validateRequest(
 
 /** Starts the resident worker and waits for its one-time model load. */
 async function startWorker(): Promise<void> {
-  if (workerReady) return workerReady
+  if (state.workerReady) return state.workerReady
   const readiness = new Promise<void>((resolveReady, rejectReady) => {
     void mkdir(dataDirectory, { recursive: true })
       .then(() => {
-        const child = spawn(/* turbopackIgnore: true */ pythonExecutable, [workerScript], {
-          cwd: dirname(workerScript),
-          env: { ...process.env, BLITZ_KOKORO_DIR: dataDirectory },
-          stdio: ["pipe", "pipe", "pipe"],
-        })
-        worker = child
+        const child = spawn(
+          /* turbopackIgnore: true */ pythonExecutable,
+          [workerScript],
+          {
+            cwd: dirname(workerScript),
+            env: { ...process.env, BLITZ_KOKORO_DIR: dataDirectory },
+            stdio: ["pipe", "pipe", "pipe"],
+          }
+        )
+        state.worker = child
         let stderr = ""
         child.stderr.on("data", (chunk: Buffer) => {
           stderr = `${stderr}${chunk.toString()}`.slice(-4_000)
@@ -118,6 +134,7 @@ async function startWorker(): Promise<void> {
         }, 180_000)
         let initialized = false
         lines.on("line", (line) => {
+          if (state.worker !== child) return
           let message: WorkerReply
           try {
             message = JSON.parse(line) as WorkerReply
@@ -138,8 +155,8 @@ async function startWorker(): Promise<void> {
             return
           }
           if ("ok" in message) {
-            const reply = activeReply
-            activeReply = undefined
+            const reply = state.activeReply
+            state.activeReply = undefined
             if (message.ok) reply?.resolve()
             else
               reply?.reject(
@@ -155,10 +172,11 @@ async function startWorker(): Promise<void> {
               : `Kokoro could not start: ${error.message}`
           )
           if (!initialized) rejectReady(failure)
-          activeReply?.reject(failure)
-          activeReply = undefined
-          worker = undefined
-          workerReady = undefined
+          if (state.worker !== child) return
+          state.activeReply?.reject(failure)
+          state.activeReply = undefined
+          state.worker = undefined
+          state.workerReady = undefined
         })
         child.once("exit", (code) => {
           clearTimeout(startupTimer)
@@ -166,9 +184,11 @@ async function startWorker(): Promise<void> {
             `The local Kokoro worker stopped${code === null ? "" : ` (exit ${code})`}.${stderr ? ` ${stderr.trim()}` : ""}`
           )
           if (!initialized) rejectReady(failure)
-          activeReply?.reject(failure)
-          worker = undefined
-          workerReady = undefined
+          if (state.worker !== child) return
+          state.activeReply?.reject(failure)
+          state.activeReply = undefined
+          state.worker = undefined
+          state.workerReady = undefined
         })
       })
       .catch((error: unknown) => {
@@ -181,36 +201,33 @@ async function startWorker(): Promise<void> {
         )
       })
   })
-  workerReady = readiness.catch((error: unknown) => {
-    workerReady = undefined
+  state.workerReady = readiness.catch((error: unknown) => {
+    state.workerReady = undefined
     throw error
   })
-  return workerReady
+  return state.workerReady
 }
-
-let activeReply:
-  { resolve: () => void; reject: (error: Error) => void } | undefined
 
 /** Sends one request to the resident process after startup has loaded the model. */
 async function sendRequest(request: SpeechRequest): Promise<void> {
   await startWorker()
-  const child = worker
+  const child = state.worker
   if (
     !child ||
     child.killed ||
     child.exitCode !== null ||
     child.stdin.destroyed
   ) {
-    worker = undefined
-    workerReady = undefined
+    state.worker = undefined
+    state.workerReady = undefined
     await startWorker()
     return sendRequest(request)
   }
   await new Promise<void>((resolveReply, rejectReply) => {
-    activeReply = { resolve: resolveReply, reject: rejectReply }
+    state.activeReply = { resolve: resolveReply, reject: rejectReply }
     child.stdin.write(`${JSON.stringify(request)}\n`, (error) => {
       if (!error) return
-      activeReply = undefined
+      state.activeReply = undefined
       rejectReply(
         new KokoroUnavailableError(
           "The local Kokoro worker stopped accepting requests."
@@ -220,35 +237,54 @@ async function sendRequest(request: SpeechRequest): Promise<void> {
   })
 }
 
-/** Queues synthesis so callers share one model safely and later work can restart after a crash. */
-async function queuedSynthesis(request: SpeechRequest): Promise<void> {
-  const current = serializedSynthesis.then(async () => {
-    try {
-      await sendRequest(request)
-    } catch (error) {
-      if (worker) worker.kill()
-      worker = undefined
-      workerReady = undefined
-      throw error
-    }
-  })
-  serializedSynthesis = current.then(
-    () => undefined,
-    () => undefined
-  )
-  return current
+/** Stops only the failing resident process; queued cancellation never kills active inference. */
+async function runSynthesis(request: SpeechRequest): Promise<void> {
+  try {
+    await sendRequest(request)
+  } catch (error) {
+    state.worker?.kill()
+    state.worker = undefined
+    state.workerReady = undefined
+    throw error
+  }
+}
+
+/** Loads installed assets ahead of the first click without downloading anything at server startup. */
+export async function warmKokoro(): Promise<void> {
+  if (process.platform !== "darwin") return
+  try {
+    await Promise.all([
+      access(pythonExecutable),
+      access(join(dataDirectory, "kokoro-v1.0.onnx")),
+      access(join(dataDirectory, "voices-v1.0.bin")),
+    ])
+  } catch {
+    return
+  }
+  await Promise.all([startWorker(), prepareReadAloudCache()])
 }
 
 /** Writes one WAV file using the persistent local Kokoro model. */
-export async function synthesizeKokoroToFile(options: {
-  text: string
-  voiceId: KokoroVoiceId
-  outputPath: string
-}): Promise<void> {
+export async function synthesizeKokoroToFile(
+  options: {
+    text: string
+    voiceId: KokoroVoiceId
+    outputPath: string
+  } & SpeechQueueOptions
+): Promise<void> {
   validateRequest(options.text, options.voiceId)
   const outputPath = resolve(options.outputPath)
   await mkdir(dirname(outputPath), { recursive: true })
-  await queuedSynthesis({ ...options, outputPath })
+  await state.queue.enqueue(
+    `file:${outputPath}`,
+    () =>
+      runSynthesis({
+        text: options.text,
+        voiceId: options.voiceId,
+        outputPath,
+      }),
+    options
+  )
 }
 
 /** Resolves a cache key to its opaque WAV path inside the private app cache. */
@@ -309,11 +345,11 @@ async function pruneReadAloudCache(): Promise<void> {
 
 /** Serializes cache cleanup so concurrent speech requests cannot race eviction. */
 function queueReadAloudCacheMaintenance(): Promise<void> {
-  const current = readAloudCacheMaintenance.then(
+  const current = state.readAloudCacheMaintenance.then(
     pruneReadAloudCache,
     pruneReadAloudCache
   )
-  readAloudCacheMaintenance = current.then(
+  state.readAloudCacheMaintenance = current.then(
     () => undefined,
     () => undefined
   )
@@ -322,16 +358,16 @@ function queueReadAloudCacheMaintenance(): Promise<void> {
 
 /** Initializes the cache once and allows speech to continue if local caching fails. */
 function prepareReadAloudCache(): Promise<boolean> {
-  if (!readAloudCacheReady) {
-    readAloudCacheReady = queueReadAloudCacheMaintenance().then(
+  if (!state.readAloudCacheReady) {
+    state.readAloudCacheReady = queueReadAloudCacheMaintenance().then(
       () => true,
       () => {
-        readAloudCacheReady = undefined
+        state.readAloudCacheReady = undefined
         return false
       }
     )
   }
-  return readAloudCacheReady
+  return state.readAloudCacheReady
 }
 
 /** Reads and marks a cached WAV as recently used without storing its source text. */
@@ -377,7 +413,7 @@ async function synthesizeKokoroWavUncached(options: {
   const temporaryDirectory = await mkdtemp(join(dataDirectory, "speech-"))
   const outputPath = join(temporaryDirectory, "speech.wav")
   try {
-    await synthesizeKokoroToFile({ ...options, outputPath })
+    await runSynthesis({ ...options, outputPath })
     return await readFile(outputPath)
   } finally {
     await rm(temporaryDirectory, { recursive: true, force: true })
@@ -385,45 +421,63 @@ async function synthesizeKokoroWavUncached(options: {
 }
 
 /** Returns local speech and reuses recent WAVs from a size- and age-limited cache. */
-export async function synthesizeKokoroWav(options: {
-  text: string
-  voiceId: KokoroVoiceId
-}): Promise<Buffer> {
+export async function synthesizeKokoroWav(
+  options: {
+    text: string
+    voiceId: KokoroVoiceId
+  } & SpeechQueueOptions
+): Promise<Buffer> {
   validateRequest(options.text, options.voiceId)
+  options.signal?.throwIfAborted()
   const key = createHash("sha256")
     .update(`read-aloud-v1\0${options.voiceId}\0${options.text}`, "utf8")
     .digest("hex")
-  if (!(await prepareReadAloudCache()))
-    return synthesizeKokoroWavUncached(options)
+  const cacheAvailable = await prepareReadAloudCache()
 
   try {
-    const cached = await readCachedReadAloud(key)
-    if (cached) return cached
+    const cached = cacheAvailable ? await readCachedReadAloud(key) : undefined
+    if (cached) {
+      options.signal?.throwIfAborted()
+      return cached
+    }
   } catch {
     // A cache read failure must not prevent the requested speech from playing.
   }
 
-  const current = readAloudInFlight.get(key)
-  if (current) return current
-
-  const generation = (async () => {
-    const audio = await synthesizeKokoroWavUncached(options)
-    try {
-      await writeCachedReadAloud(key, audio)
-      await queueReadAloudCacheMaintenance()
-    } catch {
-      // Keep the generated audio available even when the optional cache is full or unwritable.
-    }
-    return audio
-  })()
-  readAloudInFlight.set(key, generation)
-  try {
-    return await generation
-  } finally {
-    if (readAloudInFlight.get(key) === generation)
-      readAloudInFlight.delete(key)
-  }
+  options.signal?.throwIfAborted()
+  return state.queue.enqueue(
+    `wav:${key}`,
+    async () => {
+      // Another request may have filled the cache while this task waited for the model.
+      if (cacheAvailable) {
+        try {
+          const cached = await readCachedReadAloud(key)
+          if (cached) return cached
+        } catch {
+          // Continue with synthesis when optional cache access fails.
+        }
+      }
+      const audio = await synthesizeKokoroWavUncached({
+        text: options.text,
+        voiceId: options.voiceId,
+      })
+      if (cacheAvailable) {
+        try {
+          await writeCachedReadAloud(key, audio)
+          // Eviction is optional maintenance and must not delay the first audible section.
+          void queueReadAloudCacheMaintenance().catch(() => undefined)
+        } catch {
+          // Keep speech available even when the optional cache is full or unwritable.
+        }
+      }
+      return audio
+    },
+    options
+  )
 }
 
 /** Stops the resident worker when the Node.js process exits. */
-process.once("exit", () => worker?.kill())
+if (!state.exitHandlerInstalled) {
+  state.exitHandlerInstalled = true
+  process.once("exit", () => state.worker?.kill())
+}
