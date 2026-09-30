@@ -2331,7 +2331,10 @@ export function ChatWorkspace({
                             {message.content ? (
                               <>
                                 {message.status !== "running" ? (
-                                  <ReadAloudButton text={message.content} />
+                                  <ReadAloudButton
+                                    text={message.content}
+                                    prepare={latest}
+                                  />
                                 ) : null}
                                 <Button
                                   type="button"

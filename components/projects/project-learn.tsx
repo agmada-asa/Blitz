@@ -953,6 +953,7 @@ function ProjectLearnContent({ projectId, resume = false }: ProjectLearnProps) {
               <ReadAloudButton
                 key={currentItem.id}
                 text={learnItemSpeechText(currentItem)}
+                prepare
               />
               <div className="flex items-center gap-2 text-sm text-muted-foreground">
                 <span>

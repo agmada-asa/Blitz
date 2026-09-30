@@ -6,7 +6,7 @@ Blitz can narrate a ready source as an audiobook or write a podcast from the rea
 
 Settings offers five Kokoro voices with short previews. Users save one or two voices in order. The first narrates audiobooks and chat replies. Podcasts use one host when one voice is saved and alternate between two hosts when two are saved. Voice IDs are validated at the route and Convex boundaries.
 
-Run `scripts/setup-kokoro.sh` once on the Mac. [Local Kokoro setup](local-kokoro.md) covers the Python environment and model download. The worker keeps the model loaded between requests, so a long recording submits short sections through the same queue used by chat playback. A chat request can run between sections of a long job.
+Run `scripts/setup-kokoro.sh` once on the Mac. [Local Kokoro setup](local-kokoro.md) covers the Python environment and model download. The worker keeps the model loaded between requests, so a long recording submits short sections through the same queue used by chat playback. Active read aloud requests take priority between sections of a long job. The player prepares only the opening of the active lesson or latest reply and schedules later sections during playback. [Read aloud latency](local-kokoro.md#read-aloud-latency) describes preparation, cancellation, and cache limits.
 
 ## Generation
 
