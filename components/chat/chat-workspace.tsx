@@ -166,10 +166,12 @@ type ChatEvent =
   | { type: "agent-request-resolved"; requestId: string }
   | { type: "error"; message: string }
 
-/** Initial saved chat selected by the route query string. */
+/** Initial conversation or study context, with optional embedded panel behavior. */
 type ChatWorkspaceProps = {
   initialChatId?: Id<"workspaceChats">
   initialCard?: ChatCard
+  /** Selected transcript text attached to a fresh project chat. */
+  initialPassage?: ChatPassage
   /** Optional unsent prompt used when a card starts a focused chat. */
   initialPrompt?: string
   initialProject?: ChatAgentProject
@@ -177,6 +179,18 @@ type ChatWorkspaceProps = {
   embedded?: boolean
   /** Lets an owning panel open citations in its own source tab. */
   onOpenSource?: (selection: SourceSelection) => void
+}
+
+/** Selected recording passages supplied as inline context, without the full project. */
+export type ChatPassage = {
+  /** Stable selection identity used to reset the panel when passages change. */
+  id: string
+  /** Project that owns the recording and the saved conversation. */
+  projectId: Id<"projects">
+  /** Recording title and timestamps shown on the context attachment. */
+  title: string
+  /** Reader-facing transcript text with timestamps; the composer retains up to 48,000 characters. */
+  text: string
 }
 
 /** Optional overrides for standard, edited, and continued chat submissions. */
@@ -195,6 +209,39 @@ type QueuedChatMessage = {
   message: string
   attachments: DraftAttachment[]
   annotations: FloatingAnnotation[]
+}
+
+/**
+ * One reply this workspace is streaming. Replies are tracked per chat so the
+ * learner can open another chat, or start a new one, while a reply generates.
+ */
+type InFlightReply = {
+  /** Saved chat receiving the reply; unset until a new chat's first turn starts. */
+  chatId?: Id<"workspaceChats">
+  /** View that sent the reply, used to match a new chat before it is saved. */
+  view: number
+  controller: AbortController
+  /** Set when the learner pauses or steers, so the abort is not reported as an error. */
+  pausedByUser: boolean
+  promise?: Promise<boolean>
+}
+
+/**
+ * Finds the reply streaming into one chat, or into the unsaved chat of one view.
+ *
+ * @param replies - Replies currently in flight.
+ * @param chatId - Visible saved chat, or undefined for a new chat.
+ * @param view - Visible view number; distinguishes successive new chats.
+ * @returns The matching reply, if any.
+ */
+function replyForView(
+  replies: readonly InFlightReply[],
+  chatId: Id<"workspaceChats"> | undefined,
+  view: number
+): InFlightReply | undefined {
+  return replies.find((reply) =>
+    reply.chatId ? reply.chatId === chatId : !chatId && reply.view === view
+  )
 }
 
 /** Card identity shown while a new card chat waits for its first question. */
@@ -458,6 +505,7 @@ function getServerPlatformIsMac(): boolean {
 export function ChatWorkspace({
   initialChatId,
   initialCard,
+  initialPassage,
   initialPrompt,
   initialProject,
   embedded = false,
@@ -473,13 +521,19 @@ export function ChatWorkspace({
   const fileInputRef = useRef<HTMLInputElement>(null)
   const messageEndRef = useRef<HTMLDivElement>(null)
   const conversationRef = useRef<HTMLElement>(null)
-  const requestControllerRef = useRef<AbortController | undefined>(undefined)
-  const pausedByUserRef = useRef(false)
+  /** Replies in flight, read synchronously by stream callbacks. */
+  const inFlightRepliesRef = useRef<InFlightReply[]>([])
+  const [inFlightReplies, setInFlightReplies] = useState<InFlightReply[]>([])
+  /** Increments whenever the visible chat changes, including between new chats. */
+  const viewRef = useRef(0)
+  const [view, setView] = useState(0)
   const manuallyMarkedUnreadRef = useRef<Id<"workspaceChats"> | undefined>(
     undefined
   )
-  const activeSendPromiseRef = useRef<Promise<boolean> | undefined>(undefined)
-  const sendingRef = useRef(false)
+  /** Blocks a second upload batch before the uploading state re-renders. */
+  const uploadingFilesRef = useRef(false)
+  /** Whether the draft chat's project was chosen through the working project control. */
+  const draftProjectFromWorkingRef = useRef(false)
   const [queuedMessage, setQueuedMessage] = useState<QueuedChatMessage | undefined>(undefined)
   const queuedMessageRef = useRef<QueuedChatMessage | undefined>(undefined)
   const [dismissedContinuationId, setDismissedContinuationId] = useState<string>()
@@ -495,10 +549,13 @@ export function ChatWorkspace({
   const setChatUnread = useMutation(api.workspaceChats.setUnread)
   const setChatPinned = useMutation(api.workspaceChats.setPinned)
   const setChatArchived = useMutation(api.workspaceChats.setArchived)
+  const assignChatProject = useMutation(api.workspaceChats.assignProject)
   const deleteChat = useMutation(api.workspaceChats.remove)
   const [activeChatId, setActiveChatId] = useState<
     Id<"workspaceChats"> | undefined
-  >(initialCard ? undefined : initialChatId)
+  >(initialCard || initialPassage ? undefined : initialChatId)
+  /** Visible chat, read by stream callbacks that outlive the render that started them. */
+  const activeChatIdRef = useRef(activeChatId)
   const activeChat = useQuery(
     api.workspaceChats.get,
     activeChatId ? { chatId: activeChatId } : "skip"
@@ -506,16 +563,25 @@ export function ChatWorkspace({
   const [attachments, setAttachments] = useState<DraftAttachment[]>(() =>
     initialCard
       ? [draftAttachmentForCard(initialCard)]
-      : initialProject
+      : initialPassage
         ? [
             {
-              id: `project:${initialProject._id}`,
-              kind: "project",
-              label: initialProject.title,
-              projectId: initialProject._id,
+              id: initialPassage.id,
+              kind: "file",
+              label: initialPassage.title.slice(0, 255),
+              text: initialPassage.text.slice(0, MAX_ATTACHMENT_TEXT),
             },
           ]
-        : []
+        : initialProject
+          ? [
+              {
+                id: `project:${initialProject._id}`,
+                kind: "project",
+                label: initialProject.title,
+                projectId: initialProject._id,
+              },
+            ]
+          : []
   )
   const [draft, setDraft] = useState(() => initialPrompt?.slice(0, 4_000) ?? "")
   const [draftAnnotations, setDraftAnnotations] = useState<
@@ -524,7 +590,6 @@ export function ChatWorkspace({
   const [expandedAnnotationId, setExpandedAnnotationId] = useState<
     string | undefined
   >()
-  const [sending, setSending] = useState(false)
   const [savingReplySettings, setSavingReplySettings] = useState(false)
   const [messageActionId, setMessageActionId] = useState<string>()
   const [copiedMessageId, setCopiedMessageId] = useState<string>()
@@ -556,7 +621,7 @@ export function ChatWorkspace({
   const [agentInstructions, setAgentInstructions] = useState("")
   const [workingProjectId, setWorkingProjectId] = useState<
     Id<"projects"> | undefined
-  >(initialCard?.projectId ?? initialProject?._id)
+  >(initialCard?.projectId ?? initialPassage?.projectId ?? initialProject?._id)
   const [agentSettingsTouched, setAgentSettingsTouched] = useState(false)
   const [streamAgentRequests, setStreamAgentRequests] = useState<
     Record<string, { request: AgentRequest; messageId: string }>
@@ -569,7 +634,7 @@ export function ChatWorkspace({
   const [newChatDialogOpen, setNewChatDialogOpen] = useState(false)
   const [newChatProjectId, setNewChatProjectId] = useState<
     Id<"projects"> | undefined
-  >(initialCard?.projectId ?? initialProject?._id)
+  >(initialCard?.projectId ?? initialPassage?.projectId ?? initialProject?._id)
   const [linkDialogOpen, setLinkDialogOpen] = useState(false)
   const [linkUrl, setLinkUrl] = useState("")
   const [importingLink, setImportingLink] = useState(false)
@@ -779,6 +844,8 @@ export function ChatWorkspace({
   )
   const contextProjectLabel =
     contextProject?.title ?? contextualProject?.label ?? "Project"
+  // Only a reply streaming into the visible chat makes this composer busy.
+  const sending = Boolean(replyForView(inFlightReplies, activeChatId, view))
   const isStreaming = sending || activeChat?.status === "running"
   const isRunning =
     uploadingFiles ||
@@ -844,6 +911,39 @@ export function ChatWorkspace({
   const effectiveWorkingProjectId = agentSettingsTouched
     ? workingProjectId
     : (persistedAgentSettings?.workingProjectId ?? workingProjectId)
+
+  /**
+   * Files the chat under a newly chosen working project so history groups it there.
+   *
+   * A saved general chat moves immediately; a chat that already belongs to a
+   * project keeps it. A draft chat follows the working project unless a card or
+   * project link already chose its project, or a file was uploaded into the
+   * project it follows (that file must stay with its owning project).
+   *
+   * @param projectId - The newly selected working project, or undefined for none.
+   */
+  const linkChatToWorkingProject = (projectId?: Id<"projects">): void => {
+    if (!activeChatId) {
+      const followsWorkingProject =
+        !newChatProjectId || draftProjectFromWorkingRef.current
+      // Uploads without an owner token were stored in the draft project itself.
+      const hasProjectOwnedUpload = attachments.some(
+        (attachment) => attachment.documentId && !attachment.ownerToken
+      )
+      if (!followsWorkingProject || hasProjectOwnedUpload) return
+      draftProjectFromWorkingRef.current = Boolean(projectId)
+      setNewChatProjectId(projectId)
+      return
+    }
+    if (!projectId || activeChat?.projectId) return
+    void assignChatProject({ chatId: activeChatId, projectId }).catch(
+      (cause) => {
+        setError(
+          messageForError(cause, "This chat could not be moved to that project.")
+        )
+      }
+    )
+  }
   /** Tracks whether the reader is near the latest message without moving their scroll position. */
   const updateScrollToBottomVisibility = useCallback((): void => {
     const container = conversationRef.current
@@ -912,6 +1012,32 @@ export function ChatWorkspace({
     )
   }, [activeChatId, isCurrentChatUnread, setChatUnread])
 
+  /**
+   * Switches the visible chat. A reply streaming elsewhere keeps running, but
+   * its busy state and message action stay with the chat it belongs to.
+   *
+   * @param chatId - Saved chat to show, or undefined for a new chat.
+   */
+  const showView = (chatId: Id<"workspaceChats"> | undefined): void => {
+    viewRef.current += 1
+    activeChatIdRef.current = chatId
+    setView(viewRef.current)
+    setActiveChatId(chatId)
+    setMessageActionId(undefined)
+  }
+
+  /**
+   * Ends one message action unless a newer action has replaced it, for example
+   * after the learner switched chats while the earlier action was finishing.
+   *
+   * @param messageId - Message whose action finished.
+   */
+  const clearMessageAction = (messageId: string): void => {
+    setMessageActionId((current) =>
+      current === messageId ? undefined : current
+    )
+  }
+
   /** Selects one saved chat and mirrors it in the address bar. */
   const selectChat = (
     chatId: Id<"workspaceChats">,
@@ -920,7 +1046,7 @@ export function ChatWorkspace({
     manuallyMarkedUnreadRef.current = undefined
     void setChatUnread({ chatId, unread: false }).catch(() => {})
     setSourceSelection(undefined)
-    setActiveChatId(chatId)
+    showView(chatId)
     if (!preserveQueue) {
       setQueuedMessage(undefined)
       queuedMessageRef.current = undefined
@@ -946,11 +1072,15 @@ export function ChatWorkspace({
       )
   }
 
-  /** Clears the active conversation and starts a new standalone chat. */
+  /**
+   * Clears the active conversation and starts a new standalone chat. A reply
+   * still generating in the previous chat keeps running there.
+   */
   const startNewChat = (): void => {
-    if (isRunning) return
+    // Uploads land in the visible draft, so wait for them before switching.
+    if (uploadingFiles || importingLink) return
     setSourceSelection(undefined)
-    setActiveChatId(undefined)
+    showView(undefined)
     setQueuedMessage(undefined)
     queuedMessageRef.current = undefined
     revokeDraftPreviews()
@@ -966,6 +1096,7 @@ export function ChatWorkspace({
     setAgentInstructions("")
     setWorkingProjectId(undefined)
     setNewChatProjectId(undefined)
+    draftProjectFromWorkingRef.current = false
     setStreamAgentRequests({})
     setStreamProviderEvents([])
     setAgentSettingsTouched(false)
@@ -977,7 +1108,7 @@ export function ChatWorkspace({
   /** Clears the composer and assigns the selected project to the pending chat. */
   const startNewChatForProject = (project: NewChatProject): void => {
     setSourceSelection(undefined)
-    setActiveChatId(undefined)
+    showView(undefined)
     setQueuedMessage(undefined)
     queuedMessageRef.current = undefined
     setDismissedContinuationId(undefined)
@@ -999,6 +1130,7 @@ export function ChatWorkspace({
     setAgentInstructions("")
     setWorkingProjectId(project._id)
     setNewChatProjectId(project._id)
+    draftProjectFromWorkingRef.current = false
     setStreamAgentRequests({})
     setAgentSettingsTouched(false)
     setHistoryOpen(false)
@@ -1143,7 +1275,7 @@ export function ChatWorkspace({
       await deleteChat({ chatId: targetId })
       setDeleteChatId(undefined)
       if (activeChatId === targetId) {
-        setActiveChatId(undefined)
+        showView(undefined)
       }
     } catch (cause) {
       setError(messageForError(cause, "This chat could not be deleted."))
@@ -1175,7 +1307,8 @@ export function ChatWorkspace({
 
   /** Saves selected originals before allowing a message to use them as source context. */
   const chooseFiles = async (files: File[]): Promise<void> => {
-    if (uploadingFiles) return
+    if (uploadingFilesRef.current) return
+    uploadingFilesRef.current = true
     setUploadingFiles(true)
     setError("")
     const selected = files
@@ -1218,10 +1351,11 @@ export function ChatWorkspace({
       }
     }
     if (fileInputRef.current) fileInputRef.current.value = ""
+    uploadingFilesRef.current = false
     setUploadingFiles(false)
   }
 
-  /** Handles files dropped onto the composer while preserving ordinary text drops. */
+  /** Handles files dropped anywhere on the chat pane while preserving ordinary text drops. */
   const handleComposerDrop = (event: DragEvent<HTMLDivElement>): void => {
     const files = droppedFiles(Array.from(event.dataTransfer.files))
     if (!files.length) return
@@ -1337,7 +1471,8 @@ export function ChatWorkspace({
     const targetProjectId = targetChatId ? undefined : newChatProjectId
     if (
       (!message && !submittedAnnotations.length && !options.continuationOf) ||
-      (!options.continuationOf && sendingRef.current) ||
+      (!options.continuationOf &&
+        replyForView(inFlightRepliesRef.current, targetChatId, viewRef.current)) ||
       uploadingFiles ||
       importingLink ||
       savingReplySettings ||
@@ -1364,11 +1499,18 @@ export function ChatWorkspace({
     }
     setError("")
     setStreamProviderEvents([])
-    setSending(true)
-    sendingRef.current = true
-    pausedByUserRef.current = false
     const controller = new AbortController()
-    requestControllerRef.current = controller
+    const reply: InFlightReply = {
+      ...(targetChatId ? { chatId: targetChatId } : {}),
+      view: viewRef.current,
+      controller,
+      pausedByUser: false,
+    }
+    inFlightRepliesRef.current = [...inFlightRepliesRef.current, reply]
+    setInFlightReplies(inFlightRepliesRef.current)
+    /** Whether the learner is still looking at the chat this reply belongs to. */
+    const isVisible = (): boolean =>
+      replyForView([reply], activeChatIdRef.current, viewRef.current) === reply
     let started = false
     let completed = false
     let resolvedChatId: Id<"workspaceChats"> | undefined = targetChatId
@@ -1453,19 +1595,28 @@ export function ChatWorkspace({
         }
         await readChatEvents(response.body, (event) => {
           if (event.type === "error") {
-            if (pausedByUserRef.current || controller.signal.aborted) return
+            if (reply.pausedByUser || controller.signal.aborted) return
             throw new Error(event.message)
           }
           if (event.type === "started") {
             started = true
             resolvedChatId = event.chatId
-            revokeDraftPreviews()
-            setAttachments([])
-            setDraftAnnotations([])
-            setExpandedAnnotationId(undefined)
-            selectChat(event.chatId, true)
-            setStreamProviderEvents([])
+            // Follow a new chat only if the learner has not moved on to another one.
+            const following = isVisible()
+            reply.chatId = event.chatId
+            inFlightRepliesRef.current = [...inFlightRepliesRef.current]
+            setInFlightReplies(inFlightRepliesRef.current)
+            if (following) {
+              revokeDraftPreviews()
+              setAttachments([])
+              setDraftAnnotations([])
+              setExpandedAnnotationId(undefined)
+              selectChat(event.chatId, true)
+              setStreamProviderEvents([])
+            }
           }
+          // Live progress belongs to the visible chat; others read theirs from Convex.
+          if (!isVisible()) return
           if (event.type === "activity")
             setStreamProviderEvents((current) => {
               const index = current.findIndex((item) => item.id === event.event.id)
@@ -1496,9 +1647,14 @@ export function ChatWorkspace({
         if (!started && !targetChatId)
           throw new Error("Blitz ended the reply early.")
         completed = true
-        setDismissedContinuationId(undefined)
+        if (isVisible()) setDismissedContinuationId(undefined)
 
-        if (queuedMessageRef.current && resolvedChatId) {
+        // A queued message belongs to the visible chat, so send it only there.
+        if (
+          queuedMessageRef.current &&
+          resolvedChatId &&
+          resolvedChatId === activeChatIdRef.current
+        ) {
           const queued = queuedMessageRef.current
           setQueuedMessage(undefined)
           queuedMessageRef.current = undefined
@@ -1512,32 +1668,36 @@ export function ChatWorkspace({
           }, 50)
         }
       } catch (sendError) {
-        const paused = controller.signal.aborted || pausedByUserRef.current
-        if (!paused)
+        const paused = controller.signal.aborted || reply.pausedByUser
+        // A failure in another chat is saved on its message; do not show it here.
+        const visible = isVisible()
+        if (!paused && visible)
           setError(
             messageForError(
               sendError,
               "Blitz could not finish that reply. Try again."
             )
           )
-        if (!started && !options.continuationOf) {
+        // Restore the draft only while the composer still shows this chat.
+        if (visible && !started && !options.continuationOf) {
+          // A rejected first turn has not saved its context for a retry.
+          setAttachments(submittedAttachments)
           setDraft(rawMessage)
           setDraftAnnotations(submittedAnnotations)
-        } else if (!started && options.steeringPrompt) {
+        } else if (visible && !started && options.steeringPrompt) {
           setDraft(options.steeringPrompt)
         }
       } finally {
-        if (requestControllerRef.current === controller)
-          requestControllerRef.current = undefined
-        pausedByUserRef.current = false
-        sendingRef.current = false
-        setSending(false)
+        inFlightRepliesRef.current = inFlightRepliesRef.current.filter(
+          (item) => item !== reply
+        )
+        setInFlightReplies(inFlightRepliesRef.current)
       }
       return completed
     }
 
     const sendPromise = run()
-    activeSendPromiseRef.current = sendPromise
+    reply.promise = sendPromise
     return await sendPromise
   }
 
@@ -1581,7 +1741,7 @@ export function ChatWorkspace({
     } catch (editError) {
       setError(messageForError(editError, "That message could not be edited."))
     } finally {
-      setMessageActionId(undefined)
+      clearMessageAction(messageId)
     }
   }
 
@@ -1604,7 +1764,7 @@ export function ChatWorkspace({
         messageForError(branchError, "That response could not be branched.")
       )
     } finally {
-      setMessageActionId(undefined)
+      clearMessageAction(messageId)
     }
   }
 
@@ -1617,8 +1777,11 @@ export function ChatWorkspace({
           message.role === "assistant" && message.status === "running"
       )
     if (!activeChatId || !runningMessage) return
-    pausedByUserRef.current = true
-    requestControllerRef.current?.abort()
+    const reply = replyForView(inFlightRepliesRef.current, activeChatId, view)
+    if (reply) {
+      reply.pausedByUser = true
+      reply.controller.abort()
+    }
     void fetch("/api/chat/pause", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -1702,7 +1865,7 @@ export function ChatWorkspace({
         setDraft("")
       }
     } finally {
-      setMessageActionId(undefined)
+      clearMessageAction(messageId)
     }
   }
 
@@ -1718,10 +1881,11 @@ export function ChatWorkspace({
     const steeringNotes = draft.trim()
     if (!steeringNotes) return
     setDraft("")
-    pausedByUserRef.current = true
+    const reply = replyForView(inFlightRepliesRef.current, activeChatId, view)
+    if (reply) reply.pausedByUser = true
     setMessageActionId(runningMessage.id)
     try {
-      requestControllerRef.current?.abort()
+      reply?.controller.abort()
       const response = await fetch("/api/chat/pause", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1735,10 +1899,8 @@ export function ChatWorkspace({
           "This reply could not be paused for steering. Its provider session may have ended; reload the chat to check its status."
         )
       }
-      if (activeSendPromiseRef.current) {
-        await activeSendPromiseRef.current.catch(() => {})
-      }
-      sendingRef.current = false
+      // The paused request must finish before its continuation starts.
+      await reply?.promise?.catch(() => {})
       await sendMessage({
         chatId: activeChatId,
         continuationOf: runningMessage.id,
@@ -1753,7 +1915,7 @@ export function ChatWorkspace({
         )
       )
     } finally {
-      setMessageActionId(undefined)
+      clearMessageAction(runningMessage.id)
     }
   }
 
@@ -1958,7 +2120,7 @@ export function ChatWorkspace({
               type="button"
               variant="outline"
               className="shrink-0 rounded-full px-3 md:hidden"
-              disabled={isRunning}
+              disabled={uploadingFiles || importingLink}
               onClick={startNewChat}
             >
               New chat
@@ -2578,26 +2740,11 @@ export function ChatWorkspace({
               "rounded-[24px] border bg-card p-2 shadow-sm focus-within:ring-2 focus-within:ring-ring/40",
               draggingFiles && "border-brand bg-brand/5 ring-2 ring-brand/30"
             )}
-            onDragEnter={(event) => {
-              event.preventDefault()
-              if (
-                !isRunning &&
-                !continuableMessage &&
-                event.dataTransfer.types.includes("Files")
-              )
-                setDraggingFiles(true)
-            }}
-            onDragOver={(event) => {
-              event.preventDefault()
-              event.dataTransfer.dropEffect = "copy"
-            }}
-            onDragLeave={(event) => {
-              if (event.currentTarget === event.target) setDraggingFiles(false)
-            }}
-            onDrop={handleComposerDrop}
           >
+            {/* File drops bubble to the chat pane's single drop handler. */}
             <Textarea
               aria-label="Message Blitz"
+              autoFocus={Boolean(initialPassage)}
               value={draft}
               maxLength={4_000}
               rows={2}
@@ -2656,7 +2803,7 @@ export function ChatWorkspace({
                       variant="ghost"
                       size="sm"
                       className="h-9 shrink-0 rounded-full px-3 text-xs"
-                      disabled={isRunning || Boolean(continuableMessage)}
+                      disabled={Boolean(continuableMessage)}
                     >
                       Options
                     </Button>
@@ -2669,8 +2816,10 @@ export function ChatWorkspace({
                     <div className="space-y-4">
                       <section className="space-y-2">
                         <h2 className="text-sm font-medium">Reply model</h2>
+                        {/* Settings are read when a turn starts, so changes made
+                            during a reply apply to the next message. */}
                         <ReplyModelPicker
-                          disabled={isRunning || Boolean(continuableMessage)}
+                          disabled={Boolean(continuableMessage)}
                           onSaveStateChange={setSavingReplySettings}
                         />
                       </section>
@@ -2681,7 +2830,7 @@ export function ChatWorkspace({
                           additionalInstructions={effectiveAgentInstructions}
                           workingProjectId={effectiveWorkingProjectId}
                           projects={projects}
-                          disabled={isRunning || Boolean(continuableMessage)}
+                          disabled={Boolean(continuableMessage)}
                           onAutonomyChange={(value) => {
                             setAgentSettingsTouched(true)
                             setAgentAutonomy(value)
@@ -2694,6 +2843,7 @@ export function ChatWorkspace({
                           onWorkingProjectChange={(value) => {
                             setAgentSettingsTouched(true)
                             setWorkingProjectId(value)
+                            linkChatToWorkingProject(value)
                           }}
                         />
                       </section>

@@ -44,6 +44,8 @@ export interface WorkspaceChatInlineAttachment {
   workspacePath?: string
   /** Absolute filesystem path to the attached file on the host. */
   filePath?: string
+  /** Workspace path of the full page-marked text when only a preview is inline. */
+  textWorkspacePath?: string
 }
 
 /** User annotation on a previous assistant response attached to the current turn. */
@@ -517,6 +519,11 @@ export function buildWorkspaceChatPrompt(
     }
     if (attachment.filePath) {
       lines.push(`File path: ${attachment.filePath}`)
+    }
+    if (attachment.textWorkspacePath) {
+      lines.push(
+        `Full extracted text: ${attachment.textWorkspacePath} (pages begin with [Page N] markers; search it for headings or terms, then read the matching pages)`
+      )
     }
     if (attachment.text) {
       lines.push(boundedText(attachment.text, 24_000))

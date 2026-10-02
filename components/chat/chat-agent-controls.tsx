@@ -50,7 +50,7 @@ export type ChatAgentProject = { _id: Id<"projects">; title: string }
 export type ChatAgentControlsProps = {
   /** Maintained for backwards compatibility; access policies are now selected in the model picker bar. */
   autonomy?: ChatAgentAutonomy
-  /** Prevents changing working project during an active turn. */
+  /** Prevents changing the working project, such as while a paused reply awaits continuation. */
   disabled?: boolean
   /** Optional callback for autonomy changes. */
   onAutonomyChange?: (value: ChatAgentAutonomy) => void

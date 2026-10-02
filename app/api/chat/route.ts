@@ -218,6 +218,49 @@ async function chatWorkspaceDirectory(chatId: string): Promise<string> {
   return directory
 }
 
+/**
+ * Finds one attached chat document using the strongest ownership proof available.
+ *
+ * Draft uploads carry an owner token and stay unbound until the turn starts, so
+ * the token is tried first. That keeps a file attached before the learner picks a
+ * project readable after the chat joins that project. Project and chat ownership
+ * cover files saved by earlier turns.
+ *
+ * @param client - Convex client for the personal deployment.
+ * @param attachment - Submitted attachment with its document ID and optional token.
+ * @param owners - Project and chat that may own the stored document.
+ * @returns The owned document, or null when no ownership proof matches.
+ */
+async function findAttachmentDocument(
+  client: ConvexHttpClient,
+  attachment: { documentId?: Id<"chatDocuments">; ownerToken?: string },
+  owners: { ownerProjectId?: Id<"projects">; chatId?: Id<"workspaceChats"> }
+) {
+  const documentId = attachment.documentId
+  if (!documentId) return null
+  const candidates = [
+    ...(attachment.ownerToken
+      ? [
+          {
+            ownerToken: attachment.ownerToken,
+            ...(owners.chatId ? { chatId: owners.chatId } : {}),
+          },
+          { ownerToken: attachment.ownerToken },
+        ]
+      : []),
+    ...(owners.ownerProjectId ? [{ projectId: owners.ownerProjectId }] : []),
+    ...(owners.chatId ? [{ chatId: owners.chatId }] : []),
+  ]
+  for (const ownership of candidates) {
+    const document = await client.query(api.chatCitations.getDocument, {
+      documentId,
+      ...ownership,
+    })
+    if (document) return document
+  }
+  return null
+}
+
 /** Copies attached chat documents into the workspace under attachments/ and annotates them with paths. */
 async function stageWorkspaceAttachments(
   client: ConvexHttpClient,
@@ -233,22 +276,7 @@ async function stageWorkspaceAttachments(
 
   for (const attachment of attachments) {
     if (!attachment.documentId) continue
-    let document = await client.query(api.chatCitations.getDocument, {
-      documentId: attachment.documentId,
-      ...(options.ownerProjectId
-        ? { projectId: options.ownerProjectId }
-        : attachment.ownerToken
-          ? { ownerToken: attachment.ownerToken }
-          : options.chatId
-            ? { chatId: options.chatId }
-            : {}),
-    })
-    if (!document && attachment.ownerToken && options.chatId) {
-      document = await client.query(api.chatCitations.getDocument, {
-        documentId: attachment.documentId,
-        chatId: options.chatId,
-      })
-    }
+    const document = await findAttachmentDocument(client, attachment, options)
     if (!document) continue
 
     const storageId =
@@ -271,6 +299,17 @@ async function stageWorkspaceAttachments(
       }
       attachment.workspacePath = join("attachments", targetName)
       attachment.filePath = targetPath
+      if (document.textKey) {
+        // The inline text is only a preview; give the agent the whole document.
+        const textName = `${document._id}-${safeSourceFilename(document.filename)}.pages.txt`
+        const textSource = await resolveProjectFile(storageId, document.textKey)
+        await copyFile(
+          textSource,
+          join(attachmentsDir, textName),
+          fileConstants.COPYFILE_FICLONE
+        )
+        attachment.textWorkspacePath = join("attachments", textName)
+      }
     } catch {
       throw new Error(`Could not make ${document.filename} available in chat.`)
     }
@@ -399,21 +438,10 @@ export async function POST(request: Request): Promise<Response> {
         )
         for (const attachment of input.attachments) {
           if (!attachment.documentId) continue
-          let document = await client.query(api.chatCitations.getDocument, {
-            documentId: attachment.documentId,
-            ...(ownerProjectId
-              ? { projectId: ownerProjectId }
-              : attachment.ownerToken
-                ? { ownerToken: attachment.ownerToken }
-                : input.chatId
-                  ? { chatId: input.chatId }
-                  : {}),
+          const document = await findAttachmentDocument(client, attachment, {
+            ...(ownerProjectId ? { ownerProjectId } : {}),
+            ...(input.chatId ? { chatId: input.chatId } : {}),
           })
-          if (!document && attachment.ownerToken && input.chatId)
-            document = await client.query(api.chatCitations.getDocument, {
-              documentId: attachment.documentId,
-              chatId: input.chatId,
-            })
           if (!document)
             throw new Error(
               "Attached file was not found or is not owned by this chat"

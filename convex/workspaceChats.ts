@@ -317,6 +317,24 @@ export const setPinned = mutation({
   },
 })
 
+/**
+ * Files a general chat under the project the learner chose to work in.
+ *
+ * Only unassigned chats are moved. A chat that already belongs to a project
+ * keeps it, because its uploaded files are owned by that project's storage.
+ * Choosing the same project again is a no-op.
+ */
+export const assignProject = mutation({
+  args: { chatId: v.id("workspaceChats"), projectId: v.id("projects") },
+  handler: async (ctx, args) => {
+    const chat = await ctx.db.get(args.chatId)
+    if (!chat) throw new Error("Chat not found")
+    if (!(await ctx.db.get(args.projectId))) throw new Error("Project not found")
+    if (chat.projectId) return
+    await ctx.db.patch(chat._id, { projectId: args.projectId })
+  },
+})
+
 /** Sets whether one saved chat is archived or active. */
 export const setArchived = mutation({
   args: { chatId: v.id("workspaceChats"), archived: v.boolean() },
@@ -988,6 +1006,7 @@ export const branch = mutation({
             chatId: branchId,
             filename: document.filename,
             relativeKey: document.relativeKey,
+            ...(document.textKey ? { textKey: document.textKey } : {}),
             mimeType: document.mimeType,
             text: document.text,
             sizeBytes: document.sizeBytes,

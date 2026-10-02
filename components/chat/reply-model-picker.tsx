@@ -23,9 +23,9 @@ import {
   type AiReasoningEffort,
 } from "@/lib/ai-model-settings"
 
-/** Options that let a parent prevent a configuration race with an active chat turn. */
+/** Options that let a parent lock the picker and track in-flight saves. */
 type ReplyModelPickerProps = {
-  /** Prevents changing settings during an active assistant stream. */
+  /** Prevents changing settings; replies already running keep the settings they started with. */
   disabled?: boolean
   /** Notifies the parent composer when an asynchronous save operation is running. */
   onSaveStateChange?: (saving: boolean) => void

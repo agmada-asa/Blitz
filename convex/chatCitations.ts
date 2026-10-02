@@ -16,6 +16,7 @@ export const createDocument = mutation({
     ownerToken: v.optional(v.string()),
     filename: v.string(),
     relativeKey: v.string(),
+    textKey: v.optional(v.string()),
     mimeType: v.string(),
     text: v.string(),
     sizeBytes: v.number(),
@@ -32,6 +33,10 @@ export const createDocument = mutation({
         /^Sources\/[a-f0-9]{64}-[^/\\]+$/.test(args.relativeKey) ||
         /^Uploads\/[a-f0-9]{64}-[^/\\]+$/.test(args.relativeKey)
       ) ||
+      // Full text lives in the same storage folder as its original.
+      (args.textKey !== undefined &&
+        (!/^(Sources|Uploads)\/[a-f0-9]{64}\.pages\.txt$/.test(args.textKey) ||
+          args.textKey.split("/")[0] !== args.relativeKey.split("/")[0])) ||
       !args.text.trim() ||
       new TextEncoder().encode(args.text).length > 500_000 ||
       args.filename.length > 255 ||

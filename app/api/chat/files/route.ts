@@ -13,9 +13,14 @@ import {
   removeProjectFile,
   readProjectFileBytes,
   resolveProjectFile,
+  storeProjectFile,
   streamProjectFile,
 } from "@/lib/server/project-files"
-import { extractStoredSource } from "@/lib/server/source-ingestion/extract"
+import {
+  extractLongPdfText,
+  extractStoredSource,
+} from "@/lib/server/source-ingestion/extract"
+import { SourceIngestionError } from "@/lib/server/source-ingestion/errors"
 import {
   isChatImageMimeType,
   validateChatImageBytes,
@@ -69,10 +74,20 @@ function client(): ConvexHttpClient {
   return new ConvexHttpClient(url)
 }
 
-/** Saves any original and records bounded text when extraction is practical. */
+/** Characters of extracted text kept in the stored preview once the full text is too large. */
+const TEXT_PREVIEW_CHARACTERS = 100_000
+
+/**
+ * Saves any original and records bounded text when extraction is practical.
+ *
+ * Structured documents whose text is too large for the stored preview, such as
+ * whole textbooks, also get their full page-marked text saved beside the
+ * original. The chat agent receives that file so it can search the whole
+ * document instead of only the preview.
+ */
 export async function POST(request: Request): Promise<Response> {
   let cleanup:
-    | { storageId: string; key: string; remove: boolean }
+    | { storageId: string; key: string; textKey?: string; remove: boolean }
     | undefined
   try {
     if (!isTrustedBlitzOrigin(request))
@@ -136,8 +151,20 @@ export async function POST(request: Request): Promise<Response> {
           if (result.extractedText.trim()) {
             extractedText = result.extractedText
           }
-        } catch {
-          // Fallback to text sampling or file descriptor on structured extraction failure.
+        } catch (error) {
+          // Long PDFs exceed source import bounds but can still be read in chat.
+          if (
+            /\.pdf$/i.test(filename) &&
+            error instanceof SourceIngestionError &&
+            error.code === "input-too-large"
+          ) {
+            try {
+              extractedText = await extractLongPdfText(storedPath)
+            } catch {
+              // Fall back to the descriptor; the agent can still open the original.
+            }
+          }
+          // Other failures fall back to text sampling or a file descriptor.
         }
       }
 
@@ -169,8 +196,21 @@ export async function POST(request: Request): Promise<Response> {
       }
     }
 
+    let textKey: string | undefined
     if (new TextEncoder().encode(extractedText).length > 500_000) {
-      extractedText = extractedText.slice(0, 100_000)
+      const isExtractedDocument =
+        !isNativeImage && /\.(pdf|pptx|html?|md|markdown)$/i.test(filename)
+      if (isExtractedDocument) {
+        // Plain text originals are already searchable; extracted text is not.
+        textKey = `${stored.key.split("/")[0]}/${stored.sha256}.pages.txt`
+        await storeProjectFile(storageId, textKey, extractedText)
+        cleanup.textKey = textKey
+      }
+      extractedText = `${extractedText.slice(0, TEXT_PREVIEW_CHARACTERS)}${
+        textKey
+          ? "\n[Preview ends here. The full page-marked text is in a separate attached file.]"
+          : ""
+      }`
     }
 
     const mimeType = isNativeImage
@@ -184,6 +224,7 @@ export async function POST(request: Request): Promise<Response> {
       ...(!projectId && ownerToken ? { ownerToken } : {}),
       filename: stored.filename,
       relativeKey: stored.key,
+      ...(textKey ? { textKey } : {}),
       text: extractedText,
       mimeType,
       sizeBytes: stored.size,
@@ -200,6 +241,10 @@ export async function POST(request: Request): Promise<Response> {
   } catch (error) {
     if (cleanup?.remove) {
       await removeProjectFile(cleanup.storageId, cleanup.key).catch(() => undefined)
+      if (cleanup.textKey)
+        await removeProjectFile(cleanup.storageId, cleanup.textKey).catch(
+          () => undefined
+        )
     }
     return Response.json(
       {
