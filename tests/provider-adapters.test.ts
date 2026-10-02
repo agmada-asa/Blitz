@@ -820,7 +820,7 @@ test("Claude bridges one-time tool approval and denial through its control chann
   }
 })
 
-/** Background restrictions override saved full access, and interactive modes select real native flags. */
+/** Background turns stay isolated even with full access; chat turns load the user's setup under native permission modes. */
 test("Claude maps access policies without weakening background turns", () => {
   const base = {
     selection: { providerId: "claude-code" as const, model: "sonnet" },
@@ -832,14 +832,33 @@ test("Claude maps access policies without weakening background turns", () => {
   assert.ok(!full.includes("--restricted"))
   const ask = claudeArgs({ ...base, approvalPolicy: "on-request" })
   assert.ok(ask.includes("--permission-prompt-tool"))
-  assert.match(ask[ask.indexOf("--tools") + 1] ?? "", /AskUserQuestion/)
   assert.ok(!ask.includes("--dangerously-skip-permissions"))
+  // Chat turns keep the user's tools, skills, plugins, and MCP servers.
+  for (const chat of [full, ask]) {
+    assert.ok(!chat.includes("--safe-mode"))
+    assert.ok(!chat.includes("--tools"))
+    assert.ok(!chat.includes("--strict-mcp-config"))
+    assert.equal(chat[chat.indexOf("--setting-sources") + 1], "user")
+  }
+  const readOnly = claudeArgs({
+    ...base,
+    approvalPolicy: "on-request",
+    sandbox: "read-only",
+  })
+  assert.equal(readOnly[readOnly.indexOf("--permission-mode") + 1], "dontAsk")
+  assert.equal(
+    readOnly[readOnly.indexOf("--disallowedTools") + 1],
+    "Edit,Write,NotebookEdit,Bash"
+  )
+  assert.ok(!readOnly.includes("--permission-prompt-tool"))
   const background = claudeArgs({
     ...base,
     approvalPolicy: "full-access",
     ephemeral: true,
   })
   assert.equal(background[background.indexOf("--tools") + 1], "")
+  assert.ok(background.includes("--safe-mode"))
+  assert.ok(background.includes("--strict-mcp-config"))
   assert.ok(!background.includes("--dangerously-skip-permissions"))
 })
 

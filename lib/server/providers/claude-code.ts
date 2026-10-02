@@ -195,7 +195,21 @@ function toolActivityEvents(
   return activities
 }
 
-/** Builds the safe non-interactive Claude Code command line. */
+/** Built-in Claude Code tools that can change files, blocked in read-only turns. */
+const READ_ONLY_DISALLOWED_TOOLS = ["Edit", "Write", "NotebookEdit", "Bash"]
+
+/**
+ * Builds the non-interactive Claude Code command line for one turn.
+ *
+ * Background generation runs fully isolated: no settings, skills, plugins,
+ * MCP servers, or tools. Chat turns load the user's own Claude Code setup and
+ * map Blitz's access policy onto native permission modes: full access
+ * bypasses prompts, on-request routes prompts to Blitz, and never/read-only
+ * deny anything that would need approval.
+ *
+ * @param request - Normalized provider turn.
+ * @returns CLI arguments, excluding the executable.
+ */
 export function claudeArgs(request: ProviderTextTurnRequest): string[] {
   // Claude Code requires verbose mode for stream-json print output.
   const streamInput = Boolean(
@@ -233,70 +247,72 @@ export function claudeArgs(request: ProviderTextTurnRequest): string[] {
       )
     args.push("--effort", effort)
   }
-  const isolated =
-    request.sandbox === "read-only" ||
+  // Background generation reads untrusted source text and needs no tools.
+  const background =
     request.ephemeral ||
     !request.approvalPolicy ||
-    request.approvalPolicy === "never" ||
     request.webSearchMode === "disabled"
-  const toolNames = [
-    "Read",
-    "Glob",
-    "Grep",
-    "Edit",
-    "Write",
-    "Bash",
-    "AskUserQuestion",
-    "WebFetch",
-    "WebSearch",
-  ]
-  args.push(
-    "--safe-mode",
-    "--setting-sources",
-    "",
-    "--strict-mcp-config",
-    "--mcp-config",
-    '{"mcpServers":{}}'
-  )
-  if (isolated) {
+  // User hooks are not tools; Blitz keeps them off so they cannot act on its turns.
+  const blitzSettings = JSON.stringify({ disableAllHooks: true })
+  if (background) {
     args.push(
+      "--safe-mode",
+      "--setting-sources",
+      "",
+      "--strict-mcp-config",
+      "--mcp-config",
+      '{"mcpServers":{}}',
       "--restricted",
       "--tools",
       "",
       "--disallowedTools",
       "*",
       "--settings",
-      '{"disableAllHooks":true}',
+      blitzSettings,
       "--permission-mode",
       "dontAsk"
     )
-  } else if (request.approvalPolicy === "full-access") {
-    args.push(
-      "--tools",
-      toolNames.join(","),
-      "--settings",
-      '{"disableAllHooks":true}',
-      "--permission-mode",
-      "bypassPermissions",
-      "--dangerously-skip-permissions"
-    )
   } else {
-    args.push(
-      "--restricted",
-      "--tools",
-      toolNames.join(","),
-      "--settings",
-      JSON.stringify({
-        disableAllHooks: true,
-        permissions: { ask: toolNames },
-      }),
-      "--permission-mode",
-      "default",
-      "--input-format",
-      "stream-json",
-      "--permission-prompt-tool",
-      "stdio"
-    )
+    // Chat turns get the user's own Claude Code setup: built-in tools, skills,
+    // plugins, and MCP servers. Only user-level settings load; project and
+    // local settings would come from Blitz workspaces the agent can write to.
+    args.push("--setting-sources", "user")
+    if (request.approvalPolicy === "full-access") {
+      args.push(
+        "--settings",
+        blitzSettings,
+        "--permission-mode",
+        "bypassPermissions",
+        "--dangerously-skip-permissions"
+      )
+    } else if (
+      request.approvalPolicy === "never" ||
+      request.sandbox === "read-only"
+    ) {
+      // Nothing can be approved: tools run only when they need no permission
+      // or the user already allowed them. Read-only also rules out writes,
+      // because Claude Code has no OS sandbox to enforce it.
+      args.push(
+        "--settings",
+        blitzSettings,
+        "--permission-mode",
+        "dontAsk",
+        ...(request.sandbox === "read-only"
+          ? ["--disallowedTools", READ_ONLY_DISALLOWED_TOOLS.join(",")]
+          : [])
+      )
+    } else {
+      args.push(
+        "--settings",
+        blitzSettings,
+        "--permission-mode",
+        "default",
+        "--input-format",
+        "stream-json",
+        "--permission-prompt-tool",
+        "stdio"
+      )
+    }
   }
   if (request.ephemeral) args.push("--no-session-persistence")
   if (request.developerInstructions?.trim())
