@@ -480,6 +480,8 @@ export function ChatWorkspace({
   )
   const activeSendPromiseRef = useRef<Promise<boolean> | undefined>(undefined)
   const sendingRef = useRef(false)
+  /** Blocks a second upload batch before the uploading state re-renders. */
+  const uploadingFilesRef = useRef(false)
   const [queuedMessage, setQueuedMessage] = useState<QueuedChatMessage | undefined>(undefined)
   const queuedMessageRef = useRef<QueuedChatMessage | undefined>(undefined)
   const [dismissedContinuationId, setDismissedContinuationId] = useState<string>()
@@ -1175,7 +1177,8 @@ export function ChatWorkspace({
 
   /** Saves selected originals before allowing a message to use them as source context. */
   const chooseFiles = async (files: File[]): Promise<void> => {
-    if (uploadingFiles) return
+    if (uploadingFilesRef.current) return
+    uploadingFilesRef.current = true
     setUploadingFiles(true)
     setError("")
     const selected = files
@@ -1218,10 +1221,11 @@ export function ChatWorkspace({
       }
     }
     if (fileInputRef.current) fileInputRef.current.value = ""
+    uploadingFilesRef.current = false
     setUploadingFiles(false)
   }
 
-  /** Handles files dropped onto the composer while preserving ordinary text drops. */
+  /** Handles files dropped anywhere on the chat pane while preserving ordinary text drops. */
   const handleComposerDrop = (event: DragEvent<HTMLDivElement>): void => {
     const files = droppedFiles(Array.from(event.dataTransfer.files))
     if (!files.length) return
@@ -2578,24 +2582,8 @@ export function ChatWorkspace({
               "rounded-[24px] border bg-card p-2 shadow-sm focus-within:ring-2 focus-within:ring-ring/40",
               draggingFiles && "border-brand bg-brand/5 ring-2 ring-brand/30"
             )}
-            onDragEnter={(event) => {
-              event.preventDefault()
-              if (
-                !isRunning &&
-                !continuableMessage &&
-                event.dataTransfer.types.includes("Files")
-              )
-                setDraggingFiles(true)
-            }}
-            onDragOver={(event) => {
-              event.preventDefault()
-              event.dataTransfer.dropEffect = "copy"
-            }}
-            onDragLeave={(event) => {
-              if (event.currentTarget === event.target) setDraggingFiles(false)
-            }}
-            onDrop={handleComposerDrop}
           >
+            {/* File drops bubble to the chat pane's single drop handler. */}
             <Textarea
               aria-label="Message Blitz"
               value={draft}
