@@ -1006,6 +1006,7 @@ export const branch = mutation({
             chatId: branchId,
             filename: document.filename,
             relativeKey: document.relativeKey,
+            ...(document.textKey ? { textKey: document.textKey } : {}),
             mimeType: document.mimeType,
             text: document.text,
             sizeBytes: document.sizeBytes,

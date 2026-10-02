@@ -782,6 +782,11 @@ export default defineSchema({
     chatId: v.optional(v.id("workspaceChats")),
     filename: v.string(),
     relativeKey: v.string(),
+    /**
+     * Page-marked full text stored beside the original when `text` holds only
+     * a preview, such as a textbook too long for the preview limit.
+     */
+    textKey: v.optional(v.string()),
     mimeType: v.string(),
     text: v.string(),
     sizeBytes: v.number(),

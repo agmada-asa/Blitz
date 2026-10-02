@@ -184,3 +184,28 @@ test("scanProjectArtifacts excludes attachments directory from agent output arti
     "attachments folder must be excluded from agent artifacts"
   )
 })
+
+test("buildWorkspaceChatPrompt points the agent at full text when only a preview is inline", () => {
+  const request = parseWorkspaceChatRequest({
+    message: "Teach me section 3.3",
+    clientMessageId: "msg-long-pdf",
+    projectIds: [],
+    attachments: [
+      {
+        kind: "file",
+        label: "textbook.pdf",
+        text: "[Page 1]\nContents\n[Preview ends here. The full page-marked text is in a separate attached file.]",
+      },
+    ],
+  })
+  request.attachments[0].workspacePath = "attachments/doc-textbook.pdf"
+  request.attachments[0].textWorkspacePath =
+    "attachments/doc-textbook.pdf.pages.txt"
+
+  const prompt = buildWorkspaceChatPrompt(request, [])
+
+  assert.match(
+    prompt,
+    /Full extracted text: attachments\/doc-textbook\.pdf\.pages\.txt \(pages begin with \[Page N\] markers/
+  )
+})

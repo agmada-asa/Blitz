@@ -299,6 +299,17 @@ async function stageWorkspaceAttachments(
       }
       attachment.workspacePath = join("attachments", targetName)
       attachment.filePath = targetPath
+      if (document.textKey) {
+        // The inline text is only a preview; give the agent the whole document.
+        const textName = `${document._id}-${safeSourceFilename(document.filename)}.pages.txt`
+        const textSource = await resolveProjectFile(storageId, document.textKey)
+        await copyFile(
+          textSource,
+          join(attachmentsDir, textName),
+          fileConstants.COPYFILE_FICLONE
+        )
+        attachment.textWorkspacePath = join("attachments", textName)
+      }
     } catch {
       throw new Error(`Could not make ${document.filename} available in chat.`)
     }

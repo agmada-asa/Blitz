@@ -20,6 +20,21 @@ export const MAX_PPTX_XML_BYTES = 20_000_000
 export const MAX_PPTX_SLIDE_BYTES = 1_000_000
 /** Maximum local PPTX bytes read into memory by the ZIP parser. */
 export const MAX_LOCAL_PPTX_BYTES = 20_000_000
+/**
+ * Maximum pages read when a chat attachment is too long for source import.
+ * Covers long textbooks while still bounding one upload's extraction work.
+ */
+export const MAX_ATTACHMENT_PDF_PAGES = 3_000
+/** Maximum characters kept from one long chat attachment PDF (about 20 MB). */
+export const MAX_ATTACHMENT_PDF_TEXT_LENGTH = 20_000_000
+
+/** Page and character bounds applied while reading one PDF. */
+export interface PdfTextLimits {
+  /** Documents with more pages are rejected before any page is read. */
+  readonly maxPages: number
+  /** Extraction stops with an error once page-marked text exceeds this length. */
+  readonly maxCharacters: number
+}
 
 /** Download payload accepted by the bounded server extractor. */
 export interface DownloadedSourceInput {
@@ -223,7 +238,11 @@ function extractHtmlText(raw: string): string {
 
 /** Extracts text from every PDF page while retaining bounded page attribution. */
 async function extractPdfText(
-  source: { bytes: Uint8Array } | { path: string }
+  source: { bytes: Uint8Array } | { path: string },
+  limits: PdfTextLimits = {
+    maxPages: MAX_PDF_PAGES,
+    maxCharacters: MAX_DOWNLOADED_TEXT_LENGTH,
+  }
 ): Promise<string> {
   const pdfOptions = (
     "bytes" in source
@@ -248,11 +267,11 @@ async function extractPdfText(
   const loadingTask = getDocument(pdfOptions)
   try {
     const document = await loadingTask.promise
-    if (document.numPages > MAX_PDF_PAGES) {
+    if (document.numPages > limits.maxPages) {
       throw new SourceIngestionError(
         "input-too-large",
         "The PDF has more pages than the import limit",
-        { pageCount: document.numPages, maxPages: MAX_PDF_PAGES }
+        { pageCount: document.numPages, maxPages: limits.maxPages }
       )
     }
     const pages: string[] = []
@@ -273,14 +292,14 @@ async function extractPdfText(
         const separatorLength = pages.length ? 2 : 0
         if (
           extractedCharacterCount + separatorLength + pageOutput.length >
-          MAX_DOWNLOADED_TEXT_LENGTH
+          limits.maxCharacters
         )
           throw new SourceIngestionError(
             "input-too-large",
             "The downloaded source contains more text than the import limit",
             {
               format: "pdf",
-              maxCharacters: MAX_DOWNLOADED_TEXT_LENGTH,
+              maxCharacters: limits.maxCharacters,
             }
           )
         extractedCharacterCount += separatorLength + pageOutput.length
@@ -389,6 +408,38 @@ export async function extractStoredSource(
     kind:
       format === "pdf" ? "pdf" : format === "markdown" ? "markdown" : "text",
     extractedText: boundExtractedText(extractedText, format),
+  }
+}
+
+/**
+ * Reads a long local PDF with chat attachment bounds instead of import bounds.
+ *
+ * Source import caps PDFs at {@link MAX_PDF_PAGES} pages so passages stay
+ * searchable and affordable. A chat attachment only needs the text available
+ * to the agent's file tools, so whole textbooks are read here.
+ *
+ * @param path - Absolute path to a stored PDF.
+ * @returns Page-marked text, using the same `[Page N]` markers as import.
+ * @throws SourceIngestionError when the PDF is unreadable, has no text layer,
+ *   or exceeds {@link MAX_ATTACHMENT_PDF_PAGES} or
+ *   {@link MAX_ATTACHMENT_PDF_TEXT_LENGTH}.
+ */
+export async function extractLongPdfText(path: string): Promise<string> {
+  try {
+    return await extractPdfText(
+      { path },
+      {
+        maxPages: MAX_ATTACHMENT_PDF_PAGES,
+        maxCharacters: MAX_ATTACHMENT_PDF_TEXT_LENGTH,
+      }
+    )
+  } catch (error) {
+    if (error instanceof SourceIngestionError) throw error
+    throw new SourceIngestionError(
+      "invalid-input",
+      "The PDF could not be read. It may be encrypted or malformed.",
+      { format: "pdf" }
+    )
   }
 }
 
