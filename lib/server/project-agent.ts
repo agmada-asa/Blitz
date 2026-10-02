@@ -220,6 +220,7 @@ export async function runProjectAgent(
           workspaceDirectory: policy.projectDirectory,
           executable: options.executable,
           webSearchMode: "live",
+          loadPlugins: true,
           approvalHandler:
             autonomy === "approval" ? options.approvalHandler : undefined,
         })

@@ -311,6 +311,7 @@ export function createChatAgentSession(options: {
       workspaceDirectory: options.workspaceDirectory,
       webSearchMode: "live",
       experimentalApi: true,
+      loadPlugins: true,
       requestHandler: handleCodexRequest,
     })
     return {
