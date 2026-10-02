@@ -482,6 +482,8 @@ export function ChatWorkspace({
   const sendingRef = useRef(false)
   /** Blocks a second upload batch before the uploading state re-renders. */
   const uploadingFilesRef = useRef(false)
+  /** Whether the draft chat's project was chosen through the working project control. */
+  const draftProjectFromWorkingRef = useRef(false)
   const [queuedMessage, setQueuedMessage] = useState<QueuedChatMessage | undefined>(undefined)
   const queuedMessageRef = useRef<QueuedChatMessage | undefined>(undefined)
   const [dismissedContinuationId, setDismissedContinuationId] = useState<string>()
@@ -497,6 +499,7 @@ export function ChatWorkspace({
   const setChatUnread = useMutation(api.workspaceChats.setUnread)
   const setChatPinned = useMutation(api.workspaceChats.setPinned)
   const setChatArchived = useMutation(api.workspaceChats.setArchived)
+  const assignChatProject = useMutation(api.workspaceChats.assignProject)
   const deleteChat = useMutation(api.workspaceChats.remove)
   const [activeChatId, setActiveChatId] = useState<
     Id<"workspaceChats"> | undefined
@@ -846,6 +849,39 @@ export function ChatWorkspace({
   const effectiveWorkingProjectId = agentSettingsTouched
     ? workingProjectId
     : (persistedAgentSettings?.workingProjectId ?? workingProjectId)
+
+  /**
+   * Files the chat under a newly chosen working project so history groups it there.
+   *
+   * A saved general chat moves immediately; a chat that already belongs to a
+   * project keeps it. A draft chat follows the working project unless a card or
+   * project link already chose its project, or a file was uploaded into the
+   * project it follows (that file must stay with its owning project).
+   *
+   * @param projectId - The newly selected working project, or undefined for none.
+   */
+  const linkChatToWorkingProject = (projectId?: Id<"projects">): void => {
+    if (!activeChatId) {
+      const followsWorkingProject =
+        !newChatProjectId || draftProjectFromWorkingRef.current
+      // Uploads without an owner token were stored in the draft project itself.
+      const hasProjectOwnedUpload = attachments.some(
+        (attachment) => attachment.documentId && !attachment.ownerToken
+      )
+      if (!followsWorkingProject || hasProjectOwnedUpload) return
+      draftProjectFromWorkingRef.current = Boolean(projectId)
+      setNewChatProjectId(projectId)
+      return
+    }
+    if (!projectId || activeChat?.projectId) return
+    void assignChatProject({ chatId: activeChatId, projectId }).catch(
+      (cause) => {
+        setError(
+          messageForError(cause, "This chat could not be moved to that project.")
+        )
+      }
+    )
+  }
   /** Tracks whether the reader is near the latest message without moving their scroll position. */
   const updateScrollToBottomVisibility = useCallback((): void => {
     const container = conversationRef.current
@@ -968,6 +1004,7 @@ export function ChatWorkspace({
     setAgentInstructions("")
     setWorkingProjectId(undefined)
     setNewChatProjectId(undefined)
+    draftProjectFromWorkingRef.current = false
     setStreamAgentRequests({})
     setStreamProviderEvents([])
     setAgentSettingsTouched(false)
@@ -1001,6 +1038,7 @@ export function ChatWorkspace({
     setAgentInstructions("")
     setWorkingProjectId(project._id)
     setNewChatProjectId(project._id)
+    draftProjectFromWorkingRef.current = false
     setStreamAgentRequests({})
     setAgentSettingsTouched(false)
     setHistoryOpen(false)
@@ -2684,6 +2722,7 @@ export function ChatWorkspace({
                           onWorkingProjectChange={(value) => {
                             setAgentSettingsTouched(true)
                             setWorkingProjectId(value)
+                            linkChatToWorkingProject(value)
                           }}
                         />
                       </section>

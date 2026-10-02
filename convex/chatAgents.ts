@@ -214,6 +214,10 @@ export const configure = mutation({
       agentInstructions: instructions,
       workingProjectId: args.workingProjectId,
       agentRequestToolsVersion: AGENT_REQUEST_TOOLS_VERSION,
+      // A general chat joins the project it works in so history groups it there.
+      ...(args.workingProjectId && !chat.projectId
+        ? { projectId: args.workingProjectId }
+        : {}),
     })
     return { resetContext }
   },
