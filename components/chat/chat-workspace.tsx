@@ -2644,7 +2644,7 @@ export function ChatWorkspace({
                       variant="ghost"
                       size="sm"
                       className="h-9 shrink-0 rounded-full px-3 text-xs"
-                      disabled={isRunning || Boolean(continuableMessage)}
+                      disabled={Boolean(continuableMessage)}
                     >
                       Options
                     </Button>
@@ -2657,8 +2657,10 @@ export function ChatWorkspace({
                     <div className="space-y-4">
                       <section className="space-y-2">
                         <h2 className="text-sm font-medium">Reply model</h2>
+                        {/* Settings are read when a turn starts, so changes made
+                            during a reply apply to the next message. */}
                         <ReplyModelPicker
-                          disabled={isRunning || Boolean(continuableMessage)}
+                          disabled={Boolean(continuableMessage)}
                           onSaveStateChange={setSavingReplySettings}
                         />
                       </section>
@@ -2669,7 +2671,7 @@ export function ChatWorkspace({
                           additionalInstructions={effectiveAgentInstructions}
                           workingProjectId={effectiveWorkingProjectId}
                           projects={projects}
-                          disabled={isRunning || Boolean(continuableMessage)}
+                          disabled={Boolean(continuableMessage)}
                           onAutonomyChange={(value) => {
                             setAgentSettingsTouched(true)
                             setAgentAutonomy(value)
