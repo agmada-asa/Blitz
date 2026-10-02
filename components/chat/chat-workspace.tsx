@@ -211,6 +211,39 @@ type QueuedChatMessage = {
   annotations: FloatingAnnotation[]
 }
 
+/**
+ * One reply this workspace is streaming. Replies are tracked per chat so the
+ * learner can open another chat, or start a new one, while a reply generates.
+ */
+type InFlightReply = {
+  /** Saved chat receiving the reply; unset until a new chat's first turn starts. */
+  chatId?: Id<"workspaceChats">
+  /** View that sent the reply, used to match a new chat before it is saved. */
+  view: number
+  controller: AbortController
+  /** Set when the learner pauses or steers, so the abort is not reported as an error. */
+  pausedByUser: boolean
+  promise?: Promise<boolean>
+}
+
+/**
+ * Finds the reply streaming into one chat, or into the unsaved chat of one view.
+ *
+ * @param replies - Replies currently in flight.
+ * @param chatId - Visible saved chat, or undefined for a new chat.
+ * @param view - Visible view number; distinguishes successive new chats.
+ * @returns The matching reply, if any.
+ */
+function replyForView(
+  replies: readonly InFlightReply[],
+  chatId: Id<"workspaceChats"> | undefined,
+  view: number
+): InFlightReply | undefined {
+  return replies.find((reply) =>
+    reply.chatId ? reply.chatId === chatId : !chatId && reply.view === view
+  )
+}
+
 /** Card identity shown while a new card chat waits for its first question. */
 type ChatCard = {
   id: Id<"learningItems">
@@ -488,13 +521,15 @@ export function ChatWorkspace({
   const fileInputRef = useRef<HTMLInputElement>(null)
   const messageEndRef = useRef<HTMLDivElement>(null)
   const conversationRef = useRef<HTMLElement>(null)
-  const requestControllerRef = useRef<AbortController | undefined>(undefined)
-  const pausedByUserRef = useRef(false)
+  /** Replies in flight, read synchronously by stream callbacks. */
+  const inFlightRepliesRef = useRef<InFlightReply[]>([])
+  const [inFlightReplies, setInFlightReplies] = useState<InFlightReply[]>([])
+  /** Increments whenever the visible chat changes, including between new chats. */
+  const viewRef = useRef(0)
+  const [view, setView] = useState(0)
   const manuallyMarkedUnreadRef = useRef<Id<"workspaceChats"> | undefined>(
     undefined
   )
-  const activeSendPromiseRef = useRef<Promise<boolean> | undefined>(undefined)
-  const sendingRef = useRef(false)
   /** Blocks a second upload batch before the uploading state re-renders. */
   const uploadingFilesRef = useRef(false)
   /** Whether the draft chat's project was chosen through the working project control. */
@@ -519,6 +554,8 @@ export function ChatWorkspace({
   const [activeChatId, setActiveChatId] = useState<
     Id<"workspaceChats"> | undefined
   >(initialCard || initialPassage ? undefined : initialChatId)
+  /** Visible chat, read by stream callbacks that outlive the render that started them. */
+  const activeChatIdRef = useRef(activeChatId)
   const activeChat = useQuery(
     api.workspaceChats.get,
     activeChatId ? { chatId: activeChatId } : "skip"
@@ -553,7 +590,6 @@ export function ChatWorkspace({
   const [expandedAnnotationId, setExpandedAnnotationId] = useState<
     string | undefined
   >()
-  const [sending, setSending] = useState(false)
   const [savingReplySettings, setSavingReplySettings] = useState(false)
   const [messageActionId, setMessageActionId] = useState<string>()
   const [copiedMessageId, setCopiedMessageId] = useState<string>()
@@ -808,6 +844,8 @@ export function ChatWorkspace({
   )
   const contextProjectLabel =
     contextProject?.title ?? contextualProject?.label ?? "Project"
+  // Only a reply streaming into the visible chat makes this composer busy.
+  const sending = Boolean(replyForView(inFlightReplies, activeChatId, view))
   const isStreaming = sending || activeChat?.status === "running"
   const isRunning =
     uploadingFiles ||
@@ -974,6 +1012,32 @@ export function ChatWorkspace({
     )
   }, [activeChatId, isCurrentChatUnread, setChatUnread])
 
+  /**
+   * Switches the visible chat. A reply streaming elsewhere keeps running, but
+   * its busy state and message action stay with the chat it belongs to.
+   *
+   * @param chatId - Saved chat to show, or undefined for a new chat.
+   */
+  const showView = (chatId: Id<"workspaceChats"> | undefined): void => {
+    viewRef.current += 1
+    activeChatIdRef.current = chatId
+    setView(viewRef.current)
+    setActiveChatId(chatId)
+    setMessageActionId(undefined)
+  }
+
+  /**
+   * Ends one message action unless a newer action has replaced it, for example
+   * after the learner switched chats while the earlier action was finishing.
+   *
+   * @param messageId - Message whose action finished.
+   */
+  const clearMessageAction = (messageId: string): void => {
+    setMessageActionId((current) =>
+      current === messageId ? undefined : current
+    )
+  }
+
   /** Selects one saved chat and mirrors it in the address bar. */
   const selectChat = (
     chatId: Id<"workspaceChats">,
@@ -982,7 +1046,7 @@ export function ChatWorkspace({
     manuallyMarkedUnreadRef.current = undefined
     void setChatUnread({ chatId, unread: false }).catch(() => {})
     setSourceSelection(undefined)
-    setActiveChatId(chatId)
+    showView(chatId)
     if (!preserveQueue) {
       setQueuedMessage(undefined)
       queuedMessageRef.current = undefined
@@ -1008,11 +1072,15 @@ export function ChatWorkspace({
       )
   }
 
-  /** Clears the active conversation and starts a new standalone chat. */
+  /**
+   * Clears the active conversation and starts a new standalone chat. A reply
+   * still generating in the previous chat keeps running there.
+   */
   const startNewChat = (): void => {
-    if (isRunning) return
+    // Uploads land in the visible draft, so wait for them before switching.
+    if (uploadingFiles || importingLink) return
     setSourceSelection(undefined)
-    setActiveChatId(undefined)
+    showView(undefined)
     setQueuedMessage(undefined)
     queuedMessageRef.current = undefined
     revokeDraftPreviews()
@@ -1040,7 +1108,7 @@ export function ChatWorkspace({
   /** Clears the composer and assigns the selected project to the pending chat. */
   const startNewChatForProject = (project: NewChatProject): void => {
     setSourceSelection(undefined)
-    setActiveChatId(undefined)
+    showView(undefined)
     setQueuedMessage(undefined)
     queuedMessageRef.current = undefined
     setDismissedContinuationId(undefined)
@@ -1207,7 +1275,7 @@ export function ChatWorkspace({
       await deleteChat({ chatId: targetId })
       setDeleteChatId(undefined)
       if (activeChatId === targetId) {
-        setActiveChatId(undefined)
+        showView(undefined)
       }
     } catch (cause) {
       setError(messageForError(cause, "This chat could not be deleted."))
@@ -1403,7 +1471,8 @@ export function ChatWorkspace({
     const targetProjectId = targetChatId ? undefined : newChatProjectId
     if (
       (!message && !submittedAnnotations.length && !options.continuationOf) ||
-      (!options.continuationOf && sendingRef.current) ||
+      (!options.continuationOf &&
+        replyForView(inFlightRepliesRef.current, targetChatId, viewRef.current)) ||
       uploadingFiles ||
       importingLink ||
       savingReplySettings ||
@@ -1430,11 +1499,18 @@ export function ChatWorkspace({
     }
     setError("")
     setStreamProviderEvents([])
-    setSending(true)
-    sendingRef.current = true
-    pausedByUserRef.current = false
     const controller = new AbortController()
-    requestControllerRef.current = controller
+    const reply: InFlightReply = {
+      ...(targetChatId ? { chatId: targetChatId } : {}),
+      view: viewRef.current,
+      controller,
+      pausedByUser: false,
+    }
+    inFlightRepliesRef.current = [...inFlightRepliesRef.current, reply]
+    setInFlightReplies(inFlightRepliesRef.current)
+    /** Whether the learner is still looking at the chat this reply belongs to. */
+    const isVisible = (): boolean =>
+      replyForView([reply], activeChatIdRef.current, viewRef.current) === reply
     let started = false
     let completed = false
     let resolvedChatId: Id<"workspaceChats"> | undefined = targetChatId
@@ -1519,19 +1595,28 @@ export function ChatWorkspace({
         }
         await readChatEvents(response.body, (event) => {
           if (event.type === "error") {
-            if (pausedByUserRef.current || controller.signal.aborted) return
+            if (reply.pausedByUser || controller.signal.aborted) return
             throw new Error(event.message)
           }
           if (event.type === "started") {
             started = true
             resolvedChatId = event.chatId
-            revokeDraftPreviews()
-            setAttachments([])
-            setDraftAnnotations([])
-            setExpandedAnnotationId(undefined)
-            selectChat(event.chatId, true)
-            setStreamProviderEvents([])
+            // Follow a new chat only if the learner has not moved on to another one.
+            const following = isVisible()
+            reply.chatId = event.chatId
+            inFlightRepliesRef.current = [...inFlightRepliesRef.current]
+            setInFlightReplies(inFlightRepliesRef.current)
+            if (following) {
+              revokeDraftPreviews()
+              setAttachments([])
+              setDraftAnnotations([])
+              setExpandedAnnotationId(undefined)
+              selectChat(event.chatId, true)
+              setStreamProviderEvents([])
+            }
           }
+          // Live progress belongs to the visible chat; others read theirs from Convex.
+          if (!isVisible()) return
           if (event.type === "activity")
             setStreamProviderEvents((current) => {
               const index = current.findIndex((item) => item.id === event.event.id)
@@ -1562,9 +1647,14 @@ export function ChatWorkspace({
         if (!started && !targetChatId)
           throw new Error("Blitz ended the reply early.")
         completed = true
-        setDismissedContinuationId(undefined)
+        if (isVisible()) setDismissedContinuationId(undefined)
 
-        if (queuedMessageRef.current && resolvedChatId) {
+        // A queued message belongs to the visible chat, so send it only there.
+        if (
+          queuedMessageRef.current &&
+          resolvedChatId &&
+          resolvedChatId === activeChatIdRef.current
+        ) {
           const queued = queuedMessageRef.current
           setQueuedMessage(undefined)
           queuedMessageRef.current = undefined
@@ -1578,34 +1668,36 @@ export function ChatWorkspace({
           }, 50)
         }
       } catch (sendError) {
-        const paused = controller.signal.aborted || pausedByUserRef.current
-        if (!paused)
+        const paused = controller.signal.aborted || reply.pausedByUser
+        // A failure in another chat is saved on its message; do not show it here.
+        const visible = isVisible()
+        if (!paused && visible)
           setError(
             messageForError(
               sendError,
               "Blitz could not finish that reply. Try again."
             )
           )
-        if (!started && !options.continuationOf) {
+        // Restore the draft only while the composer still shows this chat.
+        if (visible && !started && !options.continuationOf) {
           // A rejected first turn has not saved its context for a retry.
           setAttachments(submittedAttachments)
           setDraft(rawMessage)
           setDraftAnnotations(submittedAnnotations)
-        } else if (!started && options.steeringPrompt) {
+        } else if (visible && !started && options.steeringPrompt) {
           setDraft(options.steeringPrompt)
         }
       } finally {
-        if (requestControllerRef.current === controller)
-          requestControllerRef.current = undefined
-        pausedByUserRef.current = false
-        sendingRef.current = false
-        setSending(false)
+        inFlightRepliesRef.current = inFlightRepliesRef.current.filter(
+          (item) => item !== reply
+        )
+        setInFlightReplies(inFlightRepliesRef.current)
       }
       return completed
     }
 
     const sendPromise = run()
-    activeSendPromiseRef.current = sendPromise
+    reply.promise = sendPromise
     return await sendPromise
   }
 
@@ -1649,7 +1741,7 @@ export function ChatWorkspace({
     } catch (editError) {
       setError(messageForError(editError, "That message could not be edited."))
     } finally {
-      setMessageActionId(undefined)
+      clearMessageAction(messageId)
     }
   }
 
@@ -1672,7 +1764,7 @@ export function ChatWorkspace({
         messageForError(branchError, "That response could not be branched.")
       )
     } finally {
-      setMessageActionId(undefined)
+      clearMessageAction(messageId)
     }
   }
 
@@ -1685,8 +1777,11 @@ export function ChatWorkspace({
           message.role === "assistant" && message.status === "running"
       )
     if (!activeChatId || !runningMessage) return
-    pausedByUserRef.current = true
-    requestControllerRef.current?.abort()
+    const reply = replyForView(inFlightRepliesRef.current, activeChatId, view)
+    if (reply) {
+      reply.pausedByUser = true
+      reply.controller.abort()
+    }
     void fetch("/api/chat/pause", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -1770,7 +1865,7 @@ export function ChatWorkspace({
         setDraft("")
       }
     } finally {
-      setMessageActionId(undefined)
+      clearMessageAction(messageId)
     }
   }
 
@@ -1786,10 +1881,11 @@ export function ChatWorkspace({
     const steeringNotes = draft.trim()
     if (!steeringNotes) return
     setDraft("")
-    pausedByUserRef.current = true
+    const reply = replyForView(inFlightRepliesRef.current, activeChatId, view)
+    if (reply) reply.pausedByUser = true
     setMessageActionId(runningMessage.id)
     try {
-      requestControllerRef.current?.abort()
+      reply?.controller.abort()
       const response = await fetch("/api/chat/pause", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1803,10 +1899,8 @@ export function ChatWorkspace({
           "This reply could not be paused for steering. Its provider session may have ended; reload the chat to check its status."
         )
       }
-      if (activeSendPromiseRef.current) {
-        await activeSendPromiseRef.current.catch(() => {})
-      }
-      sendingRef.current = false
+      // The paused request must finish before its continuation starts.
+      await reply?.promise?.catch(() => {})
       await sendMessage({
         chatId: activeChatId,
         continuationOf: runningMessage.id,
@@ -1821,7 +1915,7 @@ export function ChatWorkspace({
         )
       )
     } finally {
-      setMessageActionId(undefined)
+      clearMessageAction(runningMessage.id)
     }
   }
 
@@ -2026,7 +2120,7 @@ export function ChatWorkspace({
               type="button"
               variant="outline"
               className="shrink-0 rounded-full px-3 md:hidden"
-              disabled={isRunning}
+              disabled={uploadingFiles || importingLink}
               onClick={startNewChat}
             >
               New chat
