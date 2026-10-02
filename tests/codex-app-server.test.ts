@@ -586,35 +586,3 @@ test("rejects a missing or relative workspace before starting a process", async 
   )
   assert.equal(spawned, false)
 })
-
-test("loads the plugin catalog before returning a thread-ready client", async () => {
-  for (const reply of [
-    { result: { marketplaces: [] } },
-    // Older CLIs without plugin/list must still connect with local skills.
-    { error: { code: -32601, message: "Method not found" } },
-  ]) {
-    const process = new FakeProcess()
-    let connected = false
-    const connecting = CodexAppServerClient.connect({
-      workspaceDirectory: "/tmp/blitz-owned-workspace",
-      loadPlugins: true,
-      spawnProcess: () => process,
-    }).then((client) => {
-      connected = true
-      return client
-    })
-    initialize(process)
-    await new Promise((resolve) => setImmediate(resolve))
-    const pluginList = messages(process).find(
-      (message) => message.method === "plugin/list"
-    )
-    assert.deepEqual(pluginList?.params, {
-      cwds: ["/tmp/blitz-owned-workspace"],
-    })
-    assert.equal(connected, false)
-    process.respond({ id: pluginList?.id, ...reply })
-    const client = await connecting
-    assert.equal(connected, true)
-    await client.close()
-  }
-})

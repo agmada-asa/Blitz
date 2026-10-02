@@ -171,15 +171,6 @@ export interface CodexAppServerOptions {
   }
   /** Advertises support for experimental requests required by dynamic tools. */
   experimentalApi?: boolean
-  /**
-   * Waits for the installed plugin catalog before returning the client.
-   *
-   * A fresh app-server lists only local skills at first and loads remote
-   * marketplace plugins (such as Figma or product design) in the background.
-   * Clients that start threads should enable this so each thread sees the
-   * same skills and tools as the Codex app; listing models does not need it.
-   */
-  loadPlugins?: boolean
   /** Per-request response deadline. */
   requestTimeoutMs?: number
   /** Maximum UTF-8 bytes accepted in one inbound JSONL line. */
@@ -522,7 +513,6 @@ export class CodexAppServerClient {
     const client = new CodexAppServerClient(child, options)
     try {
       await client.initialize(options.clientInfo, options.experimentalApi)
-      if (options.loadPlugins) await client.loadInstalledPlugins()
       return client
     } catch (error) {
       await client.close()
@@ -602,23 +592,6 @@ export class CodexAppServerClient {
     asRecord(result, "initialize response")
     this.writeMessage({ method: "initialized", params: {} })
     this.initialized = true
-  }
-
-  /**
-   * Loads the installed plugin catalog, including remote marketplaces.
-   *
-   * `plugin/list` resolves only after remote plugins are known, so threads
-   * started afterwards include their skills. Older CLIs without the method,
-   * or a catalog fetch failure, leave the local skills in place rather than
-   * failing the turn.
-   */
-  private async loadInstalledPlugins(): Promise<void> {
-    try {
-      await this.request("plugin/list", { cwds: [this.workspaceDirectory] })
-    } catch (error) {
-      // A timeout already closed the connection; only tolerate method errors.
-      if (error instanceof CodexRequestTimeoutError) throw error
-    }
   }
 
   /** Starts a persisted or ephemeral thread in the explicit Blitz workspace. */

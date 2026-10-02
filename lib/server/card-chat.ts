@@ -521,7 +521,6 @@ export async function runCodexTextTurn(
       CodexAppServerClient.connect({
         workspaceDirectory: transportOptions.workspaceDirectory,
         approvalHandler: options.approvalHandler,
-        loadPlugins: true,
         ...(transportOptions.webSearchMode === undefined
           ? {}
           : { webSearchMode: transportOptions.webSearchMode }),
