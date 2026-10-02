@@ -36,6 +36,7 @@ import {
   getCodexModelCatalog,
   validateCodexModelSelection,
 } from "./codex-models.ts"
+import { codexRuntimeInstructionsIfInstalled } from "./codex-runtime.ts"
 import type {
   ProviderImageAttachment,
   ProviderModelOption,
@@ -193,6 +194,11 @@ export async function runProviderTextTurn(
     webSearchMode: request.webSearchMode,
   })
   const executionInstructions = providerExecutionInstructions(execution)
+  // Codex skills (such as PDF reading) expect the desktop app's bundled tools.
+  const runtimeInstructions =
+    request.providerId === "codex"
+      ? await codexRuntimeInstructionsIfInstalled()
+      : undefined
   const providerRequest: ProviderTextTurnRequest = {
     selection,
     workspaceDirectory: request.workspaceDirectory,
@@ -203,6 +209,7 @@ export async function runProviderTextTurn(
     developerInstructions: [
       request.developerInstructions?.trim(),
       executionInstructions,
+      runtimeInstructions,
     ]
       .filter(Boolean)
       .join("\n\n"),
