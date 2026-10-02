@@ -166,10 +166,12 @@ type ChatEvent =
   | { type: "agent-request-resolved"; requestId: string }
   | { type: "error"; message: string }
 
-/** Initial saved chat selected by the route query string. */
+/** Initial conversation or study context, with optional embedded panel behavior. */
 type ChatWorkspaceProps = {
   initialChatId?: Id<"workspaceChats">
   initialCard?: ChatCard
+  /** Selected transcript text attached to a fresh project chat. */
+  initialPassage?: ChatPassage
   /** Optional unsent prompt used when a card starts a focused chat. */
   initialPrompt?: string
   initialProject?: ChatAgentProject
@@ -177,6 +179,18 @@ type ChatWorkspaceProps = {
   embedded?: boolean
   /** Lets an owning panel open citations in its own source tab. */
   onOpenSource?: (selection: SourceSelection) => void
+}
+
+/** Selected recording passages supplied as inline context, without the full project. */
+export type ChatPassage = {
+  /** Stable selection identity used to reset the panel when passages change. */
+  id: string
+  /** Project that owns the recording and the saved conversation. */
+  projectId: Id<"projects">
+  /** Recording title and timestamps shown on the context attachment. */
+  title: string
+  /** Reader-facing transcript text with timestamps; the composer retains up to 48,000 characters. */
+  text: string
 }
 
 /** Optional overrides for standard, edited, and continued chat submissions. */
@@ -458,6 +472,7 @@ function getServerPlatformIsMac(): boolean {
 export function ChatWorkspace({
   initialChatId,
   initialCard,
+  initialPassage,
   initialPrompt,
   initialProject,
   embedded = false,
@@ -503,7 +518,7 @@ export function ChatWorkspace({
   const deleteChat = useMutation(api.workspaceChats.remove)
   const [activeChatId, setActiveChatId] = useState<
     Id<"workspaceChats"> | undefined
-  >(initialCard ? undefined : initialChatId)
+  >(initialCard || initialPassage ? undefined : initialChatId)
   const activeChat = useQuery(
     api.workspaceChats.get,
     activeChatId ? { chatId: activeChatId } : "skip"
@@ -511,16 +526,25 @@ export function ChatWorkspace({
   const [attachments, setAttachments] = useState<DraftAttachment[]>(() =>
     initialCard
       ? [draftAttachmentForCard(initialCard)]
-      : initialProject
+      : initialPassage
         ? [
             {
-              id: `project:${initialProject._id}`,
-              kind: "project",
-              label: initialProject.title,
-              projectId: initialProject._id,
+              id: initialPassage.id,
+              kind: "file",
+              label: initialPassage.title.slice(0, 255),
+              text: initialPassage.text.slice(0, MAX_ATTACHMENT_TEXT),
             },
           ]
-        : []
+        : initialProject
+          ? [
+              {
+                id: `project:${initialProject._id}`,
+                kind: "project",
+                label: initialProject.title,
+                projectId: initialProject._id,
+              },
+            ]
+          : []
   )
   const [draft, setDraft] = useState(() => initialPrompt?.slice(0, 4_000) ?? "")
   const [draftAnnotations, setDraftAnnotations] = useState<
@@ -561,7 +585,7 @@ export function ChatWorkspace({
   const [agentInstructions, setAgentInstructions] = useState("")
   const [workingProjectId, setWorkingProjectId] = useState<
     Id<"projects"> | undefined
-  >(initialCard?.projectId ?? initialProject?._id)
+  >(initialCard?.projectId ?? initialPassage?.projectId ?? initialProject?._id)
   const [agentSettingsTouched, setAgentSettingsTouched] = useState(false)
   const [streamAgentRequests, setStreamAgentRequests] = useState<
     Record<string, { request: AgentRequest; messageId: string }>
@@ -574,7 +598,7 @@ export function ChatWorkspace({
   const [newChatDialogOpen, setNewChatDialogOpen] = useState(false)
   const [newChatProjectId, setNewChatProjectId] = useState<
     Id<"projects"> | undefined
-  >(initialCard?.projectId ?? initialProject?._id)
+  >(initialCard?.projectId ?? initialPassage?.projectId ?? initialProject?._id)
   const [linkDialogOpen, setLinkDialogOpen] = useState(false)
   const [linkUrl, setLinkUrl] = useState("")
   const [importingLink, setImportingLink] = useState(false)
@@ -1563,6 +1587,8 @@ export function ChatWorkspace({
             )
           )
         if (!started && !options.continuationOf) {
+          // A rejected first turn has not saved its context for a retry.
+          setAttachments(submittedAttachments)
           setDraft(rawMessage)
           setDraftAnnotations(submittedAnnotations)
         } else if (!started && options.steeringPrompt) {
@@ -2624,6 +2650,7 @@ export function ChatWorkspace({
             {/* File drops bubble to the chat pane's single drop handler. */}
             <Textarea
               aria-label="Message Blitz"
+              autoFocus={Boolean(initialPassage)}
               value={draft}
               maxLength={4_000}
               rows={2}

@@ -1,10 +1,13 @@
 "use client"
 
-/** Hosts learning sources and card chats in one responsive, tabbed side panel. */
+/** Hosts source citations, card chats, and passage chats in one responsive side panel. */
 
 import { useSyncExternalStore } from "react"
 
-import { ChatWorkspace } from "@/components/chat/chat-workspace"
+import {
+  ChatWorkspace,
+  type ChatPassage,
+} from "@/components/chat/chat-workspace"
 import {
   SourceReader,
   type LearningSourceSelection,
@@ -45,7 +48,7 @@ export type LearningPanelSelection =
   | LearningSourceSelection
   | SourceSelection
 
-/** Props keep the tab selection and panel lifetime owned by the learning page. */
+/** Props keep tab selection and panel lifetime owned by the surrounding study page. */
 type LearningSidePaneProps = {
   /** Citation currently shown in the Source tab, when one is open. */
   sourceSelection?: LearningPanelSelection
@@ -53,6 +56,8 @@ type LearningSidePaneProps = {
   chatOpen: boolean
   /** Current card context for the Ask Blitz tab. */
   chatCard?: LearningChatCard
+  /** Selected transcript context for a listening room chat. */
+  chatPassage?: ChatPassage
   /** Selected side panel tab. */
   activeTab: LearningSidePaneTab
   /** Changes the selected side panel tab. */
@@ -82,11 +87,12 @@ function getServerSnapshot(): boolean {
   return false
 }
 
-/** Displays source citations and contextual chat in persistent tabs on desktop. */
+/** Displays source citations and card or passage chats in desktop tabs or a full-screen mobile panel. */
 export function LearningSidePane({
   sourceSelection,
   chatOpen,
   chatCard,
+  chatPassage,
   activeTab,
   onTabChange,
   onCloseTab,
@@ -138,15 +144,16 @@ export function LearningSidePane({
           />
         </TabsContent>
       ) : null}
-      {chatOpen && chatCard ? (
+      {chatOpen && (chatCard || chatPassage) ? (
         <TabsContent
           value="chat"
           forceMount
           className="mt-0 flex min-h-0 flex-1 flex-col overflow-hidden data-[state=inactive]:hidden"
         >
           <ChatWorkspace
-            key={chatCard.id}
+            key={chatCard?.id ?? chatPassage?.id}
             initialCard={chatCard}
+            initialPassage={chatPassage}
             embedded
             onOpenSource={onOpenSource}
           />
