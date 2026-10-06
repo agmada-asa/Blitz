@@ -18,7 +18,7 @@ import {
   Pin02Icon,
 } from "@hugeicons/core-free-icons"
 import { HugeiconsIcon } from "@hugeicons/react"
-import { useMemo, useState } from "react"
+import { useMemo, useState, useSyncExternalStore } from "react"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -91,7 +91,12 @@ export function ChatHistory({
   archivedCount,
   className,
 }: ChatHistoryProps) {
-  const [viewMode, setViewMode] = useState<ChatViewMode>(() => {
+  const hydrated = useSyncExternalStore(
+    () => () => undefined,
+    () => true,
+    () => false
+  )
+  const [preferredViewMode, setViewMode] = useState<ChatViewMode>(() => {
     if (typeof window === "undefined") return "chronological"
     try {
       const saved = localStorage.getItem(VIEW_MODE_STORAGE_KEY)
@@ -103,7 +108,11 @@ export function ChatHistory({
     }
     return "chronological"
   })
-  const [collapsedProjects, setCollapsedProjects] = useState<Record<string, boolean>>({})
+  // Use the server's default for the first client render, then show the saved preference.
+  const viewMode = hydrated ? preferredViewMode : "chronological"
+  const [collapsedProjects, setCollapsedProjects] = useState<
+    Record<string, boolean>
+  >({})
 
   /** Updates view mode and persists preference. */
   const changeViewMode = (mode: ChatViewMode): void => {
@@ -174,7 +183,9 @@ export function ChatHistory({
         <HugeiconsIcon icon={Pin02Icon} size={16} aria-hidden="true" />
         {chat.isPinned ? "Unpin chat" : "Pin chat"}
       </ContextMenuItem>
-      <ContextMenuItem onSelect={() => onToggleArchive(chat.id, !chat.isArchived)}>
+      <ContextMenuItem
+        onSelect={() => onToggleArchive(chat.id, !chat.isArchived)}
+      >
         <HugeiconsIcon icon={Archive02Icon} size={16} aria-hidden="true" />
         {chat.isArchived ? "Restore chat" : "Archive chat"}
       </ContextMenuItem>
@@ -196,7 +207,9 @@ export function ChatHistory({
         <HugeiconsIcon icon={PencilEdit02Icon} size={15} aria-hidden="true" />
         Rename chat
       </DropdownMenuItem>
-      <DropdownMenuItem onSelect={() => onToggleUnread(chat.id, !chat.isUnread)}>
+      <DropdownMenuItem
+        onSelect={() => onToggleUnread(chat.id, !chat.isUnread)}
+      >
         <HugeiconsIcon icon={CheckUnread01Icon} size={15} aria-hidden="true" />
         {chat.isUnread ? "Mark as read" : "Mark as unread"}
       </DropdownMenuItem>
@@ -204,7 +217,9 @@ export function ChatHistory({
         <HugeiconsIcon icon={Pin02Icon} size={15} aria-hidden="true" />
         {chat.isPinned ? "Unpin chat" : "Pin chat"}
       </DropdownMenuItem>
-      <DropdownMenuItem onSelect={() => onToggleArchive(chat.id, !chat.isArchived)}>
+      <DropdownMenuItem
+        onSelect={() => onToggleArchive(chat.id, !chat.isArchived)}
+      >
         <HugeiconsIcon icon={Archive02Icon} size={15} aria-hidden="true" />
         {chat.isArchived ? "Restore chat" : "Archive chat"}
       </DropdownMenuItem>
@@ -240,7 +255,7 @@ export function ChatHistory({
         </Button>
       </div>
 
-      <div className="px-3 pb-2 shrink-0">
+      <div className="shrink-0 px-3 pb-2">
         <div
           role="radiogroup"
           aria-label="Chat view mode"
@@ -355,7 +370,7 @@ export function ChatHistory({
                           <div className="flex items-center">
                             <Badge
                               variant="outline"
-                              className="h-4.5 max-w-[190px] truncate px-1.5 py-0 text-[10px] font-normal text-muted-foreground border-border/60"
+                              className="h-4.5 max-w-[190px] truncate border-border/60 px-1.5 py-0 text-[10px] font-normal text-muted-foreground"
                             >
                               {chat.projectTitle}
                             </Badge>
@@ -369,7 +384,7 @@ export function ChatHistory({
                   </ContextMenu>
 
                   {/* Accessible row menu trigger */}
-                  <div className="absolute right-2 bottom-2 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
+                  <div className="absolute right-2 bottom-2 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
                         <Button
@@ -402,7 +417,7 @@ export function ChatHistory({
                   <div className="group/project flex items-center justify-between rounded-md pr-1 transition-colors hover:bg-muted/40">
                     <button
                       type="button"
-                      className="flex min-w-0 flex-1 items-center gap-1.5 rounded-md px-2 py-1 text-left text-xs font-medium text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      className="flex min-w-0 flex-1 items-center gap-1.5 rounded-md px-2 py-1 text-left text-xs font-medium text-muted-foreground transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
                       onClick={() => toggleProjectCollapse(group.key)}
                       aria-expanded={!isCollapsed}
                     >
@@ -418,8 +433,10 @@ export function ChatHistory({
                         className="shrink-0 text-muted-foreground"
                         aria-hidden="true"
                       />
-                      <span className="min-w-0 flex-1 truncate">{group.title}</span>
-                      <span className="shrink-0 rounded-full bg-muted/80 px-1.5 py-0.2 text-[10px] text-muted-foreground">
+                      <span className="min-w-0 flex-1 truncate">
+                        {group.title}
+                      </span>
+                      <span className="py-0.2 shrink-0 rounded-full bg-muted/80 px-1.5 text-[10px] text-muted-foreground">
                         {group.chats.length}
                       </span>
                     </button>
@@ -427,7 +444,7 @@ export function ChatHistory({
                       type="button"
                       variant="ghost"
                       size="icon-xs"
-                      className="size-6 shrink-0 rounded-md text-muted-foreground hover:text-foreground opacity-60 group-hover/project:opacity-100 focus-visible:opacity-100 transition-opacity"
+                      className="size-6 shrink-0 rounded-md text-muted-foreground opacity-60 transition-opacity group-hover/project:opacity-100 hover:text-foreground focus-visible:opacity-100"
                       aria-label={`New chat in ${group.title}`}
                       title={`New chat in ${group.title}`}
                       onClick={(event) => {
@@ -436,18 +453,28 @@ export function ChatHistory({
                           toggleProjectCollapse(group.key)
                         }
                         if (group.projectId && onNewInProject) {
-                          onNewInProject({ _id: group.projectId, title: group.title })
+                          onNewInProject({
+                            _id: group.projectId,
+                            title: group.title,
+                          })
                         } else {
                           onNew()
                         }
                       }}
                     >
-                      <HugeiconsIcon icon={PencilEdit02Icon} size={13} strokeWidth={1.8} />
+                      <HugeiconsIcon
+                        icon={PencilEdit02Icon}
+                        size={13}
+                        strokeWidth={1.8}
+                      />
                     </Button>
                   </div>
 
                   {!isCollapsed && (
-                    <ul className="w-full min-w-0 space-y-1 pl-2 border-l border-border/40 ml-2" role="list">
+                    <ul
+                      className="ml-2 w-full min-w-0 space-y-1 border-l border-border/40 pl-2"
+                      role="list"
+                    >
                       {group.chats.map((chat) => {
                         const selected = chat.id === activeChatId
                         return (
@@ -502,7 +529,7 @@ export function ChatHistory({
                             </ContextMenu>
 
                             {/* Accessible row menu trigger */}
-                            <div className="absolute right-1 top-1.5 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
+                            <div className="absolute top-1.5 right-1 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
                               <DropdownMenu>
                                 <DropdownMenuTrigger asChild>
                                   <Button
@@ -513,7 +540,10 @@ export function ChatHistory({
                                     aria-label={`Options for ${chat.title}`}
                                     onClick={(e) => e.stopPropagation()}
                                   >
-                                    <HugeiconsIcon icon={MoreHorizontalIcon} size={13} />
+                                    <HugeiconsIcon
+                                      icon={MoreHorizontalIcon}
+                                      size={13}
+                                    />
                                   </Button>
                                 </DropdownMenuTrigger>
                                 <DropdownMenuContent align="end">
@@ -546,7 +576,7 @@ export function ChatHistory({
             <HugeiconsIcon icon={Archive02Icon} size={15} strokeWidth={1.8} />
             <span>Archived chats</span>
             {archivedCount !== undefined && archivedCount > 0 ? (
-              <span className="ml-auto rounded-full bg-muted px-1.5 py-0.2 text-[10px] font-medium text-muted-foreground">
+              <span className="py-0.2 ml-auto rounded-full bg-muted px-1.5 text-[10px] font-medium text-muted-foreground">
                 {archivedCount}
               </span>
             ) : null}
