@@ -25,6 +25,7 @@ import type {
   CodexStartThreadOptions,
   CodexStartTurnOptions,
   CodexThreadResponse,
+  CodexTurn,
   CodexTurnResponse,
 } from "../lib/server/codex-app-server.ts"
 
@@ -63,6 +64,12 @@ class FakeTransport implements CardChatTransport {
   respondTurnImmediately = false
   /** Whether completion arrives without assistant text. */
   emptyCompletion = false
+  /** Optional terminal turn emitted before or after the start response. */
+  terminalTurn?: CodexTurn
+  /** Returns the terminal turn directly from turn/start without a notification. */
+  terminalInStartResponse = false
+  /** Emits a retryable error before successfully completing the turn. */
+  retryError?: unknown
   /** Text sent by the immediate completion fixture. */
   deltaText = "A clear answer."
   /** Pending turn promise resolver for abort tests. */
@@ -103,6 +110,22 @@ class FakeTransport implements CardChatTransport {
   ): Promise<CodexTurnResponse> {
     this.turnOptions = _options
     const response = { turn: { id: "turn_1", status: "inProgress" } }
+    if (this.terminalTurn) {
+      if (this.terminalInStartResponse)
+        return Promise.resolve({ turn: this.terminalTurn })
+      /** Delivers a terminal provider result, including its structured error. */
+      const finish = () =>
+        this.emit({
+          type: "notification",
+          notification: {
+            method: "turn/completed",
+            params: { threadId, turn: this.terminalTurn },
+          },
+        })
+      if (this.respondTurnImmediately) setTimeout(finish, 0)
+      else finish()
+      return Promise.resolve(response)
+    }
     if (this.emptyCompletion) {
       this.emit({
         type: "notification",
@@ -117,6 +140,19 @@ class FakeTransport implements CardChatTransport {
       return Promise.resolve(response)
     }
     if (this.completeImmediately) {
+      if (this.retryError)
+        this.emit({
+          type: "notification",
+          notification: {
+            method: "error",
+            params: {
+              threadId,
+              turnId: "turn_1",
+              error: this.retryError,
+              willRetry: true,
+            },
+          },
+        })
       this.emit({
         type: "notification",
         notification: {
@@ -409,6 +445,134 @@ test("does not report success when completion contains no assistant text", async
   )
   assert.equal(events.filter((event) => event.type === "completed").length, 0)
   assert.equal(events.filter((event) => event.type === "error").length, 1)
+})
+
+/** Structured Codex error codes verified against the installed protocol schema. */
+const limitCases = [
+  {
+    code: "serverOverloaded",
+    reason: "provider-overloaded",
+    copy: /at capacity/,
+  },
+  {
+    code: "usageLimitExceeded",
+    reason: "usage-limit",
+    copy: /usage limit.*reset/,
+  },
+  {
+    code: "rateLimitExceeded",
+    reason: "rate-limit",
+    copy: /Too many requests.*Wait a moment/,
+  },
+] as const
+
+for (const limit of limitCases) {
+  for (const delivery of [
+    "before-response",
+    "after-response",
+    "start-response",
+  ]) {
+    test(`${limit.reason} from ${delivery}`, async () => {
+      const transport = new FakeTransport()
+      transport.respondTurnImmediately = delivery === "after-response"
+      transport.terminalInStartResponse = delivery === "start-response"
+      const providerError = {
+        message: "Selected model is at capacity. Please try a different model.",
+        codexErrorInfo: limit.code,
+        additionalDetails: "Private provider details",
+      }
+      transport.terminalTurn = {
+        id: "turn_1",
+        status: "failed",
+        error: providerError,
+      }
+      const events: CardChatEvent[] = []
+      await assert.rejects(
+        runCardChat(
+          {
+            workspaceDirectory: "/tmp/blitz-owned-workspace",
+            card,
+            source,
+            question: "Why?",
+          },
+          {
+            createTransport: factoryFor(transport),
+            onEvent: (event) => events.push(event),
+          }
+        ),
+        (error: unknown) => {
+          assert.ok(error instanceof CardChatError)
+          assert.equal(error.reason, limit.reason)
+          assert.match(error.message, limit.copy)
+          assert.doesNotMatch(error.message, /Private provider details/)
+          assert.deepEqual(error.cause, providerError)
+          return true
+        }
+      )
+      assert.equal(
+        events.filter((event) => event.type === "completed").length,
+        0
+      )
+      assert.equal(events.filter((event) => event.type === "error").length, 1)
+      assert.equal(transport.closed, true)
+    })
+  }
+}
+
+test("lets the provider recover from retryable rate errors before reporting success", async () => {
+  const transport = new FakeTransport()
+  transport.completeImmediately = true
+  transport.retryError = {
+    codexErrorInfo: "rateLimitExceeded",
+    message: "Retrying",
+  }
+  const events: CardChatEvent[] = []
+  const result = await runCardChat(
+    {
+      workspaceDirectory: "/tmp/blitz-owned-workspace",
+      card,
+      source,
+      question: "Why?",
+    },
+    {
+      createTransport: factoryFor(transport),
+      onEvent: (event) => events.push(event),
+    }
+  )
+  assert.equal(result.text, "A clear answer.")
+  assert.equal(events.filter((event) => event.type === "completed").length, 1)
+  assert.equal(events.filter((event) => event.type === "error").length, 0)
+})
+
+test("keeps unknown turn failures generic while retaining provider diagnostics", async () => {
+  const transport = new FakeTransport()
+  const providerError = {
+    message: "Private source content",
+    codexErrorInfo: "other",
+  }
+  transport.terminalTurn = {
+    id: "turn_1",
+    status: "failed",
+    error: providerError,
+  }
+  await assert.rejects(
+    runCardChat(
+      {
+        workspaceDirectory: "/tmp/blitz-owned-workspace",
+        card,
+        source,
+        question: "Why?",
+      },
+      { createTransport: factoryFor(transport) }
+    ),
+    (error: unknown) => {
+      assert.ok(error instanceof CardChatError)
+      assert.equal(error.reason, "turn-failed")
+      assert.equal(error.message, "Blitz turn failed")
+      assert.deepEqual(error.cause, providerError)
+      return true
+    }
+  )
 })
 
 test("fails when streamed assistant text exceeds the collection bound", async () => {

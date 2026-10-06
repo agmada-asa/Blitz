@@ -189,6 +189,9 @@ export type CardChatFailureReason =
   | "aborted"
   | "timeout"
   | "transport"
+  | "provider-overloaded"
+  | "usage-limit"
+  | "rate-limit"
   | "turn-failed"
   | "turn-interrupted"
 
@@ -224,11 +227,11 @@ export interface CardChatResult {
   readonly durationMs?: number
 }
 
-/** Stable error for invalid input, cancellation, timeout, or turn failure. */
+/** Stable error for invalid input, cancellation, timeout, provider limits, or turn failure. */
 export class CardChatError extends Error {
   /** Machine-readable reason for the failure. */
   readonly reason: CardChatFailureReason
-  /** Optional underlying transport error, retained for diagnostics. */
+  /** Optional underlying transport or provider error, retained for diagnostics. */
   readonly cause?: unknown
 
   /** Creates a safe card-chat error without including source content. */
@@ -423,6 +426,33 @@ function parseCompletion(
   return { threadId: params.threadId, turn: turn as CodexTurn }
 }
 
+/** Maps verified Codex limit codes to safe recovery copy without exposing raw provider messages. */
+function codexLimitError(error: unknown): CardChatError | undefined {
+  const providerError = record(error)
+  switch (providerError?.codexErrorInfo) {
+    case "serverOverloaded":
+      return new CardChatError(
+        "provider-overloaded",
+        "The selected model is at capacity. Try again shortly or choose another model in Settings.",
+        providerError
+      )
+    case "usageLimitExceeded":
+      return new CardChatError(
+        "usage-limit",
+        "You've reached the selected provider's usage limit. Wait for it to reset or choose another provider in Settings.",
+        providerError
+      )
+    case "rateLimitExceeded":
+      return new CardChatError(
+        "rate-limit",
+        "Too many requests to the selected provider. Wait a moment, then try again.",
+        providerError
+      )
+    default:
+      return undefined
+  }
+}
+
 /** Extracts authoritative assistant text from completed turn items when present. */
 function extractTurnText(turn: CodexTurn): string | undefined {
   if (!Array.isArray(turn.items)) return undefined
@@ -574,9 +604,16 @@ export async function runCodexTextTurn(
   const complete = (status: string, completedTurn?: CodexTurn): void => {
     if (finished || !threadId || !turnId) return
     if (status !== "completed") {
+      const providerError = record(completedTurn?.error)
+      const limitError =
+        status === "failed" ? codexLimitError(providerError) : undefined
+      if (limitError) {
+        cancel(limitError)
+        return
+      }
       const reason =
         status === "interrupted" ? "turn-interrupted" : "turn-failed"
-      cancel(new CardChatError(reason, `Blitz turn ${status}`))
+      cancel(new CardChatError(reason, `Blitz turn ${status}`, providerError))
       return
     }
     const authoritativeText = completedTurn

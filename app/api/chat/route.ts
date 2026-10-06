@@ -28,10 +28,8 @@ import {
 } from "@/lib/ai-model-settings"
 import { CardChatError } from "@/lib/server/card-chat"
 import { createChatProgress } from "@/lib/server/chat-progress"
-import {
-  loadSavedAiModelSettings,
-  SavedModelSettingsError,
-} from "@/lib/server/ai-model-settings"
+import { loadSavedAiModelSettings } from "@/lib/server/ai-model-settings"
+import { workspaceChatFailure } from "@/lib/server/workspace-chat-failure"
 import { runProviderTextTurn } from "@/lib/server/providers/run-text-turn"
 import { getCodexModelCatalog } from "@/lib/server/providers/codex-models"
 import { providerCommand } from "@/lib/server/providers/registry"
@@ -334,37 +332,6 @@ async function readRequestJson(request: Request): Promise<unknown> {
 /** Encodes one newline-delimited event for the browser stream. */
 function eventLine(value: unknown): Uint8Array {
   return new TextEncoder().encode(`${JSON.stringify(value)}\n`)
-}
-
-/** Returns recovery copy and a stable diagnostic reason for one failed turn. */
-function workspaceChatFailure(
-  error: unknown,
-  contextSaved: boolean
-): {
-  reason: string
-  message: string
-} {
-  if (error instanceof SavedModelSettingsError)
-    return { reason: "invalid-input", message: error.message }
-  if (error instanceof CardChatError && error.reason === "invalid-input")
-    return { reason: error.reason, message: error.message }
-  const recovery = contextSaved
-    ? "Your chat context is saved, so try again."
-    : "Try again."
-  if (error instanceof CardChatError && error.reason === "timeout")
-    return {
-      reason: error.reason,
-      message: `That reply took too long. ${recovery}`,
-    }
-  if (error instanceof CardChatError && error.reason === "aborted")
-    return {
-      reason: error.reason,
-      message: `That reply was interrupted. ${recovery}`,
-    }
-  return {
-    reason: error instanceof CardChatError ? error.reason : "unknown",
-    message: `Blitz could not finish that reply. ${recovery}`,
-  }
 }
 
 /** Starts or resumes one read-only Blitz conversation with optional source context. */
