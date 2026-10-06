@@ -377,6 +377,26 @@
 .markdown-code-block .hljs-title, .markdown-code-block .hljs-section, .markdown-code-block .hljs-attr, .markdown-code-block .hljs-attribute, .markdown-code-block .hljs-variable, .markdown-code-block .hljs-property { color: #8aadf4; }
 .markdown-code-block .hljs-name, .markdown-code-block .hljs-selector-class, .markdown-code-block .hljs-selector-id { color: #f5a97f; }
 .chat-markdown pre code { padding: 0; background: transparent; }
+/* Formula fonts and SVG diagrams keep their own layout inside scrollable reply regions. */
+.markdown-math { overflow-wrap: normal; }
+.markdown-math .katex { font-size: 1.1em; }
+.markdown-math-display { display: block; overflow-x: auto; max-width: 100%; padding: 4px 0; }
+.markdown-math-display .katex-display { margin: .5em 0; }
+.markdown-math-fallback { overflow-wrap: anywhere; }
+.markdown-diagram { min-width: 0; }
+.markdown-diagram-canvas { overflow-x: auto; max-width: 100%; padding: 12px 0; }
+.markdown-diagram-canvas svg { display: block; max-width: none; height: auto; margin-inline: auto; }
+.markdown-diagram-source { margin-top: 8px; }
+.markdown-diagram-source summary { width: fit-content; cursor: pointer; color: var(--muted-foreground); font-size: .85em; border-radius: 4px; }
+.markdown-diagram-source[open] summary { margin-bottom: 8px; }
+.markdown-alert { border-left: 2px solid var(--brand); padding-left: 12px; }
+.markdown-alert > * + * { margin-top: .4em; }
+.markdown-alert-title { font-weight: 650; color: var(--brand); }
+.markdown-math-display:focus-visible, .markdown-diagram-canvas:focus-visible, .markdown-diagram-source summary:focus-visible { outline: 2px solid var(--ring); outline-offset: 3px; }
+@media (prefers-reduced-motion: reduce) {
+  /* Mermaid embeds its animation rules in SVG styles, so this override must take precedence. */
+  .markdown-diagram-canvas *, .markdown-diagram-canvas *::before, .markdown-diagram-canvas *::after { animation: none !important; transition: none !important; }
+}
 .chat-markdown blockquote { border-left: 2px solid var(--brand); padding-left: 12px; }
 .chat-markdown hr { border-color: #ffffff26; }
 .markdown-table { position: relative; overflow-x: auto; max-width: 100%; padding-top: 28px; }

@@ -1071,13 +1071,7 @@ function ProjectLearnContent({ projectId, resume = false }: ProjectLearnProps) {
                       More detail
                     </summary>
                     <div className="mt-3 space-y-3 text-sm leading-6 text-muted-foreground">
-                      {currentItem.deepExplanation
-                        .split(/\n{2,}/)
-                        .map((paragraph, index) => (
-                          <p key={`${currentItem.id}-detail-${index}`}>
-                            {paragraph}
-                          </p>
-                        ))}
+                      <Markdown text={currentItem.deepExplanation} />
                     </div>
                   </details>
                 ) : null}

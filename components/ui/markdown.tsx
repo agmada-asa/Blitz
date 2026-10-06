@@ -1,6 +1,6 @@
 "use client"
 
-/** Renders chat Markdown as semantic React elements without injecting generated HTML. */
+/** Renders shared web Markdown with safe links, highlighted code, formulas, and diagrams. */
 import { memo, type ReactNode, useMemo, useState } from "react"
 import type { Token, Tokens } from "marked"
 import { Copy01Icon, QuoteUpIcon, Tick02Icon } from "@hugeicons/core-free-icons"
@@ -34,6 +34,8 @@ import {
 } from "@/lib/markdown"
 import { resolveCitation, type ChatCitation } from "@/lib/citations"
 import { Button } from "@/components/ui/button"
+import { MarkdownMath } from "@/components/ui/markdown-math"
+import { MarkdownMermaid } from "@/components/ui/markdown-mermaid"
 import {
   Popover,
   PopoverContent,
@@ -191,6 +193,11 @@ function renderHighlightNodes(
  */
 function highlightCode(code: string, requestedLanguage: string) {
   const canonical = canonicalCodeLanguage(requestedLanguage)
+  if (canonical === "mermaid")
+    return {
+      markup: codeHighlighter.highlight(code, { language: "plaintext" }).value,
+      label: "Mermaid",
+    }
   const hasGrammar = Boolean(
     canonical && codeHighlighter.getLanguage(canonical)
   )
@@ -384,6 +391,15 @@ function inline(tokens: Token[], options: CitationOptions): ReactNode {
         ? inline(token.tokens ?? [], options)
         : markdownText("text" in token ? token.text : token.raw)
     switch (token.type) {
+      case "math":
+        return (
+          <MarkdownMath
+            key={key}
+            text={token.text}
+            display={token.display}
+            inline
+          />
+        )
       case "strong":
         return <strong key={key}>{children}</strong>
       case "em":
@@ -482,7 +498,10 @@ function inline(tokens: Token[], options: CitationOptions): ReactNode {
 function blocks(tokens: Token[], options: CitationOptions): ReactNode {
   return tokens.map((token, key) => {
     switch (token.type) {
+      case "math":
+        return <MarkdownMath key={key} text={token.text} display />
       case "space":
+      case "checkbox":
         return null
       case "heading": {
         const Heading = `h${Math.min(6, token.depth + 1)}` as "h2"
@@ -499,20 +518,45 @@ function blocks(tokens: Token[], options: CitationOptions): ReactNode {
               : markdownText(token.text)}
           </p>
         )
-      case "code":
-        return (
-          <CodeBlock
-            key={key}
-            code={token.text}
-            language={token.lang?.split(/[\s,]/)[0] ?? ""}
-          />
-        )
-      case "blockquote":
+      case "code": {
+        const language = token.lang?.split(/[\s,]/)[0]?.toLowerCase() ?? ""
+        if (["math", "latex", "tex", "katex"].includes(language))
+          return <MarkdownMath key={key} text={token.text} display />
+        if (language === "mermaid")
+          return (
+            <MarkdownMermaid key={key} source={token.text}>
+              <CodeBlock code={token.text} language="mermaid" />
+            </MarkdownMermaid>
+          )
+        return <CodeBlock key={key} code={token.text} language={language} />
+      }
+      case "blockquote": {
+        const alert =
+          /^\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\](?:[ \t]*\n|$)/i.exec(
+            token.text
+          )
+        if (alert) {
+          const label = alert[1].toLowerCase()
+          return (
+            <aside key={key} className="markdown-alert" aria-label={label}>
+              <p className="markdown-alert-title">
+                {label[0].toUpperCase() + label.slice(1)}
+              </p>
+              {blocks(
+                parseMarkdown(token.text.slice(alert[0].length), {
+                  math: true,
+                }),
+                options
+              )}
+            </aside>
+          )
+        }
         return (
           <blockquote key={key}>
             {blocks(token.tokens ?? [], options)}
           </blockquote>
         )
+      }
       case "hr":
         return <hr key={key} />
       case "list": {
@@ -588,6 +632,8 @@ export const Markdown = memo(function Markdown({
   ...options
 }: { text: string } & CitationOptions) {
   return (
-    <div className="chat-markdown">{blocks(parseMarkdown(text), options)}</div>
+    <div className="chat-markdown">
+      {blocks(parseMarkdown(text, { math: true }), options)}
+    </div>
   )
 })

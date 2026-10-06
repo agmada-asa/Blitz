@@ -2,6 +2,7 @@
 
 import type { Metadata } from "next"
 import "@fontsource-variable/instrument-sans"
+import "katex/dist/katex.min.css"
 import "./globals.css"
 import { AppShell } from "@/components/app-shell"
 import { ConvexClientProvider } from "@/components/convex-client-provider"

@@ -1,12 +1,99 @@
 /** Exercises Markdown syntax shared by the web and Android renderers. */
 import assert from "node:assert/strict"
 import { test } from "node:test"
+import type { Token, Tokens } from "marked"
 import {
   markdownHref,
   markdownImageSrc,
   markdownText,
   parseMarkdown,
+  type MathToken,
 } from "../lib/markdown.ts"
+
+/** Collects nested formulas from lists, emphasis, links, and table cells for parser regressions. */
+function formulas(tokens: Token[]): MathToken[] {
+  return tokens.flatMap((token) => {
+    if (token.type === "math") return [token as MathToken]
+    if (token.type === "list")
+      return token.items.flatMap((item: Tokens.ListItem) =>
+        formulas(item.tokens)
+      )
+    if (token.type === "table")
+      return [token.header, ...token.rows].flatMap((row: Tokens.TableCell[]) =>
+        row.flatMap((cell) => formulas(cell.tokens))
+      )
+    return "tokens" in token && token.tokens ? formulas(token.tokens) : []
+  })
+}
+
+test("Web math preserves LaTeX commands, nested formatting, and display delimiters", () => {
+  const tokens = parseMarkdown(
+    String.raw`For **\(n\ge2\)**, use $\Theta(n^2)$.
+
+\[
+3n^2 \le 3n^2+2n-2 \le 4n^2.
+\]
+
+- Subscript $c_1$ and escaped dollar $\text{\$5}$.
+
+| Bound |
+|---|
+| $\Omega(n^2)$ |
+
+$$\sum_{i=1}^{n} i$$`,
+    { math: true }
+  )
+  assert.deepEqual(
+    formulas(tokens).map((token) => [token.text, token.display]),
+    [
+      [String.raw`n\ge2`, false],
+      [String.raw`\Theta(n^2)`, false],
+      [String.raw`3n^2 \le 3n^2+2n-2 \le 4n^2.`, true],
+      ["c_1", false],
+      [String.raw`\text{\$5}`, false],
+      [String.raw`\Omega(n^2)`, false],
+      [String.raw`\sum_{i=1}^{n} i`, true],
+    ]
+  )
+})
+
+test("Math leaves prices, escaped openers, code, and native parsing unchanged", () => {
+  for (const text of [
+    "Prices are $5 and $10.",
+    String.raw`Escaped \$x$ and \\(x\\).`,
+  ])
+    assert.equal(formulas(parseMarkdown(text, { math: true })).length, 0)
+  const text = String.raw`Inline code: \`$x$\`.
+
+\`\`\`js
+const value = "$x$";
+\`\`\``.replaceAll("\\`", "`")
+  assert.equal(formulas(parseMarkdown(text, { math: true })).length, 0)
+  assert.equal(formulas(parseMarkdown(String.raw`$x$ and \(y\)`)).length, 0)
+  const fences = parseMarkdown(
+    "```math\nx^2\n```\n\n```mermaid\ngraph LR\nA-->B\n```",
+    { math: true }
+  )
+  assert.deepEqual(
+    fences
+      .filter((token): token is Tokens.Code => token.type === "code")
+      .map((token) => token.lang),
+    ["math", "mermaid"]
+  )
+})
+
+test("Every streamed formula prefix stays readable without parser failures", () => {
+  const reply = String.raw`For \(n\ge2\), $c_1=3$.
+
+\[3n^2 \le 4n^2\]
+
+$$\begin{aligned}a&=b\\c&=d\end{aligned}$$`
+  for (let end = 0; end <= reply.length; end++)
+    assert.doesNotThrow(() =>
+      parseMarkdown(reply.slice(0, end), { math: true })
+    )
+  assert.equal(formulas(parseMarkdown(reply, { math: true })).length, 4)
+})
 
 test("Markdown parses headings, nested lists, tables, and unfinished code fences", () => {
   const tokens = parseMarkdown(
