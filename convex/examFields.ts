@@ -1,7 +1,7 @@
 /**
  * Shares exam mode's persisted validators between the schema and the exam
- * functions in `convex/exam.ts`, so a saved paper, an autosaved answer, and a
- * marking result always have the same shape.
+ * functions in `convex/exam.ts`, so a saved paper, a learner's question edit,
+ * an autosaved answer, and a marking result always have the same shape.
  */
 import { v } from "convex/values"
 
@@ -39,6 +39,25 @@ export const examQuestionFields = v.object({
   unitId: v.optional(v.id("units")),
   /** Learning item that records answers to a choice question as study evidence. */
   itemId: v.optional(v.id("learningItems")),
+})
+
+/**
+ * A learner's edit to one question after `validateQuestionEdit` in
+ * `lib/exam.ts` accepted it. The question keeps its id, unit, and learning
+ * item; `exam.updateQuestion` checks the bounds again and decides the answer
+ * source itself.
+ */
+export const examQuestionEditFields = v.object({
+  number: v.string(),
+  marks: v.number(),
+  type: examQuestionType,
+  prompt: v.string(),
+  concept: v.string(),
+  options: v.optional(v.array(v.object({ id: v.string(), text: v.string() }))),
+  correctOptionIds: v.optional(v.array(v.string())),
+  explanation: v.optional(v.string()),
+  modelAnswer: v.optional(v.string()),
+  markScheme: v.optional(v.array(v.object({ point: v.string(), marks: v.number() }))),
 })
 
 /** The learner's answer to one question, autosaved while the paper is open. */

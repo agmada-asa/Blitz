@@ -322,6 +322,12 @@ export default defineSchema({
     runStartedAt: v.number(),
     finishedAt: v.optional(v.number()),
     createdAt: v.number(),
+    /**
+     * Set when the learner deletes a past paper. The row stays, emptied of
+     * questions and attempts, so its uploaded files stay out of the module's
+     * units; every exam view skips it. Deleted mock papers are removed.
+     */
+    deletedAt: v.optional(v.number()),
   })
     .index("by_project_createdAt", ["projectId", "createdAt"])
     .index("by_project_source", ["projectId", "sourceId"])
