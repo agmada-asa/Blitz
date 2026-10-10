@@ -1,17 +1,42 @@
 "use client"
 
-/** Shows the next learning action and the four live destinations for one project. */
+/**
+ * A module's home: the one next thing to learn, the learning path of units
+ * (weeks or lectures) with their Teach progress, and a way to add this week's
+ * material. Practice, sources, and listening are secondary destinations.
+ */
 
 import Link from "next/link"
-import { usePaginatedQuery, useQuery } from "convex/react"
+import { useMutation, useQuery } from "convex/react"
+import type { FunctionReturnType } from "convex/server"
+import { useState } from "react"
 
+import { AddMaterial } from "@/components/learn/add-material"
 import { ProjectActions } from "@/components/projects/project-actions"
 import { Button } from "@/components/ui/button"
-import { ArrowLeftIcon, ArrowRightIcon } from "@/components/ui/icon"
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
+import { ArrowLeftIcon, ArrowRightIcon, PlusIcon } from "@/components/ui/icon"
+import { Input } from "@/components/ui/input"
 import { Progress } from "@/components/ui/progress"
 import { Skeleton } from "@/components/ui/skeleton"
 import { api } from "@/convex/_generated/api"
 import type { Doc, Id } from "@/convex/_generated/dataModel"
+
+/** One unit as listed on the module page. */
+type UnitRow = FunctionReturnType<typeof api.units.listForProject>["units"][number]
 
 /** Renders project metadata first so an invalid ID does not start dependent queries. */
 export function ProjectOverview({ projectId }: { projectId: string }) {
@@ -22,15 +47,15 @@ export function ProjectOverview({ projectId }: { projectId: string }) {
 
   if (project === undefined) {
     return (
-      <main className="mx-auto max-w-6xl space-y-6 px-4 py-8 sm:px-8">
+      <main className="mx-auto max-w-4xl space-y-6 px-4 py-8 sm:px-8">
         <Skeleton className="h-10 w-56" />
-        <Skeleton className="h-36 w-full rounded-xl" />
+        <Skeleton className="h-36 w-full rounded-2xl" />
       </main>
     )
   }
   if (project === null) {
     return (
-      <main className="mx-auto max-w-6xl px-4 py-12 sm:px-8">
+      <main className="mx-auto max-w-4xl px-4 py-12 sm:px-8">
         <h1 className="text-2xl font-semibold">Project not found</h1>
         <Button asChild variant="outline" className="mt-5">
           <Link href="/library">Back to library</Link>
@@ -38,42 +63,71 @@ export function ProjectOverview({ projectId }: { projectId: string }) {
       </main>
     )
   }
-  return <LoadedProjectOverview project={project} />
+  return <ModuleOverview project={project} />
 }
 
-/** Uses generated path and source status to choose the next useful live action. */
-function LoadedProjectOverview({ project }: { project: Doc<"projects"> }) {
+/** Returns a unit's Teach status in words. */
+function unitStatus(unit: UnitRow): string {
+  const sources = `${unit.sources.length} source${unit.sources.length === 1 ? "" : "s"}`
+  const teach = unit.teach
+  if (!teach || teach.sectionCount === 0) return `${sources} · Not started`
+  if (teach.completed) return `${sources} · Done`
+  return `${sources} · Section ${teach.sectionIndex + 1} of ${teach.sectionCount}`
+}
+
+/** Returns a unit's Teach progress as a percentage. */
+function unitProgress(unit: UnitRow): number {
+  const teach = unit.teach
+  if (!teach || !teach.sectionCount) return 0
+  if (teach.completed) return 100
+  return Math.round((teach.sectionIndex / teach.sectionCount) * 100)
+}
+
+/**
+ * Picks what to learn next: the most recently studied unfinished unit, then
+ * the first unit not yet started.
+ */
+function nextUnit(units: UnitRow[]): UnitRow | undefined {
+  const inProgress = units
+    .filter((unit) => unit.teach && unit.teach.sectionCount > 0 && !unit.teach.completed)
+    .sort((a, b) => (b.teach?.updatedAt ?? 0) - (a.teach?.updatedAt ?? 0))
+  return inProgress[0] ?? units.find((unit) => !unit.teach?.completed && unit.sources.length)
+}
+
+/** Renders the module page once its project has loaded. */
+function ModuleOverview({ project }: { project: Doc<"projects"> }) {
   const projectId = project._id
   const base = `/projects/${encodeURIComponent(String(projectId))}`
-  const path = useQuery(api.learning.getProjectPath, { projectId })
-  const { results: sources, status: sourceStatus } = usePaginatedQuery(
-    api.sources.listSources,
-    { projectId },
-    { initialNumItems: 1 }
-  )
-  const loading = path === undefined || sourceStatus === "LoadingFirstPage"
-  const concepts = path?.sections.flatMap((section) => section.concepts) ?? []
-  const nextConcept =
-    concepts.find(
-      (concept) =>
-        concept.completionStatus !== "completed" && concept.items.length > 0
-    ) ?? concepts.find((concept) => concept.items.length > 0)
-  const nextItem =
-    nextConcept?.items.find((item) => item.type === "explain") ??
-    nextConcept?.items[0]
-  const progress = path?.stats.questionCount
-    ? Math.round(
-        (path.stats.answeredQuestionCount / path.stats.questionCount) * 100
-      )
-    : 0
-  const hasSources = sources.length > 0
-  const onlyFailedSources =
-    sourceStatus === "Exhausted" &&
-    hasSources &&
-    sources.every((source) => source.status === "failed")
+  const data = useQuery(api.units.listForProject, { projectId })
+  const createUnit = useMutation(api.units.create)
+  const moveSource = useMutation(api.units.moveSource)
+  const [adding, setAdding] = useState<{ unitId?: Id<"units"> } | null>(null)
+  const [grouping, setGrouping] = useState(false)
+
+  const units = data?.units ?? []
+  const next = nextUnit(units)
+  const allDone = units.length > 0 && units.every((unit) => unit.teach?.completed)
+  const teachHref = (unit: UnitRow) => `${base}/learn/${encodeURIComponent(String(unit.id))}`
+
+  /** Gathers sources imported before units existed into one unit. */
+  async function groupUnsorted() {
+    if (!data?.unsortedSources.length || grouping) return
+    setGrouping(true)
+    try {
+      const unitId = await createUnit({
+        projectId,
+        title: "Earlier material",
+        titleSource: "auto",
+      })
+      for (const source of data.unsortedSources)
+        await moveSource({ sourceId: source.id, unitId })
+    } finally {
+      setGrouping(false)
+    }
+  }
 
   return (
-    <main className="mx-auto w-full max-w-6xl px-4 py-8 text-foreground sm:px-8 sm:py-10">
+    <main className="mx-auto w-full max-w-4xl px-4 py-8 text-foreground sm:px-8 sm:py-10">
       <Button asChild variant="ghost" size="sm" className="mb-3 -ml-2 min-h-9">
         <Link href="/library">
           <ArrowLeftIcon aria-hidden="true" /> Projects
@@ -84,13 +138,8 @@ function LoadedProjectOverview({ project }: { project: Doc<"projects"> }) {
           {project.title}
         </h1>
         <div className="flex flex-wrap items-center gap-2">
-          <Button asChild variant="outline" className="min-h-10 rounded-full">
-            <Link href={`${base}/map`}>Concept map</Link>
-          </Button>
           <Button asChild variant="ghost" className="min-h-10 rounded-full">
-            <Link
-              href={`/chat?projectId=${encodeURIComponent(String(projectId))}`}
-            >
+            <Link href={`/chat?projectId=${encodeURIComponent(String(projectId))}`}>
               Ask Blitz
             </Link>
           </Button>
@@ -98,86 +147,275 @@ function LoadedProjectOverview({ project }: { project: Doc<"projects"> }) {
         </div>
       </header>
 
-      {loading ? (
-        <section aria-label="Loading project" className="mt-8 space-y-5">
-          <Skeleton className="h-32 w-full rounded-xl" />
-          <Skeleton className="h-28 w-full rounded-xl" />
+      {data === undefined ? (
+        <section aria-label="Loading module" className="mt-8 space-y-4">
+          <Skeleton className="h-28 w-full rounded-2xl" />
+          <Skeleton className="h-16 w-full rounded-xl" />
+          <Skeleton className="h-16 w-full rounded-xl" />
         </section>
-      ) : nextItem ? (
-        <>
-          <section className="mt-8 rounded-xl border border-brand/25 bg-brand/[0.04] p-5 sm:flex sm:items-center sm:justify-between sm:gap-5 sm:p-6">
-            <h2 className="min-w-0 font-heading text-lg font-semibold break-words">
-              {nextItem.title}
-            </h2>
-            <Button
-              asChild
-              className="mt-5 min-h-11 w-full rounded-full bg-brand text-brand-foreground hover:bg-brand/85 sm:mt-0 sm:w-auto"
-            >
-              <Link href={`${base}/learn?resume=1`}>
-                {progress === 100 ? "Review learning" : "Resume learning"}
-                <ArrowRightIcon aria-hidden="true" />
-              </Link>
-            </Button>
-          </section>
-
-          {path && path.stats.questionCount > 0 ? (
-            <div className="mt-8 flex items-center gap-4">
-              <span className="shrink-0 text-sm text-muted-foreground">
-                {path.stats.answeredQuestionCount} / {path.stats.questionCount}{" "}
-                questions answered
-              </span>
-              <Progress
-                value={progress}
-                aria-label={`${path.stats.answeredQuestionCount} of ${path.stats.questionCount} questions answered`}
-                className="[&_[data-slot=progress-indicator]]:bg-brand"
-              />
-            </div>
-          ) : null}
-        </>
       ) : (
-        <section className="mt-8 rounded-xl border border-border bg-card p-6">
-          <h2 className="font-heading text-xl font-semibold">
-            {!hasSources
-              ? "Add a source to start"
-              : onlyFailedSources
-                ? "Source needs attention"
-                : "Preparing study material"}
-          </h2>
-          <Button asChild className="mt-5 min-h-11 rounded-full">
-            <Link href={`${base}/sources`}>
-              {!hasSources ? "Add a source" : "Open sources"}
-            </Link>
-          </Button>
-        </section>
+        <>
+          {next ? (
+            <section className="mt-8 flex flex-col gap-4 rounded-2xl border border-brand/25 bg-brand/[0.05] p-5 sm:flex-row sm:items-center sm:justify-between sm:p-6">
+              <div className="min-w-0">
+                <h2 className="font-heading text-xl font-semibold break-words">{next.title}</h2>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  {next.teach?.currentSectionTitle ??
+                    (next.teach?.sectionCount ? unitStatus(next) : `${next.sources.length} source${next.sources.length === 1 ? "" : "s"} ready to teach`)}
+                </p>
+              </div>
+              <Button
+                asChild
+                className="min-h-11 w-full shrink-0 rounded-full bg-brand px-6 text-brand-foreground hover:bg-brand/85 sm:w-auto"
+              >
+                <Link href={teachHref(next)}>
+                  {next.teach?.sectionCount ? "Continue learning" : "Start learning"}
+                  <ArrowRightIcon aria-hidden="true" />
+                </Link>
+              </Button>
+            </section>
+          ) : allDone ? (
+            <section className="mt-8 flex flex-col gap-4 rounded-2xl border border-border bg-card p-5 sm:flex-row sm:items-center sm:justify-between sm:p-6">
+              <h2 className="font-heading text-xl font-semibold">Every unit is taught</h2>
+              <Button asChild className="min-h-11 rounded-full px-6">
+                <Link href={`${base}/practice`}>Practice</Link>
+              </Button>
+            </section>
+          ) : !units.length && !data.unsortedSources.length ? (
+            <section className="mt-8 rounded-2xl border border-border bg-card p-6 text-center sm:p-10">
+              <h2 className="font-heading text-xl font-semibold">Add your first week</h2>
+              <p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">
+                Upload a week&apos;s transcripts, slides, and notes. Blitz starts
+                teaching them straight away.
+              </p>
+              <Button
+                type="button"
+                onClick={() => setAdding({})}
+                className="mt-5 min-h-11 rounded-full bg-brand px-6 text-brand-foreground hover:bg-brand/85"
+              >
+                <PlusIcon aria-hidden="true" /> Add material
+              </Button>
+            </section>
+          ) : null}
+
+          {units.length || data.unsortedSources.length ? (
+            <section aria-labelledby="learning-path-heading" className="mt-10">
+              <div className="flex items-center justify-between gap-3">
+                <h2 id="learning-path-heading" className="font-heading text-lg font-semibold">
+                  Learning path
+                </h2>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setAdding({})}
+                  className="min-h-10 rounded-full px-4"
+                >
+                  <PlusIcon aria-hidden="true" /> Add material
+                </Button>
+              </div>
+              <ol className="mt-4 space-y-2">
+                {units.map((unit, index) => (
+                  <UnitListItem
+                    key={unit.id}
+                    unit={unit}
+                    number={index + 1}
+                    href={teachHref(unit)}
+                    isFirst={index === 0}
+                    isLast={index === units.length - 1}
+                    onAddMaterial={() => setAdding({ unitId: unit.id })}
+                  />
+                ))}
+              </ol>
+              {data.unsortedSources.length ? (
+                <div className="mt-6 flex flex-col gap-3 rounded-xl border border-dashed border-border p-4 sm:flex-row sm:items-center sm:justify-between">
+                  <p className="text-sm text-muted-foreground">
+                    {data.unsortedSources.length} earlier source
+                    {data.unsortedSources.length === 1 ? " isn't" : "s aren't"} in a unit yet.
+                  </p>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={grouping}
+                    onClick={() => void groupUnsorted()}
+                    className="min-h-10 rounded-full px-4"
+                  >
+                    {grouping ? "Grouping…" : "Group into a unit"}
+                  </Button>
+                </div>
+              ) : null}
+            </section>
+          ) : null}
+
+          <nav aria-label="Module areas" className="mt-10 flex flex-wrap gap-2">
+            {[
+              { href: `${base}/practice`, label: "Practice" },
+              { href: `${base}/sources`, label: "Sources" },
+              { href: `${base}/listen`, label: "Listen" },
+            ].map((item) => (
+              <Button key={item.href} asChild variant="outline" className="min-h-11 rounded-full px-5">
+                <Link href={item.href}>{item.label}</Link>
+              </Button>
+            ))}
+          </nav>
+        </>
       )}
 
-      {!loading ? (
-        <nav
-          aria-label="Project areas"
-          className="mt-8 grid grid-cols-2 gap-3 xl:grid-cols-4"
-        >
-          <Destination href={`${base}/learn`} label="Learn" />
-          <Destination href={`${base}/practice`} label="Practice" />
-          <Destination href={`${base}/sources`} label="Sources" />
-          <Destination href={`${base}/listen`} label="Listen" />
-        </nav>
+      {adding ? (
+        <AddMaterial
+          projectId={projectId}
+          units={units.map((unit) => ({ id: unit.id, title: unit.title }))}
+          {...(adding.unitId ? { defaultUnitId: adding.unitId } : {})}
+          open
+          onOpenChange={(open) => {
+            if (!open) setAdding(null)
+          }}
+        />
       ) : null}
     </main>
   )
 }
 
-/** Renders one boxed destination as a single accessible link. */
-function Destination({ href, label }: { href: string; label: string }) {
+/** Props for one unit row. */
+type UnitListItemProps = {
+  unit: UnitRow
+  number: number
+  href: string
+  isFirst: boolean
+  isLast: boolean
+  onAddMaterial: () => void
+}
+
+/** Renders one unit with its progress and an actions menu. */
+function UnitListItem({ unit, number, href, isFirst, isLast, onAddMaterial }: UnitListItemProps) {
+  const rename = useMutation(api.units.rename)
+  const move = useMutation(api.units.move)
+  const remove = useMutation(api.units.remove)
+  const [renaming, setRenaming] = useState(false)
+  const [title, setTitle] = useState(unit.title)
+  const [error, setError] = useState("")
+  const progress = unitProgress(unit)
+
+  /** Saves a new title from the rename dialog. */
+  async function saveTitle() {
+    try {
+      await rename({ unitId: unit.id, title })
+      setRenaming(false)
+    } catch {
+      setError("The title could not be saved. Try again.")
+    }
+  }
+
   return (
-    <Button
-      asChild
-      variant="outline"
-      className="h-28 w-full flex-col items-stretch justify-between rounded-xl border-border bg-card p-4 text-left text-base hover:bg-muted"
-    >
-      <Link href={href}>
-        <span>{label}</span>
-        <ArrowRightIcon aria-hidden="true" className="self-end" />
-      </Link>
-    </Button>
+    <li className="group relative flex items-center gap-3 rounded-xl border border-border bg-card px-4 py-3 transition-colors hover:bg-muted/50">
+      <span
+        aria-hidden="true"
+        className="flex size-8 shrink-0 items-center justify-center rounded-full bg-muted text-sm font-medium tabular-nums"
+      >
+        {number}
+      </span>
+      <div className="min-w-0 flex-1">
+        <Link
+          href={href}
+          className="block font-medium break-words after:absolute after:inset-0 after:rounded-xl focus-visible:outline-none focus-visible:after:ring-2 focus-visible:after:ring-ring"
+        >
+          {unit.title}
+        </Link>
+        <p className="mt-0.5 text-xs text-muted-foreground">{unitStatus(unit)}</p>
+        {progress > 0 ? (
+          <Progress
+            value={progress}
+            aria-label={`${unit.title}: ${progress}% taught`}
+            className="mt-2 h-1 [&_[data-slot=progress-indicator]]:bg-brand"
+          />
+        ) : null}
+      </div>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button
+            variant="ghost"
+            className="relative z-10 min-h-10 min-w-10 rounded-full"
+            aria-label={`Actions for ${unit.title}`}
+          >
+            ⋯
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end">
+          <DropdownMenuItem onSelect={onAddMaterial}>Add material</DropdownMenuItem>
+          <DropdownMenuItem
+            onSelect={() => {
+              setTitle(unit.title)
+              setError("")
+              setRenaming(true)
+            }}
+          >
+            Rename
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem
+            disabled={isFirst}
+            onSelect={() => void move({ unitId: unit.id, direction: "earlier" })}
+          >
+            Move earlier
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            disabled={isLast}
+            onSelect={() => void move({ unitId: unit.id, direction: "later" })}
+          >
+            Move later
+          </DropdownMenuItem>
+          {!unit.sources.length ? (
+            <>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                className="text-destructive data-[highlighted]:text-destructive"
+                onSelect={() => void remove({ unitId: unit.id })}
+              >
+                Delete empty unit
+              </DropdownMenuItem>
+            </>
+          ) : null}
+        </DropdownMenuContent>
+      </DropdownMenu>
+
+      <Dialog open={renaming} onOpenChange={setRenaming}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Rename unit</DialogTitle>
+          </DialogHeader>
+          <form
+            onSubmit={(event) => {
+              event.preventDefault()
+              void saveTitle()
+            }}
+            className="space-y-3"
+          >
+            <label htmlFor={`unit-title-${unit.id}`} className="sr-only">
+              Unit title
+            </label>
+            <Input
+              id={`unit-title-${unit.id}`}
+              value={title}
+              maxLength={160}
+              onChange={(event) => setTitle(event.target.value)}
+              className="min-h-11"
+              autoFocus
+            />
+            {error ? (
+              <p role="alert" className="text-sm text-destructive">
+                {error}
+              </p>
+            ) : null}
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setRenaming(false)}>
+                Cancel
+              </Button>
+              <Button type="submit" disabled={!title.trim()}>
+                Save
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+    </li>
   )
 }

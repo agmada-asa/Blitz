@@ -10,11 +10,13 @@ import { join } from "node:path"
 /** @typedef {(url: string, options?: object) => Promise<{ok: boolean, status: number}>} HealthFetch */
 /** @typedef {(pid: number, signal?: string) => unknown} ProcessKiller */
 
+/**
+ * Background workers started after Next and Convex answer. Teach replaces the
+ * old lesson, preparation, and card-chat workers, so only source recovery and
+ * Deep Research run in the background.
+ */
 const workerDefinitions = [
   ["ingestion", "worker:ingestion"],
-  ["preparation", "worker"],
-  ["content", "worker:content"],
-  ["chat", "worker:chat"],
   ["research", "worker:research"],
 ]
 
@@ -334,7 +336,7 @@ export class ServiceManager {
 
   /** Returns the URL that proves each probed service is answering. */
   livenessTargets() {
-    const targets = [["next", `http://127.0.0.1:${this.port}/`]]
+    const targets = [["next", `http://127.0.0.1:${this.port}/api/health`]]
     if (this.definitions.has("convex"))
       targets.push(["convex", this.environment.BLITZ_CONVEX_URL])
     return targets
@@ -408,7 +410,7 @@ export class ServiceManager {
       try {
         if (!nextReady) {
           const response = await this.fetchImpl(
-            `http://127.0.0.1:${this.port}/`,
+            `http://127.0.0.1:${this.port}/api/health`,
             { signal: AbortSignal.timeout(1_500) }
           )
           if (response.status < 500) {

@@ -43,6 +43,12 @@ import {
   type ProviderActivityEvent,
 } from "@/lib/provider-activity"
 import {
+  buildTeachPrompt,
+  parseTeachOutline,
+  parseTeachSectionMarker,
+  teachUnitTitle,
+} from "@/lib/teach"
+import {
   buildWorkspaceChatPrompt,
   combineWorkspaceChatContinuation,
   mergeWorkspaceChatReplay,
@@ -527,6 +533,13 @@ export async function POST(request: Request): Promise<Response> {
           turnAbort,
           Date.now() + WORKSPACE_CHAT_TIMEOUT_MS
         )
+        // A Teach session is a chat with its unit's material and protocol.
+        const teach = input.chatId
+          ? await client.query(api.units.teachContext, {
+              chatId: turn.chatId,
+              message: input.message,
+            })
+          : null
         // Recovery sessions need original image bytes because native blocks are
         // not retained by a provider when a fresh session is created.
         const nativeImageDocumentIds = new Set(
@@ -666,12 +679,17 @@ export async function POST(request: Request): Promise<Response> {
           api.chatAgents.getSettings,
           { chatId: turn.chatId }
         )
-        const autonomy = input.autonomy ?? savedAgentSettings.autonomy
-        const additionalInstructions =
-          input.additionalInstructions ??
-          savedAgentSettings.additionalInstructions
-        const workingProjectId =
-          input.autonomy === undefined
+        // Teach sessions only read; agent controls from ordinary chats never apply.
+        const autonomy = teach
+          ? "approval"
+          : (input.autonomy ?? savedAgentSettings.autonomy)
+        const additionalInstructions = teach
+          ? ""
+          : (input.additionalInstructions ??
+            savedAgentSettings.additionalInstructions)
+        const workingProjectId = teach
+          ? undefined
+          : input.autonomy === undefined
             ? savedAgentSettings.workingProjectId
             : input.workingProjectId
         const { resetContext } = await client.mutation(
@@ -683,10 +701,13 @@ export async function POST(request: Request): Promise<Response> {
             ...(workingProjectId ? { workingProjectId } : {}),
           }
         )
-        const workspaceDirectory = workingProjectId
-          ? (await prepareProjectAgentWorkspace(workingProjectId))
+        const workspaceDirectory = teach
+          ? (await prepareProjectAgentWorkspace(teach.projectId))
               .projectDirectory
-          : await chatWorkspaceDirectory(turn.chatId)
+          : workingProjectId
+            ? (await prepareProjectAgentWorkspace(workingProjectId))
+                .projectDirectory
+            : await chatWorkspaceDirectory(turn.chatId)
         await stageWorkspaceAttachments(
           client,
           workspaceDirectory,
@@ -742,9 +763,33 @@ export async function POST(request: Request): Promise<Response> {
             "This provider has no workspace-only OS sandbox. Choose approval mode or full access."
           )
         }
+        /** Builds a Teach turn's prompt, with the unit material when the session needs it. */
+        const teachPrompt = (includeContext: boolean): string =>
+          buildTeachPrompt({
+            moduleTitle: teach!.moduleTitle,
+            unitTitle: teach!.unitTitle,
+            sources: teach!.sources.map((source) => ({
+              filename: source.filename,
+              ...(source.relativeKey ? { relativeKey: source.relativeKey } : {}),
+              text: source.text,
+            })),
+            message: input.message,
+            includeContext,
+            history: turn.replayContext.messages
+              .filter((message) => message.content.trim())
+              .map((message) => ({
+                role: message.role,
+                content: message.content,
+              })),
+            ...(teach!.outline ? { outline: teach!.outline } : {}),
+            ...(teach!.sectionIndex !== null
+              ? { sectionIndex: teach!.sectionIndex }
+              : {}),
+          })
         let replayPrompt: Promise<string> | undefined
         /** Rebuilds prior dialogue and attachments only when thread continuity is uncertain. */
         const promptWithReplay = (): Promise<string> => {
+          if (teach) return Promise.resolve(teachPrompt(true))
           replayPrompt ??= (async () => {
             await appendReplayImages()
             const merged = mergeWorkspaceChatReplay(input, turn.replayContext)
@@ -906,8 +951,9 @@ export async function POST(request: Request): Promise<Response> {
             // A removed historical project does not invalidate the conversation.
           }
         }
-        const initialPrompt =
-          turn.shouldReplayContext || resetContext
+        const initialPrompt = teach
+          ? teachPrompt(turn.shouldReplayContext || resetContext)
+          : turn.shouldReplayContext || resetContext
             ? await promptWithReplay()
             : buildWorkspaceChatPrompt(input, projects, card)
         const citationProjectIds = [
@@ -921,7 +967,7 @@ export async function POST(request: Request): Promise<Response> {
           ),
         ].slice(0, 3)
         const retrieved = await Promise.all(
-          citationProjectIds.map((projectId) =>
+          (teach ? [] : citationProjectIds).map((projectId) =>
             client.query(api.chatCitations.projectPassages, {
               projectId,
               question: retrievalQuestion,
@@ -932,13 +978,15 @@ export async function POST(request: Request): Promise<Response> {
           chatId: turn.chatId,
           messageId: turn.assistantMessageId,
           question: retrievalQuestion,
-          chunkIds: [
-            ...new Set(
-              retrieved.flatMap((result) =>
-                result.results.map((item) => item.citation.chunkId)
-              )
-            ),
-          ].slice(0, 60),
+          chunkIds: teach
+            ? teach.citationChunkIds
+            : [
+                ...new Set(
+                  retrieved.flatMap((result) =>
+                    result.results.map((item) => item.citation.chunkId)
+                  )
+                ),
+              ].slice(0, 60),
         })
         const citationContext = citationPrompt(citations)
         let result
@@ -996,6 +1044,27 @@ export async function POST(request: Request): Promise<Response> {
           thought: result.thought,
           durationMs: result.durationMs,
         })
+        if (teach) {
+          // Progress is derived from the finished reply, never from the client.
+          const outline = parseTeachOutline(reply)
+          const marker = parseTeachSectionMarker(reply)
+          await client
+            .mutation(api.units.recordTeachProgress, {
+              chatId: turn.chatId,
+              ...(outline ? { outline } : {}),
+              ...(marker
+                ? { sectionId: marker.kind === "done" ? "done" : marker.id }
+                : {}),
+              ...(outline && teach.unitTitleSource === "auto"
+                ? { unitTitle: teachUnitTitle(teach.unitTitle, outline.title) }
+                : {}),
+            })
+            .catch((error: unknown) => {
+              console.error("Teach progress could not be saved", {
+                message: error instanceof Error ? error.message : "Unknown error",
+              })
+            })
+        }
         send({
           type: "complete",
           chatId: turn.chatId,

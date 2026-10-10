@@ -428,7 +428,8 @@ export const list = query({
 
     for (const message of workspaceMessages) {
       const chat = workspaceChats.find((row) => row._id === message.chatId)
-      if (!chat) continue
+      // Teach replies are read on the Teach screen as they stream; no notice needed.
+      if (!chat || chat.purpose === "teach") continue
       const status = message.status
       rows.push({
         id: `workspace-reply:${message._id}`,

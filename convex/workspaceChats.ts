@@ -207,6 +207,7 @@ export const list = query({
         )
         .order("desc")
         .take(60)
+      chats = chats.filter((chat) => chat.purpose !== "teach")
     } else {
       const [pinnedChats, recentChats] = await Promise.all([
         ctx.db
@@ -224,6 +225,8 @@ export const list = query({
       ])
       const seen = new Set<Id<"workspaceChats">>()
       chats = [...pinnedChats, ...recentChats].filter((chat) => {
+        // Teach sessions live on their unit's Learn screen, not in chat history.
+        if (chat.purpose === "teach") return false
         if (chat.isArchived) return false
         if (seen.has(chat._id)) return false
         seen.add(chat._id)

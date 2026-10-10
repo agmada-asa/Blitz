@@ -1,0 +1,173 @@
+/**
+ * Turns quizzes asked inside Teach sessions into durable study evidence.
+ *
+ * A quiz the tutor writes becomes an ordinary learning item under a concept,
+ * so its answers feed review scheduling, Practice, and the home feed exactly
+ * like any other question. The server route parses the quiz from the saved
+ * assistant message; these functions only accept quizzes tied to a real
+ * Teach reply.
+ */
+
+import { v } from "convex/values"
+
+import { mutation, query } from "./_generated/server"
+import type { Id } from "./_generated/dataModel"
+
+/** Quiz shape accepted from the server route after it parsed the saved reply. */
+const quizValidator = v.object({
+  id: v.string(),
+  concept: v.string(),
+  type: v.union(
+    v.literal("single-choice"),
+    v.literal("multiple-answer"),
+    v.literal("true-false")
+  ),
+  question: v.string(),
+  options: v.array(v.object({ id: v.string(), text: v.string() })),
+  correctOptionIds: v.array(v.string()),
+  explanation: v.string(),
+})
+
+/** Normalises a concept title for matching without changing how it is shown. */
+function conceptKey(title: string): string {
+  return title.replace(/\s+/g, " ").trim().slice(0, 120)
+}
+
+/**
+ * Returns the learning item for one Teach quiz, creating it and its concept on
+ * first answer. Repeated calls for the same message and quiz reuse the item.
+ * @returns The owning project and item, ready for `learning.recordAnswerEvent`.
+ */
+export const registerQuiz = mutation({
+  args: {
+    chatId: v.id("workspaceChats"),
+    messageId: v.id("workspaceChatMessages"),
+    quiz: quizValidator,
+  },
+  handler: async (ctx, { chatId, messageId, quiz }) => {
+    const chat = await ctx.db.get(chatId)
+    if (!chat || chat.purpose !== "teach" || !chat.projectId)
+      throw new Error("Teach session not found")
+    const message = await ctx.db.get(messageId)
+    if (
+      !message ||
+      message.chatId !== chatId ||
+      message.role !== "assistant" ||
+      message.status !== "completed"
+    )
+      throw new Error("Answer quizzes after the reply finishes")
+    const projectId = chat.projectId
+    const teachKey = `${messageId}:${quiz.id}`
+    const existing = await ctx.db
+      .query("learningItems")
+      .withIndex("by_project_teachKey", (q) =>
+        q.eq("projectId", projectId).eq("teachKey", teachKey)
+      )
+      .first()
+    if (existing) return { projectId, itemId: existing._id }
+
+    const unitSources = chat.unitId
+      ? await ctx.db
+          .query("sources")
+          .withIndex("by_unit", (q) => q.eq("unitId", chat.unitId))
+          .collect()
+      : []
+    const sourceIds = unitSources.map((source) => source._id)
+    const title = conceptKey(quiz.concept) || "Unit check"
+    let concept = await ctx.db
+      .query("concepts")
+      .withIndex("by_project_title", (q) =>
+        q.eq("projectId", projectId).eq("title", title)
+      )
+      .first()
+    const now = Date.now()
+    if (!concept) {
+      const conceptId = await ctx.db.insert("concepts", {
+        projectId,
+        ...(chat.unitId ? { unitId: chat.unitId } : {}),
+        title,
+        sourceIds,
+        createdAt: now,
+      })
+      concept = (await ctx.db.get(conceptId))!
+    }
+    const correct = quiz.correctOptionIds
+    const itemId: Id<"learningItems"> = await ctx.db.insert("learningItems", {
+      projectId,
+      conceptId: concept._id,
+      ...(chat.unitId ? { unitId: chat.unitId } : {}),
+      teachKey,
+      sourceIds,
+      type: quiz.type,
+      title,
+      body: quiz.explanation.slice(0, 4_000),
+      question: quiz.question.slice(0, 2_000),
+      ...(quiz.type === "true-false"
+        ? { correctAnswer: correct[0] === "true" }
+        : {
+            options: quiz.options,
+            ...(quiz.type === "single-choice"
+              ? { correctOptionId: correct[0] }
+              : { correctOptionIds: correct }),
+          }),
+      order: now,
+      createdAt: now,
+    })
+    return { projectId, itemId }
+  },
+})
+
+/**
+ * Returns the latest recorded answer for every quiz in a Teach session, keyed
+ * by message ID and then quiz ID, so the lesson shows answered state on reload.
+ */
+export const answeredQuizzes = query({
+  args: { chatId: v.id("workspaceChats") },
+  handler: async (ctx, { chatId }) => {
+    const chat = await ctx.db.get(chatId)
+    if (!chat || chat.purpose !== "teach" || !chat.projectId) return {}
+    const projectId = chat.projectId
+    const messages = await ctx.db
+      .query("workspaceChatMessages")
+      .withIndex("by_chat_createdAt", (q) => q.eq("chatId", chatId))
+      .collect()
+    const answered: Record<
+      string,
+      Record<string, { selectedOptionIds: string[]; correct: boolean }>
+    > = {}
+    for (const message of messages) {
+      if (message.role !== "assistant") continue
+      // Keys are `<messageId>:<quizId>`, so one message's quizzes share a prefix.
+      const items = await ctx.db
+        .query("learningItems")
+        .withIndex("by_project_teachKey", (q) =>
+          q
+            .eq("projectId", projectId)
+            .gte("teachKey", `${message._id}:`)
+            .lt("teachKey", `${message._id};`)
+        )
+        .collect()
+      for (const item of items) {
+        const event = await ctx.db
+          .query("studyEvents")
+          .withIndex("by_item_occurredAt", (q) => q.eq("itemId", item._id))
+          .order("desc")
+          .filter((q) => q.eq(q.field("eventType"), "answer"))
+          .first()
+        if (!event || event.answer === undefined || !event.outcome) continue
+        const quizId = item.teachKey!.slice(message._id.length + 1)
+        const selectedOptionIds =
+          typeof event.answer === "boolean"
+            ? [String(event.answer)]
+            : Array.isArray(event.answer)
+              ? event.answer
+              : [event.answer]
+        answered[message._id] = {
+          ...answered[message._id],
+          [quizId]: { selectedOptionIds, correct: event.outcome === "correct" },
+        }
+      }
+    }
+    return answered
+  },
+})

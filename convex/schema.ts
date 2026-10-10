@@ -72,8 +72,25 @@ export default defineSchema({
     workspaceRelativePath: v.optional(v.string()),
   }).index("by_createdAt", ["createdAt"]),
 
+  /**
+   * One teachable block of a module, such as a week or a lecture. Uploads are
+   * grouped into units, and each unit has its own Teach session.
+   */
+  units: defineTable({
+    projectId: v.id("projects"),
+    title: v.string(),
+    /** Whether the title was suggested by Blitz or set by the learner. */
+    titleSource: v.union(v.literal("auto"), v.literal("user")),
+    /** Position in the module's learning path; lower comes first. */
+    order: v.number(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index("by_project_order", ["projectId", "order"]),
+
   sources: defineTable({
     projectId: v.id("projects"),
+    /** Unit this source teaches; unset for sources imported before units existed. */
+    unitId: v.optional(v.id("units")),
     filename: v.string(),
     kind: v.union(
       v.literal("pdf"),
@@ -107,7 +124,8 @@ export default defineSchema({
     .index("by_project", ["projectId"])
     .index("by_project_status", ["projectId", "status"])
     .index("by_project_fingerprint", ["projectId", "importFingerprint"])
-    .index("by_project_contentHash", ["projectId", "contentHash"]),
+    .index("by_project_contentHash", ["projectId", "contentHash"])
+    .index("by_unit", ["unitId"]),
 
   cards: defineTable({
     projectId: v.id("projects"),
@@ -148,6 +166,8 @@ export default defineSchema({
 
   concepts: defineTable({
     projectId: v.id("projects"),
+    /** Unit whose Teach session introduced this concept. */
+    unitId: v.optional(v.id("units")),
     topicId: v.optional(v.id("topics")),
     title: v.string(),
     /** Other source terms that refer to this same taught idea. */
@@ -190,6 +210,13 @@ export default defineSchema({
   learningItems: defineTable({
     projectId: v.id("projects"),
     conceptId: v.id("concepts"),
+    /** Unit whose Teach session produced this item. */
+    unitId: v.optional(v.id("units")),
+    /**
+     * Stable `<messageId>:<quizId>` identity for a question asked inside a
+     * Teach session, so answering it twice reuses one item.
+     */
+    teachKey: v.optional(v.string()),
     sourceIds: v.array(v.id("sources")),
     type: learningItemType,
     title: v.string(),
@@ -218,7 +245,8 @@ export default defineSchema({
     .index("by_project", ["projectId"])
     .index("by_project_order", ["projectId", "order"])
     .index("by_project_concept_order", ["projectId", "conceptId", "order"])
-    .index("by_concept_order", ["conceptId", "order"]),
+    .index("by_concept_order", ["conceptId", "order"])
+    .index("by_project_teachKey", ["projectId", "teachKey"]),
 
   /** Previous explanation text retained when a new source revises a lesson. */
   lessonPageRevisions: defineTable({
@@ -572,6 +600,19 @@ export default defineSchema({
   workspaceChats: defineTable({
     /** Optional owning project. Chats can exist independently of projects. */
     projectId: v.optional(v.id("projects")),
+    /** `teach` marks a unit's Teach session; ordinary chats leave it unset. */
+    purpose: v.optional(v.literal("teach")),
+    /** Unit taught by a Teach session. */
+    unitId: v.optional(v.id("units")),
+    /** Lesson outline the tutor proposed in its first Teach reply. */
+    teachOutline: v.optional(
+      v.object({
+        title: v.string(),
+        sections: v.array(v.object({ id: v.string(), title: v.string() })),
+      })
+    ),
+    /** Zero-based index of the furthest section the tutor has taught. */
+    teachSectionIndex: v.optional(v.number()),
     title: v.string(),
     /** Optional chat agent policy; legacy chats use approval with no extra instructions. */
     agentAutonomy: v.optional(
@@ -609,7 +650,8 @@ export default defineSchema({
     .index("by_updatedAt", ["updatedAt"])
     .index("by_project_updatedAt", ["projectId", "updatedAt"])
     .index("by_pinned_updatedAt", ["isPinned", "updatedAt"])
-    .index("by_archived_updatedAt", ["isArchived", "updatedAt"]),
+    .index("by_archived_updatedAt", ["isArchived", "updatedAt"])
+    .index("by_unit_updatedAt", ["unitId", "updatedAt"]),
 
   /** User and assistant messages retained for a general Blitz session. */
   workspaceChatMessages: defineTable({

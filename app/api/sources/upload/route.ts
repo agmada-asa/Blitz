@@ -20,6 +20,18 @@ function convexClient(): ConvexHttpClient {
   return new ConvexHttpClient(endpoint)
 }
 
+/**
+ * Decodes a percent-encoded header value. Browsers reject non-ASCII header
+ * text, so the uploader encodes filenames; plain ASCII names pass through.
+ */
+function decodeHeaderValue(value: string): string {
+  try {
+    return decodeURIComponent(value)
+  } catch {
+    return value
+  }
+}
+
 /** Returns the server source kind and whether deterministic extraction supports a filename. */
 function sourceFormat(filename: string): {
   kind: "pdf" | "markdown" | "text"
@@ -29,7 +41,7 @@ function sourceFormat(filename: string): {
   if (/\.(md|markdown)$/i.test(filename))
     return { kind: "markdown", supported: true }
   if (
-    /\.(txt|pptx|html?|csv|json|xml|ya?ml|toml|py|tsx?|jsx?|css|scss|sql|sh|bash|zsh|rs|go|c|cpp|h|java|kt|rb|php)$/i.test(
+    /\.(txt|vtt|srt|pptx|html?|csv|json|xml|ya?ml|toml|py|tsx?|jsx?|css|scss|sql|sh|bash|zsh|rs|go|c|cpp|h|java|kt|rb|php)$/i.test(
       filename
     )
   )
@@ -37,10 +49,45 @@ function sourceFormat(filename: string): {
   return { kind: "text", supported: false }
 }
 
-/** Stores one original upload after validating its required transport metadata. */
+/**
+ * Largest extracted text stored on the source record. Convex documents are
+ * capped near 1 MB; the complete text stays searchable through source chunks.
+ */
+const MAX_STORED_TEXT_BYTES = 450_000
+
+/** Truncates text to a UTF-8 byte budget without splitting a character. */
+function boundedStoredText(text: string): string {
+  const encoder = new TextEncoder()
+  if (encoder.encode(text).byteLength <= MAX_STORED_TEXT_BYTES) return text
+  let low = 0
+  let high = text.length
+  while (low < high) {
+    const middle = Math.ceil((low + high) / 2)
+    if (encoder.encode(text.slice(0, middle)).byteLength <= MAX_STORED_TEXT_BYTES)
+      low = middle
+    else high = middle - 1
+  }
+  return text.slice(0, low)
+}
+
+/**
+ * Stores one original upload after validating its required transport metadata.
+ *
+ * Headers: `x-blitz-project-id` and `x-blitz-filename` are required;
+ * `x-blitz-unit-id` files the source under a unit, and `x-blitz-source-url`
+ * records the page a fetched link came from. Pasted notes and fetched
+ * links arrive here as text bodies so every source gets the same extraction,
+ * chunking, and citations.
+ */
 export async function POST(request: Request): Promise<Response> {
   const projectId = request.headers.get("x-blitz-project-id")?.trim() ?? ""
-  const filename = request.headers.get("x-blitz-filename")?.trim() ?? ""
+  const unitId = request.headers.get("x-blitz-unit-id")?.trim() || undefined
+  const originalUrl =
+    decodeHeaderValue(request.headers.get("x-blitz-source-url")?.trim() ?? "") ||
+    undefined
+  const filename = decodeHeaderValue(
+    request.headers.get("x-blitz-filename")?.trim() ?? ""
+  )
   if (!projectId || !filename)
     return Response.json(
       { error: "Project and filename are required" },
@@ -64,6 +111,8 @@ export async function POST(request: Request): Promise<Response> {
     const format = sourceFormat(stored.filename)
     const record = await convex.mutation(api.sources.createOriginalSource, {
       projectId: projectId as never,
+      ...(unitId ? { unitId: unitId as never } : {}),
+      ...(originalUrl ? { originalUrl } : {}),
       filename: stored.filename,
       kind: format.kind,
       relativeKey: stored.key,
@@ -149,7 +198,7 @@ export async function POST(request: Request): Promise<Response> {
         sourceId: record.sourceId,
         ingestionJobId: record.ingestionJobId,
         leaseToken,
-        extractedText: normalized.text,
+        extractedText: boundedStoredText(normalized.text),
         status: "completed",
       })
       return Response.json(

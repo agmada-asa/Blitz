@@ -62,7 +62,7 @@ test("starts Convex and Next, checks both, then starts every worker", async () =
   const { manager, children, healthUrls } = harness()
   const convexPorts = await resolveLocalConvexPorts(process.cwd())
   await manager.start()
-  assert.equal(children.length, 7)
+  assert.equal(children.length, 4)
   assert.equal(children[0].command, "npx")
   assert.deepEqual(children[0].args.slice(-4), [
     "--local-cloud-port",
@@ -90,7 +90,7 @@ test("keeps restarting a crashing worker without stopping other services", async
   assert.equal(status.ingestion.restarts, 4)
   assert.equal(status.ingestion.lastExit, "1")
   assert.equal(status.next.state, "ready")
-  assert.equal(status.chat.state, "running")
+  assert.equal(status.research.state, "running")
   await manager.stop()
 })
 
@@ -139,13 +139,13 @@ test("resets the backoff after a service stays up", async () => {
   await manager.start()
   for (let crash = 0; crash < 3; crash += 1) {
     const before = Date.now()
-    latest("worker:chat")?.emit("exit", 1, null)
-    const { nextRestartAt } = manager.snapshot().chat
+    latest("worker:ingestion")?.emit("exit", 1, null)
+    const { nextRestartAt } = manager.snapshot().ingestion
     assert.equal(Math.round(((nextRestartAt ?? 0) - before) / 1_000), 1)
     manager.restartTimers.forEach((timer: NodeJS.Timeout) =>
       clearTimeout(timer)
     )
-    manager.startService("chat")
+    manager.startService("ingestion")
   }
   await manager.stop()
 })
@@ -153,7 +153,7 @@ test("resets the backoff after a service stays up", async () => {
 test("stops every service and cancels pending restarts", async () => {
   const { manager, latest, children } = harness({ restartBaseDelayMs: 50 })
   await manager.start()
-  latest("worker:content")?.emit("exit", 1, null)
+  latest("worker:research")?.emit("exit", 1, null)
   await manager.stop()
   const spawned = children.length
   await settle(80)
@@ -161,7 +161,7 @@ test("stops every service and cancels pending restarts", async () => {
   const states = Object.values(manager.snapshot()).map(
     (status) => (status as { state: string }).state
   )
-  assert.equal(states.length, 7)
+  assert.equal(states.length, 4)
   assert.ok(states.every((state) => state === "stopped"))
 })
 
@@ -184,7 +184,7 @@ test("restarts Convex when it stops answering while its process stays alive", as
     livenessGraceMs: 0,
     livenessFailureLimit: 2,
     fetchImpl: async (url: string) => {
-      if (!url.endsWith("/") && !convexHealthy) throw new Error("refused")
+      if (!url.endsWith("/api/health") && !convexHealthy) throw new Error("refused")
       return { ok: true, status: 200 }
     },
   })

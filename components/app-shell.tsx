@@ -38,7 +38,9 @@ export function AppShell({ children }: AppShellProps) {
     pathname === "/preview" || pathname.startsWith("/preview/")
   const isHomeRoute = pathname === "/"
   const isChatRoute = pathname === "/chat"
-  const isFullHeightMobileRoute = isHomeRoute || isChatRoute
+  // Teach is a focused screen with its own back link and dock.
+  const isTeachRoute = /^\/projects\/[^/]+\/learn\/[^/]+$/.test(pathname)
+  const isFullHeightMobileRoute = isHomeRoute || isChatRoute || isTeachRoute
   const [collapsed, setCollapsed] = useState(true)
   const links: NavLink[] = [
     {
@@ -140,7 +142,10 @@ export function AppShell({ children }: AppShellProps) {
       </div>
       <nav
         aria-label="Primary navigation"
-        className="fixed inset-x-0 bottom-0 z-40 grid h-[calc(68px+env(safe-area-inset-bottom))] grid-cols-5 border-t border-border/70 bg-background/95 px-1 pb-[env(safe-area-inset-bottom)] backdrop-blur-xl md:hidden"
+        className={cn(
+          "fixed inset-x-0 bottom-0 z-40 grid h-[calc(68px+env(safe-area-inset-bottom))] grid-cols-5 border-t border-border/70 bg-background/95 px-1 pb-[env(safe-area-inset-bottom)] backdrop-blur-xl md:hidden",
+          isTeachRoute && "hidden"
+        )}
       >
         {links.map((link) => (
           <NavItem key={link.label} {...link} mobile />

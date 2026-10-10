@@ -29,7 +29,9 @@ import type * as settings from "../settings.js";
 import type * as sourceRetrieval from "../sourceRetrieval.js";
 import type * as sources from "../sources.js";
 import type * as study from "../study.js";
+import type * as teach from "../teach.js";
 import type * as topics from "../topics.js";
+import type * as units from "../units.js";
 import type * as workspaceChats from "../workspaceChats.js";
 import type * as writing from "../writing.js";
 
@@ -61,7 +63,9 @@ declare const fullApi: ApiFromModules<{
   sourceRetrieval: typeof sourceRetrieval;
   sources: typeof sources;
   study: typeof study;
+  teach: typeof teach;
   topics: typeof topics;
+  units: typeof units;
   workspaceChats: typeof workspaceChats;
   writing: typeof writing;
 }>;
