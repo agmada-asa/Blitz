@@ -555,3 +555,41 @@ export const recordTeachProgress = mutation({
       })
   },
 })
+
+/**
+ * Summarises every module for the Library: how many units are fully taught,
+ * which unit comes next, and when the learner last studied it. Reads unit and
+ * Teach session records only, never source text, so it stays cheap.
+ */
+export const libraryProgress = query({
+  args: {},
+  handler: async (ctx) => {
+    const units = await ctx.db.query("units").collect()
+    const byProject = new Map<
+      string,
+      { unitCount: number; taughtCount: number; nextUnitTitle: string | null; lastStudiedAt: number }
+    >()
+    const ordered = [...units].sort((a, b) => a.order - b.order)
+    for (const unit of ordered) {
+      const key = String(unit.projectId)
+      const entry = byProject.get(key) ?? {
+        unitCount: 0,
+        taughtCount: 0,
+        nextUnitTitle: null,
+        lastStudiedAt: 0,
+      }
+      entry.unitCount += 1
+      const chat = await latestTeachChat(ctx, unit._id)
+      const summary = teachSummary(chat)
+      if (summary?.completed) entry.taughtCount += 1
+      else if (!entry.nextUnitTitle) entry.nextUnitTitle = unit.title
+      entry.lastStudiedAt = Math.max(
+        entry.lastStudiedAt,
+        chat?.updatedAt ?? 0,
+        unit.startedAt ?? 0
+      )
+      byProject.set(key, entry)
+    }
+    return Object.fromEntries(byProject)
+  },
+})
