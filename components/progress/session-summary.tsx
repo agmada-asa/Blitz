@@ -8,7 +8,7 @@
  */
 
 import { useQuery } from "convex/react"
-import type { ReactNode } from "react"
+import { useId, type ReactNode } from "react"
 
 import { strengthStyle } from "@/components/practice/practice-hub"
 import { Progress } from "@/components/ui/progress"
@@ -48,6 +48,12 @@ function minutes(ms: number): string {
 }
 
 /**
+ * Longest span shown as time spent. A unit taught over several days started
+ * long before its summary, so the gap since then is not study time.
+ */
+const MAX_TIMED_SPAN_MS = 12 * 60 * 60 * 1000
+
+/**
  * Renders the summary for a session that started at `since`. Reactive, so an
  * answer recorded while it is open is counted straight away.
  */
@@ -70,6 +76,10 @@ export function SessionSummary({
     now,
   })
   const Heading = headingLevel
+  // Sections inside the summary sit one level below its heading.
+  const Subheading = headingLevel === "h1" ? "h2" : "h3"
+  // Teach can show this summary in the page and in a dialog at once.
+  const titleId = useId()
 
   if (summary === undefined)
     return (
@@ -109,7 +119,9 @@ export function SessionSummary({
           },
         ]
       : []),
-    { label: "Time", value: minutes(Math.max(0, now - since)) },
+    ...(now - since <= MAX_TIMED_SPAN_MS
+      ? [{ label: "Time", value: minutes(Math.max(0, now - since)) }]
+      : []),
   ]
   const { today } = summary
   const remaining = Math.max(0, today.goal - today.xp)
@@ -122,10 +134,10 @@ export function SessionSummary({
       : `${remaining} XP more meets today's goal.`
 
   return (
-    <section aria-labelledby="session-summary-title">
+    <section aria-labelledby={titleId}>
       <p className="text-xs font-medium text-brand">{eyebrow}</p>
       <Heading
-        id="session-summary-title"
+        id={titleId}
         className="mt-1 font-heading text-3xl font-semibold tracking-tight text-balance"
       >
         {heading}
@@ -167,7 +179,7 @@ export function SessionSummary({
 
       {summary.concepts.length ? (
         <div className="mt-6">
-          <h3 className="text-sm font-medium">Concepts</h3>
+          <Subheading className="text-sm font-medium">Concepts</Subheading>
           <ul className="mt-2 divide-y divide-border rounded-xl border border-border bg-card">
             {summary.concepts.map((concept) => (
               <li
