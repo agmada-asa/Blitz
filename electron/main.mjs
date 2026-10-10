@@ -5,7 +5,7 @@ import { join } from "node:path"
 import { ServiceManager } from "./service-manager.mjs"
 import { assertProjectPath, repositoryRoot } from "./paths.mjs"
 
-const port = Number(process.env.BLITZ_PORT || 3001)
+const port = Number(process.env.BLITZ_PORT || 3008)
 const host = process.env.BLITZ_LAN_ADDRESS ? "0.0.0.0" : "127.0.0.1"
 /** Shared native icon used by the macOS Dock and non-macOS window chrome. */
 const appIconPath = join(repositoryRoot(), "app", "apple-icon.png")
