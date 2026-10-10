@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { PdfReader } from "@/components/ui/pdf-reader"
+import { citationOriginalUrl } from "@/lib/citations"
 import { markdownHref } from "@/lib/markdown"
 
 /** Identifies one citation through its owning saved message. */
@@ -157,12 +158,12 @@ export function SourceReader({
       </p>
   )
   const { citation, text, startOffset, endOffset, fileUrl, mimeType } = result
-  const externalUrl = result.originalUrl
-    ? markdownHref(result.originalUrl)
-    : undefined
-  const original = fileUrl
-    ? `${fileUrl}${citation.page ? `#page=${citation.page}` : ""}`
-    : externalUrl
+  // Opens the PDF page, or the web page scrolled to the passage, when the source allows it.
+  const original = citationOriginalUrl(citation, {
+    fileUrl,
+    mimeType,
+    webUrl: result.originalUrl ? markdownHref(result.originalUrl) : undefined,
+  })
   const newTabUrl = "kind" in selection
     ? `/sources/learning-view?projectId=${encodeURIComponent(selection.projectId)}&sourceId=${encodeURIComponent(selection.sourceId)}${selection.locator ? `&locator=${encodeURIComponent(selection.locator)}` : ""}`
     : `/sources/view?chatId=${encodeURIComponent(selection.chatId)}&messageId=${encodeURIComponent(selection.messageId)}&citationId=${encodeURIComponent(selection.citationId)}`
