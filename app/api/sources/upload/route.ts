@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto"
 import { ConvexHttpClient } from "convex/browser"
 import { api } from "@/convex/_generated/api"
 import { resolveProjectFile } from "@/lib/server/project-files"
+import { SourceIngestionError } from "@/lib/server/source-ingestion/errors"
 import { prepareStoredSource } from "@/lib/server/source-ingestion/prepare"
 
 /** Uses Node.js streams and the local filesystem for durable upload storage. */
@@ -139,6 +140,10 @@ export async function POST(request: Request): Promise<Response> {
           ...stored,
           sourceId: record.sourceId,
           duplicate: true,
+          // Which unit the existing copy belongs to, so the uploader can tell
+          // whether this unit gained anything.
+          ...("unitId" in record && record.unitId ? { unitId: record.unitId } : {}),
+          ...("reference" in record && record.reference ? { reference: true } : {}),
           pending: ingestionStillRunning,
           unsupported: "unsupported" in record ? record.unsupported : false,
         },
@@ -235,14 +240,23 @@ export async function POST(request: Request): Promise<Response> {
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "Source extraction failed"
+      // A document Blitz cannot read (no text layer, unknown format) stays
+      // saved but unreadable; anything else is a failure the learner can retry.
+      const unreadable = error instanceof SourceIngestionError
       await convex.mutation(api.sources.completeOriginalIngestion, {
         sourceId: record.sourceId,
         ingestionJobId: record.ingestionJobId,
         leaseToken,
         extractedText: "",
-        status: "completed",
-        unsupported: true,
+        status: unreadable ? "completed" : "failed",
+        ...(unreadable ? { unsupported: true } : {}),
+        error: message.slice(0, 300),
       })
+      if (!unreadable)
+        return Response.json(
+          { error: "This file could not be prepared. Try again." },
+          { status: 500, headers: { "Cache-Control": "no-store" } }
+        )
       return Response.json(
         {
           ...stored,

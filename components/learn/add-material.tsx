@@ -78,7 +78,7 @@ async function uploadToUnit(input: {
   unitId: Id<"units">
   file: File
   sourceUrl?: string
-}): Promise<{ duplicate: boolean; reference: boolean }> {
+}): Promise<{ duplicate: boolean; reference: boolean; inThisUnit: boolean }> {
   const response = await fetch("/api/sources/upload", {
     method: "POST",
     headers: {
@@ -95,12 +95,18 @@ async function uploadToUnit(input: {
   const result = (await response.json()) as {
     duplicate?: boolean
     reference?: boolean
+    unitId?: string
     unsupported?: boolean
     extractionError?: string
   }
   if (result.unsupported)
     throw new Error(result.extractionError || "Blitz can't read this file type yet.")
-  return { duplicate: Boolean(result.duplicate), reference: Boolean(result.reference) }
+  return {
+    duplicate: Boolean(result.duplicate),
+    reference: Boolean(result.reference),
+    // A duplicate counts for this unit only when its existing copy is here.
+    inThisUnit: !result.duplicate || result.unitId === String(input.unitId),
+  }
 }
 
 /** Renders the add-material dialog. */
@@ -168,18 +174,24 @@ export function AddMaterial({
         next[index] = { ...next[index], state: "uploading" }
         setRows([...next])
         try {
-          const { duplicate, reference } = await uploadToUnit({ projectId, unitId, file })
+          const { duplicate, reference, inThisUnit } = await uploadToUnit({
+            projectId,
+            unitId,
+            file,
+          })
           next[index] = {
             ...next[index],
             state: "ready",
-            ...(duplicate
-              ? { detail: "Already in this module" }
-              : reference
-                ? { detail: "Saved as a reference book that backs up every unit" }
-                : {}),
+            ...(reference
+              ? { detail: "Saved as a reference book that backs up every unit" }
+              : duplicate && !inThisUnit
+                ? { detail: "Already in another unit of this module" }
+                : duplicate
+                  ? { detail: "Already in this module" }
+                  : {}),
           }
           succeeded += 1
-          if (!reference) teachable += 1
+          if (!reference && inThisUnit) teachable += 1
         } catch (uploadError) {
           next[index] = {
             ...next[index],

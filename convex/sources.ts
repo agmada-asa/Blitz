@@ -278,6 +278,11 @@ export const createOriginalSource = mutation({
       )
       .first()
     if (duplicate) {
+      // Re-uploading an unsorted file into a unit files it there; a file that
+      // already belongs to another unit or is a reference book stays put.
+      if (args.unitId && !duplicate.unitId && duplicate.role !== "reference")
+        await ctx.db.patch(duplicate._id, { unitId: args.unitId })
+      const unitId = duplicate.unitId ?? (duplicate.role === "reference" ? undefined : args.unitId)
       const job = await ctx.db
         .query("ingestionJobs")
         .withIndex("by_source", (q) => q.eq("sourceId", duplicate._id))
@@ -301,6 +306,7 @@ export const createOriginalSource = mutation({
           ingestionJobId: job._id,
           ingestionStatus: "queued" as const,
           duplicate: false,
+          ...(unitId ? { unitId } : {}),
         }
       }
       return {
@@ -312,6 +318,8 @@ export const createOriginalSource = mutation({
           ? { ingestionLeaseExpiresAt: job.leaseExpiresAt }
           : {}),
         duplicate: true,
+        ...(unitId ? { unitId } : {}),
+        reference: duplicate.role === "reference",
       }
     }
     const sourceId = await ctx.db.insert("sources", {
