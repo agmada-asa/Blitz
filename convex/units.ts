@@ -13,6 +13,13 @@ import { mutation, query, type QueryCtx } from "./_generated/server"
 import type { Doc, Id } from "./_generated/dataModel"
 import { passageScore } from "../lib/citations"
 import { teachTurnFocus } from "../lib/teach-focus"
+import { searchTerms } from "../lib/search-terms"
+
+/** Reference-book passages added to one Teach turn. */
+const MAX_REFERENCE_EXCERPTS = 6
+
+/** Characters kept from each reference passage. */
+const MAX_REFERENCE_EXCERPT_TEXT = 2_500
 
 /** Longest unit title accepted from the learner or the tutor. */
 const MAX_UNIT_TITLE = 160
@@ -107,8 +114,10 @@ export const listForProject = query({
       .collect()
     const byUnit = new Map<string, Doc<"sources">[]>()
     const unsorted: Doc<"sources">[] = []
+    const references: Doc<"sources">[] = []
     for (const source of sources) {
-      if (!source.unitId) unsorted.push(source)
+      if (source.role === "reference") references.push(source)
+      else if (!source.unitId) unsorted.push(source)
       else byUnit.set(source.unitId, [...(byUnit.get(source.unitId) ?? []), source])
     }
     const result = await Promise.all(
@@ -127,6 +136,10 @@ export const listForProject = query({
     return {
       units: result,
       unsortedSources: unsorted
+        .sort((a, b) => a.createdAt - b.createdAt)
+        .map(sourceSummary),
+      /** Whole books and other large sources that back up every unit. */
+      referenceSources: references
         .sort((a, b) => a.createdAt - b.createdAt)
         .map(sourceSummary),
     }
@@ -373,11 +386,47 @@ export const teachContext = query({
           order: candidates.length,
         })
     }
-    const chunkIds = candidates
-      .sort((a, b) => b.score - a.score || a.order - b.order)
-      .slice(0, MAX_TEACH_CITATION_CHUNKS)
-      .sort((a, b) => a.order - b.order)
-      .map((candidate) => candidate.id)
+    // Reference books for the module are searched for this turn's topic.
+    const references = await ctx.db
+      .query("sources")
+      .withIndex("by_project_role", (q) =>
+        q.eq("projectId", unit.projectId).eq("role", "reference")
+      )
+      .collect()
+    // The unit's topic anchors every search so a section title's common words
+    // do not pull in unrelated chapters.
+    const topic = chat.teachOutline?.title ?? unit.title
+    const terms = searchTerms(
+      focus
+        ? `${topic} ${topic} ${focus}`
+        : [topic, ...sources.map((source) => source.extractedText.slice(0, 3_000))].join(" ")
+    )
+    const referenceExcerpts: Array<{ chunkId: Id<"sourceChunks">; filename: string; text: string }> = []
+    if (terms && references.length) {
+      const perReference = Math.max(1, Math.floor(MAX_REFERENCE_EXCERPTS / references.length))
+      for (const reference of references) {
+        const matches = await ctx.db
+          .query("sourceChunks")
+          .withSearchIndex("search_text", (q) =>
+            q.search("text", terms).eq("projectId", unit.projectId).eq("sourceId", reference._id)
+          )
+          .take(perReference)
+        for (const match of matches)
+          referenceExcerpts.push({
+            chunkId: match._id,
+            filename: reference.filename,
+            text: match.text.slice(0, MAX_REFERENCE_EXCERPT_TEXT),
+          })
+      }
+    }
+    const chunkIds = [
+      ...candidates
+        .sort((a, b) => b.score - a.score || a.order - b.order)
+        .slice(0, MAX_TEACH_CITATION_CHUNKS - referenceExcerpts.length)
+        .sort((a, b) => a.order - b.order)
+        .map((candidate) => candidate.id),
+      ...referenceExcerpts.map((excerpt) => excerpt.chunkId),
+    ]
     return {
       projectId: project._id,
       moduleTitle: project.title,
@@ -396,6 +445,7 @@ export const teachContext = query({
           truncated: source.extractedText.length > MAX_TEACH_SOURCE_TEXT,
         })),
       citationChunkIds: chunkIds,
+      referenceExcerpts: referenceExcerpts.map(({ filename, text }) => ({ filename, text })),
     }
   },
 })

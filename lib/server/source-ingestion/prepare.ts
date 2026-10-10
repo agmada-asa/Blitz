@@ -17,10 +17,14 @@ import { segmentSourceDocument } from "./segment.ts"
 import type { NormalizedSourceDocument, SourceChunk } from "./types.ts"
 
 /**
- * Largest normalized text, in UTF-8 bytes, that fits on a Convex source row.
- * Uploads above it are saved without extracted text or sections.
+ * Largest normalized text, in UTF-8 bytes, split into searchable sections.
+ * Large enough for a whole textbook; the source row itself keeps only an
+ * excerpt, and every section is written to Convex in batches.
  */
-export const MAX_PREPARED_TEXT_BYTES = 500_000
+export const MAX_PREPARED_TEXT_BYTES = 25_000_000
+
+/** Most sections one source may produce: about 25 MB at 5,000 characters each. */
+export const MAX_PREPARED_CHUNKS = 6_000
 
 /** Extracted text and its normalized document, before any size bound. */
 export interface ExtractedStoredSource {
@@ -76,7 +80,7 @@ export function segmentPreparedDocument(
       "Extracted text exceeds the automatic preparation boundary.",
       { maxBytes: MAX_PREPARED_TEXT_BYTES }
     )
-  return segmentSourceDocument(document)
+  return segmentSourceDocument(document, { maxChunks: MAX_PREPARED_CHUNKS })
 }
 
 /**

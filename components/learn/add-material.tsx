@@ -78,7 +78,7 @@ async function uploadToUnit(input: {
   unitId: Id<"units">
   file: File
   sourceUrl?: string
-}): Promise<{ duplicate: boolean }> {
+}): Promise<{ duplicate: boolean; reference: boolean }> {
   const response = await fetch("/api/sources/upload", {
     method: "POST",
     headers: {
@@ -94,12 +94,13 @@ async function uploadToUnit(input: {
     throw new Error(await responseError(response, "This file could not be uploaded."))
   const result = (await response.json()) as {
     duplicate?: boolean
+    reference?: boolean
     unsupported?: boolean
     extractionError?: string
   }
   if (result.unsupported)
     throw new Error(result.extractionError || "Blitz can't read this file type yet.")
-  return { duplicate: Boolean(result.duplicate) }
+  return { duplicate: Boolean(result.duplicate), reference: Boolean(result.reference) }
 }
 
 /** Renders the add-material dialog. */
@@ -112,6 +113,7 @@ export function AddMaterial({
 }: AddMaterialProps) {
   const router = useRouter()
   const createUnit = useMutation(api.units.create)
+  const removeUnit = useMutation(api.units.remove)
   const inputRef = useRef<HTMLInputElement>(null)
   const [target, setTarget] = useState<string>(defaultUnitId ?? NEW_UNIT)
   const [rows, setRows] = useState<UploadRow[]>([])
@@ -160,17 +162,24 @@ export function AddMaterial({
       const unitId = await resolveUnit(files.map((file) => file.name))
       const next = [...initial]
       let succeeded = 0
+      // Reference books leave the unit, so only teachable files make it worth opening.
+      let teachable = 0
       for (const [index, file] of files.entries()) {
         next[index] = { ...next[index], state: "uploading" }
         setRows([...next])
         try {
-          const { duplicate } = await uploadToUnit({ projectId, unitId, file })
+          const { duplicate, reference } = await uploadToUnit({ projectId, unitId, file })
           next[index] = {
             ...next[index],
             state: "ready",
-            ...(duplicate ? { detail: "Already in this module" } : {}),
+            ...(duplicate
+              ? { detail: "Already in this module" }
+              : reference
+                ? { detail: "Saved as a reference book that backs up every unit" }
+                : {}),
           }
           succeeded += 1
+          if (!reference) teachable += 1
         } catch (uploadError) {
           next[index] = {
             ...next[index],
@@ -180,8 +189,11 @@ export function AddMaterial({
         }
         setRows([...next])
       }
-      if (succeeded) setDoneUnitId(unitId)
-      else setError("None of these files could be added.")
+      if (teachable) setDoneUnitId(unitId)
+      else if (!succeeded) setError("None of these files could be added.")
+      // A new unit that only received reference books is empty; remove it.
+      // `units.remove` refuses units that still have sources.
+      if (!teachable && target === NEW_UNIT) await removeUnit({ unitId }).catch(() => undefined)
     } catch {
       setError("A unit could not be created for this material. Try again.")
     } finally {

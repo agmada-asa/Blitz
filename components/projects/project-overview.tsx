@@ -181,7 +181,7 @@ function ModuleOverview({ project }: { project: Doc<"projects"> }) {
                 <Link href={`${base}/practice`}>Practice</Link>
               </Button>
             </section>
-          ) : !units.length && !data.unsortedSources.length ? (
+          ) : !units.length && !data.unsortedSources.length && !data.referenceSources.length ? (
             <section className="mt-8 rounded-2xl border border-border bg-card p-6 text-center sm:p-10">
               <h2 className="font-heading text-xl font-semibold">Add your first week</h2>
               <p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">
@@ -243,6 +243,29 @@ function ModuleOverview({ project }: { project: Doc<"projects"> }) {
                   </Button>
                 </div>
               ) : null}
+            </section>
+          ) : null}
+
+          {data.referenceSources.length ? (
+            <section aria-labelledby="reference-heading" className="mt-10">
+              <h2 id="reference-heading" className="font-heading text-lg font-semibold">
+                Reference books
+              </h2>
+              <p className="mt-1 text-sm text-muted-foreground">
+                The tutor searches these for every unit to add depth and extra examples.
+              </p>
+              <ul className="mt-3 space-y-1.5">
+                {data.referenceSources.map((source) => (
+                  <li key={source.id}>
+                    <Link
+                      href={`${base}/sources/${encodeURIComponent(String(source.id))}`}
+                      className="text-sm underline-offset-4 hover:underline"
+                    >
+                      {source.filename}
+                    </Link>
+                  </li>
+                ))}
+              </ul>
             </section>
           ) : null}
 

@@ -267,7 +267,8 @@ export const createOriginalSource = mutation({
       throw new Error("Original source metadata is invalid")
     if (args.unitId) {
       const unit = await ctx.db.get(args.unitId)
-      if (!unit || unit.projectId !== args.projectId)
+      if (!unit) throw new Error("Unit not found")
+      if (unit.projectId !== args.projectId)
         throw new Error("Unit belongs to another project")
     }
     const duplicate = await ctx.db
@@ -420,6 +421,21 @@ export const getSource = query({
     const source = await ctx.db.get(args.sourceId)
     if (!source || source.projectId !== args.projectId) return null
     return source
+  },
+})
+
+/**
+ * Marks a very large source as a module-wide reference and takes it out of
+ * its unit. The unit is kept even if this empties it, because more files in
+ * the same upload may still be on their way; the uploader removes a unit
+ * that ends up empty.
+ */
+export const markReference = mutation({
+  args: { sourceId: v.id("sources") },
+  handler: async (ctx, { sourceId }) => {
+    const source = await ctx.db.get(sourceId)
+    if (!source) throw new Error("Source not found")
+    await ctx.db.patch(sourceId, { role: "reference", unitId: undefined })
   },
 })
 

@@ -55,6 +55,15 @@ function sourceFormat(filename: string): {
  */
 const MAX_STORED_TEXT_BYTES = 450_000
 
+/** Sections written per Convex call, keeping each request well under its size limit. */
+const CHUNK_BATCH = 200
+
+/**
+ * Extracted characters above which a source is a module-wide reference, about
+ * 250 dense pages. Teach searches references instead of reading them whole.
+ */
+const REFERENCE_SOURCE_CHARACTERS = 600_000
+
 /** Truncates text to a UTF-8 byte budget without splitting a character. */
 function boundedStoredText(text: string): string {
   const encoder = new TextEncoder()
@@ -174,12 +183,7 @@ export async function POST(request: Request): Promise<Response> {
         },
         String(record.sourceId)
       )
-      await convex.mutation(api.sourceRetrieval.replaceChunks, {
-        projectId: projectId as never,
-        sourceId: record.sourceId,
-        ingestionJobId: record.ingestionJobId,
-        leaseToken,
-        chunks: chunks.map((chunk) => ({
+      const rows = chunks.map((chunk) => ({
           ordinal: chunk.ordinal,
           text: chunk.text,
           textHash: chunk.id.replace(/^chunk_/, ""),
@@ -192,8 +196,19 @@ export async function POST(request: Request): Promise<Response> {
             startOffset: reference.startOffset,
             endOffset: reference.endOffset,
           })),
-        })),
-      })
+        }))
+      // Large sources are written in batches: the first replaces any earlier
+      // sections, the rest append, all under the same ingestion lease.
+      for (let start = 0; start === 0 || start < rows.length; start += CHUNK_BATCH) {
+        await convex.mutation(api.sourceRetrieval.replaceChunks, {
+          projectId: projectId as never,
+          sourceId: record.sourceId,
+          ingestionJobId: record.ingestionJobId,
+          leaseToken,
+          append: start > 0,
+          chunks: rows.slice(start, start + CHUNK_BATCH),
+        })
+      }
       await convex.mutation(api.sources.completeOriginalIngestion, {
         sourceId: record.sourceId,
         ingestionJobId: record.ingestionJobId,
@@ -201,12 +216,19 @@ export async function POST(request: Request): Promise<Response> {
         extractedText: boundedStoredText(normalized.text),
         status: "completed",
       })
+      // A whole book backs up every unit instead of being taught as one.
+      const reference = normalized.text.length > REFERENCE_SOURCE_CHARACTERS
+      if (reference)
+        await convex.mutation(api.sources.markReference, {
+          sourceId: record.sourceId,
+        })
       return Response.json(
         {
           ...stored,
           sourceId: record.sourceId,
           ingestionJobId: record.ingestionJobId,
           extracted: true,
+          ...(reference ? { reference: true } : {}),
         },
         { headers: { "Cache-Control": "no-store" } }
       )

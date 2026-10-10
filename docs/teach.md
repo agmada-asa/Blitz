@@ -65,8 +65,12 @@ first section finished within a minute with the configured reply provider.
 
 ## Known limits
 
-- Sources over 500 PDF pages or 2 million characters (whole textbooks) are not
-  imported yet. They need batched chunk writes and chapter-sized units.
+- Whole textbooks import (up to 3,000 PDF pages or 20 million characters) and
+  become module-wide **reference books** when their text exceeds 600,000
+  characters. Their sections are written in batches; Teach searches them each
+  turn with the unit topic plus the section being taught and adds up to six
+  passages as citable excerpts. A book uploaded seconds before teaching may not
+  be searchable for the first turn.
 - Research imports are stored as unsorted sources without passages; use
   `Group into a unit` on the module page to teach them.
 - Interactive visualisations run in a sandboxed frame with no network access,

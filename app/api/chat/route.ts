@@ -786,6 +786,7 @@ export async function POST(request: Request): Promise<Response> {
             ...(teach!.sectionIndex !== null
               ? { sectionIndex: teach!.sectionIndex }
               : {}),
+            references: teach!.referenceExcerpts,
           })
         let replayPrompt: Promise<string> | undefined
         /** Rebuilds prior dialogue and attachments only when thread continuity is uncertain. */

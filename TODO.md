@@ -26,7 +26,7 @@ names the PR that delivers it once one exists.
 - [x] Lesson quizzes saved as learning items and study events
 - [x] Remove batch generation, old Learn, concept map UI, legacy card chat
 - [x] Prompt map (`docs/prompts.md`); dead card-generation prompt removed
-- [ ] Whole-textbook sources: batched chunk writes, chapter-sized units
+- [x] Whole textbooks as module-wide reference books searched by Teach
 - [ ] Research imports into units with passages
 - [ ] Consolidate the remaining workers into one supervised process
 - [ ] Share one server Convex client helper across API routes (new code uses `lib/server/convex.ts`)

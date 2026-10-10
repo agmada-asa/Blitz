@@ -91,6 +91,12 @@ export default defineSchema({
     projectId: v.id("projects"),
     /** Unit this source teaches; unset for sources imported before units existed. */
     unitId: v.optional(v.id("units")),
+    /**
+     * `reference` marks a whole book or other very large source. It belongs to
+     * the module rather than one unit, and Teach searches it for passages
+     * relevant to whatever is being taught.
+     */
+    role: v.optional(v.literal("reference")),
     filename: v.string(),
     kind: v.union(
       v.literal("pdf"),
@@ -125,7 +131,8 @@ export default defineSchema({
     .index("by_project_status", ["projectId", "status"])
     .index("by_project_fingerprint", ["projectId", "importFingerprint"])
     .index("by_project_contentHash", ["projectId", "contentHash"])
-    .index("by_unit", ["unitId"]),
+    .index("by_unit", ["unitId"])
+    .index("by_project_role", ["projectId", "role"]),
 
   cards: defineTable({
     projectId: v.id("projects"),

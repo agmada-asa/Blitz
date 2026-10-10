@@ -324,6 +324,11 @@ export const replaceChunks = mutation({
     sourceId: v.id("sources"),
     ingestionJobId: v.optional(v.id("ingestionJobs")),
     leaseToken: v.optional(v.string()),
+    /**
+     * Adds this batch after earlier ones instead of replacing the source's
+     * chunks. Large sources are written as one replacing batch, then appends.
+     */
+    append: v.optional(v.boolean()),
     chunks: v.array(
       v.object({
         ordinal: v.number(),
@@ -360,11 +365,13 @@ export const replaceChunks = mutation({
     }
     if (args.chunks.length > 500) throw new Error("Chunk batch is too large")
     const ordinals = new Set<number>()
-    const existing = await ctx.db
-      .query("sourceChunks")
-      .withIndex("by_source_ordinal", (q) => q.eq("sourceId", args.sourceId))
-      .collect()
-    for (const chunk of existing) await ctx.db.delete(chunk._id)
+    if (!args.append) {
+      const existing = await ctx.db
+        .query("sourceChunks")
+        .withIndex("by_source_ordinal", (q) => q.eq("sourceId", args.sourceId))
+        .collect()
+      for (const chunk of existing) await ctx.db.delete(chunk._id)
+    }
     const now = Date.now()
     for (const chunk of args.chunks) {
       if (

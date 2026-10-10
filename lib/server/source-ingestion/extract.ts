@@ -89,8 +89,22 @@ function filenameForUrl(
   return candidate
 }
 
-/** Ensures extracted text is non-empty and within the persisted source bound. */
-function boundExtractedText(text: string, format: string): string {
+/**
+ * Largest text read from a stored original. Whole textbooks fit; their full
+ * text is searchable through source chunks while the source row keeps an
+ * excerpt.
+ */
+export const MAX_STORED_TEXT_LENGTH = 20_000_000
+
+/**
+ * Ensures extracted text is non-empty and within a length bound.
+ * @param maxLength Downloads use {@link MAX_DOWNLOADED_TEXT_LENGTH}; stored originals use {@link MAX_STORED_TEXT_LENGTH}.
+ */
+function boundExtractedText(
+  text: string,
+  format: string,
+  maxLength = MAX_DOWNLOADED_TEXT_LENGTH
+): string {
   const normalized = text.replace(/\r\n?/g, "\n").trim()
   if (!normalized) {
     throw new SourceIngestionError(
@@ -101,14 +115,14 @@ function boundExtractedText(text: string, format: string): string {
       { format }
     )
   }
-  if (normalized.length > MAX_DOWNLOADED_TEXT_LENGTH) {
+  if (normalized.length > maxLength) {
     throw new SourceIngestionError(
       "input-too-large",
-      "The downloaded source contains more text than the import limit",
+      "The source contains more text than the import limit",
       {
         format,
         characterCount: normalized.length,
-        maxCharacters: MAX_DOWNLOADED_TEXT_LENGTH,
+        maxCharacters: maxLength,
       }
     )
   }
@@ -375,7 +389,14 @@ export async function extractStoredSource(
   let extractedText: string
   if (format === "pdf") {
     try {
-      extractedText = await extractPdfText({ path: input.path })
+      // Stored originals may be whole textbooks, so they use the long-PDF bounds.
+      extractedText = await extractPdfText(
+        { path: input.path },
+        {
+          maxPages: MAX_ATTACHMENT_PDF_PAGES,
+          maxCharacters: MAX_STORED_TEXT_LENGTH,
+        }
+      )
     } catch (error) {
       if (error instanceof SourceIngestionError) throw error
       throw new SourceIngestionError(
@@ -413,7 +434,7 @@ export async function extractStoredSource(
     filename: filenameForUrl(url, extension),
     kind:
       format === "pdf" ? "pdf" : format === "markdown" ? "markdown" : "text",
-    extractedText: boundExtractedText(extractedText, format),
+    extractedText: boundExtractedText(extractedText, format, MAX_STORED_TEXT_LENGTH),
   }
 }
 
