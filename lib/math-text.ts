@@ -179,3 +179,19 @@ export function mathToText(latex: string): string {
     .replace(/([(\[⌊⌈⟨])\s+/g, "$1")
     .trim()
 }
+
+/**
+ * Converts the formulas inside a line of prose (`$…$`, `\\(…\\)`) to plain
+ * text and leaves the rest alone, for short strings such as quiz options
+ * that are shown without Markdown.
+ * @param text Prose that may contain inline formulas.
+ */
+export function inlineMathToText(text: string): string {
+  return text
+    .replace(/\\\((.+?)\\\)/g, (_, formula: string) => mathToText(formula))
+    .replace(/\$\$(.+?)\$\$/g, (_, formula: string) => mathToText(formula))
+    .replace(/\$([^$\n]+?)\$(?!\d)/g, (match, formula: string) =>
+      // Prices such as "$5 and $10" stay as written.
+      /^\s|\s$/.test(formula) ? match : mathToText(formula)
+    )
+}

@@ -20,6 +20,7 @@ import {
   type QuizType,
 } from "../../lib/interactive-blocks"
 import { normalizeBlankAnswer, normalizeOutputAnswer } from "../../lib/learning/core"
+import { inlineMathToText } from "../../lib/math-text"
 import { colors, radius, TOUCH_TARGET } from "../lib/theme"
 import { Markdown } from "./markdown"
 import { Text, TextInput } from "./native-text"
@@ -235,7 +236,7 @@ function ChoiceAnswer({
             >
               {multiple ? (isSelected ? "✓" : "") : String.fromCharCode(65 + index)}
             </Text>
-            <Text style={styles.optionText}>{option.text}</Text>
+            <Text style={styles.optionText}>{inlineMathToText(option.text)}</Text>
           </Pressable>
         )
       })}
@@ -257,7 +258,10 @@ function OrderingAnswer({
   readonly result?: QuestionResult
   readonly onChange: (value: string[]) => void
 }) {
-  const text = useMemo(() => new Map(options.map((option) => [option.id, option.text])), [options])
+  const text = useMemo(
+    () => new Map(options.map((option) => [option.id, inlineMathToText(option.text)])),
+    [options]
+  )
   const key = result?.correctOptionIds
 
   /** Swaps the item at `index` with its neighbour in `direction`. */
@@ -340,7 +344,7 @@ function MatchingAnswer({
   readonly result?: QuestionResult
   readonly onChange: (value: string[]) => void
 }) {
-  const text = new Map(options.map((option) => [option.id, option.text]))
+  const text = new Map(options.map((option) => [option.id, inlineMathToText(option.text)]))
   const key = result?.correctOptionIds
   return (
     <View style={styles.list}>
@@ -353,7 +357,7 @@ function MatchingAnswer({
             key={`${index}:${prompt}`}
             style={[styles.matchRow, right === true && styles.optionCorrect, right === false && styles.optionWrong]}
           >
-            <Text style={styles.matchPrompt}>{prompt}</Text>
+            <Text style={styles.matchPrompt}>{inlineMathToText(prompt)}</Text>
             <View accessibilityRole="radiogroup" accessibilityLabel={`Match for ${prompt}`} style={styles.chips}>
               {options.map((option) => {
                 const isChosen = chosen === option.id
@@ -380,7 +384,7 @@ function MatchingAnswer({
                     ]}
                   >
                     <Text style={[styles.chipText, isChosen && !locked && styles.chipTextChosen]}>
-                      {option.text}
+                      {inlineMathToText(option.text)}
                     </Text>
                   </Pressable>
                 )
