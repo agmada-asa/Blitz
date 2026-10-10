@@ -33,6 +33,7 @@ import {
   clampMarks,
   conceptBreakdown,
   DEFAULT_EXAM_MINUTES,
+  EXAM_CHANGE_LOCK_MESSAGES,
   EXAM_DEADLINE_GRACE_MS,
   EXAM_LIMITS,
   EXAM_MARK_RANGE,
@@ -45,6 +46,7 @@ import {
   rescoreResults,
   scoreAttempt,
   type ExamAnswer,
+  type ExamChangeLock,
   type ExamQuestionResult,
 } from "../lib/exam-scoring"
 
@@ -90,28 +92,18 @@ function gradingStatus(attempt: Doc<"examAttempts">, now: number) {
 }
 
 /**
- * Why a paper's questions can't be edited and the paper can't be deleted
- * right now: it is being prepared, or written answers on one of its attempts
- * are being marked. Runs past their lease no longer block.
+ * Returns why the paper can't be edited or deleted right now (see
+ * `ExamChangeLock`). Runs past their lease no longer block.
  */
-type ChangeLock = "processing" | "marking" | null
-
-/** Returns the paper's current change lock. */
 function changeLock(
   paper: Doc<"examPapers">,
   attempts: Doc<"examAttempts">[],
   now: number
-): ChangeLock {
+): ExamChangeLock | null {
   if (paperStatus(paper, now).status === "processing") return "processing"
   if (attempts.some((attempt) => gradingStatus(attempt, now).status === "running")) return "marking"
   return null
 }
-
-/** Learner-facing reason for each change lock, shared by editing and deleting. */
-const CHANGE_LOCK_MESSAGES = {
-  processing: "This paper is still being prepared. You can change it once it's ready.",
-  marking: "Written answers on this paper are being marked. You can change it once marking finishes.",
-} as const
 
 /**
  * Loads a paper for a change, refusing a missing or deleted paper and any
@@ -133,7 +125,7 @@ async function changeablePaper(
     .withIndex("by_paper_startedAt", (q) => q.eq("paperId", paperId))
     .collect()
   const lock = changeLock(paper, attempts, now)
-  if (lock) throw new ConvexError(CHANGE_LOCK_MESSAGES[lock])
+  if (lock) throw new ConvexError(EXAM_CHANGE_LOCK_MESSAGES[lock])
   if (requireReady && paperStatus(paper, now).status !== "ready")
     throw new ConvexError("This paper has no questions to edit.")
   return { paper, attempts }

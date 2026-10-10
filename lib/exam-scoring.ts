@@ -52,6 +52,20 @@ export const EXAM_MARK_RANGE = { min: 0.5, max: 100 } as const
 /** Longest written answer stored for one question, in characters. */
 export const MAX_WRITTEN_ANSWER_CHARS = 8_000
 
+/**
+ * Why a paper's questions can't be edited and the paper can't be deleted
+ * right now: it is being prepared, or written answers on one of its attempts
+ * are being marked.
+ */
+export type ExamChangeLock = "processing" | "marking"
+
+/** Learner-facing reason for each change lock, shared by the server and the screens that offer changes. */
+export const EXAM_CHANGE_LOCK_MESSAGES: Record<ExamChangeLock, string> = {
+  processing: "This paper is still being prepared. You can change it once it's ready.",
+  marking:
+    "Written answers on this paper are being marked. You can change it once marking finishes.",
+}
+
 /** How long after the deadline answers are still accepted, to absorb network delay. */
 export const EXAM_DEADLINE_GRACE_MS = 60_000
 
