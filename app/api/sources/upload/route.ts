@@ -214,6 +214,14 @@ export async function POST(request: Request): Promise<Response> {
           chunks: rows.slice(start, start + CHUNK_BATCH),
         })
       }
+      // A whole book backs up every unit instead of being taught as one. Mark
+      // it before completing, while the lease is still held, so a failure here
+      // fails the upload cleanly instead of leaving a book taught as a unit.
+      const reference = normalized.text.length > REFERENCE_SOURCE_CHARACTERS
+      if (reference)
+        await convex.mutation(api.sources.markReference, {
+          sourceId: record.sourceId,
+        })
       await convex.mutation(api.sources.completeOriginalIngestion, {
         sourceId: record.sourceId,
         ingestionJobId: record.ingestionJobId,
@@ -221,12 +229,6 @@ export async function POST(request: Request): Promise<Response> {
         extractedText: boundedStoredText(normalized.text),
         status: "completed",
       })
-      // A whole book backs up every unit instead of being taught as one.
-      const reference = normalized.text.length > REFERENCE_SOURCE_CHARACTERS
-      if (reference)
-        await convex.mutation(api.sources.markReference, {
-          sourceId: record.sourceId,
-        })
       return Response.json(
         {
           ...stored,
