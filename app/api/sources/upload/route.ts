@@ -35,7 +35,8 @@ function sourceFormat(filename: string): {
   supported: boolean
 } {
   if (/\.pdf$/i.test(filename)) return { kind: "pdf", supported: true }
-  if (/\.(md|markdown)$/i.test(filename))
+  // Word documents are extracted as Markdown, with headings kept for citations.
+  if (/\.(md|markdown|docx)$/i.test(filename))
     return { kind: "markdown", supported: true }
   if (
     /\.(txt|vtt|srt|pptx|html?|csv|json|xml|ya?ml|toml|py|tsx?|jsx?|css|scss|sql|sh|bash|zsh|rs|go|c|cpp|h|java|kt|rb|php)$/i.test(

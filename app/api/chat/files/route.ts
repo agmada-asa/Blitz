@@ -52,6 +52,8 @@ function inferMimeType(filename: string, candidate: string | null): string {
   if (/\.pdf$/i.test(filename)) return "application/pdf"
   if (/\.pptx$/i.test(filename))
     return "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+  if (/\.docx$/i.test(filename))
+    return "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
   if (/\.json$/i.test(filename)) return "application/json"
   if (/\.csv$/i.test(filename)) return "text/csv"
   if (/\.html?$/i.test(filename)) return "text/html"
@@ -135,7 +137,7 @@ export async function POST(request: Request): Promise<Response> {
     if (isNativeImage) {
       extractedText = `[Image attachment: ${stored.filename}]`
     } else {
-      const isStructuredDoc = /\.(pdf|pptx|html?|md|markdown)$/i.test(filename)
+      const isStructuredDoc = /\.(pdf|pptx|docx|html?|md|markdown)$/i.test(filename)
       if (isStructuredDoc) {
         try {
           const result = await extractStoredSource({
@@ -195,7 +197,7 @@ export async function POST(request: Request): Promise<Response> {
     let textKey: string | undefined
     if (new TextEncoder().encode(extractedText).length > 500_000) {
       const isExtractedDocument =
-        !isNativeImage && /\.(pdf|pptx|html?|md|markdown)$/i.test(filename)
+        !isNativeImage && /\.(pdf|pptx|docx|html?|md|markdown)$/i.test(filename)
       if (isExtractedDocument) {
         // Plain text originals are already searchable; extracted text is not.
         textKey = `${stored.key.split("/")[0]}/${stored.sha256}.pages.txt`
