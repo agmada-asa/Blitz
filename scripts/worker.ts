@@ -216,6 +216,7 @@ function researchQueue(
         kind: args.kind,
         extractedText: args.extractedText,
         originalUrl: args.originalUrl,
+        ...(args.chunks ? { chunks: args.chunks } : {}),
         ...(args.partNumber === undefined
           ? {}
           : { partNumber: args.partNumber }),

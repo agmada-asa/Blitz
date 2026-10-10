@@ -1,10 +1,18 @@
-/** Drains approved source-index imports with bounded public fetches and atomic persistence. */
+/**
+ * Drains approved source-index imports with bounded public fetches and atomic
+ * persistence. Each part is split into passages here, the same way uploads
+ * are, and saved with its source so Teach can cite it immediately.
+ */
 
 import { randomUUID } from "node:crypto"
 import {
   fetchApprovedResearchSource,
   type ResearchImportedSource,
 } from "./research-import.ts"
+import {
+  prepareTextSource,
+  type PersistedChunkRow,
+} from "./source-ingestion/chunk-rows.ts"
 import { SourceIngestionError } from "./source-ingestion/errors.ts"
 import { splitSourceText, sourcePartFilename } from "../source-splitting.ts"
 
@@ -87,6 +95,8 @@ export interface ResearchImportQueue {
     originalUrl: string
     partNumber?: number
     totalParts?: number
+    /** Passages of `extractedText`, saved with the source. */
+    chunks?: PersistedChunkRow[]
   }): Promise<unknown>
   /** Records a classified per-source error while preserving deliberate retry. */
   failImport(args: {
@@ -147,16 +157,25 @@ export async function runResearchImportStep(
     } = {}
     for (const part of parts) {
       options.signal?.throwIfAborted()
+      const filename = sourcePartFilename(
+        claim.source.title,
+        part.partNumber,
+        part.totalParts
+      )
+      // The stored text is the normalized part, so passage offsets match it.
+      const prepared = prepareTextSource({
+        seed: `research:${claim.importId}:${part.partNumber}`,
+        filename,
+        kind: source.kind,
+        text: part.text,
+      })
       const result = await options.queue.completeImport({
         importId: claim.importId,
         leaseToken: claim.leaseToken,
-        filename: sourcePartFilename(
-          claim.source.title,
-          part.partNumber,
-          part.totalParts
-        ),
+        filename,
         kind: source.kind,
-        extractedText: part.text,
+        extractedText: prepared.text,
+        chunks: prepared.chunks,
         originalUrl: source.originalUrl,
         partNumber: part.partNumber,
         totalParts: part.totalParts,
