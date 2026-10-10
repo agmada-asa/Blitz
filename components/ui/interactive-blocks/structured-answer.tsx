@@ -297,7 +297,8 @@ function MatchingAnswer({
               {renderMarkdown(prompt, { inline: true })}
             </span>
             <Select
-              value={value[index] || undefined}
+              // An empty string keeps the picker controlled while it shows the placeholder.
+              value={value[index] ?? ""}
               disabled={disabled}
               onValueChange={(choice) => {
                 const next = [...value]
