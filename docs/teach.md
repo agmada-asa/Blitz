@@ -61,7 +61,7 @@ to ready per file. `--teach` also runs the first Teach turn and reports time to
 first words and to the finished first section. On 10 October 2026, COMP26120
 Week 1 (three transcripts, three slide PDFs) was ready in 1.8 seconds; the
 first teaching text appeared about 13 seconds after opening the unit, and the
-first section finished in under 30 seconds on Codex.
+first section finished within a minute with the configured reply provider.
 
 ## Known limits
 
