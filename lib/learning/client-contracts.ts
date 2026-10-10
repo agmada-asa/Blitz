@@ -1,8 +1,19 @@
 /** Defines the shared HTTP learning contracts consumed by browser and native clients. */
 
-/** Supported feed item formats exposed before an answer is submitted. */
+/**
+ * Supported feed item formats exposed before an answer is submitted. Older
+ * native clients skip the structured formats (cloze, ordering, matching,
+ * code output) they cannot render.
+ */
 export type FeedCardType =
-  "explain" | "single-choice" | "multiple-answer" | "true-false"
+  | "explain"
+  | "single-choice"
+  | "multiple-answer"
+  | "true-false"
+  | "cloze"
+  | "ordering"
+  | "matching"
+  | "code-output"
 
 /** One visible choice in a question card; correctness is withheld in feed data. */
 export type FeedOption = {
@@ -34,12 +45,15 @@ export type ExplainFeedCard = FeedCardBase & {
   options?: never
 }
 
-/** A choice or true-false card whose explanation is revealed after answering. */
+/** A question card whose answer key and explanation are revealed after answering. */
 export type QuestionFeedCard = FeedCardBase & {
   type: Exclude<FeedCardType, "explain">
   body?: never
   question: string
+  /** Choices, ordering items in display order, or matching right-hand items. */
   options?: FeedOption[]
+  /** Matching only: the left-hand items. */
+  prompts?: string[]
 }
 
 /** A feed card union that keeps explain and question fields distinct. */
@@ -76,8 +90,11 @@ export type AnswerRequest = {
 export type AnswerFeedback = {
   body: string
   correctOptionId?: string
+  /** Multiple-answer set, ordering sequence, or the match for each matching item. */
   correctOptionIds?: string[]
   correctAnswer?: boolean
+  /** Cloze: accepted answers per blank. Code output: one entry of accepted outputs. */
+  acceptedAnswers?: string[][]
 }
 
 /** Response from the server-scored answer mutation. */

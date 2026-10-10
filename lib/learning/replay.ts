@@ -19,16 +19,21 @@ export interface ScoredReviewEvent {
   readonly outcome: "correct" | "incorrect"
 }
 
-/** Compares two answer values while treating multiple-answer order as irrelevant. */
+/**
+ * Compares two answer values. Multiple-answer selections ignore order;
+ * pass `ordered` for answers where position is the answer (ordering,
+ * matching, and typed blanks).
+ */
 export function answersEquivalent(
   first: AnswerInput,
-  second: AnswerInput
+  second: AnswerInput,
+  ordered = false
 ): boolean {
   if (typeof first !== typeof second) return false
   if (Array.isArray(first) && Array.isArray(second)) {
     if (first.length !== second.length) return false
-    const left = [...first].sort()
-    const right = [...second].sort()
+    const left = ordered ? [...first] : [...first].sort()
+    const right = ordered ? [...second] : [...second].sort()
     return left.every((value, index) => value === right[index])
   }
   return first === second

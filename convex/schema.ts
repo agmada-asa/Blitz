@@ -13,12 +13,20 @@ const cardType = v.union(
   v.literal("connection")
 )
 
-/** Question formats stored in the new learning-item table. */
+/**
+ * Question formats stored in the new learning-item table. The structured
+ * formats (cloze, ordering, matching, code output) are answered with a list
+ * of strings; see `lib/learning/core.ts` for how each is scored.
+ */
 const learningItemType = v.union(
   v.literal("explain"),
   v.literal("single-choice"),
   v.literal("multiple-answer"),
-  v.literal("true-false")
+  v.literal("true-false"),
+  v.literal("cloze"),
+  v.literal("ordering"),
+  v.literal("matching"),
+  v.literal("code-output")
 )
 
 /** Stable option payload shared by choice learning items. */
@@ -257,8 +265,19 @@ export default defineSchema({
     question: v.optional(v.string()),
     options: v.optional(v.array(learningOption)),
     correctOptionId: v.optional(v.string()),
+    /**
+     * Multiple-answer: the correct set. Ordering: every option id in the
+     * correct order. Matching: the matching option id for each prompt.
+     */
     correctOptionIds: v.optional(v.array(v.string())),
     correctAnswer: v.optional(v.boolean()),
+    /** Matching: the left-hand items, each paired with one option. */
+    matchPrompts: v.optional(v.array(v.string())),
+    /**
+     * Cloze: accepted answers for each numbered blank, in blank order.
+     * Code output: a single entry listing the accepted outputs.
+     */
+    acceptedAnswers: v.optional(v.array(v.array(v.string()))),
     sourceChunkId: v.optional(v.id("preparationChunks")),
     sourceChunkOrdinal: v.optional(v.number()),
     order: v.number(),

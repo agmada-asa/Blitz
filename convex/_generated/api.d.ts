@@ -26,6 +26,7 @@ import type * as preparation from "../preparation.js";
 import type * as progress from "../progress.js";
 import type * as projectAgents from "../projectAgents.js";
 import type * as projects from "../projects.js";
+import type * as quizFields from "../quizFields.js";
 import type * as research from "../research.js";
 import type * as settings from "../settings.js";
 import type * as sourceRetrieval from "../sourceRetrieval.js";
@@ -62,6 +63,7 @@ declare const fullApi: ApiFromModules<{
   progress: typeof progress;
   projectAgents: typeof projectAgents;
   projects: typeof projects;
+  quizFields: typeof quizFields;
   research: typeof research;
   settings: typeof settings;
   sourceRetrieval: typeof sourceRetrieval;

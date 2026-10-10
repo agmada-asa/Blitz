@@ -2,7 +2,7 @@
 
 /** Renders one server-backed card and owns its answer selection and feedback state. */
 
-import { useState } from "react"
+import { useId, useState } from "react"
 
 import type {
   AnswerResponse,
@@ -13,6 +13,17 @@ import type {
 import { Button } from "@/components/ui/button"
 import { CancelIcon, CheckIcon } from "@/components/ui/icon"
 import { plainMarkdownRenderer } from "@/components/ui/markdown"
+import {
+  StructuredAnswer,
+  structuredHints,
+} from "@/components/ui/interactive-blocks/structured-answer"
+import {
+  clozeDisplayText,
+  initialStructuredAnswer,
+  isChoiceQuiz,
+  structuredAnswerReady,
+  type StructuredAnswerShape,
+} from "@/lib/interactive-blocks"
 import { cn } from "@/lib/utils"
 
 /** Headline sizes: short prompts read as a headline, long exam questions as body text. */
@@ -40,6 +51,27 @@ export function FeedCardView({ card, onAsk, onSkip, onAnswer }: FeedCardProps) {
   const [pending, setPending] = useState(false)
   const [error, setError] = useState("")
   const isMultipleAnswer = card.type === "multiple-answer"
+  const idBase = useId()
+  const structured = card.type !== "explain" && !isChoiceQuiz(card.type)
+  const shape: StructuredAnswerShape | null =
+    card.type !== "explain" && structured
+      ? {
+          type: card.type,
+          question: card.question,
+          options: card.options ?? [],
+          prompts: card.prompts,
+        }
+      : null
+  const [structuredValue, setStructuredValue] = useState<string[]>(() =>
+    shape ? initialStructuredAnswer(shape) : []
+  )
+  // Cloze blanks show as numbered gaps; every other prompt shows as written.
+  const prompt =
+    card.type === "explain"
+      ? card.title
+      : card.type === "cloze"
+        ? clozeDisplayText(card.question)
+        : card.question
 
   /** Sends one selected answer for server scoring and keeps failure recoverable. */
   async function submitAnswer(answer: LearningAnswer) {
@@ -122,7 +154,7 @@ export function FeedCardView({ card, onAsk, onSkip, onAnswer }: FeedCardProps) {
       "flex min-h-14 w-full items-center gap-4 rounded-2xl border border-border/80 bg-card/60 px-4 text-left text-sm text-foreground/90 transition-[background-color,border-color,transform] duration-200 hover:border-foreground/20 hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none active:scale-[0.99] disabled:cursor-default sm:px-5 sm:text-base",
       isSelected &&
         !showFeedback &&
-        "border-brand bg-brand/10 text-foreground font-medium",
+        "border-brand bg-brand/10 font-medium text-foreground",
       showFeedback &&
         optionIsCorrect(optionId) &&
         "border-emerald-500/60 bg-emerald-500/10 text-emerald-800 dark:border-emerald-400/65 dark:bg-emerald-400/15 dark:text-emerald-100",
@@ -140,20 +172,23 @@ export function FeedCardView({ card, onAsk, onSkip, onAnswer }: FeedCardProps) {
           <p className="mb-3 text-xs font-medium text-brand">Recap</p>
         ) : null}
         {/* Questions may hold code blocks, so long ones render as Markdown blocks. */}
-        {card.type !== "explain" && card.question.includes("```") ? (
-          <div className={cn("max-w-[620px] text-foreground", headlineClass(card.question))}>
-            {plainMarkdownRenderer(card.question)}
+        {card.type !== "explain" && prompt.includes("```") ? (
+          <div
+            className={cn(
+              "max-w-[620px] text-foreground",
+              headlineClass(prompt)
+            )}
+          >
+            {plainMarkdownRenderer(prompt)}
           </div>
         ) : (
           <h2
             className={cn(
               "max-w-[620px] text-foreground",
-              headlineClass(card.type === "explain" ? card.title : card.question)
+              headlineClass(prompt)
             )}
           >
-            {plainMarkdownRenderer(card.type === "explain" ? card.title : card.question, {
-              inline: true,
-            })}
+            {plainMarkdownRenderer(prompt, { inline: true })}
           </h2>
         )}
 
@@ -161,6 +196,36 @@ export function FeedCardView({ card, onAsk, onSkip, onAnswer }: FeedCardProps) {
           <div className="mt-6 max-w-[590px] text-base leading-[1.65] text-muted-foreground sm:mt-5 sm:text-lg">
             {plainMarkdownRenderer(card.body)}
           </div>
+        ) : shape ? (
+          <>
+            <p className="mt-5 text-sm text-muted-foreground">
+              {structuredHints[shape.type as keyof typeof structuredHints]}
+            </p>
+            <div className="mt-4" aria-busy={pending}>
+              <StructuredAnswer
+                shape={shape}
+                value={structuredValue}
+                onChange={setStructuredValue}
+                disabled={pending || feedback !== null}
+                answerKey={feedback?.feedback}
+                correct={feedback ? feedback.isCorrect : undefined}
+                renderMarkdown={plainMarkdownRenderer}
+                idBase={idBase}
+              />
+            </div>
+            {!feedback ? (
+              <Button
+                type="button"
+                onClick={() => void submitAnswer(structuredValue)}
+                disabled={
+                  !structuredAnswerReady(shape.type, structuredValue) || pending
+                }
+                className="mt-5 h-11 rounded-full bg-brand px-5 text-sm font-medium text-brand-foreground hover:bg-brand/85 focus-visible:ring-ring"
+              >
+                Check answer
+              </Button>
+            ) : null}
+          </>
         ) : (
           <>
             {isMultipleAnswer ? (

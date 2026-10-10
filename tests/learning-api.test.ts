@@ -39,6 +39,26 @@ test("parses answer and passive event contracts without scoring client data", ()
   )
 })
 
+test("accepts typed list answers with some blanks left empty", () => {
+  const request = parseAnswerRequest({
+    projectId: "project_1",
+    itemId: "item_1",
+    clientEventId: "event_3",
+    occurredAt: 789,
+    answer: ["O(log n)", ""],
+  })
+  assert.deepEqual(request.answer, ["O(log n)", ""])
+  assert.throws(() =>
+    parseAnswerRequest({
+      projectId: "project_1",
+      itemId: "item_1",
+      clientEventId: "event_4",
+      occurredAt: 789,
+      answer: ["", " "],
+    })
+  )
+})
+
 test("rejects invalid answer shapes and event types with 400 errors", () => {
   assert.throws(
     () =>

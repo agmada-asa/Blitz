@@ -10,7 +10,7 @@
  * dependencies. Server runs that call the provider live in `lib/server/exam.ts`.
  */
 
-import { parseInteractiveBlock, type QuizOption } from "./interactive-blocks.ts"
+import { isChoiceQuiz, parseInteractiveBlock, type QuizOption } from "./interactive-blocks.ts"
 import { extractJsonObject } from "./practice.ts"
 import { budgetSources } from "./teach.ts"
 import {
@@ -460,7 +460,8 @@ function parseExamQuestion(
       explanation,
     })
   )
-  if (!quiz.ok || quiz.block.kind !== "quiz") return null
+  // Exam papers hold choice and written questions only.
+  if (!quiz.ok || quiz.block.kind !== "quiz" || !isChoiceQuiz(quiz.block.type)) return null
   return {
     ...base,
     type: quiz.block.type,

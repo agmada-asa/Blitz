@@ -10,7 +10,37 @@
 
 /** The question formats supported in ordinary Blitz study flows. */
 export type StandardQuestionType =
-  "single-choice" | "multiple-answer" | "true-false"
+  | "single-choice"
+  | "multiple-answer"
+  | "true-false"
+  | StructuredQuestionType
+
+/**
+ * Question formats answered with an ordered list of strings rather than a
+ * choice: typed blanks, a sequence, pairs, or a program's output.
+ */
+export type StructuredQuestionType =
+  "cloze" | "ordering" | "matching" | "code-output"
+
+/** Every structured question type, for runtime checks. */
+export const STRUCTURED_QUESTION_TYPES: readonly StructuredQuestionType[] = [
+  "cloze",
+  "ordering",
+  "matching",
+  "code-output",
+]
+
+/** Returns whether a stored type is one of the structured question types. */
+export function isStructuredQuestionType(
+  type: string
+): type is StructuredQuestionType {
+  return (STRUCTURED_QUESTION_TYPES as readonly string[]).includes(type)
+}
+
+/** Question types whose answer order is meaningful, so idempotency checks must not sort it. */
+export function answerOrderMatters(type: string): boolean {
+  return isStructuredQuestionType(type)
+}
 
 /** Identifies where a question may be shown. */
 export type QuestionContext = "feed" | "project-activity"
@@ -63,12 +93,51 @@ export interface WrittenQuestion extends BaseQuestion {
   readonly acceptedAnswers: readonly string[]
 }
 
+/**
+ * A prompt with numbered blanks (`{{1}}`, `{{2}}`, …) typed by the learner.
+ * Each blank accepts any of its listed answers after `normalizeBlankAnswer`.
+ */
+export interface ClozeQuestion extends BaseQuestion {
+  readonly type: "cloze"
+  /** Accepted answers per blank, in blank order. */
+  readonly acceptedAnswers: readonly (readonly string[])[]
+}
+
+/** Items to put in order; `options` is the display order, `correctOrder` the answer. */
+export interface OrderingQuestion extends BaseQuestion {
+  readonly type: "ordering"
+  readonly options: readonly QuestionOption[]
+  /** Every option id, in the correct order. */
+  readonly correctOrder: readonly string[]
+}
+
+/** Prompts each matched to one option; options may include unused extras. */
+export interface MatchingQuestion extends BaseQuestion {
+  readonly type: "matching"
+  /** Left-hand items, in display order. */
+  readonly prompts: readonly string[]
+  readonly options: readonly QuestionOption[]
+  /** The option id that matches each prompt, in prompt order. */
+  readonly correctOptionIds: readonly string[]
+}
+
+/** A program whose exact output the learner types. */
+export interface CodeOutputQuestion extends BaseQuestion {
+  readonly type: "code-output"
+  /** Accepted outputs, compared after `normalizeOutputAnswer`. */
+  readonly acceptedOutputs: readonly string[]
+}
+
 /** Every question the learning core can evaluate. */
 export type Question =
   | SingleChoiceQuestion
   | MultipleAnswerQuestion
   | TrueFalseQuestion
   | WrittenQuestion
+  | ClozeQuestion
+  | OrderingQuestion
+  | MatchingQuestion
+  | CodeOutputQuestion
 
 /** A scalar or structured answer accepted by the normal question formats. */
 export type AnswerInput =
@@ -85,6 +154,7 @@ export type InvalidAnswerReason =
   | "unknown-option"
   | "duplicate-option"
   | "invalid-question"
+  | "incomplete-answer"
 
 /** The normalized result of evaluating a learner answer. */
 export interface AnswerEvaluation {
@@ -294,6 +364,116 @@ export function normalizeTextAnswer(value: string): string {
   return value.trim().replace(/\s+/g, " ").toLowerCase()
 }
 
+/**
+ * Normalizes one typed blank for matching: case, surrounding quotes or
+ * backticks, a trailing full stop, and spacing are ignored, so `O(n)`,
+ * "`o(n)`" and "O( n )." all match. Unicode is NFKC-folded so pasted
+ * symbols compare equal to typed ones.
+ */
+export function normalizeBlankAnswer(value: string): string {
+  return value
+    .normalize("NFKC")
+    .trim()
+    .replace(/^[`'"“”‘’]+|[`'"“”‘’]+$/g, "")
+    .replace(/\.$/, "")
+    .replace(/\s+/g, "")
+    .toLowerCase()
+}
+
+/**
+ * Normalizes program output for matching: line endings, trailing spaces,
+ * runs of spaces, and leading or trailing blank lines are ignored; case and
+ * line breaks still count, because they are part of the output.
+ */
+export function normalizeOutputAnswer(value: string): string {
+  return value
+    .normalize("NFKC")
+    .replace(/\r\n?/g, "\n")
+    .split("\n")
+    .map((line) => line.replace(/[ \t]+/g, " ").trim())
+    .join("\n")
+    .replace(/^\n+|\n+$/g, "")
+}
+
+/** Returns how many numbered blanks (`{{n}}`) a cloze prompt contains. */
+export function countClozeBlanks(prompt: string): number {
+  const numbers = new Set(
+    [...prompt.matchAll(/\{\{\s*(\d{1,2})\s*\}\}/g)].map((match) => Number(match[1]))
+  )
+  return numbers.size
+}
+
+/** Gets a list of strings from an answer, or undefined for another shape. */
+function stringListAnswer(
+  answer: AnswerInput | undefined
+): readonly string[] | undefined {
+  if (Array.isArray(answer)) return answer
+  if (typeof answer === "string") return [answer]
+  return undefined
+}
+
+/** Evaluates a structured question; the caller has already checked the question's base fields. */
+function evaluateStructured(
+  question: ClozeQuestion | OrderingQuestion | MatchingQuestion | CodeOutputQuestion,
+  answer: AnswerInput | undefined
+): AnswerEvaluation {
+  const values = stringListAnswer(answer)
+  if (values === undefined)
+    return invalid(answer === undefined ? "missing-answer" : "wrong-answer-shape")
+  if (question.type === "cloze") {
+    const blanks = question.acceptedAnswers.map((accepted) =>
+      accepted.map(normalizeBlankAnswer).filter(Boolean)
+    )
+    if (!blanks.length || blanks.some((accepted) => !accepted.length))
+      return invalid("invalid-question")
+    if (values.length !== blanks.length) return invalid("wrong-answer-shape")
+    const typed = values.map(normalizeBlankAnswer)
+    if (typed.every((value) => !value)) return invalid("missing-answer")
+    const correct = typed.every((value, index) => blanks[index].includes(value))
+    return { status: correct ? "correct" : "incorrect", isCorrect: correct, normalizedAnswer: typed }
+  }
+  if (question.type === "code-output") {
+    const accepted = question.acceptedOutputs.map(normalizeOutputAnswer).filter(Boolean)
+    if (!accepted.length) return invalid("invalid-question")
+    if (values.length !== 1) return invalid("wrong-answer-shape")
+    const typed = normalizeOutputAnswer(values[0])
+    if (!typed) return invalid("missing-answer")
+    const correct = accepted.includes(typed)
+    return { status: correct ? "correct" : "incorrect", isCorrect: correct, normalizedAnswer: typed }
+  }
+  const optionIds = question.options.map((option) => option.id)
+  if (new Set(optionIds).size !== optionIds.length) return invalid("invalid-question")
+  if (question.type === "ordering") {
+    const order = [...question.correctOrder]
+    if (
+      order.length < 2 ||
+      order.length !== optionIds.length ||
+      order.some((id) => !optionIds.includes(id)) ||
+      new Set(order).size !== order.length
+    )
+      return invalid("invalid-question")
+    if (!values.length) return invalid("missing-answer")
+    if (values.length !== order.length) return invalid("incomplete-answer")
+    if (new Set(values).size !== values.length) return invalid("duplicate-option")
+    if (values.some((id) => !optionIds.includes(id))) return invalid("unknown-option")
+    const correct = values.every((id, index) => id === order[index])
+    return { status: correct ? "correct" : "incorrect", isCorrect: correct, normalizedAnswer: [...values] }
+  }
+  const expected = [...question.correctOptionIds]
+  if (
+    question.prompts.length < 2 ||
+    expected.length !== question.prompts.length ||
+    expected.some((id) => !optionIds.includes(id))
+  )
+    return invalid("invalid-question")
+  if (!values.length || values.every((id) => !id)) return invalid("missing-answer")
+  if (values.length !== expected.length || values.some((id) => !id))
+    return invalid("incomplete-answer")
+  if (values.some((id) => !optionIds.includes(id))) return invalid("unknown-option")
+  const correct = values.every((id, index) => id === expected[index])
+  return { status: correct ? "correct" : "incorrect", isCorrect: correct, normalizedAnswer: [...values] }
+}
+
 /** Produces an invalid answer result with a consistent shape. */
 function invalid(reason: InvalidAnswerReason): AnswerEvaluation {
   return { status: "invalid", isCorrect: false, reason }
@@ -385,6 +565,13 @@ export function evaluateAnswer(
       normalizedAnswer: answer,
     }
   }
+  if (
+    question.type === "cloze" ||
+    question.type === "ordering" ||
+    question.type === "matching" ||
+    question.type === "code-output"
+  )
+    return evaluateStructured(question, answer)
   if (question.type === "written") {
     if (!question.context || question.context !== "project-activity")
       return invalid("invalid-question")

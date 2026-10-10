@@ -9,6 +9,11 @@
  * run in route handlers and Node tests.
  */
 import { lexer, type Token, type Tokens } from "marked"
+import {
+  countClozeBlanks,
+  evaluateAnswer,
+  type Question,
+} from "./learning/core.ts"
 
 /** Fence languages that render as interactive blocks instead of code. */
 export const INTERACTIVE_BLOCK_LANGUAGES = [
@@ -25,17 +30,38 @@ export type InteractiveBlockLanguage =
 /** A quiz choice with a stable normalized id ("a", "b", … or "true" / "false"). */
 export type QuizOption = { id: string; text: string }
 
-/** A validated quiz with normalized options; `correctOptionIds` always references `options` ids. */
+/** Every quiz format. Choice formats submit option ids; the rest submit a list of strings. */
+export type QuizType =
+  | "single-choice"
+  | "multiple-answer"
+  | "true-false"
+  | "cloze"
+  | "ordering"
+  | "matching"
+  | "code-output"
+
+/**
+ * A validated quiz with normalized options. `correctOptionIds` always
+ * references `options` ids: the correct set for choice questions, every id in
+ * the correct order for ordering, and the matching id per prompt for matching.
+ * Cloze and code output leave it empty and use `acceptedAnswers`.
+ */
 export type QuizBlock = {
   kind: "quiz"
   /** Model-assigned id, unique within a message, 1–64 characters of `[A-Za-z0-9_-]`. */
   id: string
   /** Concept the question checks, used for progress tracking. */
   concept: string
-  type: "single-choice" | "multiple-answer" | "true-false"
+  type: QuizType
+  /** Markdown prompt. Cloze prompts mark blanks as `{{1}}`, `{{2}}`, … */
   question: string
+  /** Choices, ordering items in display order, or matching right-hand items. */
   options: QuizOption[]
   correctOptionIds: string[]
+  /** Matching only: left-hand items, each answered with one option id. */
+  prompts?: string[]
+  /** Cloze: accepted answers per blank. Code output: one entry of accepted outputs. */
+  acceptedAnswers?: string[][]
   /** Markdown explanation shown after answering. */
   explanation: string
 }
@@ -79,6 +105,15 @@ export const INTERACTIVE_BLOCK_LIMITS = {
   titleChars: 200,
   maxFollowups: 4,
   followupChars: 120,
+  minOrderItems: 3,
+  maxOrderItems: 8,
+  minPairs: 3,
+  maxPairs: 6,
+  maxMatchExtras: 2,
+  maxBlanks: 6,
+  maxAcceptedAnswers: 6,
+  blankAnswerChars: 200,
+  outputChars: 1000,
 } as const
 
 /**
@@ -214,6 +249,191 @@ function optionIndex(value: unknown, optionCount: number): number {
 }
 
 /**
+ * Hashes text to a 32-bit seed (FNV-1a) so a quiz shuffles the same way on
+ * every parse, in the browser and on the server.
+ * @param text Text to hash.
+ * @returns An unsigned 32-bit integer.
+ */
+function seedFrom(text: string): number {
+  let hash = 0x811c9dc5
+  for (let index = 0; index < text.length; index += 1) {
+    hash ^= text.charCodeAt(index)
+    hash = Math.imul(hash, 0x01000193)
+  }
+  return hash >>> 0
+}
+
+/**
+ * Returns a deterministic, never-identity permutation of a list, seeded by
+ * text. Ordering and matching questions are written in answer order, so the
+ * displayed order must differ from it.
+ * @param items Items in answer order; at least two for a non-identity result.
+ * @param seedText Text that fixes the permutation.
+ * @returns A new array in display order.
+ */
+export function stableShuffle<T>(items: readonly T[], seedText: string): T[] {
+  const result = [...items]
+  let state = seedFrom(seedText) || 1
+  /** Mulberry32 step returning a float in [0, 1). */
+  const next = () => {
+    state = (state + 0x6d2b79f5) >>> 0
+    let value = state
+    value = Math.imul(value ^ (value >>> 15), value | 1)
+    value ^= value + Math.imul(value ^ (value >>> 7), value | 61)
+    return ((value ^ (value >>> 14)) >>> 0) / 4294967296
+  }
+  for (let index = result.length - 1; index > 0; index -= 1) {
+    const swap = Math.floor(next() * (index + 1))
+    ;[result[index], result[swap]] = [result[swap], result[index]]
+  }
+  // A shuffle that lands on the answer order gives the answer away; rotate it.
+  if (result.length > 1 && result.every((item, index) => item === items[index]))
+    result.push(result.shift()!)
+  return result
+}
+
+/**
+ * Validates one accepted-answer entry: a string or a list of alternatives.
+ * @param value Untrusted value from model JSON.
+ * @param field Field name used in error messages.
+ * @param max Maximum characters per alternative.
+ * @returns One to `maxAcceptedAnswers` distinct trimmed alternatives.
+ * @throws BlockValidationError when the entry is empty, too long, or not text.
+ */
+function acceptedList(value: unknown, field: string, max: number): string[] {
+  const limits = INTERACTIVE_BLOCK_LIMITS
+  const raw = Array.isArray(value) ? value : [value]
+  if (raw.length < 1 || raw.length > limits.maxAcceptedAnswers)
+    throw new BlockValidationError(
+      `${field} must list 1 to ${limits.maxAcceptedAnswers} accepted answers`
+    )
+  const answers = raw.map((entry, index) =>
+    requiredText(entry, `${field}[${index}]`, max)
+  )
+  return [...new Set(answers)]
+}
+
+/**
+ * Validates the formats answered with a list of strings: cloze, ordering,
+ * matching, and code output.
+ * @param data Parsed quiz object.
+ * @param base Shared validated fields.
+ * @returns The normalized quiz block.
+ * @throws BlockValidationError describing the first invalid field.
+ */
+function parseStructuredQuiz(
+  data: Record<string, unknown>,
+  base: Pick<QuizBlock, "kind" | "id" | "concept" | "question" | "explanation">
+): QuizBlock {
+  const limits = INTERACTIVE_BLOCK_LIMITS
+  const type = data.type
+  if (type === "cloze") {
+    const blanks = countClozeBlanks(base.question)
+    if (blanks < 1 || blanks > limits.maxBlanks)
+      throw new BlockValidationError(
+        `a cloze question needs 1 to ${limits.maxBlanks} blanks written {{1}}, {{2}}, …`
+      )
+    for (let number = 1; number <= blanks; number += 1)
+      if (!new RegExp(`\\{\\{\\s*${number}\\s*\\}\\}`).test(base.question))
+        throw new BlockValidationError("cloze blanks must be numbered from {{1}} without gaps")
+    const answer =
+      blanks === 1 && !Array.isArray(data.answer) ? [data.answer] : data.answer
+    // A single blank may list its alternatives directly: ["O(n)", "linear"].
+    const entries =
+      blanks === 1 && Array.isArray(answer) && answer.every((entry) => typeof entry === "string")
+        ? [answer]
+        : answer
+    if (!Array.isArray(entries) || entries.length !== blanks)
+      throw new BlockValidationError("answer must give accepted answers for each blank")
+    return {
+      ...base,
+      type,
+      options: [],
+      correctOptionIds: [],
+      acceptedAnswers: entries.map((entry, index) =>
+        acceptedList(entry, `answer[${index}]`, limits.blankAnswerChars)
+      ),
+    }
+  }
+  if (type === "code-output") {
+    if (!/```|~~~/.test(base.question))
+      throw new BlockValidationError("a code-output question must include a fenced code block")
+    return {
+      ...base,
+      type,
+      options: [],
+      correctOptionIds: [],
+      acceptedAnswers: [acceptedList(data.answer, "answer", limits.outputChars)],
+    }
+  }
+  if (type === "ordering") {
+    if (
+      !Array.isArray(data.options) ||
+      data.options.length < limits.minOrderItems ||
+      data.options.length > limits.maxOrderItems
+    )
+      throw new BlockValidationError(
+        `options must list ${limits.minOrderItems} to ${limits.maxOrderItems} items in the correct order`
+      )
+    const texts = data.options.map((option, index) =>
+      requiredText(option, `options[${index}]`, limits.optionChars)
+    )
+    if (new Set(texts).size !== texts.length)
+      throw new BlockValidationError("options must be unique")
+    const ordered = texts.map((text, index) => ({ id: optionId(index), text }))
+    return {
+      ...base,
+      type,
+      options: stableShuffle(ordered, `${base.id}:${base.question}`),
+      correctOptionIds: ordered.map((option) => option.id),
+    }
+  }
+  if (type === "matching") {
+    if (
+      !Array.isArray(data.pairs) ||
+      data.pairs.length < limits.minPairs ||
+      data.pairs.length > limits.maxPairs
+    )
+      throw new BlockValidationError(
+        `pairs must contain ${limits.minPairs} to ${limits.maxPairs} [item, match] pairs`
+      )
+    const pairs = data.pairs.map((pair, index) => {
+      if (!Array.isArray(pair) || pair.length !== 2)
+        throw new BlockValidationError(`pairs[${index}] must be [item, match]`)
+      return [
+        requiredText(pair[0], `pairs[${index}][0]`, limits.optionChars),
+        requiredText(pair[1], `pairs[${index}][1]`, limits.optionChars),
+      ] as const
+    })
+    const extras =
+      data.extras === undefined || data.extras === null
+        ? []
+        : Array.isArray(data.extras)
+          ? data.extras.map((extra, index) =>
+              requiredText(extra, `extras[${index}]`, limits.optionChars)
+            )
+          : (() => {
+              throw new BlockValidationError("extras must be an array of strings")
+            })()
+    if (extras.length > limits.maxMatchExtras)
+      throw new BlockValidationError(`extras must contain at most ${limits.maxMatchExtras} entries`)
+    const prompts = pairs.map((pair) => pair[0])
+    const matches = [...pairs.map((pair) => pair[1]), ...extras]
+    if (new Set(prompts).size !== prompts.length || new Set(matches).size !== matches.length)
+      throw new BlockValidationError("matching items and matches must be unique")
+    const options = matches.map((text, index) => ({ id: optionId(index), text }))
+    return {
+      ...base,
+      type,
+      prompts,
+      options: stableShuffle(options, `${base.id}:${base.question}`),
+      correctOptionIds: pairs.map((_, index) => optionId(index)),
+    }
+  }
+  throw new BlockValidationError("unknown quiz type")
+}
+
+/**
  * Validates and normalizes a quiz body.
  * @param source Raw JSON fence body.
  * @returns The normalized quiz block.
@@ -236,12 +456,25 @@ function parseQuiz(source: string): QuizBlock {
   )
   const type = data.type
   if (
+    type === "cloze" ||
+    type === "ordering" ||
+    type === "matching" ||
+    type === "code-output"
+  )
+    return parseStructuredQuiz(data, {
+      kind: "quiz",
+      id: data.id,
+      concept,
+      question,
+      explanation,
+    })
+  if (
     type !== "single-choice" &&
     type !== "multiple-answer" &&
     type !== "true-false"
   )
     throw new BlockValidationError(
-      'type must be "single-choice", "multiple-answer", or "true-false"'
+      'type must be "single-choice", "multiple-answer", "true-false", "cloze", "ordering", "matching", or "code-output"'
     )
 
   const base = { kind: "quiz" as const, id: data.id, concept, question }
@@ -479,16 +712,121 @@ export function findQuizBlocks(markdown: string): QuizBlock[] {
 }
 
 /**
- * Grades a learner's selection against a quiz. A multiple-answer question is correct only when the
- * selection matches every correct option and no incorrect one.
+ * Returns the fields a quiz is saved with as a learning item (everything but
+ * `kind` and `id`), matching `quizValidator` in `convex/quizFields.ts`.
+ * @param block A validated quiz.
+ * @returns A plain object safe to send to Convex.
+ */
+export function quizPayload(block: QuizBlock) {
+  return {
+    concept: block.concept,
+    type: block.type,
+    question: block.question,
+    options: block.options,
+    correctOptionIds: block.correctOptionIds,
+    ...(block.prompts ? { prompts: block.prompts } : {}),
+    ...(block.acceptedAnswers ? { acceptedAnswers: block.acceptedAnswers } : {}),
+    explanation: block.explanation,
+  }
+}
+
+/** The parts of a structured question needed to collect an answer, without its answer key. */
+export type StructuredAnswerShape = {
+  type: QuizType
+  question: string
+  options: readonly QuizOption[]
+  prompts?: readonly string[]
+}
+
+/**
+ * Shows a cloze prompt's numbered blanks as `____(1)`, which reads as a gap in
+ * prose and in code alike and does not form Markdown emphasis.
+ * @param question Cloze prompt with `{{n}}` blanks.
+ * @returns The prompt for display.
+ */
+export function clozeDisplayText(question: string): string {
+  return question.replace(/\{\{\s*(\d{1,2})\s*\}\}/g, "____($1)")
+}
+
+/**
+ * Returns the empty answer a structured question starts from: the displayed
+ * order for ordering, and one empty value per pair, blank, or output.
+ * @param shape The question being answered.
+ * @returns A fresh answer list.
+ */
+export function initialStructuredAnswer(shape: StructuredAnswerShape): string[] {
+  switch (shape.type) {
+    case "ordering":
+      return shape.options.map((option) => option.id)
+    case "matching":
+      return (shape.prompts ?? []).map(() => "")
+    case "cloze":
+      return Array.from({ length: Math.max(1, countClozeBlanks(shape.question)) }, () => "")
+    default:
+      return [""]
+  }
+}
+
+/**
+ * Reports whether a structured answer can be checked: every pair matched,
+ * at least one blank filled, or some output typed. Ordering is always ready.
+ * @param type Question format.
+ * @param value Current answer list.
+ */
+export function structuredAnswerReady(type: QuizType, value: readonly string[]): boolean {
+  if (type === "ordering") return value.length > 1
+  if (type === "matching") return value.length > 0 && value.every(Boolean)
+  return value.some((entry) => entry.trim().length > 0)
+}
+
+/** Quiz formats answered by choosing options rather than typing or arranging. */
+export function isChoiceQuiz(type: QuizType): type is "single-choice" | "multiple-answer" | "true-false" {
+  return type === "single-choice" || type === "multiple-answer" || type === "true-false"
+}
+
+/**
+ * Converts a structured quiz into the learning core's question shape, so the
+ * browser grades it with the same rules as the server.
+ * @param block A cloze, ordering, matching, or code-output quiz.
+ * @returns The core question.
+ */
+export function structuredQuestion(block: QuizBlock): Question {
+  const base = { id: block.id, conceptId: block.concept, prompt: block.question }
+  switch (block.type) {
+    case "cloze":
+      return { ...base, type: "cloze", acceptedAnswers: block.acceptedAnswers ?? [] }
+    case "code-output":
+      return { ...base, type: "code-output", acceptedOutputs: block.acceptedAnswers?.[0] ?? [] }
+    case "ordering":
+      return { ...base, type: "ordering", options: block.options, correctOrder: block.correctOptionIds }
+    case "matching":
+      return {
+        ...base,
+        type: "matching",
+        prompts: block.prompts ?? [],
+        options: block.options,
+        correctOptionIds: block.correctOptionIds,
+      }
+    default:
+      throw new Error("Choice quizzes are graded by option set")
+  }
+}
+
+/**
+ * Grades a learner's answer against a quiz. A multiple-answer question is correct only when the
+ * selection matches every correct option and no incorrect one; structured formats use the learning
+ * core's rules (typed blanks and output are normalized, order and pairs must match exactly).
  * @param block Validated quiz block.
- * @param selectedOptionIds Option ids chosen by the learner, in any order; duplicates are ignored.
- * @returns True when the selection exactly matches `correctOptionIds`.
+ * @param selectedOptionIds Option ids chosen by the learner, in any order, with duplicates ignored;
+ * or, for structured formats, the typed or arranged answer list.
+ * @returns True when the answer is correct.
  */
 export function gradeQuizAnswer(
   block: QuizBlock,
   selectedOptionIds: readonly string[]
 ): boolean {
+  if (!isChoiceQuiz(block.type))
+    return evaluateAnswer(structuredQuestion(block), selectedOptionIds).isCorrect
   const selected = new Set(selectedOptionIds)
   return (
     selected.size === block.correctOptionIds.length &&
@@ -505,6 +843,14 @@ export function gradeQuizAnswer(
 export function interactiveBlockSpeechText(block: InteractiveBlock): string {
   switch (block.kind) {
     case "quiz": {
+      if (block.type === "ordering")
+        return `Question: ${block.question} Put these in order: ${block.options.map((option) => option.text).join("; ")}.`
+      if (block.type === "matching")
+        return `Question: ${block.question} Match each of: ${(block.prompts ?? []).join("; ")}. With one of: ${block.options.map((option) => option.text).join("; ")}.`
+      if (block.type === "cloze")
+        return `Question: ${block.question.replace(/\{\{\s*(\d+)\s*\}\}/g, "blank $1")}`
+      if (block.type === "code-output")
+        return `Question: ${block.question} Type the output.`
       const options =
         block.type === "true-false"
           ? "True or false."
@@ -709,6 +1055,11 @@ Use after a key idea, roughly one per section. Ask about the idea, not trivia. O
 - type "multiple-answer": 2–6 distinct options, answer is an array of 0-based indices with at least 2 correct and at least 1 incorrect.
 - type "true-false": omit options, answer is true or false.
 - question max 1000 chars, explanation max 2000 chars (Markdown allowed). Do not reveal the answer outside the block.
+Other types, for recall that choices would give away:
+- "cloze": mark 1–6 blanks in the question as {{1}}, {{2}}…; answer is one list of accepted answers per blank, e.g. "answer":[["O(log n)","log n"],["root"]]. Accept common spellings; matching ignores case and spacing.
+- "ordering": options are 3–8 steps or items listed in the correct order (they are shuffled for the learner); no answer field.
+- "matching": "pairs":[["term","its match"],…] with 3–6 pairs, optional "extras":["unused match"] (max 2); no options or answer.
+- "code-output": the question includes a fenced code block; answer is the exact output, or a list of accepted outputs. Keep programs short and deterministic.
 
 ### steps: worked example revealed one step at a time
 Use for worked problems, derivations, proofs, and code traces. 1–12 steps; each body is Markdown (max 4000 chars), title optional.
