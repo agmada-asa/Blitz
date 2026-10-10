@@ -184,7 +184,7 @@ test("restarts Convex when it stops answering while its process stays alive", as
     livenessGraceMs: 0,
     livenessFailureLimit: 2,
     fetchImpl: async (url: string) => {
-      if (!url.endsWith("/") && !convexHealthy) throw new Error("refused")
+      if (!url.endsWith("/api/health") && !convexHealthy) throw new Error("refused")
       return { ok: true, status: 200 }
     },
   })
