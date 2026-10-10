@@ -3,7 +3,7 @@
 `npm run desktop` starts the Mac-only Electron shell for Blitz. The shell starts
 the same local services as the LAN launcher on loopback: Convex on the port pair
 saved in `.convex/local/default/config.json` (or the next free pair from
-`3220`), Next at `3001`, and the ingestion, preparation, content, chat, and
+`3220`), Next at `3008` (`dev:lan` uses `3007`), and the ingestion and
 research workers. The native shell uses the shared Blitz PNG for the macOS Dock icon and
 window icon. The BrowserWindow waits for Next to answer before it loads the app.
 

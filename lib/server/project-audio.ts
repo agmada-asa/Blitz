@@ -71,6 +71,8 @@ type AudioManifest = ProjectAudioItem & {
 export type CreateProjectAudioInput = {
   kind: ProjectAudioKind
   sourceId?: string
+  /** Limits a podcast to one unit's sources. */
+  unitId?: string
   durationMinutes?: 15 | 30 | 60 | 90
   focus?: string
 }
@@ -255,33 +257,38 @@ export async function completedProjectTranscript(
   }
 }
 
-/** Lists every ready source's extracted text so project coverage is not silently truncated. */
+/**
+ * Lists the extracted text of every ready source the podcast should cover, so
+ * coverage is not silently truncated. A unit podcast reads that unit's
+ * sources; a module podcast reads every unit's sources plus unsorted ones.
+ * Past papers, their solutions, and reference books are never taught, so they
+ * are left out, matching `units.listForProject`.
+ */
 async function readyPodcastSources(
   client: ConvexHttpClient,
-  projectId: Id<"projects">
+  projectId: Id<"projects">,
+  unitId?: string
 ): Promise<PodcastSource[]> {
+  let candidates: Array<{ id: Id<"sources">; status: string; hasText: boolean }>
+  if (unitId) {
+    const unit = await client.query(api.units.get, { unitId: unitId as Id<"units"> })
+    candidates = unit?.sources ?? []
+  } else {
+    const learningPath = await client.query(api.units.listForProject, { projectId })
+    candidates = [
+      ...learningPath.units.flatMap((unit) => unit.sources),
+      ...learningPath.unsortedSources,
+    ]
+  }
   const sources: PodcastSource[] = []
-  let cursor: string | null = null
-  for (;;) {
-    const page: {
-      page: Array<{ _id: Id<"sources">; status: string }>
-      isDone: boolean
-      continueCursor: string
-    } = await client.query(api.sources.listSources, {
+  for (const metadata of candidates) {
+    if (metadata.status !== "ready" || !metadata.hasText) continue
+    const source = await client.query(api.sources.getSource, {
       projectId,
-      paginationOpts: { numItems: 20, cursor },
+      sourceId: metadata.id,
     })
-    for (const metadata of page.page) {
-      if (metadata.status !== "ready") continue
-      const source = await client.query(api.sources.getSource, {
-        projectId,
-        sourceId: metadata._id,
-      })
-      if (source?.extractedText.trim())
-        sources.push({ filename: source.filename, text: source.extractedText })
-    }
-    if (page.isDone) break
-    cursor = page.continueCursor
+    if (source?.extractedText.trim())
+      sources.push({ filename: source.filename, text: source.extractedText })
   }
   return sources
 }
@@ -525,7 +532,7 @@ async function podcastPass(
   projectId: Id<"projects">,
   projectTitle: string
 ): Promise<AudioPassage[]> {
-  const sources = await readyPodcastSources(client, projectId)
+  const sources = await readyPodcastSources(client, projectId, manifest.unitId)
   const settings = await loadSavedAiModelSettings(client)
   const selection = resolveAiTaskSelection(settings, "research", {
     providerEnvironmentFallback: process.env.BLITZ_RESEARCH_PROVIDER,
@@ -672,6 +679,15 @@ export async function createProjectAudio(
     )
       throw new Error("Wait for the current project audio to finish")
     let sourceFilename: string | undefined
+    let unitTitle: string | undefined
+    if (input.kind === "podcast" && input.unitId) {
+      const unit = await client.query(api.units.get, { unitId: input.unitId as Id<"units"> })
+      if (!unit || unit.projectId !== projectId)
+        throw new Error("Choose a unit from this module")
+      if (!unit.sources.some((source) => source.hasText))
+        throw new Error("This unit has no readable material yet")
+      unitTitle = unit.title
+    }
     if (input.kind === "audiobook") {
       if (!input.sourceId) throw new Error("Choose a source for the audiobook")
       const source = await client.query(api.sources.getSource, {
@@ -693,13 +709,14 @@ export async function createProjectAudio(
       title:
         input.kind === "audiobook"
           ? `${sourceFilename} audiobook`
-          : `${projectTitle} podcast`,
+          : `${unitTitle ?? projectTitle} podcast`,
       status: "queued",
       createdAt: now,
       updatedAt: now,
       workerPid: process.pid,
       voiceIds,
       ...(input.sourceId ? { sourceId: input.sourceId } : {}),
+      ...(input.kind === "podcast" && input.unitId ? { unitId: input.unitId } : {}),
       ...(input.durationMinutes
         ? {
             requestedMinutes: input.durationMinutes,

@@ -3,6 +3,7 @@
 import { defineSchema, defineTable } from "convex/server"
 import { v } from "convex/values"
 import { citationFields } from "./citationFields"
+import { examAnswerFields, examQuestionFields, examResultFields } from "./examFields"
 
 /** Validator shared by the cards table's supported learning formats. */
 const cardType = v.union(
@@ -226,8 +227,12 @@ export default defineSchema({
      * Teach session, so answering it twice reuses one item.
      */
     teachKey: v.optional(v.string()),
-    /** `teach` for lesson quizzes, `bank` for generated practice questions. */
-    origin: v.optional(v.union(v.literal("teach"), v.literal("bank"))),
+    /**
+     * `teach` for lesson quizzes, `bank` for generated practice questions,
+     * `exam` for choice questions on an exam paper. Exam items stay out of the
+     * feed and drills so a paper's answers are not shown before it is taken.
+     */
+    origin: v.optional(v.union(v.literal("teach"), v.literal("bank"), v.literal("exam"))),
     /**
      * Outcome and time of the latest answer, kept on the item so drills and
      * the feed can rank questions without reading every answer event.
@@ -282,7 +287,85 @@ export default defineSchema({
     error: v.optional(v.string()),
     startedAt: v.number(),
     finishedAt: v.optional(v.number()),
-  }).index("by_unit_startedAt", ["unitId", "startedAt"]),
+  })
+    .index("by_unit_startedAt", ["unitId", "startedAt"])
+    .index("by_startedAt", ["startedAt"]),
+
+  /**
+   * A past paper imported from an upload, or a mock paper written from a
+   * module's units. While `processing`, a background run extracts or writes
+   * the questions; `runStartedAt` identifies that run and acts as its lease.
+   */
+  examPapers: defineTable({
+    projectId: v.id("projects"),
+    kind: v.union(v.literal("past"), v.literal("mock")),
+    title: v.string(),
+    status: v.union(v.literal("processing"), v.literal("ready"), v.literal("failed")),
+    /** Learner-facing reason the last run failed. */
+    error: v.optional(v.string()),
+    /** Past papers: the uploaded paper, stored as a module source with no unit. */
+    sourceId: v.optional(v.id("sources")),
+    /** Past papers: optional uploaded solutions or mark scheme. */
+    solutionsSourceId: v.optional(v.id("sources")),
+    /** Mock papers: units the paper covers. */
+    unitIds: v.optional(v.array(v.id("units"))),
+    /** Time allowed in minutes: stated on a past paper, or chosen for a mock. */
+    durationMinutes: v.optional(v.number()),
+    /** Total marks printed on a past paper, when stated. */
+    statedTotalMarks: v.optional(v.number()),
+    /** Sum of question marks, set when the paper is ready. */
+    totalMarks: v.optional(v.number()),
+    /** Empty until the paper is ready. */
+    questions: v.array(examQuestionFields),
+    /** Questions dropped by validation. */
+    rejectedCount: v.optional(v.number()),
+    runStartedAt: v.number(),
+    finishedAt: v.optional(v.number()),
+    createdAt: v.number(),
+  })
+    .index("by_project_createdAt", ["projectId", "createdAt"])
+    .index("by_project_source", ["projectId", "sourceId"])
+    .index("by_createdAt", ["createdAt"]),
+
+  /**
+   * One sitting of an exam paper. Answers autosave while `in_progress`, so a
+   * reload resumes. On submit, choice questions are marked at once and
+   * written answers wait for a background grading run.
+   */
+  examAttempts: defineTable({
+    projectId: v.id("projects"),
+    paperId: v.id("examPapers"),
+    status: v.union(v.literal("in_progress"), v.literal("submitted")),
+    durationMinutes: v.number(),
+    startedAt: v.number(),
+    /** Answers are accepted until shortly after this time. */
+    deadlineAt: v.number(),
+    updatedAt: v.number(),
+    answers: v.array(examAnswerFields),
+    submittedAt: v.optional(v.number()),
+    /** Set when time ran out before the learner submitted. */
+    autoSubmitted: v.optional(v.boolean()),
+    /** One result per question, in paper order, once submitted. */
+    results: v.optional(v.array(examResultFields)),
+    gradingStatus: v.optional(
+      v.union(
+        v.literal("not_needed"),
+        v.literal("running"),
+        v.literal("completed"),
+        v.literal("failed")
+      )
+    ),
+    /** Identifies the grading run and acts as its lease. */
+    gradingStartedAt: v.optional(v.number()),
+    gradingError: v.optional(v.string()),
+    /** When the latest grading run finished or failed. */
+    gradedAt: v.optional(v.number()),
+    /** Marks awarded so far and marks available on the paper. */
+    awardedMarks: v.optional(v.number()),
+    availableMarks: v.optional(v.number()),
+  })
+    .index("by_paper_startedAt", ["paperId", "startedAt"])
+    .index("by_submittedAt", ["submittedAt"]),
 
   /** Previous explanation text retained when a new source revises a lesson. */
   lessonPageRevisions: defineTable({
@@ -360,6 +443,11 @@ export default defineSchema({
     scope: v.literal("global"),
     /** XP that counts as a completed day for the streak. */
     dailyGoalXp: v.number(),
+    /**
+     * Local hour (0–23) after which the desktop app reminds the learner if the
+     * goal is not met; null turns reminders off, unset uses the default.
+     */
+    reminderHour: v.optional(v.union(v.number(), v.null())),
     updatedAt: v.number(),
   }).index("by_scope", ["scope"]),
 

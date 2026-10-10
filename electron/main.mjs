@@ -1,11 +1,15 @@
 /** Boots the Mac desktop shell, local Blitz services, and project-scoped native bridge. */
 
-import { app, BrowserWindow, dialog, ipcMain, shell } from "electron"
+import { app, BrowserWindow, dialog, ipcMain, Notification, shell } from "electron"
+import { ConvexHttpClient } from "convex/browser"
+import { anyApi } from "convex/server"
+import { readFileSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
+import { startStudyReminders } from "./reminders.mjs"
 import { ServiceManager } from "./service-manager.mjs"
 import { assertProjectPath, repositoryRoot } from "./paths.mjs"
 
-const port = Number(process.env.BLITZ_PORT || 3001)
+const port = Number(process.env.BLITZ_PORT || 3008)
 const host = process.env.BLITZ_LAN_ADDRESS ? "0.0.0.0" : "127.0.0.1"
 /** Shared native icon used by the macOS Dock and non-macOS window chrome. */
 const appIconPath = join(repositoryRoot(), "app", "apple-icon.png")
@@ -90,6 +94,52 @@ async function boot() {
   registerIpc()
   await services.start()
   await createWindow()
+  startReminders()
+}
+
+/**
+ * Starts the daily study reminder. Clicking the notification opens the unit
+ * the learner is working through, or Home.
+ */
+function startReminders() {
+  if (!Notification.isSupported()) return
+  const convex = new ConvexHttpClient(services.environment.BLITZ_CONVEX_URL)
+  // The last reminder day survives restarts so reopening Blitz in the evening
+  // does not send the same day's reminder again.
+  const statePath = join(app.getPath("userData"), "study-reminder.json")
+  let lastRemindedDay
+  try {
+    const saved = JSON.parse(readFileSync(statePath, "utf8"))
+    if (typeof saved?.lastRemindedDay === "string")
+      lastRemindedDay = saved.lastRemindedDay
+  } catch {
+    // No reminder has been sent yet, or the file is unreadable; start fresh.
+  }
+  startStudyReminders({
+    lastRemindedDay,
+    onReminded: (day) => {
+      try {
+        writeFileSync(statePath, JSON.stringify({ lastRemindedDay: day }))
+      } catch {
+        // A missed write only risks one repeated reminder after a restart.
+      }
+    },
+    loadSummary: (now) =>
+      convex.query(anyApi.progress.today, {
+        tzOffsetMinutes: now.getTimezoneOffset(),
+        now: now.getTime(),
+      }),
+    notify: ({ title, body, path }) => {
+      const notification = new Notification({ title, body })
+      notification.on("click", () => {
+        if (!mainWindow) return
+        void mainWindow.loadURL(`http://127.0.0.1:${port}${path}`)
+        mainWindow.show()
+        mainWindow.focus()
+      })
+      notification.show()
+    },
+  })
 }
 
 /** Stops every managed process group before the Electron process exits. */

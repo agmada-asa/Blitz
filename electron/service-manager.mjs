@@ -109,7 +109,7 @@ export class ServiceManager {
    */
   constructor({
     cwd,
-    port = Number(process.env.BLITZ_PORT || 3001),
+    port = Number(process.env.BLITZ_PORT || 3008),
     host = process.env.BLITZ_DESKTOP_HOST || "127.0.0.1",
     desktop = true,
     environment = process.env,

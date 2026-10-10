@@ -34,7 +34,7 @@ async function main(): Promise<void> {
   loadLocalEnvironment()
   const convexUrl =
     process.env.BLITZ_CONVEX_URL ?? process.env.NEXT_PUBLIC_CONVEX_URL
-  const serverUrl = process.env.BLITZ_SERVER_URL ?? "http://127.0.0.1:3001"
+  const serverUrl = process.env.BLITZ_SERVER_URL ?? "http://127.0.0.1:3007"
   if (!convexUrl)
     throw new Error("Set BLITZ_CONVEX_URL before starting the ingestion worker")
   const client = new ConvexHttpClient(convexUrl)

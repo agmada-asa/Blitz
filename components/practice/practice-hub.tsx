@@ -2,8 +2,9 @@
 
 /**
  * The module's Practice screen: one drill that asks missed and weak material
- * first, the concepts that are not sticking with a way back into Teach, and
- * each unit's question bank with a way to write more questions.
+ * first, exam prep with past papers and mock exams, the concepts that are not
+ * sticking with a way back into Teach, and each unit's question bank with a
+ * way to write more questions.
  */
 
 import Link from "next/link"
@@ -11,6 +12,7 @@ import { useQuery } from "convex/react"
 import type { FunctionReturnType } from "convex/server"
 import { useState } from "react"
 
+import { ExamPrep } from "@/components/practice/exam-prep"
 import { Button } from "@/components/ui/button"
 import { ElapsedTime } from "@/components/ui/elapsed-time"
 import { ArrowLeftIcon, ArrowRightIcon, LoadingIcon } from "@/components/ui/icon"
@@ -122,6 +124,8 @@ export function PracticeHub({ projectId }: { projectId: string }) {
               )}
             </Button>
           </section>
+
+          <ExamPrep projectId={projectId} />
 
           {data.weakConcepts.length ? (
             <section aria-labelledby="weak-heading" className="mt-10">

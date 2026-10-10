@@ -10,7 +10,13 @@ import {
 export type MobileActivityRow = {
   readonly id: string
   readonly kind:
-    "preparation" | "research" | "import" | "card-reply" | "workspace-reply"
+    | "practice"
+    | "exam-paper"
+    | "exam-marking"
+    | "research"
+    | "import"
+    | "card-reply"
+    | "workspace-reply"
   readonly title: string
   readonly detail: string
   readonly context: string | null

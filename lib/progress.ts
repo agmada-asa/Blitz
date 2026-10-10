@@ -15,6 +15,9 @@ export const XP = {
 /** Daily goal used until the learner chooses another. About one section plus a short drill. */
 export const DEFAULT_DAILY_GOAL_XP = 50
 
+/** Local hour of the daily reminder until the learner chooses another. */
+export const DEFAULT_REMINDER_HOUR = 19
+
 /** Smallest and largest daily goals the learner can choose. */
 export const DAILY_GOAL_RANGE = { min: 10, max: 500 } as const
 

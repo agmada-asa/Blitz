@@ -30,16 +30,39 @@ type Project = {
   createdAt?: number
 }
 
+/** Learning progress for one module, keyed by project ID. */
+type ModuleProgress = {
+  unitCount: number
+  taughtCount: number
+  nextUnitTitle: string | null
+  lastStudiedAt: number
+  /** True when a module without units has sources waiting to be grouped. */
+  hasUnsortedSources: boolean
+}
+
 /** Props required to render the project library and create a project. */
 type ProjectGridProps = {
   projects?: Project[]
+  /**
+   * Per-module progress, undefined while loading. Modules with no units and
+   * no sources have no entry.
+   */
+  progress?: Record<string, ModuleProgress>
   onCreate: (title: string) => Promise<void>
 }
 
+/** Describes a module's progress in one short line. */
+function progressLine(progress: ModuleProgress | undefined): string {
+  if (progress?.hasUnsortedSources) return "Sources aren't in a unit yet"
+  if (!progress?.unitCount) return "No material yet"
+  const taught = `${progress.taughtCount} of ${progress.unitCount} unit${progress.unitCount === 1 ? "" : "s"} taught`
+  return progress.nextUnitTitle ? `${taught} · Next: ${progress.nextUnitTitle}` : taught
+}
+
 /** Displays project summaries and creates a project through the supplied mutation. */
-export function ProjectGrid({ projects, onCreate }: ProjectGridProps) {
+export function ProjectGrid({ projects, progress, onCreate }: ProjectGridProps) {
   const [search, setSearch] = useState("")
-  const [sort, setSort] = useState<"newest" | "name">("newest")
+  const [sort, setSort] = useState<"recent" | "newest" | "name">("recent")
   const filtered = projects
     ?.filter((project) =>
       project.title
@@ -49,7 +72,10 @@ export function ProjectGrid({ projects, onCreate }: ProjectGridProps) {
     .toSorted((a, b) =>
       sort === "name"
         ? a.title.localeCompare(b.title)
-        : (b.createdAt ?? 0) - (a.createdAt ?? 0)
+        : sort === "recent"
+          ? (progress?.[b._id]?.lastStudiedAt ?? 0) - (progress?.[a._id]?.lastStudiedAt ?? 0) ||
+            (b.createdAt ?? 0) - (a.createdAt ?? 0)
+          : (b.createdAt ?? 0) - (a.createdAt ?? 0)
     )
   const [open, setOpen] = useState(false)
   const [title, setTitle] = useState("")
@@ -130,10 +156,13 @@ export function ProjectGrid({ projects, onCreate }: ProjectGridProps) {
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="outline" className="h-11 rounded-xl">
-                {sort === "newest" ? "Newest first" : "Name A–Z"}
+                {sort === "recent" ? "Recently studied" : sort === "newest" ? "Newest first" : "Name A–Z"}
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
+              <DropdownMenuItem onSelect={() => setSort("recent")}>
+                Recently studied
+              </DropdownMenuItem>
               <DropdownMenuItem onSelect={() => setSort("newest")}>
                 Newest first
               </DropdownMenuItem>
@@ -179,26 +208,38 @@ export function ProjectGrid({ projects, onCreate }: ProjectGridProps) {
             {filtered?.map((project) => (
               <li
                 key={project._id}
-                className="relative h-28 min-w-0 rounded-2xl border border-border bg-card transition-colors hover:bg-muted/50"
+                className="relative h-32 min-w-0 rounded-2xl border border-border bg-card transition-colors hover:bg-muted/50"
               >
                 <Link
                   href={`/projects/${project._id}`}
                   className="absolute inset-0 flex min-w-0 flex-col justify-between rounded-2xl px-3 pb-3 pt-9 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none sm:px-4"
                 >
-                  <h2 className="line-clamp-2 text-sm font-medium tracking-tight break-words sm:text-base">
+                  <h2 className="line-clamp-2 shrink-0 text-sm font-medium tracking-tight break-words sm:text-base">
                     {project.title}
                   </h2>
-                  {project.createdAt && (
-                    <p className="text-xs text-muted-foreground">
-                      Created{" "}
-                      {new Date(project.createdAt).toLocaleDateString("en-GB", {
-                        day: "numeric",
-                        month: "short",
-                        year: "numeric",
-                        timeZone: "UTC",
-                      })}
-                    </p>
-                  )}
+                  <div className="space-y-1.5">
+                    {progress?.[project._id]?.unitCount ? (
+                      <div
+                        aria-hidden="true"
+                        className="h-1 overflow-hidden rounded-full bg-muted"
+                      >
+                        <div
+                          className="h-full rounded-full bg-brand"
+                          style={{
+                            width: `${(progress[project._id].taughtCount / progress[project._id].unitCount) * 100}%`,
+                          }}
+                        />
+                      </div>
+                    ) : null}
+                    {progress ? (
+                      // One line, so a two-line title still fits the fixed card height.
+                      <p className="line-clamp-1 text-xs text-muted-foreground">
+                        {progressLine(progress[project._id])}
+                      </p>
+                    ) : (
+                      <Skeleton className="h-4 w-32" />
+                    )}
+                  </div>
                 </Link>
                 <div className="absolute top-1 right-1 z-10">
                   <ProjectActions project={project} />

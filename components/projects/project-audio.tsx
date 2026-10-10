@@ -4,6 +4,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react"
 import Link from "next/link"
+import { useQuery } from "convex/react"
 
 import { Button } from "@/components/ui/button"
 import {
@@ -21,7 +22,12 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
+import { api } from "@/convex/_generated/api"
+import type { Id } from "@/convex/_generated/dataModel"
 import type { ProjectAudioItem } from "@/lib/project-audio-types"
+
+/** Select value for a podcast covering the whole module. */
+const WHOLE_MODULE = "module"
 
 /** Source metadata used to choose material for an audiobook. */
 type AudioSource = {
@@ -88,6 +94,14 @@ export function ProjectAudio({
   const [durationMinutes, setDurationMinutes] =
     useState<(typeof DURATIONS)[number]>(15)
   const [focus, setFocus] = useState("")
+  const [podcastScope, setPodcastScope] = useState(WHOLE_MODULE)
+  const unitData = useQuery(api.units.listForProject, {
+    projectId: projectId as Id<"projects">,
+  })
+  // Only units with readable material can be covered by a podcast.
+  const podcastUnits = (unitData?.units ?? []).filter((unit) =>
+    unit.sources.some((source) => source.hasText)
+  )
   const [createOpen, setCreateOpen] = useState(false)
   const [submitting, setSubmitting] = useState<"audiobook" | "podcast" | null>(
     null
@@ -166,7 +180,11 @@ export function ProjectAudio({
           kind,
           ...(kind === "audiobook"
             ? { sourceId: selectedSourceId }
-            : { durationMinutes, focus: focus.trim() || undefined }),
+            : {
+                durationMinutes,
+                focus: focus.trim() || undefined,
+                ...(podcastScope !== WHOLE_MODULE ? { unitId: podcastScope } : {}),
+              }),
         }),
       })
       const payload = (await response.json()) as {
@@ -374,6 +392,24 @@ export function ProjectAudio({
             </TabsContent>
             <TabsContent value="podcast" className="w-full">
               <div className="space-y-3">
+                {podcastUnits.length ? (
+                  <label className="block space-y-1.5 text-sm">
+                    <span className="font-medium">Covers</span>
+                    <Select value={podcastScope} onValueChange={setPodcastScope}>
+                      <SelectTrigger aria-label="What the podcast covers" className="min-h-10 w-full">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value={WHOLE_MODULE}>The whole module</SelectItem>
+                        {podcastUnits.map((unit) => (
+                          <SelectItem key={unit.id} value={unit.id}>
+                            {unit.title}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </label>
+                ) : null}
                 <label className="block space-y-1.5 text-sm">
                   <span className="font-medium">Episode length</span>
                   <Select

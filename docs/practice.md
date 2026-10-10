@@ -33,6 +33,18 @@ its review history. A wrong answer offers **Relearn**, which opens the unit's
 Teach screen with `?ask=` holding `relearnMessage(concept, question)`; the Teach
 screen sends it once and removes it from the URL.
 
+## Exam prep
+
+The Practice screen's Exam prep section holds past papers and mock exams:
+upload a paper (with optional solutions) or write a mock from chosen units,
+then sit it against the clock and get it marked, with a per-concept breakdown
+that links back to Relearn. See `docs/exam-mode.md`.
+
+Choice questions on a paper are learning items with `origin: "exam"`. Their
+answers update concept review, so drills and the feed learn from exams, but
+`practice.drill`, `practice.feed`, and the unit question counts leave them out
+so a paper's answers are never shown before it is taken.
+
 ## Home feed
 
 `GET /api/learning/feed` now serves `practice.feed`: questions and recaps from
@@ -55,3 +67,11 @@ for review. The daily goal (default 50 XP) is set under Settings.
 
 The Today card (`components/feed/today-card.tsx`) is the first page of the home
 feed.
+
+## Daily reminder
+
+The desktop app checks every ten minutes (`electron/reminders.mjs`). At or
+after the reminder hour (default 19:00, set or turned off in Settings), if
+today's goal is not met and no reminder has been shown today, it shows a
+native notification. Clicking it opens the unit in progress, or Home. Browser
+and `dev:lan` sessions do not send reminders.

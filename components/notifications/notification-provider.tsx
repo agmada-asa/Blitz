@@ -17,6 +17,7 @@ import type { FunctionReturnType } from "convex/server"
 
 import { useBackgroundNotice } from "@/components/background-notices"
 import { api } from "@/convex/_generated/api"
+import { useMinuteClock } from "@/hooks/use-minute-clock"
 import { isNotificationInCurrentChat } from "@/lib/notifications"
 import { usePathname } from "next/navigation"
 
@@ -117,7 +118,8 @@ function announceInBrowser(item: NotificationRow): void {
 
 /** Provides live task state, unread tracking, and in-app or browser alerts. */
 export function NotificationProvider({ children }: { children: ReactNode }) {
-  const snapshot = useQuery(api.activity.list)
+  const now = useMinuteClock()
+  const snapshot = useQuery(api.activity.list, { now })
   const notifyBackground = useBackgroundNotice()
   const pathname = usePathname()
   const deliveredIds = useRef<Set<string> | null>(null)

@@ -37,14 +37,16 @@ names the PR that delivers it once one exists.
 - [x] Per-concept strength and adaptive drills
 - [x] Relearn from practice into the unit's Teach session
 - [ ] More question types: cloze, ordering, matching, code output
-- [ ] Past paper import and mock exams
-- [ ] Long answer grading against sources
+- [x] Past paper import and mock exams (`docs/exam-mode.md`)
+- [x] Long answer grading against sources (exam written answers, marked
+      against each question's mark scheme and model answer)
+- [ ] Delete exam papers and edit extracted questions
 
 ## Phase 3: home feed and habit
 
 - [x] Weakness-weighted infinite feed of studied material, with recaps
 - [x] Streaks, XP, daily goal, Today card with a seven-day chart
-- [ ] Daily prompt notification (desktop app)
+- [x] Daily reminder notification in the desktop app (time set in Settings)
 - [ ] Session summaries after Teach and drills
 
 ## Known limits
@@ -65,7 +67,8 @@ names the PR that delivers it once one exists.
 ## Phase 5: polish and redesign
 
 - [ ] Redesign starting from the Teach screen
-- [ ] Podcasts from units
+- [x] Podcasts can cover one unit or the whole module
+- [x] Notifications for practice questions, exam papers, and marking; retired lesson pipeline rows removed
 
 ## Phase 6: mobile and sync
 
