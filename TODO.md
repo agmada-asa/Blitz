@@ -29,7 +29,7 @@ names the PR that delivers it once one exists.
 - [x] Whole textbooks as module-wide reference books searched by Teach
 - [ ] Research imports into units with passages
 - [ ] Consolidate the remaining workers into one supervised process
-- [ ] Share one server Convex client helper across API routes (new code uses `lib/server/convex.ts`)
+- [x] Share one server Convex client helper across API routes, server modules, and scripts (`lib/server/convex.ts`)
 
 ## Phase 2: practice and exam mode
 
