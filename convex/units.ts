@@ -571,7 +571,10 @@ export const recordTeachProgress = mutation({
 /**
  * Summarises every module for the Library: how many units are fully taught,
  * which unit comes next, and when the learner last studied it. Reads unit and
- * Teach session records only, never source text, so it stays cheap.
+ * Teach session records, never whole source lists, so it stays cheap. A module
+ * with no units gets an entry only when it has taught material outside a unit,
+ * found by reading its sources until the first one that is not an exam paper
+ * or a reference book (usually the first).
  */
 export const libraryProgress = query({
   args: {},
@@ -579,7 +582,14 @@ export const libraryProgress = query({
     const units = await ctx.db.query("units").collect()
     const byProject = new Map<
       string,
-      { unitCount: number; taughtCount: number; nextUnitTitle: string | null; lastStudiedAt: number }
+      {
+        unitCount: number
+        taughtCount: number
+        nextUnitTitle: string | null
+        lastStudiedAt: number
+        /** True when a module without units already has sources to group. */
+        hasUnsortedSources: boolean
+      }
     >()
     const ordered = [...units].sort((a, b) => a.order - b.order)
     for (const unit of ordered) {
@@ -589,6 +599,7 @@ export const libraryProgress = query({
         taughtCount: 0,
         nextUnitTitle: null,
         lastStudiedAt: 0,
+        hasUnsortedSources: false,
       }
       entry.unitCount += 1
       const chat = await latestTeachChat(ctx, unit._id)
@@ -601,6 +612,28 @@ export const libraryProgress = query({
         unit.startedAt ?? 0
       )
       byProject.set(key, entry)
+    }
+    for (const project of await ctx.db.query("projects").collect()) {
+      if (byProject.has(String(project._id))) continue
+      const examSources = new Set<string>()
+      for (const paper of await ctx.db
+        .query("examPapers")
+        .withIndex("by_project_createdAt", (q) => q.eq("projectId", project._id))
+        .collect())
+        for (const id of [paper.sourceId, paper.solutionsSourceId]) if (id) examSources.add(id)
+      for await (const source of ctx.db
+        .query("sources")
+        .withIndex("by_project", (q) => q.eq("projectId", project._id))) {
+        if (source.role === "reference" || examSources.has(source._id)) continue
+        byProject.set(String(project._id), {
+          unitCount: 0,
+          taughtCount: 0,
+          nextUnitTitle: null,
+          lastStudiedAt: 0,
+          hasUnsortedSources: true,
+        })
+        break
+      }
     }
     return Object.fromEntries(byProject)
   },

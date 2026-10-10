@@ -597,7 +597,11 @@ function storedQuestion(
   }
 }
 
-/** Finds a concept by title in the project, creating it under a unit when new. */
+/**
+ * Finds a concept by title within the question's unit, creating it when new.
+ * Concepts are per unit, as in Teach and practice: the same generic title in
+ * two units is two concepts. Questions with no unit share unit-less concepts.
+ */
 async function conceptFor(
   ctx: MutationCtx,
   projectId: Id<"projects">,
@@ -607,10 +611,12 @@ async function conceptFor(
   now: number
 ) {
   const title = name.replace(/\s+/g, " ").trim().slice(0, 120) || "General"
-  const existing = await ctx.db
-    .query("concepts")
-    .withIndex("by_project_title", (q) => q.eq("projectId", projectId).eq("title", title))
-    .first()
+  const existing = (
+    await ctx.db
+      .query("concepts")
+      .withIndex("by_project_title", (q) => q.eq("projectId", projectId).eq("title", title))
+      .collect()
+  ).find((candidate) => candidate.unitId === unitId)
   if (existing) return existing
   const conceptId = await ctx.db.insert("concepts", {
     projectId,

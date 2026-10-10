@@ -68,3 +68,34 @@ test("reminds once per day across repeated checks and survives load failures", a
   assert.ok(calls >= 3)
   assert.deepEqual(shown, ["Keep your 4-day streak"])
 })
+
+test("a reminder day saved before a restart suppresses a second reminder", async () => {
+  const shown: string[] = []
+  const saved: string[] = []
+  const stop = startStudyReminders({
+    loadSummary: async () => summary(),
+    notify: (reminder) => shown.push(reminder.title),
+    intervalMs: 5,
+    clock: () => new Date(2026, 9, 10, 20, 0),
+    lastRemindedDay: "2026-10-10",
+    onReminded: (day) => saved.push(day),
+  })
+  await new Promise((resolve) => setTimeout(resolve, 20))
+  stop()
+  assert.deepEqual(shown, [])
+  assert.deepEqual(saved, [])
+})
+
+test("reports the reminder day so the caller can persist it", async () => {
+  const saved: string[] = []
+  const stop = startStudyReminders({
+    loadSummary: async () => summary(),
+    notify: () => undefined,
+    intervalMs: 5,
+    clock: () => new Date(2026, 9, 10, 20, 0),
+    onReminded: (day) => saved.push(day),
+  })
+  await new Promise((resolve) => setTimeout(resolve, 20))
+  stop()
+  assert.deepEqual(saved, ["2026-10-10"])
+})

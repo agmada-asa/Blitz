@@ -36,18 +36,24 @@ type ModuleProgress = {
   taughtCount: number
   nextUnitTitle: string | null
   lastStudiedAt: number
+  /** True when a module without units has sources waiting to be grouped. */
+  hasUnsortedSources: boolean
 }
 
 /** Props required to render the project library and create a project. */
 type ProjectGridProps = {
   projects?: Project[]
-  /** Per-module progress; modules without units have no entry. */
+  /**
+   * Per-module progress, undefined while loading. Modules with no units and
+   * no sources have no entry.
+   */
   progress?: Record<string, ModuleProgress>
   onCreate: (title: string) => Promise<void>
 }
 
 /** Describes a module's progress in one short line. */
 function progressLine(progress: ModuleProgress | undefined): string {
+  if (progress?.hasUnsortedSources) return "Sources aren't in a unit yet"
   if (!progress?.unitCount) return "No material yet"
   const taught = `${progress.taughtCount} of ${progress.unitCount} unit${progress.unitCount === 1 ? "" : "s"} taught`
   return progress.nextUnitTitle ? `${taught} · Next: ${progress.nextUnitTitle}` : taught
@@ -225,9 +231,13 @@ export function ProjectGrid({ projects, progress, onCreate }: ProjectGridProps) 
                         />
                       </div>
                     ) : null}
-                    <p className="line-clamp-2 text-xs text-muted-foreground">
-                      {progressLine(progress?.[project._id])}
-                    </p>
+                    {progress ? (
+                      <p className="line-clamp-2 text-xs text-muted-foreground">
+                        {progressLine(progress[project._id])}
+                      </p>
+                    ) : (
+                      <Skeleton className="h-4 w-32" />
+                    )}
                   </div>
                 </Link>
                 <div className="absolute top-1 right-1 z-10">
