@@ -206,7 +206,12 @@ export const setReminderHour = mutation({
   },
 })
 
-/** Longest session a summary covers; older starts are clamped to this. */
+/**
+ * Longest session a module-wide summary covers; older starts are clamped to
+ * this, because those summaries scan every project's events by time. Unit
+ * summaries read by concept and unit instead, so they cover the whole unit
+ * however many days it took.
+ */
 const MAX_SESSION_MS = 12 * 60 * 60 * 1000
 
 /**
@@ -226,14 +231,39 @@ export const sessionSummary = query({
     now: v.number(),
   },
   handler: async (ctx, { projectId, unitId, since, tzOffsetMinutes, now }) => {
-    const start = Math.max(since, now - MAX_SESSION_MS)
+    const start = unitId ? since : Math.max(since, now - MAX_SESSION_MS)
     const { offset, xpByDay } = await studyHistory(ctx, tzOffsetMinutes, now)
-    const events = await ctx.db
-      .query("studyEvents")
-      .withIndex("by_eventType_occurredAt", (q) =>
-        q.eq("eventType", "answer").gte("occurredAt", start)
-      )
-      .collect()
+    const events = unitId
+      ? (
+          await Promise.all(
+            (
+              await ctx.db
+                .query("concepts")
+                .withIndex("by_project", (q) => q.eq("projectId", projectId))
+                .collect()
+            )
+              .filter((concept) => concept.unitId === unitId)
+              .map((concept) =>
+                ctx.db
+                  .query("studyEvents")
+                  .withIndex("by_project_concept_occurredAt", (q) =>
+                    q
+                      .eq("projectId", projectId)
+                      .eq("conceptId", concept._id)
+                      .gte("occurredAt", start)
+                  )
+                  .collect()
+              )
+          )
+        )
+          .flat()
+          .filter((event) => event.eventType === "answer")
+      : await ctx.db
+          .query("studyEvents")
+          .withIndex("by_eventType_occurredAt", (q) =>
+            q.eq("eventType", "answer").gte("occurredAt", start)
+          )
+          .collect()
     const concepts = new Map<string, { title: string; unitId?: string } | null>()
     const answers = []
     for (const event of events) {
@@ -250,15 +280,19 @@ export const sessionSummary = query({
       if (!concept || (unitId && concept.unitId !== String(unitId))) continue
       answers.push({ conceptId: key, correct: event.outcome === "correct" })
     }
-    const milestones = (
-      await ctx.db
-        .query("learningActivity")
-        .withIndex("by_occurredAt", (q) => q.gte("occurredAt", start))
-        .collect()
-    ).filter(
-      (milestone) =>
-        milestone.projectId === projectId && (!unitId || milestone.unitId === unitId)
-    )
+    const milestones = unitId
+      ? (
+          await ctx.db
+            .query("learningActivity")
+            .withIndex("by_unit_kind", (q) => q.eq("unitId", unitId))
+            .collect()
+        ).filter((milestone) => milestone.occurredAt >= start)
+      : (
+          await ctx.db
+            .query("learningActivity")
+            .withIndex("by_occurredAt", (q) => q.gte("occurredAt", start))
+            .collect()
+        ).filter((milestone) => milestone.projectId === projectId)
     const totals = summarizeSession(answers, milestones)
     const reviews = await ctx.db
       .query("conceptReviews")
