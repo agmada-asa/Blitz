@@ -984,7 +984,7 @@ export async function POST(request: Request): Promise<Response> {
         const citations = await client.mutation(api.chatCitations.prepare, {
           chatId: turn.chatId,
           messageId: turn.assistantMessageId,
-          question: retrievalQuestion,
+          question: teach?.citationFocus || retrievalQuestion,
           chunkIds: teach
             ? teach.citationChunkIds
             : [

@@ -533,6 +533,11 @@ export const teachContext = query({
           truncated: source.extractedText.length > MAX_TEACH_SOURCE_TEXT,
         })),
       citationChunkIds: chunkIds,
+      /**
+       * What this turn teaches, for ranking citable passages. A quick reply
+       * such as `Next section` says nothing about the passages it needs.
+       */
+      citationFocus: focus ?? null,
       referenceExcerpts: referenceExcerpts.map(({ filename, text }) => ({ filename, text })),
     }
   },
