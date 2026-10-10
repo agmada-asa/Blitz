@@ -122,7 +122,11 @@ test("non-Codex execution distinguishes disabled tools and native approval contr
   )
 })
 
-/** Unsupported settings produce an actionable failure, not an ignored setting or another provider. */
+/**
+ * Unsupported settings produce an actionable failure, not an ignored setting
+ * or another provider. Model support is checked against the provider's
+ * catalog where one is available; without one the adapter checks at dispatch.
+ */
 test("saving unsupported reasoning fails rather than silently defaulting", () => {
   for (const [replyProvider, replyModel] of [
     ["claude-code", "haiku"],
@@ -130,12 +134,15 @@ test("saving unsupported reasoning fails rather than silently defaulting", () =>
   ] as const) {
     assert.throws(
       () =>
-        validateAiModelSettings({
-          ...DEFAULT_AI_MODEL_SETTINGS,
-          replyProvider,
-          replyModel,
-          replyEffort: "high",
-        }),
+        validateAiModelSettings(
+          {
+            ...DEFAULT_AI_MODEL_SETTINGS,
+            replyProvider,
+            replyModel,
+            replyEffort: "high",
+          },
+          { [replyProvider]: [{ id: replyModel, reasoningEfforts: ["default"] }] } as never
+        ),
       /not available/
     )
   }
@@ -158,7 +165,7 @@ test("invalid saved settings fail explicitly while an unsaved installation uses 
         ...DEFAULT_AI_MODEL_SETTINGS,
         replyProvider: "opencode",
         replyModel: "default",
-        replyEffort: "high",
+        replyEffort: "high effort",
       }),
     } as never),
     SavedModelSettingsError

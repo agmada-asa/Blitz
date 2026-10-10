@@ -28,12 +28,14 @@ function nativeModel(overrides: Record<string, unknown> = {}) {
   }
 }
 
+// Provider-published levels are kept, including ones Blitz has no label for,
+// so a new reasoning level works without an app update.
 test("normalizes native reasoning, modalities, hidden state, and default metadata", () => {
   const option = normalizeCodexModel(nativeModel() as never)
   assert.deepEqual(option, {
     id: "gpt-spark",
     label: "Spark",
-    reasoningEfforts: ["none", "minimal"],
+    reasoningEfforts: ["none", "minimal", "future-level"],
     inputModalities: ["text"],
     isDefault: true,
   })
