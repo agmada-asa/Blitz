@@ -53,6 +53,25 @@ and its strength, and today's goal and streak, with Done for now, Keep
 learning, and Practice this unit. Once the unit is complete, the same summary
 for the whole unit appears after the recap.
 
+### The same look elsewhere
+
+The Teach screen's progress visuals live in
+`components/progress/progress-path.tsx` and are reused across the app, so
+progress always reads the same way:
+
+- **Segmented bar** (`SegmentedBar`): one segment per section, unit, or
+  concept, filled as far as it has gone. Teach and the module page draw a
+  unit's sections; Home's Continue card draws the unit being resumed; Library
+  cards draw one segment per unit; Practice draws one per concept, grouped by
+  strength and filled by mastery.
+- **Path** (`PathMarker`, `PathConnector`): numbered markers joined by a line
+  that fills as steps are done. Teach's outline uses it for sections and the
+  module page's learning path for units (taught, up next, ahead).
+
+Concept strength is one colour fading out (strong, learning, needs work) with
+grey for not practised, so it stays readable in every accent theme. Home also
+keeps today's XP in a chip above the feed.
+
 ## Protocol
 
 The tutor's rules live in `TEACH_RULES` in `lib/teach.ts`:
