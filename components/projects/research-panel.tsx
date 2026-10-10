@@ -1,17 +1,28 @@
 "use client"
 
-/** Owns the project research proposal and source selection flow. */
+/**
+ * Owns the project research proposal and source selection flow. Approved
+ * sources are imported into the unit the learner picks, or a new unit for the
+ * research, ready to teach.
+ */
 
 import Link from "next/link"
 import { useCallback, useEffect, useRef, useState } from "react"
-import { useQuery } from "convex/react"
 
 import { useBackgroundNotice } from "@/components/background-notices"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
-import { api } from "@/convex/_generated/api"
-import type { Id } from "@/convex/_generated/dataModel"
+
+/** Value of the unit picker that files imports into a new unit for this research. */
+const NEW_UNIT = "new"
 
 type ProposalStatus = "queued" | "running" | "ready" | "failed"
 type ImportStatus = "queued" | "running" | "imported" | "failed"
@@ -78,99 +89,45 @@ type ResearchImport = {
   preparationJobId?: string
   failureCategory?: string
   error?: string
+  /** Unit the sources were filed into; absent on imports from before units. */
+  unitId?: string
   createdAt: number
   updatedAt: number
 }
 
-/** Shows durable preparation progress for a downloaded research source. */
-function ImportPreparationStatus({
+/** A unit the learner can file imported sources into. */
+export type ResearchUnitOption = { id: string; title: string }
+
+/**
+ * Confirms where an imported source went and offers to start learning it.
+ * Imports from before units existed only say they were imported.
+ */
+function ImportedStatus({
   projectId,
-  sourceIds,
+  unitId,
+  units,
 }: {
   projectId: string
-  sourceIds: string[]
+  unitId?: string
+  units: ResearchUnitOption[]
 }) {
-  const boundedSourceIds = sourceIds.slice(0, 20)
-  const jobs = useQuery(api.preparation.listJobsForProject, {
-    projectId: projectId as Id<"projects">,
-    sourceIds: boundedSourceIds as Id<"sources">[],
-  })
-
-  if (jobs === undefined || !jobs.length)
-    return (
-      <span className="text-muted-foreground">
-        Downloaded · preparation queued
-      </span>
-    )
-
-  const failed = jobs.find((job) => job.status === "failed")
-  if (failed)
-    return (
-      <span className="text-destructive">
-        Needs retry
-        <Link
-          href="/notifications"
-          className="ml-2 underline underline-offset-2 hover:text-foreground"
-        >
-          View preparation
-        </Link>
-      </span>
-    )
-
-  const active = jobs.filter(
-    (job) => job.status === "queued" || job.status === "leased"
+  const unit = units.find((item) => item.id === unitId)
+  if (!unitId || !unit)
+    return <span className="text-muted-foreground">Imported</span>
+  return (
+    <span className="text-muted-foreground">
+      Added to {unit.title}
+      <Link
+        href={`/projects/${encodeURIComponent(projectId)}/learn/${encodeURIComponent(unitId)}`}
+        className="ml-2 text-foreground underline underline-offset-2"
+      >
+        Start learning
+      </Link>
+    </span>
   )
-  if (active.length) {
-    if (sourceIds.length === 1) {
-      const job = active[0]
-      const currentSection = job.totalChunks
-        ? Math.min(job.nextChunkOrdinal + 1, job.totalChunks)
-        : undefined
-      return (
-        <span className="text-muted-foreground">
-          {job.status === "queued"
-            ? "Queued for preparation"
-            : currentSection && job.totalChunks
-              ? `Preparing section ${currentSection} of ${job.totalChunks}`
-              : "Preparing source…"}
-        </span>
-      )
-    }
-    return (
-      <span className="text-muted-foreground">
-        {active.some((job) => job.status === "leased")
-          ? "Preparing cards"
-          : "Queued for preparation"}
-      </span>
-    )
-  }
-
-  if (sourceIds.length > 20)
-    return <span className="text-muted-foreground">Preparation continues</span>
-
-  const completed = jobs.filter((job) => job.status === "completed")
-  if (
-    completed.length === sourceIds.length &&
-    completed.some(
-      (job) =>
-        typeof job.generatedItemCount === "number" && job.generatedItemCount > 0
-    )
-  )
-    return <span className="text-emerald-700 dark:text-emerald-300">Ready</span>
-  if (
-    completed.length === sourceIds.length &&
-    completed.some((job) => job.generatedItemCount === 0)
-  )
-    return (
-      <span className="text-amber-700 dark:text-amber-300">
-        No study content
-      </span>
-    )
-  if (completed.length === sourceIds.length)
-    return <span className="text-muted-foreground">Preparation complete</span>
-  return <span className="text-muted-foreground">Preparing cards</span>
 }
 
+/** Request state for importing or retrying selected sources. */
 type ApplyState =
   | { status: "idle" }
   | { status: "pending" }
@@ -309,6 +266,10 @@ export type ResearchPanelProps = {
   projectId: string
   initialRequestId?: string
   active: boolean
+  /** The module's units, in path order, offered as import destinations. */
+  units: ResearchUnitOption[]
+  /** Unit the learner is researching for, picked by default. */
+  defaultUnitId?: string
 }
 
 /** Renders the research request and source review inside Add sources. */
@@ -316,7 +277,14 @@ export function ResearchPanel({
   projectId,
   initialRequestId,
   active,
+  units,
+  defaultUnitId,
 }: ResearchPanelProps) {
+  const [unitTarget, setUnitTarget] = useState(defaultUnitId ?? NEW_UNIT)
+  // A unit deleted since it was picked falls back to a new unit.
+  const target = units.some((unit) => unit.id === unitTarget)
+    ? unitTarget
+    : NEW_UNIT
   const [requestText, setRequestText] = useState("")
   const [requestId, setRequestId] = useState<string | undefined>(
     initialRequestId
@@ -645,6 +613,7 @@ export function ResearchPanel({
           projectId,
           requestId: activeRequestId,
           sourceIndexes,
+          ...(target === NEW_UNIT ? {} : { unitId: target }),
         }),
       })
       if (!response.ok)
@@ -718,6 +687,7 @@ export function ResearchPanel({
           projectId,
           requestId: activeRequestId,
           sourceIndexes: [sourceIndex],
+          ...(target === NEW_UNIT ? {} : { unitId: target }),
         }),
       })
       if (!response.ok)
@@ -929,15 +899,10 @@ export function ResearchPanel({
                             ? `: ${importFailureLabel(importRow)}`
                             : null}
                           {importRow.status === "imported" ? (
-                            <ImportPreparationStatus
+                            <ImportedStatus
                               projectId={projectId}
-                              sourceIds={[
-                                ...(importRow.sourceIds ??
-                                  importRow.partSourceIds ??
-                                  (importRow.sourceId
-                                    ? [importRow.sourceId]
-                                    : [])),
-                              ]}
+                              unitId={importRow.unitId}
+                              units={units}
                             />
                           ) : null}
                         </span>
@@ -985,12 +950,37 @@ export function ResearchPanel({
               {applyState.message}
             </p>
           ) : null}
-          <div className="flex justify-end">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+            <div className="min-w-0 flex-1 space-y-1.5">
+              <label
+                htmlFor="research-unit"
+                className="text-sm font-medium text-foreground"
+              >
+                Add to
+              </label>
+              <Select
+                value={target}
+                onValueChange={setUnitTarget}
+                disabled={applyState.status === "pending"}
+              >
+                <SelectTrigger id="research-unit" className="min-h-11 w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={NEW_UNIT}>New unit</SelectItem>
+                  {units.map((unit) => (
+                    <SelectItem key={unit.id} value={unit.id}>
+                      {unit.title}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
             <Button
               type="button"
               onClick={() => void importSelected()}
               disabled={!canApply}
-              className="h-11 bg-brand text-brand-foreground hover:bg-brand/85"
+              className="h-11 shrink-0 bg-brand text-brand-foreground hover:bg-brand/85"
             >
               {applyState.status === "pending"
                 ? "Starting…"

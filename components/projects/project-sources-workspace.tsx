@@ -20,12 +20,15 @@ import type {} from "@/lib/client/desktop"
 type ProjectSourcesWorkspaceProps = {
   projectId: string
   initialResearchRequestId?: string
+  /** Unit the learner opened Find sources from, picked for imports by default. */
+  initialResearchUnitId?: string
 }
 
 /** Shows current project sources, existing add methods, and source detail previews. */
 export function ProjectSourcesWorkspace({
   projectId,
   initialResearchRequestId,
+  initialResearchUnitId,
 }: ProjectSourcesWorkspaceProps) {
   const convexProjectId = projectId as Id<"projects">
   const project = useQuery(api.projects.getProject, {
@@ -220,6 +223,13 @@ export function ProjectSourcesWorkspace({
                 projectId={String(projectId)}
                 initialRequestId={initialResearchRequestId}
                 active
+                units={(unitData?.units ?? []).map((unit) => ({
+                  id: String(unit.id),
+                  title: unit.title,
+                }))}
+                {...(initialResearchUnitId
+                  ? { defaultUnitId: initialResearchUnitId }
+                  : {})}
               />
             </CardContent>
           </Card>
