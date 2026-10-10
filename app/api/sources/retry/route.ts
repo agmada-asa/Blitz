@@ -2,8 +2,8 @@
  * Replays a retained original source through the upload route's extraction.
  *
  * Extraction is the only preparation a source needs before Teach can use it,
- * so a retry re-reads the stored original. The ingestion worker also calls
- * this route to recover uploads interrupted by a restart.
+ * so a retry re-reads the stored original. The worker's ingestion loop also
+ * calls this route to recover uploads interrupted by a restart.
  */
 
 import { api } from "@/convex/_generated/api"

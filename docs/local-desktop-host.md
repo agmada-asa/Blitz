@@ -3,14 +3,14 @@
 `npm run desktop` starts the Mac-only Electron shell for Blitz. The shell starts
 the same local services as the LAN launcher on loopback: Convex on the port pair
 saved in `.convex/local/default/config.json` (or the next free pair from
-`3220`), Next at `3008` (`dev:lan` uses `3007`), and the ingestion and
-research workers. The native shell uses the shared Blitz PNG for the macOS Dock icon and
+`3220`), Next at `3008` (`dev:lan` uses `3007`), and the background worker
+(`scripts/worker.ts`). The native shell uses the shared Blitz PNG for the macOS Dock icon and
 window icon. The BrowserWindow waits for Next to answer before it loads the app.
 
 The desktop supervisor in `electron/service-manager.mjs` owns each process
 group, and `npm run dev:lan` uses the same supervisor. Closing the window or
 quitting the app sends `SIGTERM` to every group and escalates to `SIGKILL` after
-three seconds, so workers and their Codex child processes do not remain behind.
+three seconds, so the worker and its Codex child processes do not remain behind.
 
 Any service that exits unexpectedly, including Next and Convex, restarts with
 exponential backoff from half a second up to 30 seconds. The backoff resets
@@ -18,7 +18,14 @@ after a service stays up for a minute. One failing service never stops the
 others. Every five seconds after startup the supervisor also probes Next and
 Convex; `convex dev` keeps running when the database it hosts dies, so a
 service that misses three probes in a row is killed and restarted as
-`unresponsive`. Workers start only after Next and Convex answer. Startup waits
+`unresponsive`. The worker starts only after Next and Convex answer.
+
+The worker is one Node process that runs two isolated loops: `ingestion`
+(source recovery) and `research` (Deep Research imports and proposals). A
+failing step is logged and retried after 3 seconds, doubling up to 30 seconds,
+while the other loop keeps running; if the process itself exits, the
+supervisor restarts it like any other service. The Kokoro speech worker is
+started on demand by Next and is not part of this process. Startup waits
 up to 60 seconds (override with `BLITZ_DESKTOP_HEALTH_TIMEOUT_MS`).
 
 Browsers rewrite a local `NEXT_PUBLIC_CONVEX_URL` to the hostname that served
@@ -55,7 +62,7 @@ to 500 KB in UTF-8. Inputs that cross a parsing or text bound stay saved for
 agent inspection without partial indexing; Blitz never silently truncates
 searchable evidence.
 
-`worker:ingestion` recovers queued uploads and expired five-minute ingestion
+The worker's `ingestion` loop recovers queued uploads and expired five-minute ingestion
 leases through `/api/sources/retry`. Failed files require an explicit retry.
 A source is ready to teach as soon as ingestion completes; no lesson
 generation job follows it.

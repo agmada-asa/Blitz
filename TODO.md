@@ -28,7 +28,7 @@ names the PR that delivers it once one exists.
 - [x] Prompt map (`docs/prompts.md`); dead card-generation prompt removed
 - [x] Whole textbooks as module-wide reference books searched by Teach
 - [ ] Research imports into units with passages
-- [ ] Consolidate the remaining workers into one supervised process
+- [x] Consolidate the remaining workers into one supervised process (`scripts/worker.ts`)
 - [x] Share one server Convex client helper across API routes, server modules, and scripts (`lib/server/convex.ts`)
 
 ## Phase 2: practice and exam mode
