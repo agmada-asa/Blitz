@@ -680,7 +680,7 @@ export async function POST(request: Request): Promise<Response> {
           api.chatAgents.getSettings,
           { chatId: turn.chatId }
         )
-        // Teach sessions only read; agent controls from ordinary chats never apply.
+        // Agent controls from ordinary chats never apply to Teach sessions.
         const autonomy = teach
           ? "approval"
           : (input.autonomy ?? savedAgentSettings.autonomy)
@@ -734,8 +734,11 @@ export async function POST(request: Request): Promise<Response> {
           model: turn.providerModel ?? configuredSelection.model,
           effort: turn.providerEffort ?? configuredSelection.effort,
         }
-        const approvalPolicy =
-          autonomy === "approval"
+        // Teach reads untrusted course files, so it never inherits the global
+        // access setting: no approvals to wait on, and a read-only sandbox.
+        const approvalPolicy = teach
+          ? "never"
+          : autonomy === "approval"
             ? resolveProviderApprovalPolicy(modelSettings, selection.providerId)
             : autonomy === "full"
               ? "full-access"
@@ -864,8 +867,9 @@ export async function POST(request: Request): Promise<Response> {
               ...(threadId ? { threadId } : {}),
               model: selection.model,
               effort: selection.effort,
-              sandbox:
-                selection.providerId === "codex"
+              sandbox: teach
+                ? "read-only"
+                : selection.providerId === "codex"
                   ? approvalPolicy === "full-access" || autonomy === "full"
                     ? "danger-full-access"
                     : autonomy === "project"
