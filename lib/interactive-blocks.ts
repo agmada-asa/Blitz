@@ -293,6 +293,26 @@ export function stableShuffle<T>(items: readonly T[], seedText: string): T[] {
 }
 
 /**
+ * Gives shuffled option texts ids in display order ("a" is shown first), so
+ * the ids carry no hint of the answer order the model wrote them in.
+ * @param texts Unique option texts, already shuffled for display.
+ * @returns Options in display order.
+ */
+function labelInDisplayOrder(texts: readonly string[]): QuizOption[] {
+  return texts.map((text, index) => ({ id: optionId(index), text }))
+}
+
+/**
+ * Finds the id of an option by its text; texts are validated as unique.
+ * @param options Labelled options.
+ * @param text Option text to find.
+ * @returns The option's id.
+ */
+function idForText(options: readonly QuizOption[], text: string): string {
+  return options.find((option) => option.text === text)!.id
+}
+
+/**
  * Validates one accepted-answer entry: a string or a list of alternatives.
  * @param value Untrusted value from model JSON.
  * @param field Field name used in error messages.
@@ -380,12 +400,14 @@ function parseStructuredQuiz(
     )
     if (new Set(texts).size !== texts.length)
       throw new BlockValidationError("options must be unique")
-    const ordered = texts.map((text, index) => ({ id: optionId(index), text }))
+    const options = labelInDisplayOrder(
+      stableShuffle(texts, `${base.id}:${base.question}`)
+    )
     return {
       ...base,
       type,
-      options: stableShuffle(ordered, `${base.id}:${base.question}`),
-      correctOptionIds: ordered.map((option) => option.id),
+      options,
+      correctOptionIds: texts.map((text) => idForText(options, text)),
     }
   }
   if (type === "matching") {
@@ -421,13 +443,15 @@ function parseStructuredQuiz(
     const matches = [...pairs.map((pair) => pair[1]), ...extras]
     if (new Set(prompts).size !== prompts.length || new Set(matches).size !== matches.length)
       throw new BlockValidationError("matching items and matches must be unique")
-    const options = matches.map((text, index) => ({ id: optionId(index), text }))
+    const options = labelInDisplayOrder(
+      stableShuffle(matches, `${base.id}:${base.question}`)
+    )
     return {
       ...base,
       type,
       prompts,
-      options: stableShuffle(options, `${base.id}:${base.question}`),
-      correctOptionIds: pairs.map((_, index) => optionId(index)),
+      options,
+      correctOptionIds: pairs.map((pair) => idForText(options, pair[1])),
     }
   }
   throw new BlockValidationError("unknown quiz type")

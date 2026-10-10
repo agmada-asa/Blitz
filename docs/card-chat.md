@@ -44,7 +44,7 @@ The event shapes are based on the installed `codex-cli 0.153.0` v2 schema:
 
 `POST /api/learning/chat` accepts only `projectId`, `itemId`, `clientMessageId`, and the learner's `question`. It creates or resumes one conversation per project and learning item, and treats a repeated client message id as an idempotent retry. The `202` response includes `conversationId`, `messageId`, `status`, `alreadyQueued`, and the full safe message record. `GET /api/learning/chat?projectId=...&itemId=...` returns message status, questions, replies, errors, and the saved conversation status. It never returns source text.
 
-No worker answers these questions any more: the card chat worker was removed with batch generation, so new questions stay queued. The routes remain so the frozen Android app keeps compiling and can read saved history. Retry is an explicit `convex.conversations.retry` mutation.
+No worker answers these questions any more: the card chat worker was removed with batch generation, so new questions stay queued. The notification centre lists only failed and completed card replies, so these questions never show as running work. The routes remain so the frozen Android app keeps compiling and can read saved history. Retry is an explicit `convex.conversations.retry` mutation.
 
 For HTTP clients, `POST /api/learning/chat/retry` takes `projectId`, `itemId`, and the failed `messageId`; it deliberately requeues that existing record and never creates a duplicate question.
 

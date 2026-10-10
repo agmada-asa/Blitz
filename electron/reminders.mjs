@@ -56,7 +56,10 @@ export function reminderFor({ now, lastRemindedDay, summary }) {
  *   notify: (reminder: { title: string, body: string, path: string }) => void,
  *   intervalMs?: number,
  *   clock?: () => Date,
- * }} options
+ *   lastRemindedDay?: string,
+ *   onReminded?: (day: string) => void,
+ * }} options `lastRemindedDay` and `onReminded` let the caller persist the
+ *   last reminder day, so restarting the app does not remind twice in a day.
  * @returns {() => void} Stops further checks.
  */
 export function startStudyReminders({
@@ -64,8 +67,10 @@ export function startStudyReminders({
   notify,
   intervalMs = CHECK_INTERVAL_MS,
   clock = () => new Date(),
+  lastRemindedDay: initialLastRemindedDay,
+  onReminded = () => undefined,
 }) {
-  let lastRemindedDay
+  let lastRemindedDay = initialLastRemindedDay
   let checking = false
   /** Loads today's summary and shows a reminder when one is due. */
   const check = async () => {
@@ -80,6 +85,7 @@ export function startStudyReminders({
       })
       if (reminder) {
         lastRemindedDay = reminder.day
+        onReminded(reminder.day)
         notify(reminder)
       }
     } catch {

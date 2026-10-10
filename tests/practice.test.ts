@@ -136,3 +136,13 @@ test("repairs LaTeX backslashes that models leave unescaped in JSON", () => {
   assert.equal(value.c, 'line\nbreak "quoted" \\ é')
   assert.deepEqual(extractJsonObject('```json\n{"q":"$O(\\log n)$"}\n```'), { q: "$O(\\log n)$" })
 })
+
+test("keeps real newlines and tabs before words that start like LaTeX commands", () => {
+  const raw = String.raw`{"a":"line one\nother line","b":"first\nequal","c":"x\ttop","d":"$\tan x \to \infty$ and $a \notin B$","e":"$\textbf{v}$ and $\rightarrow$"}`
+  const value = JSON.parse(repairJsonEscapes(raw)) as Record<string, string>
+  assert.equal(value.a, "line one\nother line")
+  assert.equal(value.b, "first\nequal")
+  assert.equal(value.c, "x\ttop")
+  assert.equal(value.d, String.raw`$\tan x \to \infty$ and $a \notin B$`)
+  assert.equal(value.e, String.raw`$\textbf{v}$ and $\rightarrow$`)
+})

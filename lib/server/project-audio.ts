@@ -257,48 +257,38 @@ export async function completedProjectTranscript(
   }
 }
 
-/** Lists every ready source's extracted text so project coverage is not silently truncated. */
+/**
+ * Lists the extracted text of every ready source the podcast should cover, so
+ * coverage is not silently truncated. A unit podcast reads that unit's
+ * sources; a module podcast reads every unit's sources plus unsorted ones.
+ * Past papers, their solutions, and reference books are never taught, so they
+ * are left out, matching `units.listForProject`.
+ */
 async function readyPodcastSources(
   client: ConvexHttpClient,
   projectId: Id<"projects">,
   unitId?: string
 ): Promise<PodcastSource[]> {
-  const sources: PodcastSource[] = []
+  let candidates: Array<{ id: Id<"sources">; status: string; hasText: boolean }>
   if (unitId) {
-    // A unit podcast covers only that unit's material.
     const unit = await client.query(api.units.get, { unitId: unitId as Id<"units"> })
-    for (const metadata of unit?.sources ?? []) {
-      if (metadata.status !== "ready" || !metadata.hasText) continue
-      const source = await client.query(api.sources.getSource, {
-        projectId,
-        sourceId: metadata.id,
-      })
-      if (source?.extractedText.trim())
-        sources.push({ filename: source.filename, text: source.extractedText })
-    }
-    return sources
+    candidates = unit?.sources ?? []
+  } else {
+    const learningPath = await client.query(api.units.listForProject, { projectId })
+    candidates = [
+      ...learningPath.units.flatMap((unit) => unit.sources),
+      ...learningPath.unsortedSources,
+    ]
   }
-  let cursor: string | null = null
-  for (;;) {
-    const page: {
-      page: Array<{ _id: Id<"sources">; status: string }>
-      isDone: boolean
-      continueCursor: string
-    } = await client.query(api.sources.listSources, {
+  const sources: PodcastSource[] = []
+  for (const metadata of candidates) {
+    if (metadata.status !== "ready" || !metadata.hasText) continue
+    const source = await client.query(api.sources.getSource, {
       projectId,
-      paginationOpts: { numItems: 20, cursor },
+      sourceId: metadata.id,
     })
-    for (const metadata of page.page) {
-      if (metadata.status !== "ready") continue
-      const source = await client.query(api.sources.getSource, {
-        projectId,
-        sourceId: metadata._id,
-      })
-      if (source?.extractedText.trim())
-        sources.push({ filename: source.filename, text: source.extractedText })
-    }
-    if (page.isDone) break
-    cursor = page.continueCursor
+    if (source?.extractedText.trim())
+      sources.push({ filename: source.filename, text: source.extractedText })
   }
   return sources
 }
