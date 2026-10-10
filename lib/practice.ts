@@ -118,8 +118,12 @@ function parseRecaps(value: unknown): ConceptRecap[] {
   return recaps
 }
 
-/** Pulls the first JSON object out of a reply that may wrap it in a code fence. */
-function extractJsonObject(text: string): unknown {
+/**
+ * Pulls the first JSON object out of a reply that may wrap it in a code fence.
+ * Shared with exam papers and grading in `lib/exam.ts`.
+ * @throws When the text holds no parsable JSON object.
+ */
+export function extractJsonObject(text: string): unknown {
   const fenced = /```(?:json)?\s*\n([\s\S]*?)\n```/i.exec(text)
   const candidate = fenced?.[1] ?? text
   const start = candidate.indexOf("{")
