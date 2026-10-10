@@ -321,7 +321,31 @@ export default defineSchema({
       "conceptId",
       "occurredAt",
     ])
-    .index("by_item_occurredAt", ["itemId", "occurredAt"]),
+    .index("by_item_occurredAt", ["itemId", "occurredAt"])
+    .index("by_occurredAt", ["occurredAt"]),
+
+  /**
+   * Learning milestones other than answers, used for XP and streaks: a Teach
+   * section reached, or a unit finished.
+   */
+  learningActivity: defineTable({
+    kind: v.union(v.literal("section"), v.literal("unit")),
+    projectId: v.id("projects"),
+    unitId: v.id("units"),
+    /** Section id for `section` milestones, so one section counts once. */
+    sectionId: v.optional(v.string()),
+    occurredAt: v.number(),
+  })
+    .index("by_occurredAt", ["occurredAt"])
+    .index("by_unit_kind", ["unitId", "kind"]),
+
+  /** Personal study preferences for this installation. */
+  studyPreferences: defineTable({
+    scope: v.literal("global"),
+    /** XP that counts as a completed day for the streak. */
+    dailyGoalXp: v.number(),
+    updatedAt: v.number(),
+  }).index("by_scope", ["scope"]),
 
   conceptReviews: defineTable({
     projectId: v.id("projects"),

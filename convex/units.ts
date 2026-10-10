@@ -440,6 +440,34 @@ export const recordTeachProgress = mutation({
       teachOutline: outline,
       teachSectionIndex: index,
     })
+    // Milestones feed XP and streaks; each section and each unit counts once,
+    // even if the unit is restarted.
+    const now = Date.now()
+    const previous = chat.teachOutline ? (chat.teachSectionIndex ?? 0) : -1
+    const reachedSections = outline.sections.slice(
+      Math.max(0, previous + 1),
+      Math.min(index, outline.sections.length - 1) + 1
+    )
+    const logged = await ctx.db
+      .query("learningActivity")
+      .withIndex("by_unit_kind", (q) => q.eq("unitId", chat.unitId!))
+      .collect()
+    for (const section of reachedSections)
+      if (!logged.some((entry) => entry.kind === "section" && entry.sectionId === section.id))
+        await ctx.db.insert("learningActivity", {
+          kind: "section",
+          projectId: chat.projectId!,
+          unitId: chat.unitId,
+          sectionId: section.id,
+          occurredAt: now,
+        })
+    if (index >= outline.sections.length && !logged.some((entry) => entry.kind === "unit"))
+      await ctx.db.insert("learningActivity", {
+        kind: "unit",
+        projectId: chat.projectId!,
+        unitId: chat.unitId,
+        occurredAt: now,
+      })
     const unit = await ctx.db.get(chat.unitId)
     if (unit && unit.titleSource === "auto" && args.unitTitle && !chat.teachOutline)
       await ctx.db.patch(unit._id, {

@@ -23,6 +23,7 @@ import type * as conversations from "../conversations.js";
 import type * as learning from "../learning.js";
 import type * as practice from "../practice.js";
 import type * as preparation from "../preparation.js";
+import type * as progress from "../progress.js";
 import type * as projectAgents from "../projectAgents.js";
 import type * as projects from "../projects.js";
 import type * as research from "../research.js";
@@ -58,6 +59,7 @@ declare const fullApi: ApiFromModules<{
   learning: typeof learning;
   practice: typeof practice;
   preparation: typeof preparation;
+  progress: typeof progress;
   projectAgents: typeof projectAgents;
   projects: typeof projects;
   research: typeof research;
