@@ -4,7 +4,9 @@
  * Choice questions are marked deterministically here, inside the Convex
  * mutation that submits an attempt, so the browser can never mark its own
  * paper. Written answers stay `pending` until the grading run awards marks.
- * Dependency-free so Convex functions, route handlers, and the client share
+ * When the learner edits or deletes a question, the helpers at the end of
+ * this file carry saved answers across the change and mark earlier attempts
+ * again. Dependency-free so Convex functions, route handlers, and the client share
  * one set of rules and limits. Prompts and model-output validation live in
  * `lib/exam.ts`.
  */
@@ -249,4 +251,115 @@ export function conceptBreakdown(
       const ratioB = b.available ? b.awarded / b.available : 0
       return ratioA - ratioB || b.available - a.available || a.concept.localeCompare(b.concept)
     })
+}
+
+/**
+ * Builds the mapping from a choice question's option ids before an edit to
+ * its ids after it, so saved selections keep pointing at the same option when
+ * options are added, removed, or reworded.
+ * @param previousIds For each option after the edit, in order, the id it had
+ *   before, or null for a new option.
+ * @param nextIds Option ids after the edit, in the same order.
+ * @param currentIds Option ids before the edit.
+ * @returns Old id to new id, with removed options absent; or null when the
+ *   lists differ in length, name an unknown option, or name one option twice.
+ */
+export function optionIdMap(
+  previousIds: Array<string | null>,
+  nextIds: string[],
+  currentIds: string[]
+): Map<string, string> | null {
+  if (previousIds.length !== nextIds.length) return null
+  const known = new Set(currentIds)
+  const map = new Map<string, string>()
+  for (const [index, previous] of previousIds.entries()) {
+    if (previous === null) continue
+    if (!known.has(previous) || map.has(previous)) return null
+    map.set(previous, nextIds[index])
+  }
+  return map
+}
+
+/**
+ * Applies an edit or deletion of one question to an attempt's saved answers.
+ * @param map Option id map for an edited choice question, or null when the
+ *   question was deleted and its answer should be dropped.
+ * @returns New answers; other questions' answers are unchanged.
+ */
+export function remapAnswers(
+  answers: ExamAnswer[],
+  questionId: string,
+  map: Map<string, string> | null
+): ExamAnswer[] {
+  return answers.flatMap((answer) => {
+    if (answer.questionId !== questionId) return [answer]
+    if (!map) return []
+    const selected = (answer.selectedOptionIds ?? []).flatMap((id) => {
+      const next = map.get(id)
+      return next === undefined ? [] : [next]
+    })
+    return [{ ...answer, selectedOptionIds: selected }]
+  })
+}
+
+/**
+ * Marks a submitted attempt again after its paper's questions changed.
+ *
+ * Choice questions are marked again against the current answer key, which is
+ * deterministic, so unchanged questions keep their result. Written answers
+ * keep the marks and feedback they were given, clamped to the question's
+ * current marks, because re-marking them would need another model run; ones
+ * still waiting for marking stay pending. Results for questions no longer on
+ * the paper are dropped.
+ * @returns One result per current question, in paper order.
+ */
+export function rescoreResults(
+  questions: ScorableQuestion[],
+  answers: ExamAnswer[],
+  results: ExamQuestionResult[]
+): ExamQuestionResult[] {
+  const answerById = new Map(answers.map((answer) => [answer.questionId, answer]))
+  const resultById = new Map(results.map((result) => [result.questionId, result]))
+  return questions.map((question) => {
+    const answer = answerById.get(question.id)
+    if (isChoiceType(question.type)) return scoreChoiceAnswer(question, answer)
+    const result = resultById.get(question.id)
+    if (!result) return scoreAttempt([question], answer ? [answer] : [])[0]
+    return result.awardedMarks === undefined
+      ? result
+      : { ...result, awardedMarks: clampMarks(result.awardedMarks, question.marks) }
+  })
+}
+
+/** The parts of a question that decide what counts as the right answer. */
+export type ExamAnswerKey = {
+  type: ExamQuestionType
+  correctOptionIds?: string[]
+  modelAnswer?: string
+  markScheme?: Array<{ point: string; marks: number }>
+}
+
+/**
+ * Returns whether an edit changed a question's answer: its format, its
+ * correct options (compared through the option id map, so moving options
+ * around is not a change), its model answer, or its mark scheme.
+ * @param map Option id map for a choice question; ids map to themselves when omitted.
+ */
+export function answerKeyChanged(
+  before: ExamAnswerKey,
+  after: ExamAnswerKey,
+  map?: Map<string, string>
+): boolean {
+  if (before.type !== after.type) return true
+  if (isChoiceType(before.type)) {
+    const previous = (before.correctOptionIds ?? []).map((id) => (map ? map.get(id) : id))
+    const next = new Set(after.correctOptionIds ?? [])
+    return previous.length !== next.size || previous.some((id) => id === undefined || !next.has(id))
+  }
+  const scheme = (key: ExamAnswerKey) =>
+    JSON.stringify((key.markScheme ?? []).map((point) => [point.point.trim(), point.marks]))
+  return (
+    (before.modelAnswer ?? "").trim() !== (after.modelAnswer ?? "").trim() ||
+    scheme(before) !== scheme(after)
+  )
 }
