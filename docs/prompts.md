@@ -33,7 +33,7 @@ instructions.
 | Instructions | Where |
 | --- | --- |
 | Project folder rules for chat agents and Teach workspaces | `projectAgentInstructions` in `lib/server/project-agent.ts` |
-| Provider execution and sandbox notes | `providerExecutionInstructions` via `lib/server/providers/run-text-turn.ts` |
+| Provider execution and sandbox notes | `providerExecutionInstructions` in `lib/provider-execution.ts` |
 | Approval and question requests shown in the composer | `lib/server/agent-request.ts` |
 
 ## Changing a prompt
