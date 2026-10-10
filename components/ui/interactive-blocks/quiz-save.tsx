@@ -85,7 +85,7 @@ export function QuizSaveAction({
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="start" className="max-w-80">
-          <DropdownMenuLabel>Add to a unit's questions</DropdownMenuLabel>
+          <DropdownMenuLabel>Add to a unit&apos;s questions</DropdownMenuLabel>
           {units.map((unit) => (
             <DropdownMenuItem key={unit.id} onSelect={() => void save(unit.id)}>
               <span className="truncate">{unit.title}</span>
