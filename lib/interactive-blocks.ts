@@ -1058,7 +1058,7 @@ Other types, for recall that choices would give away. They take the same id, con
 {"id":"q2","concept":"Heaps","type":"cloze","question":"A binary heap with n nodes has height {{1}}.","answer":[["O(log n)","log n"]],"explanation":"Each level doubles the nodes, so the height grows logarithmically."}
 \`\`\`
 - "cloze": mark 1–6 blanks in the question as {{1}}, {{2}}…; answer is one list of accepted answers per blank, e.g. "answer":[["O(log n)","log n"],["root"]]. Accept common spellings; matching ignores case and spacing.
-- "ordering": options are 3–8 steps or items listed in the correct order (they are shuffled for the learner); no answer field.
+- "ordering": options are 3–8 steps or items written in the correct order, first to last; no answer field. Never shuffle them yourself: Blitz shuffles them for the learner, and your order is the answer key.
 - "matching": "pairs":[["term","its match"],…] with 3–6 pairs, optional "extras":["unused match"] (max 2); no options or answer.
 - "code-output": the question includes a fenced code block; answer is the exact output, or a list of accepted outputs. Keep programs short and deterministic.
 
