@@ -27,6 +27,22 @@ export type InteractiveBlocksContextValue = {
   >
   /** Sends a suggested follow-up as the learner's next message; suggestions are hidden without it. */
   onFollowUp?: (text: string) => void
+  /** Lets quizzes be saved to a unit's question bank; the action is hidden without it. */
+  quizSaving?: QuizSaving
+}
+
+/** Where a message's quizzes can be saved, and which already are. */
+export type QuizSaving = {
+  /** Module the units belong to, for the link to its Practice page. */
+  projectId: string
+  /** Units in the module, in order. */
+  units: Array<{ id: string; title: string }>
+  /** Unit offered first. */
+  defaultUnitId: string
+  /** Quizzes in this message already saved, keyed by quiz id. */
+  saved: Record<string, { unitId: string; unitTitle: string }>
+  /** Saves quizzes to a unit. Throwing shows a retryable error. */
+  onSave: (quizIds: string[], unitId: string) => Promise<void>
 }
 
 /**

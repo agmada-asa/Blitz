@@ -565,6 +565,11 @@ export function ChatWorkspace({
     api.workspaceChats.get,
     activeChatId ? { chatId: activeChatId } : "skip"
   )
+  // Units a chat quiz can be saved to, and the quizzes already saved.
+  const quizTargets = useQuery(
+    api.practice.chatQuizTargets,
+    activeChatId ? { chatId: activeChatId } : "skip"
+  )
   const [attachments, setAttachments] = useState<DraftAttachment[]>(() =>
     initialCard
       ? [draftAttachmentForCard(initialCard)]
@@ -764,6 +769,45 @@ export function ChatWorkspace({
       createdAt: a.createdAt,
     })),
   ]
+
+  /**
+   * Saves quizzes from one reply to a unit's question bank through the
+   * server route, which re-reads them from the saved reply.
+   * @throws When the route refuses or the request fails, so the quiz shows a retryable error.
+   */
+  const saveQuizzes = useCallback(
+    async (messageId: string, quizIds: string[], unitId: string) => {
+      if (!activeChatId) throw new Error("No chat is open")
+      const response = await fetch("/api/practice/save-quiz", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ chatId: activeChatId, messageId, unitId, quizIds }),
+      })
+      if (!response.ok) throw new Error("The question could not be saved")
+    },
+    [activeChatId]
+  )
+
+  /**
+   * Builds the save options for one reply's quizzes, or nothing when the
+   * chat has no module or the reply is not finished.
+   */
+  const quizSavingFor = (message: { id: string; status: string; content: string }) =>
+    quizTargets && message.status === "completed" && message.content.includes("```quiz")
+      ? {
+          projectId: String(quizTargets.projectId),
+          units: quizTargets.units.map((unit) => ({ id: String(unit.id), title: unit.title })),
+          defaultUnitId: String(quizTargets.defaultUnitId),
+          saved: Object.fromEntries(
+            Object.entries(quizTargets.saved[message.id] ?? {}).map(([quizId, entry]) => [
+              quizId,
+              { unitId: String(entry.unitId), unitTitle: entry.unitTitle },
+            ])
+          ),
+          onSave: (quizIds: string[], unitId: string) =>
+            saveQuizzes(message.id, quizIds, unitId),
+        }
+      : undefined
 
   /** Creates a new draft annotation anchored to the selected text on an assistant reply. */
   const addAnnotation = useCallback(
@@ -2346,6 +2390,7 @@ export function ChatWorkspace({
                             <InteractiveBlocksProvider
                               value={{
                                 streaming: message.status === "running",
+                                quizSaving: quizSavingFor(message),
                                 // Suggested follow-ups send a new message from the latest reply only.
                                 ...(latest && !isRunning
                                   ? {
