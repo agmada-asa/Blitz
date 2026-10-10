@@ -10,8 +10,13 @@ source IDs that support the concept. Every `learningItems` row belongs to one
 concept and project and must cite at least one source attached to that
 concept. Item insertion accepts a bounded batch of up to 100 items.
 
-Learning items support `explain`, `single-choice`, `multiple-answer`, and
-`true-false`. Choice options and the stored correct answer fields are kept on
+Learning items support `explain`, `single-choice`, `multiple-answer`,
+`true-false`, `cloze`, `ordering`, `matching`, and `code-output`. Ordering
+stores the correct sequence in `correctOptionIds`; matching stores the match
+for each of its `matchPrompts` there; cloze and code output keep their accepted
+answers in `acceptedAnswers`. `convex/quizFields.ts` maps a parsed quiz onto
+these fields for every writer (question banks, Teach quizzes, and quizzes saved
+from chat). Choice options and the stored correct answer fields are kept on
 the server. `listLearningFeedCandidates` omits correct answer fields before
 returning feed data to a client.
 
@@ -28,7 +33,8 @@ outcome on the event, making later replay independent of item edits.
 for analytics and sync, but never creates or changes a concept review summary.
 The two event mutations scope idempotency keys to a project and reject reuse
 with a different item, event type, timestamp, or answer. Reordered
-multiple-answer arrays represent the same payload.
+multiple-answer arrays represent the same payload; for ordering, matching, and
+cloze the order is part of the answer.
 
 When a scored answer is recorded, the server rebuilds that concept's summary
 from the stored outcomes of all answer events sorted by `occurredAt`,

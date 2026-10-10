@@ -9,7 +9,7 @@ change together; this page is the map.
 | Rules | Where | Used by |
 | --- | --- | --- |
 | Teaching voice for lessons, questions, and tutor replies | `lib/teaching-voice.ts` | Teach, practice questions, chat, podcasts |
-| Interactive blocks: quiz, steps, viz, followups | `INTERACTIVE_BLOCKS_PROMPT` in `lib/interactive-blocks.ts` | Teach, chat |
+| Interactive blocks: quiz (choice, cloze, ordering, matching, code output), steps, viz, followups | `INTERACTIVE_BLOCKS_PROMPT` in `lib/interactive-blocks.ts` | Teach, chat |
 | Citation links to supplied passages | `citationPrompt` in `lib/citations.ts` | Teach, chat |
 
 Every prompt that carries learner material fences it between explicit
