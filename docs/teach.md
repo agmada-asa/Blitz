@@ -13,7 +13,12 @@ citations, interactive blocks, and quizzes that count as study evidence.
    uploaded as Markdown text files, so every source gets the same extraction,
    passages, and citations. A source is `ready` as soon as extraction finishes;
    there is no generation step. Subtitle files (`.vtt`, `.srt`) become
-   `[m:ss]`-stamped paragraphs (`lib/transcript.ts`).
+   `[m:ss]`-stamped paragraphs (`lib/transcript.ts`), and Word documents
+   (`.docx`) become Markdown with their headings. Sources found with **Find
+   sources** are imported into the unit the learner picks (or a new unit for
+   the research) with passages, the same way uploads are; see
+   `docs/research.md`. Each unit's menu on the module page opens Find
+   sources with that unit picked.
 2. **Open the unit.** `/projects/[projectId]/learn/[unitId]` renders
    `components/learn/teach-session.tsx`. `units.startTeach` returns the unit's
    session, a workspace chat with `purpose: "teach"`, creating it on first visit.
@@ -105,10 +110,16 @@ first section finished within a minute with the configured reply provider.
   become module-wide **reference books** when their text exceeds 600,000
   characters. Their sections are written in batches; Teach searches them each
   turn with the unit topic plus the section being taught and adds up to six
-  passages as citable excerpts. A book uploaded seconds before teaching may not
-  be searchable for the first turn.
-- Research imports are stored as unsorted sources without passages; use
-  `Group into a unit` on the module page to teach them.
+  passages as citable excerpts, cited at their page even past the 450 KB
+  excerpt stored on the source row. A book uploaded seconds before teaching
+  may not be searchable for the first turn.
+- Research imports made before imports were filed into units are unsorted
+  and have no passages. `Group into a unit` on the module page lets Teach
+  teach them from their text, but they cannot be cited; add the link again
+  with `Add material` to cite it.
+- Citations open the cited page, slide, timestamp, or heading as described
+  in `docs/chat-citations.md`. Slides and Word documents are shown as
+  extracted text; their originals download.
 - Interactive visualisations run in a sandboxed frame with no network access,
   but a script can still navigate its own frame away. Treat source-driven
   prompt injection as possible, though it cannot reach Blitz data.

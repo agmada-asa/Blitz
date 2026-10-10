@@ -10,9 +10,11 @@ The saved Research model and reasoning level from `/settings` take precedence fo
 
 ## Applying approved sources
 
-The interface must send an explicit `POST /api/research/proposals/apply` with `projectId`, `requestId`, and selected `sourceIndexes` from the stored ready proposal. It sends indexes only; the server resolves URLs from that immutable proposal. Repeating the request is safe: imported sources remain imported, queued or running imports remain unchanged, and a failed selected import is deliberately requeued.
+The interface must send an explicit `POST /api/research/proposals/apply` with `projectId`, `requestId`, selected `sourceIndexes` from the stored ready proposal, and an optional `unitId`. It sends indexes only; the server resolves URLs from that immutable proposal. Repeating the request is safe: imported sources remain imported, queued or running imports remain unchanged, and a failed selected import is deliberately requeued, going to the unit chosen in the retry.
 
-Poll `GET /api/research/proposals/imports?projectId=...&requestId=...` for an `imports` array containing each selected source index, status, and resulting source and preparation job IDs. The local worker performs bounded public URL validation, follows at most three redirects, retains at most 5 MB, extracts readable PDF, PPTX, Markdown, HTML, or text, and atomically creates the source and a completed preparation job that serves as its import checkpoint. Article links that redirect to a site homepage are rejected before import. Failed imports include a fixed `failureCategory` such as `site-refused`, `not-found`, `unsupported-format`, `needs-ocr`, `too-large`, `timeout`, or `download-failed`, plus safe recovery copy. Retry a failed item deliberately with another explicit apply request. No planned generated note is created in this flow.
+Every approved source is filed into a unit so Teach can teach and cite it straight away. `unitId` names an existing unit in the project (the unit Find sources was opened from, or one the learner picked). Without it, the sources go into one new unit per research request (`researchProposals.unitId`), created with the first imported source at the end of the learning path. Its title comes from the request (`researchUnitTitle` in `lib/research-unit.ts`, so `help me learn graph algorithms` becomes `Graph algorithms`) and is `auto`, so the tutor retitles it when it first teaches the unit. If a picked unit was deleted before the import ran, the import falls back to the research's new unit.
+
+Poll `GET /api/research/proposals/imports?projectId=...&requestId=...` for an `imports` array containing each selected source index, status, the unit its sources joined (`unitId`), and resulting source and preparation job IDs. The local worker performs bounded public URL validation, follows at most three redirects, retains at most 5 MB, extracts readable PDF, PPTX, Word, Markdown, HTML, or text, and splits each part into passages with `prepareTextSource` (`lib/server/source-ingestion/chunk-rows.ts`), the same normalization, chunking, and page, slide, and timestamp references as uploads. `research.completeImport` checks every passage is an exact slice of the stored text, then atomically creates the source in its unit, its passages, and a completed preparation job that serves as its import checkpoint. Article links that redirect to a site homepage are rejected before import. Failed imports include a fixed `failureCategory` such as `site-refused`, `not-found`, `unsupported-format`, `needs-ocr`, `too-large`, `timeout`, or `download-failed`, plus safe recovery copy. Retry a failed item deliberately with another explicit apply request. No planned generated note is created in this flow.
 
 
 ## Progress and large sources
@@ -24,6 +26,7 @@ Legacy proposals have an empty activity list.
 
 Extraction accepts up to 2,000,000 characters, then splits approved downloads
 into attributed parts no larger than 120,000 characters. Each part commits a
-source and preparation job atomically, with its IDs checkpointed on the import.
+source, its passages, and a preparation job atomically, with its IDs
+checkpointed on the import. Every part joins the same unit.
 The lease remains live until the final part. Replayed parts must match saved
 content before a retry can continue. See `docs/source-splitting.md`.
