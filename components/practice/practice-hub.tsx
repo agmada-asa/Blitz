@@ -30,7 +30,7 @@ import { cn } from "@/lib/utils"
 type UnitPractice = FunctionReturnType<typeof api.practice.overview>["units"][number]
 
 /** Words and colours for each concept strength. */
-const strengthStyle: Record<ConceptStrength, { label: string; dot: string }> = {
+export const strengthStyle: Record<ConceptStrength, { label: string; dot: string }> = {
   weak: { label: "Needs work", dot: "bg-destructive" },
   learning: { label: "Learning", dot: "bg-brand/50" },
   strong: { label: "Strong", dot: "bg-brand" },

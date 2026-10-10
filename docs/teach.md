@@ -36,6 +36,23 @@ citations, interactive blocks, and quizzes that count as study evidence.
    `learning.recordAnswerEvent`. Review scheduling, Practice, and the feed read
    these like any other question. `teach.answeredQuizzes` restores answered state.
 
+## The Teach screen
+
+The header carries the unit title, the current section, a segmented progress
+bar (one segment per section: taught, current, or ahead), the XP earned this
+sitting, and **Finish for now**. On narrow screens the progress bar opens the
+outline; on wide ones the outline is a rail drawn as a path, with the unit's
+sources beneath it. Each section in the lesson opens with a numbered heading.
+
+A sitting starts when the learner opens the unit and lasts until a three hour
+gap (`lib/client/teach-sitting.ts`, kept in session storage so a reload keeps
+it). **Finish for now** opens the session summary for the sitting
+(`components/progress/session-summary.tsx`, backed by
+`progress.sessionSummary`): XP, sections, accuracy, time, each concept answered
+and its strength, and today's goal and streak, with Done for now, Keep
+learning, and Practice this unit. Once the unit is complete, the same summary
+for the whole unit appears after the recap.
+
 ## Protocol
 
 The tutor's rules live in `TEACH_RULES` in `lib/teach.ts`:

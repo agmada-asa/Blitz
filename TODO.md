@@ -47,7 +47,7 @@ names the PR that delivers it once one exists.
 - [x] Weakness-weighted infinite feed of studied material, with recaps
 - [x] Streaks, XP, daily goal, Today card with a seven-day chart
 - [x] Daily reminder notification in the desktop app (time set in Settings)
-- [ ] Session summaries after Teach and drills
+- [x] Session summaries after Teach and drills
 
 ## Known limits
 
@@ -66,7 +66,8 @@ names the PR that delivers it once one exists.
 
 ## Phase 5: polish and redesign
 
-- [ ] Redesign starting from the Teach screen
+- [x] Redesign starting from the Teach screen: progress bar, path outline, session XP, Finish for now
+- [ ] Carry the redesign to Practice, the Library, and Home
 - [x] Podcasts can cover one unit or the whole module
 - [x] Notifications for practice questions, exam papers, and marking; retired lesson pipeline rows removed
 

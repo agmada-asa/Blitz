@@ -180,13 +180,21 @@ const TutorReply = memo(function TutorReply({
     >
       {plan ? <LessonPlan outline={plan} /> : null}
       {sectionNumber >= 0 ? (
-        <header className="mb-4">
-          <p className="text-xs font-medium text-brand">
-            Section {sectionNumber + 1} of {outline!.sections.length}
-          </p>
-          <h2 className="mt-1 font-heading text-2xl font-semibold tracking-tight">
-            {outline!.sections[sectionNumber].title}
-          </h2>
+        <header className="mb-5 flex items-start gap-3">
+          <span
+            aria-hidden="true"
+            className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-full bg-brand/10 font-heading text-sm font-semibold text-brand tabular-nums"
+          >
+            {sectionNumber + 1}
+          </span>
+          <div className="min-w-0">
+            <p className="text-xs font-medium text-muted-foreground">
+              Section {sectionNumber + 1} of {outline!.sections.length}
+            </p>
+            <h2 className="mt-0.5 font-heading text-2xl font-semibold tracking-tight text-balance">
+              {outline!.sections[sectionNumber].title}
+            </h2>
+          </div>
         </header>
       ) : marker?.kind === "done" ? (
         <header className="mb-4">

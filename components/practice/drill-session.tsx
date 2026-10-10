@@ -3,7 +3,8 @@
 /**
  * One adaptive drill: up to ten questions, missed and weak material first,
  * with immediate feedback. A wrong answer offers Relearn, which re-teaches
- * the concept in the unit's Teach session. The deck is fetched once so
+ * the concept in the unit's Teach session. The end screen summarises the
+ * drill: XP, concepts and their strength, today's goal, and what to relearn. The deck is fetched once so
  * answering does not reshuffle it mid-drill.
  */
 
@@ -13,6 +14,7 @@ import type { FunctionReturnType } from "convex/server"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 
 import { relearnLink } from "@/components/practice/practice-hub"
+import { SessionSummary } from "@/components/progress/session-summary"
 import { Button } from "@/components/ui/button"
 import { InteractiveBlocksProvider } from "@/components/ui/interactive-blocks"
 import { plainMarkdownRenderer } from "@/components/ui/markdown"
@@ -80,6 +82,8 @@ export function DrillSession({ projectId, unitId }: { projectId: string; unitId?
   const [index, setIndex] = useState(0)
   const [results, setResults] = useState<Record<string, DrillResult>>({})
   const [round, setRound] = useState(0)
+  // When this round's deck arrived; the summary counts answers from then on.
+  const [startedAt, setStartedAt] = useState(0)
   const nextRef = useRef<HTMLButtonElement>(null)
   const base = `/projects/${encodeURIComponent(projectId)}`
 
@@ -97,6 +101,7 @@ export function DrillSession({ projectId, unitId }: { projectId: string; unitId?
         if (!active) return
         setLoadError("")
         setDeck(questions)
+        setStartedAt(Date.now())
         setIndex(0)
         setResults({})
       })
@@ -182,52 +187,59 @@ export function DrillSession({ projectId, unitId }: { projectId: string; unitId?
           </Button>
         </section>
       ) : finished ? (
-        <section className="mt-10" aria-labelledby="drill-done">
-          <h1 id="drill-done" className="font-heading text-3xl font-semibold tracking-tight">
-            {correctCount} of {deck.length} correct
-          </h1>
-          {missed.length ? (
-            <>
-              <p className="mt-2 text-sm text-muted-foreground">
-                These will come back first next time. Relearn them now while they are fresh.
-              </p>
-              <ul className="mt-4 divide-y divide-border rounded-xl border border-border bg-card">
-                {missed.map((question) => (
-                  <li
-                    key={question.itemId}
-                    className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
-                  >
-                    <div className="min-w-0">
-                      <p className="font-medium break-words">{question.quiz.concept}</p>
-                      <p className="text-xs text-muted-foreground">{question.unitTitle}</p>
-                    </div>
-                    <Button asChild variant="outline" className="min-h-10 shrink-0 rounded-full px-4">
-                      <Link {...relearnLink(projectId, question.unitId, question.quiz.concept, question.quiz.question)}>
-                        Relearn
-                      </Link>
-                    </Button>
-                  </li>
-                ))}
-              </ul>
-            </>
-          ) : (
-            <p className="mt-2 text-sm text-muted-foreground">Every answer was right.</p>
-          )}
-          <div className="mt-6 flex flex-wrap gap-2">
-            <Button
-              onClick={() => {
-                setDeck(null)
-                setRound((value) => value + 1)
-              }}
-              className="min-h-11 rounded-full bg-brand px-6 text-brand-foreground hover:bg-brand/85"
-            >
-              Drill again
-            </Button>
-            <Button asChild variant="outline" className="min-h-11 rounded-full px-5">
-              <Link href={`${base}/practice`}>Back to Practice</Link>
-            </Button>
-          </div>
-        </section>
+        <div className="mt-10">
+          <SessionSummary
+            projectId={projectId}
+            unitId={unitId}
+            since={startedAt}
+            eyebrow="Drill complete"
+            title={`${correctCount} of ${deck.length} correct`}
+            headingLevel="h1"
+            actions={
+              <>
+                <Button
+                  onClick={() => {
+                    setDeck(null)
+                    setRound((value) => value + 1)
+                  }}
+                  className="min-h-11 rounded-full bg-brand px-6 text-brand-foreground hover:bg-brand/85"
+                >
+                  Drill again
+                </Button>
+                <Button asChild variant="outline" className="min-h-11 rounded-full px-5">
+                  <Link href={`${base}/practice`}>Back to Practice</Link>
+                </Button>
+              </>
+            }
+          >
+            {missed.length ? (
+              <div className="mt-6">
+                <h2 className="text-sm font-medium">Missed</h2>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  These come back first next time. Relearn them now while they are fresh.
+                </p>
+                <ul className="mt-3 divide-y divide-border rounded-xl border border-border bg-card">
+                  {missed.map((question) => (
+                    <li
+                      key={question.itemId}
+                      className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
+                    >
+                      <div className="min-w-0">
+                        <p className="font-medium break-words">{question.quiz.concept}</p>
+                        <p className="text-xs text-muted-foreground">{question.unitTitle}</p>
+                      </div>
+                      <Button asChild variant="outline" className="min-h-10 shrink-0 rounded-full px-4">
+                        <Link {...relearnLink(projectId, question.unitId, question.quiz.concept, question.quiz.question)}>
+                          Relearn
+                        </Link>
+                      </Button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+          </SessionSummary>
+        </div>
       ) : current ? (
         <section className="mt-8 flex-1" aria-label={`Question ${index + 1}`}>
           <p className="mb-3 text-xs text-muted-foreground">

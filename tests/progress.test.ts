@@ -3,7 +3,13 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 
-import { computeStreak, localDayKey, previousDayKey } from "../lib/progress.ts"
+import {
+  computeStreak,
+  localDayKey,
+  previousDayKey,
+  summarizeSession,
+  XP,
+} from "../lib/progress.ts"
 import { parseQuestionBank } from "../lib/practice.ts"
 
 test("local day keys follow the learner's midnight", () => {
@@ -68,4 +74,42 @@ test("recaps are kept once per concept and malformed ones are dropped", () => {
     })
   )
   assert.deepEqual(parsed.recaps.map((recap) => recap.title), ["Recursion"])
+})
+
+test("summarizes a session's answers, milestones, and concepts", () => {
+  const totals = summarizeSession(
+    [
+      { conceptId: "heaps", correct: true },
+      { conceptId: "sorting", correct: false },
+      { conceptId: "heaps", correct: true },
+      { conceptId: "sorting", correct: true },
+      { conceptId: "graphs", correct: true },
+    ],
+    [{ kind: "section" }, { kind: "section" }, { kind: "unit" }]
+  )
+  assert.equal(totals.answered, 5)
+  assert.equal(totals.correct, 4)
+  assert.equal(totals.sections, 2)
+  assert.equal(totals.unitsCompleted, 1)
+  assert.equal(
+    totals.xp,
+    4 * XP.correctAnswer + XP.incorrectAnswer + 2 * XP.section + XP.unit
+  )
+  // Concepts with mistakes come first, then the most practised.
+  assert.deepEqual(
+    totals.concepts.map((concept) => [concept.conceptId, concept.correct, concept.answered]),
+    [
+      ["sorting", 1, 2],
+      ["heaps", 2, 2],
+      ["graphs", 1, 1],
+    ]
+  )
+  assert.deepEqual(summarizeSession([], []), {
+    answered: 0,
+    correct: 0,
+    xp: 0,
+    sections: 0,
+    unitsCompleted: 0,
+    concepts: [],
+  })
 })
