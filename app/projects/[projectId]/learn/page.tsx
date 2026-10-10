@@ -1,22 +1,13 @@
-/** Exposes the project's source-grounded Learn experience at a focused route. */
+/** Keeps old Learn links working; a module's learning path lives on its project page. */
 
-import { ProjectLearn } from "@/components/projects/project-learn"
+import { redirect } from "next/navigation"
 
-/** Resolves the Next.js 16 project segment and renders its Learn workspace. */
+/** Sends `/projects/[projectId]/learn` to the project page, which lists its units. */
 export default async function ProjectLearnPage({
   params,
-  searchParams,
 }: {
   params: Promise<{ projectId: string }>
-  searchParams: Promise<{ resume?: string }>
 }) {
-  const [{ projectId }, query] = await Promise.all([params, searchParams])
-  const resume = query.resume === "1"
-  return (
-    <ProjectLearn
-      key={resume ? "resume" : "path"}
-      projectId={projectId}
-      resume={resume}
-    />
-  )
+  const { projectId } = await params
+  redirect(`/projects/${encodeURIComponent(projectId)}`)
 }

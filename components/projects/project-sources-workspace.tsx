@@ -4,10 +4,13 @@
 
 import Link from "next/link"
 import { useEffect, useState } from "react"
-import { useMutation, usePaginatedQuery, useQuery } from "convex/react"
+import { usePaginatedQuery, useQuery } from "convex/react"
+import { AddMaterial } from "@/components/learn/add-material"
 import { ProjectFiles } from "@/components/projects/project-files"
-import { SourceUploader } from "@/components/projects/source-uploader"
+import { ResearchPanel } from "@/components/projects/research-panel"
 import { Button } from "@/components/ui/button"
+import { Card, CardContent } from "@/components/ui/card"
+import { PlusIcon } from "@/components/ui/icon"
 import { Skeleton } from "@/components/ui/skeleton"
 import { api } from "@/convex/_generated/api"
 import type { Id } from "@/convex/_generated/dataModel"
@@ -37,10 +40,10 @@ export function ProjectSourcesWorkspace({
     { projectId: convexProjectId },
     { initialNumItems: 20 }
   )
-  const createSource = useMutation(api.sources.createSource)
-  const updateSource = useMutation(api.sources.updateSource)
-  const enqueueContent = useMutation(api.contentGeneration.enqueue)
-  const setContentDepth = useMutation(api.contentGeneration.setDepth)
+  const unitData = useQuery(api.units.listForProject, {
+    projectId: convexProjectId,
+  })
+  const [adding, setAdding] = useState(false)
   const [agentWorkspaceDirectory, setAgentWorkspaceDirectory] = useState("")
   const [desktopAvailable, setDesktopAvailable] = useState(false)
   const ingestion = useQuery(api.projectAgents.listIngestion, {
@@ -177,10 +180,12 @@ export function ProjectSourcesWorkspace({
             Sources
           </h1>
         </div>
-        <Button asChild variant="outline" className="min-h-10 rounded-full">
-          <Link href={`/projects/${encodeURIComponent(projectId)}/map`}>
-            Explore concept map
-          </Link>
+        <Button
+          type="button"
+          onClick={() => setAdding(true)}
+          className="min-h-11 rounded-full bg-brand px-5 text-brand-foreground hover:bg-brand/85"
+        >
+          <PlusIcon aria-hidden="true" /> Add material
         </Button>
       </div>
 
@@ -240,17 +245,31 @@ export function ProjectSourcesWorkspace({
         </section>
 
         <aside className="min-w-0 lg:sticky lg:top-6 lg:self-start">
-          <SourceUploader
-            projectId={convexProjectId}
-            depth={project.contentDepth ?? 3}
-            onDepthChange={(depth) => setContentDepth({ projectId: convexProjectId, depth })}
-            initialResearchRequestId={initialResearchRequestId}
-            createSource={createSource}
-            updateSource={updateSource}
-            enqueueContent={enqueueContent}
-          />
+          <Card className="border-border bg-card">
+            <CardContent className="p-5 sm:p-7">
+              <h2 className="mb-4 font-heading text-xl">Find sources</h2>
+              <ResearchPanel
+                projectId={String(projectId)}
+                initialRequestId={initialResearchRequestId}
+                active
+              />
+            </CardContent>
+          </Card>
         </aside>
       </div>
+      {adding ? (
+        <AddMaterial
+          projectId={convexProjectId}
+          units={(unitData?.units ?? []).map((unit) => ({
+            id: unit.id,
+            title: unit.title,
+          }))}
+          open
+          onOpenChange={(open) => {
+            if (!open) setAdding(false)
+          }}
+        />
+      ) : null}
     </main>
   )
 }
