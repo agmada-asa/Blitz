@@ -15,8 +15,9 @@
     "test": "node --test --experimental-strip-types tests/*.test.ts",
     "format": "prettier --write \"**/*.{js,mjs,ts,tsx}\"",
     "typecheck": "tsc --noEmit",
-    "worker:research": "node --experimental-strip-types scripts/research-worker.ts",
-    "worker:ingestion": "node --experimental-strip-types scripts/ingestion-worker.ts",
+    "worker": "node --experimental-strip-types scripts/worker.ts",
+    "worker:research": "node --experimental-strip-types scripts/worker.ts --only research",
+    "worker:ingestion": "node --experimental-strip-types scripts/worker.ts --only ingestion",
     "eval:ingestion": "node --experimental-strip-types scripts/eval-ingestion.ts",
     "benchmark:teach": "node --experimental-strip-types scripts/benchmark-teach.ts",
     "check:runtimes": "node --experimental-strip-types scripts/check-provider-runtimes.ts"
