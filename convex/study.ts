@@ -119,7 +119,8 @@ export const listStudyQuestions = query({
         numItems: Math.min(args.paginationOpts.numItems, MAX_STUDY_PAGE_SIZE),
       })
     for (const item of page.page) {
-      if (item.type === "explain") continue
+      // Exam paper questions are only asked inside their paper.
+      if (item.type === "explain" || item.origin === "exam") continue
       const concept = await ctx.db.get(item.conceptId)
       if (
         !concept ||

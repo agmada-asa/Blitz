@@ -15,22 +15,20 @@ import { extractJsonObject } from "./practice.ts"
 import { budgetSources } from "./teach.ts"
 import {
   clampMarks,
+  EXAM_LIMITS,
   EXAM_MARK_RANGE,
+  MAX_PAPER_QUESTIONS,
   MAX_WRITTEN_ANSWER_CHARS,
   type ExamQuestionType,
 } from "./exam-scoring.ts"
 
-/** Most questions one paper may hold; extra questions are dropped and counted. */
-export const MAX_PAPER_QUESTIONS = 60
-
-/** Mock exam lengths the learner can choose, in minutes. */
-export const MOCK_EXAM_MINUTES = [30, 60, 90] as const
-
-/** One of the allowed mock exam lengths. */
-export type MockExamMinutes = (typeof MOCK_EXAM_MINUTES)[number]
-
-/** Paper length offered when a past paper does not state one, in minutes. */
-export const DEFAULT_EXAM_MINUTES = 60
+export {
+  DEFAULT_EXAM_MINUTES,
+  EXAM_LIMITS,
+  MAX_PAPER_QUESTIONS,
+  MOCK_EXAM_MINUTES,
+  type MockExamMinutes,
+} from "./exam-scoring.ts"
 
 /** Characters of past paper and solutions text placed in an extraction prompt, shared fairly. */
 export const PAST_PAPER_TEXT_BUDGET = 160_000
@@ -43,22 +41,6 @@ export const GRADING_ANSWER_BUDGET = 60_000
 
 /** Past papers whose questions are shown to the model as style examples for a mock. */
 export const MAX_STYLE_EXAMPLES = 2
-
-/** Bounds on every string and list in a validated exam question. */
-export const EXAM_LIMITS = {
-  titleChars: 120,
-  numberChars: 20,
-  promptChars: 4_000,
-  conceptChars: 120,
-  modelAnswerChars: 4_000,
-  markPointChars: 400,
-  maxMarkPoints: 10,
-  feedbackChars: 1_000,
-  minFeedbackChars: 10,
-  minDurationMinutes: 5,
-  maxDurationMinutes: 600,
-  maxStatedTotalMarks: 1_000,
-} as const
 
 /** Where a past paper question's answer came from. */
 export type AnswerSource = "solutions" | "inferred"

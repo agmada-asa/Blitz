@@ -5,11 +5,44 @@
  * mutation that submits an attempt, so the browser can never mark its own
  * paper. Written answers stay `pending` until the grading run awards marks.
  * Dependency-free so Convex functions, route handlers, and the client share
- * one set of rules. Prompts and model-output validation live in `lib/exam.ts`.
+ * one set of rules and limits. Prompts and model-output validation live in
+ * `lib/exam.ts`.
  */
 
 /** Question formats an exam paper can hold. */
 export type ExamQuestionType = "single-choice" | "multiple-answer" | "true-false" | "written"
+
+/** Most questions one paper may hold; extra questions are dropped and counted. */
+export const MAX_PAPER_QUESTIONS = 60
+
+/** Mock exam lengths the learner can choose, in minutes. */
+export const MOCK_EXAM_MINUTES = [30, 60, 90] as const
+
+/** One of the allowed mock exam lengths. */
+export type MockExamMinutes = (typeof MOCK_EXAM_MINUTES)[number]
+
+/** Paper length offered when a past paper does not state one, in minutes. */
+export const DEFAULT_EXAM_MINUTES = 60
+
+/** Bounds on every string and list in a validated exam question and grade. */
+export const EXAM_LIMITS = {
+  titleChars: 120,
+  numberChars: 20,
+  promptChars: 4_000,
+  conceptChars: 120,
+  /** Lesson quiz limits, which exam choice questions reuse. */
+  optionChars: 1_000,
+  explanationChars: 2_000,
+  maxOptions: 6,
+  modelAnswerChars: 4_000,
+  markPointChars: 400,
+  maxMarkPoints: 10,
+  feedbackChars: 1_000,
+  minFeedbackChars: 10,
+  minDurationMinutes: 5,
+  maxDurationMinutes: 600,
+  maxStatedTotalMarks: 1_000,
+} as const
 
 /** Lowest and highest marks one question may carry. Marks are whole or half numbers. */
 export const EXAM_MARK_RANGE = { min: 0.5, max: 100 } as const
