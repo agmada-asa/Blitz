@@ -232,15 +232,19 @@ export default defineSchema({
     unitId: v.optional(v.id("units")),
     /**
      * Stable `<messageId>:<quizId>` identity for a question asked inside a
-     * Teach session, so answering it twice reuses one item.
+     * Teach session or saved from a chat reply, so answering or saving it
+     * twice reuses one item.
      */
     teachKey: v.optional(v.string()),
     /**
      * `teach` for lesson quizzes, `bank` for generated practice questions,
-     * `exam` for choice questions on an exam paper. Exam items stay out of the
-     * feed and drills so a paper's answers are not shown before it is taken.
+     * `chat` for chat quizzes the learner saved to a unit, `exam` for choice
+     * questions on an exam paper. Exam items stay out of the feed and drills
+     * so a paper's answers are not shown before it is taken.
      */
-    origin: v.optional(v.union(v.literal("teach"), v.literal("bank"), v.literal("exam"))),
+    origin: v.optional(
+      v.union(v.literal("teach"), v.literal("bank"), v.literal("chat"), v.literal("exam"))
+    ),
     /**
      * Outcome and time of the latest answer, kept on the item so drills and
      * the feed can rank questions without reading every answer event.

@@ -13,9 +13,15 @@
 
 import { v } from "convex/values"
 
-import { internalMutation, mutation, query, type QueryCtx } from "./_generated/server"
+import {
+  internalMutation,
+  mutation,
+  query,
+  type MutationCtx,
+  type QueryCtx,
+} from "./_generated/server"
 import type { Doc, Id } from "./_generated/dataModel"
-import { quizFromItem, quizItemFields, quizValidator } from "./quizFields"
+import { quizFields, quizFromItem, quizItemFields, quizValidator } from "./quizFields"
 import {
   conceptStrength,
   selectDrillQuestions,
@@ -46,6 +52,37 @@ const QUESTION_TYPES = new Set([
 /** Normalises a concept title for matching. */
 function conceptTitle(title: string): string {
   return title.replace(/\s+/g, " ").trim().slice(0, 120) || "General"
+}
+
+/**
+ * Finds a concept by title within one unit, creating it when missing.
+ * Concepts are per unit: a generic title in two weeks is two concepts.
+ * @returns The concept document.
+ */
+async function unitConcept(
+  ctx: Pick<MutationCtx, "db">,
+  projectId: Id<"projects">,
+  unitId: Id<"units">,
+  name: string,
+  sourceIds: Id<"sources">[],
+  now: number
+): Promise<Doc<"concepts">> {
+  const title = conceptTitle(name)
+  const existing = (
+    await ctx.db
+      .query("concepts")
+      .withIndex("by_project_title", (q) => q.eq("projectId", projectId).eq("title", title))
+      .collect()
+  ).find((candidate) => candidate.unitId === unitId)
+  if (existing) return existing
+  const conceptId = await ctx.db.insert("concepts", {
+    projectId,
+    unitId,
+    title,
+    sourceIds,
+    createdAt: now,
+  })
+  return (await ctx.db.get(conceptId))!
 }
 
 /** Returns whether a learning item is an answerable question. */
@@ -232,28 +269,9 @@ export const saveGeneratedQuestions = mutation({
         .collect()
     ).map((source) => source._id)
     const now = Date.now()
-    /** Finds a concept by title in the project, creating it under this unit. */
-    const conceptFor = async (name: string) => {
-      const title = conceptTitle(name)
-      // Concepts are per unit: a generic title in two weeks is two concepts.
-      const existing = (
-        await ctx.db
-          .query("concepts")
-          .withIndex("by_project_title", (q) =>
-            q.eq("projectId", run.projectId).eq("title", title)
-          )
-          .collect()
-      ).find((candidate) => candidate.unitId === run.unitId)
-      if (existing) return existing
-      const conceptId = await ctx.db.insert("concepts", {
-        projectId: run.projectId,
-        unitId: run.unitId,
-        title,
-        sourceIds,
-        createdAt: now,
-      })
-      return (await ctx.db.get(conceptId))!
-    }
+    /** Finds or creates this unit's concept with the given name. */
+    const conceptFor = (name: string) =>
+      unitConcept(ctx, run.projectId, run.unitId, name, sourceIds, now)
     const unitItems = await ctx.db
       .query("learningItems")
       .withIndex("by_unit", (q) => q.eq("unitId", run.unitId))
@@ -294,6 +312,123 @@ export const saveGeneratedQuestions = mutation({
       createdCount: run.createdCount + questions.length,
       rejectedCount: (run.rejectedCount ?? 0) + rejectedCount,
     })
+  },
+})
+
+/**
+ * Lists where quizzes in a chat can be saved: the chat's module units, the
+ * unit to suggest first, and which quizzes are already saved, keyed by
+ * message ID and then quiz ID. Returns null for chats outside a module.
+ */
+export const chatQuizTargets = query({
+  args: { chatId: v.id("workspaceChats") },
+  handler: async (ctx, { chatId }) => {
+    const chat = await ctx.db.get(chatId)
+    if (!chat?.projectId) return null
+    const projectId = chat.projectId
+    const units = await ctx.db
+      .query("units")
+      .withIndex("by_project_order", (q) => q.eq("projectId", projectId))
+      .collect()
+    if (!units.length) return null
+    // Suggest the chat's own unit, else the unit studied most recently, else the first.
+    const latestStarted = [...units]
+      .filter((unit) => unit.startedAt)
+      .sort((a, b) => (b.startedAt ?? 0) - (a.startedAt ?? 0))[0]
+    const defaultUnitId = chat.unitId ?? latestStarted?._id ?? units[0]._id
+    const titles = new Map(units.map((unit) => [String(unit._id), unit.title]))
+    const saved: Record<string, Record<string, { unitId: Id<"units">; unitTitle: string }>> = {}
+    const messages = await ctx.db
+      .query("workspaceChatMessages")
+      .withIndex("by_chat_createdAt", (q) => q.eq("chatId", chatId))
+      .collect()
+    for (const message of messages) {
+      if (message.role !== "assistant" || !message.content.includes("```quiz")) continue
+      // Keys are `<messageId>:<quizId>`, so one message's quizzes share a prefix.
+      const items = await ctx.db
+        .query("learningItems")
+        .withIndex("by_project_teachKey", (q) =>
+          q
+            .eq("projectId", projectId)
+            .gte("teachKey", `${message._id}:`)
+            .lt("teachKey", `${message._id};`)
+        )
+        .collect()
+      for (const item of items) {
+        if (item.origin !== "chat" || !item.unitId || item.archivedAt) continue
+        const quizId = item.teachKey!.slice(message._id.length + 1)
+        saved[message._id] = {
+          ...saved[message._id],
+          [quizId]: { unitId: item.unitId, unitTitle: titles.get(String(item.unitId)) ?? "" },
+        }
+      }
+    }
+    return {
+      projectId,
+      defaultUnitId,
+      units: units.map((unit) => ({ id: unit._id, title: unit.title })),
+      saved,
+    }
+  },
+})
+
+/**
+ * Saves one quiz from a finished chat reply into a unit's question bank, so
+ * it is drilled and shown in the feed like generated questions. The server
+ * route parses the quiz from the saved reply; saving the same quiz again
+ * returns the existing question.
+ * @returns The question's ID and whether it already existed.
+ */
+export const saveChatQuiz = mutation({
+  args: {
+    chatId: v.id("workspaceChats"),
+    messageId: v.id("workspaceChatMessages"),
+    unitId: v.id("units"),
+    quiz: v.object({ id: v.string(), ...quizFields }),
+  },
+  handler: async (ctx, { chatId, messageId, unitId, quiz }) => {
+    const chat = await ctx.db.get(chatId)
+    const unit = await ctx.db.get(unitId)
+    if (!chat?.projectId || !unit || unit.projectId !== chat.projectId)
+      throw new Error("Choose a unit in this chat's module")
+    const message = await ctx.db.get(messageId)
+    if (
+      !message ||
+      message.chatId !== chatId ||
+      message.role !== "assistant" ||
+      message.status !== "completed"
+    )
+      throw new Error("Save questions after the reply finishes")
+    const projectId = chat.projectId
+    const teachKey = `${messageId}:${quiz.id}`
+    const existing = await ctx.db
+      .query("learningItems")
+      .withIndex("by_project_teachKey", (q) =>
+        q.eq("projectId", projectId).eq("teachKey", teachKey)
+      )
+      .first()
+    if (existing && !existing.archivedAt) return { itemId: existing._id, alreadySaved: true }
+    const sourceIds = (
+      await ctx.db
+        .query("sources")
+        .withIndex("by_unit", (q) => q.eq("unitId", unitId))
+        .collect()
+    ).map((source) => source._id)
+    const now = Date.now()
+    const concept = await unitConcept(ctx, projectId, unitId, quiz.concept, sourceIds, now)
+    const itemId = await ctx.db.insert("learningItems", {
+      projectId,
+      conceptId: concept._id,
+      unitId,
+      teachKey,
+      origin: "chat",
+      sourceIds,
+      title: concept.title,
+      ...quizItemFields(quiz),
+      order: now,
+      createdAt: now,
+    })
+    return { itemId, alreadySaved: false }
   },
 })
 

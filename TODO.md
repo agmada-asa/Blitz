@@ -61,7 +61,7 @@ names the PR that delivers it once one exists.
 
 - [x] Agent controls already sit behind Options; access is chosen in the model picker
 - [x] Interactive blocks in chat, follow-up chips, and Quiz me
-- [ ] Save chat quizzes into a unit's question bank
+- [x] Save chat quizzes into a unit's question bank
 - [ ] Citations for every source type
 
 ## Phase 5: polish and redesign

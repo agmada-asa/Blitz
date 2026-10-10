@@ -32,6 +32,7 @@ import {
   useInteractiveBlocks,
   type MarkdownRenderer,
 } from "@/components/ui/interactive-blocks/context"
+import { QuizSaveAction } from "@/components/ui/interactive-blocks/quiz-save"
 import {
   StructuredAnswer,
   structuredHints,
@@ -129,7 +130,8 @@ export function QuizBlockView({
   block: QuizBlock
   renderMarkdown: MarkdownRenderer
 }) {
-  const { onQuizAnswer, answeredQuizzes } = useInteractiveBlocks()
+  const { onQuizAnswer, answeredQuizzes, quizSaving, streaming } =
+    useInteractiveBlocks()
   const baseId = useId()
   const questionId = `${baseId}-question`
   const hintId = `${baseId}-hint`
@@ -476,6 +478,9 @@ export function QuizBlockView({
           </Button>
         ) : null}
       </div>
+      {quizSaving && !streaming ? (
+        <QuizSaveAction quizId={block.id} saving={quizSaving} />
+      ) : null}
     </section>
   )
 }

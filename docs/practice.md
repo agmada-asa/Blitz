@@ -28,6 +28,19 @@ A unit's first bank starts automatically, once, when Teach reaches its second
 section (`startFirstQuestionBank`, called from the chat route). Later batches
 are written on request from the Practice screen.
 
+## Saving chat quizzes
+
+A quiz in a chat reply can join a unit's question bank. When the chat belongs
+to a module, each finished quiz offers **Save to practice** with the module's
+units (the chat's own unit, or the one studied most recently, first).
+`POST /api/practice/save-quiz` re-reads the quiz from the saved reply, so the
+browser only chooses which quiz and which unit, and `practice.saveChatQuiz`
+stores it as a learning item with `origin: "chat"` under a concept of that
+unit. Its `teachKey` (`<messageId>:<quizId>`) makes saving twice return the
+same question, and `practice.chatQuizTargets` tells the chat which quizzes are
+already saved. Saved questions are drilled and shown in the feed like
+generated ones.
+
 ## Drills and Relearn
 
 `/projects/[projectId]/practice/drill` asks ten questions, optionally for one
