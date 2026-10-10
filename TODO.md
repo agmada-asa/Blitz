@@ -16,19 +16,20 @@ names the PR that delivers it once one exists.
 
 ## Phase 1: Teach
 
-- [ ] Benchmark script over the school materials fixture
-- [ ] Module and unit data model; drop old generated lesson data
-- [ ] Automatic unit grouping for uploads
-- [ ] `.txt` and `.vtt` transcripts with timestamp anchors
-- [ ] Slide, page, and paragraph anchors for citations
-- [ ] Single prompts module
-- [ ] Teach session: outline, streamed sections, resume
-- [ ] Interactive block protocol and renderers
-- [ ] Quick replies and inline questions in a session
-- [ ] Background concept and evidence extraction
+- [x] Benchmark script over the school materials fixture (`npm run benchmark:teach`)
+- [x] Module and unit data model
+- [x] Uploads filed into units, titled from filenames, renamed by the tutor
+- [x] `.vtt` and `.srt` transcripts with timestamp anchors
+- [x] Teach session: outline, streamed sections, resume, citations
+- [x] Interactive block protocol and renderers (quiz, steps, viz, followups)
+- [x] Quick replies and inline questions in a session
+- [x] Lesson quizzes saved as learning items and study events
 - [ ] Remove batch generation, old Learn, concept map UI, legacy card chat
+- [ ] Single prompts module
+- [ ] Whole-textbook sources: batched chunk writes, chapter-sized units
+- [ ] Research imports into units with passages
 - [ ] Consolidate the remaining workers into one supervised process
-- [ ] Share one server Convex client helper across API routes
+- [ ] Share one server Convex client helper across API routes (new code uses `lib/server/convex.ts`)
 
 ## Phase 2: practice and exam mode
 
