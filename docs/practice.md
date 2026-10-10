@@ -50,6 +50,12 @@ review, then unanswered questions on weak concepts, then the rest, avoiding the
 same concept twice in a row. The deck is fetched once per drill so answering
 does not reshuffle it. Answers go to `POST /api/learning/answer`.
 
+A finished drill shows the session summary (`components/progress/session-summary.tsx`):
+XP earned, accuracy, and time; each concept answered with its current strength;
+today's goal and streak; then the missed questions with Relearn.
+`progress.sessionSummary` counts answers and Teach milestones from the drill's
+start, limited to the module and, when set, the unit.
+
 `conceptStrength` classifies a concept as new, weak, learning, or strong from
 its review history. A wrong answer offers **Relearn**, which opens the unit's
 Teach screen with `?ask=` holding `relearnMessage(concept, question)`; the Teach

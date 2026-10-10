@@ -14,6 +14,7 @@ import { usePathname, useRouter } from "next/navigation"
 import { useMutation, useQuery } from "convex/react"
 import type { FunctionReturnType } from "convex/server"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { useMinuteClock } from "@/hooks/use-minute-clock"
 
 import {
   SourcePane,
@@ -22,7 +23,11 @@ import {
 } from "@/components/chat/source-pane"
 import { TeachDock, type TeachDockState } from "@/components/learn/teach-dock"
 import { TeachLesson } from "@/components/learn/teach-lesson"
-import { TeachOutlineList } from "@/components/learn/teach-outline"
+import {
+  TeachOutlineList,
+  TeachProgressBar,
+} from "@/components/learn/teach-outline"
+import { SessionSummary } from "@/components/progress/session-summary"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -50,6 +55,7 @@ import { api } from "@/convex/_generated/api"
 import type { Id } from "@/convex/_generated/dataModel"
 import type { ChatCitation } from "@/lib/citations"
 import { consumeRelearn } from "@/lib/client/relearn"
+import { restartSitting, sittingStart } from "@/lib/client/teach-sitting"
 import { createClientMessageId, sendTeachTurn } from "@/lib/client/teach-turn"
 import type { QuizBlock } from "@/lib/interactive-blocks"
 import {
@@ -124,6 +130,25 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
   >()
   const [confirmRestart, setConfirmRestart] = useState(false)
   const [outlineOpen, setOutlineOpen] = useState(false)
+  const [summaryOpen, setSummaryOpen] = useState(false)
+  // When this sitting began; "Finish for now" summarises from here.
+  const [sittingStartedAt] = useState(() =>
+    typeof window === "undefined" ? 0 : sittingStart(String(unit.id), Date.now())
+  )
+  const now = useMinuteClock()
+  // XP earned this sitting, shown in the header as answers and sections land.
+  const sitting = useQuery(
+    api.progress.sessionSummary,
+    sittingStartedAt
+      ? {
+          projectId: unit.projectId,
+          unitId: unit.id,
+          since: sittingStartedAt,
+          tzOffsetMinutes: new Date().getTimezoneOffset(),
+          now,
+        }
+      : "skip"
+  )
   const [showJump, setShowJump] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
   const startingRef = useRef(false)
@@ -393,6 +418,8 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
                   Boolean(outline) &&
                   sectionIndex >= (outline?.sections.length ?? 0) - 1,
               }
+  const currentSectionTitle =
+    outline && !complete ? outline.sections[sectionIndex]?.title : undefined
   const progressLabel = outline
     ? complete
       ? "Unit complete"
@@ -476,81 +503,106 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex items-center gap-2 border-b border-border/70 px-4 py-3 sm:px-6">
-          <Button
-            asChild
-            variant="ghost"
-            size="icon"
-            className={cn("size-10", source ? "2xl:hidden" : "lg:hidden")}
-          >
-            <Link
-              href={projectHref}
-              aria-label={`Back to ${unit.projectTitle}`}
+        <header className="border-b border-border/70 px-4 pt-3 pb-3 sm:px-6">
+          <div className="flex items-center gap-2">
+            <Button
+              asChild
+              variant="ghost"
+              size="icon"
+              className={cn("size-10", source ? "2xl:hidden" : "lg:hidden")}
             >
-              <ArrowLeftIcon aria-hidden="true" />
-            </Link>
-          </Button>
-          <div className="min-w-0 flex-1">
-            <h1 className="truncate font-heading text-lg font-semibold">
-              {unit.title}
-            </h1>
-            {progressLabel ? (
-              <>
-                <p
-                  className={cn(
-                    "text-xs text-muted-foreground",
-                    outline && "hidden",
-                    outline && (source ? "2xl:block" : "lg:block")
-                  )}
-                >
+              <Link
+                href={projectHref}
+                aria-label={`Back to ${unit.projectTitle}`}
+              >
+                <ArrowLeftIcon aria-hidden="true" />
+              </Link>
+            </Button>
+            <div className="min-w-0 flex-1">
+              <h1 className="truncate font-heading text-lg font-semibold">
+                {unit.title}
+              </h1>
+              {progressLabel ? (
+                <p className="truncate text-xs text-muted-foreground">
                   {progressLabel}
+                  {currentSectionTitle ? ` · ${currentSectionTitle}` : ""}
                 </p>
-                {outline ? (
-                  // Narrow screens have no rail, so the progress label opens the outline.
-                  <Popover open={outlineOpen} onOpenChange={setOutlineOpen}>
-                    <PopoverTrigger asChild>
-                      <button
-                        type="button"
-                        aria-label={`${progressLabel}. Show outline`}
-                        className={cn(
-                          "flex min-h-6 items-center gap-1 text-xs text-muted-foreground hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none",
-                          source ? "2xl:hidden" : "lg:hidden"
-                        )}
-                      >
-                        {progressLabel}
-                        <ArrowDownIcon aria-hidden="true" className="size-3" />
-                      </button>
-                    </PopoverTrigger>
-                    <PopoverContent
-                      align="start"
-                      className="w-[min(22rem,calc(100vw-2rem))] p-2"
-                    >
-                      {outlineList}
-                    </PopoverContent>
-                  </Popover>
-                ) : null}
-              </>
+              ) : null}
+            </div>
+            {sitting?.xp ? (
+              <p
+                className="hidden shrink-0 rounded-full bg-brand/10 px-3 py-1 text-xs font-medium text-brand tabular-nums sm:block"
+                aria-label={`${sitting.xp} XP earned this session`}
+              >
+                +{sitting.xp} XP
+              </p>
             ) : null}
-          </div>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
+            {chat && messages.length ? (
               <Button
-                variant="ghost"
-                className="min-h-10 rounded-full px-3"
-                aria-label="Unit options"
+                type="button"
+                variant="outline"
+                onClick={() => setSummaryOpen(true)}
+                className="min-h-10 shrink-0 rounded-full px-4"
               >
-                ⋯
+                Finish<span className="hidden sm:inline">&nbsp;for now</span>
               </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuItem
-                disabled={running}
-                onSelect={() => setConfirmRestart(true)}
-              >
-                Start this unit over
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+            ) : null}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="ghost"
+                  className="min-h-10 rounded-full px-3"
+                  aria-label="Unit options"
+                >
+                  ⋯
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem
+                  disabled={running}
+                  onSelect={() => setConfirmRestart(true)}
+                >
+                  Start this unit over
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+          {outline ? (
+            <>
+              <TeachProgressBar
+                outline={outline}
+                sectionIndex={sectionIndex}
+                taughtSectionIds={taughtSectionIds}
+                className={cn("mt-3", source ? "hidden 2xl:flex" : "hidden lg:flex")}
+              />
+              {/* Narrow screens have no rail, so the progress bar opens the outline. */}
+              <Popover open={outlineOpen} onOpenChange={setOutlineOpen}>
+                <PopoverTrigger asChild>
+                  <button
+                    type="button"
+                    aria-label={`${progressLabel}. Show outline`}
+                    className={cn(
+                      "mt-2 flex min-h-8 w-full items-center gap-2 rounded-lg focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none",
+                      source ? "2xl:hidden" : "lg:hidden"
+                    )}
+                  >
+                    <TeachProgressBar
+                      outline={outline}
+                      sectionIndex={sectionIndex}
+                      taughtSectionIds={taughtSectionIds}
+                    />
+                    <ArrowDownIcon aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />
+                  </button>
+                </PopoverTrigger>
+                <PopoverContent
+                  align="start"
+                  className="w-[min(22rem,calc(100vw-2rem))] p-2"
+                >
+                  {outlineList}
+                </PopoverContent>
+              </Popover>
+            </>
+          ) : null}
         </header>
 
         <div className="relative min-h-0 flex-1">
@@ -579,6 +631,17 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
                   <Skeleton className="h-4 w-5/6" />
                 </div>
               )}
+              {complete && chat && !running ? (
+                <div className="mt-12 rounded-2xl border border-border bg-card p-5 sm:p-6">
+                  <SessionSummary
+                    projectId={String(unit.projectId)}
+                    unitId={String(unit.id)}
+                    since={messages[0]?.createdAt ?? 0}
+                    eyebrow="Unit complete"
+                    title={`You finished ${unit.title}`}
+                  />
+                </div>
+              ) : null}
               {!unit.sources.some((source) => source.hasText) &&
               chat &&
               !messages.length ? (
@@ -640,6 +703,56 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
           <SourcePane selection={source} onClose={() => setSource(undefined)} />
         </div>
       ) : null}
+
+      <Dialog open={summaryOpen} onOpenChange={setSummaryOpen}>
+        <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-lg">
+          <DialogHeader className="sr-only">
+            <DialogTitle>This session</DialogTitle>
+            <DialogDescription>
+              What you covered since you sat down with this unit.
+            </DialogDescription>
+          </DialogHeader>
+          {sittingStartedAt ? (
+            <SessionSummary
+              projectId={String(unit.projectId)}
+              unitId={String(unit.id)}
+              since={sittingStartedAt}
+              eyebrow="This session"
+              actions={
+                <>
+                  <Button
+                    asChild
+                    className="min-h-11 rounded-full bg-brand px-5 text-brand-foreground hover:bg-brand/85"
+                  >
+                    <Link
+                      href={projectHref}
+                      onClick={() => restartSitting(String(unit.id), Date.now())}
+                    >
+                      Done for now
+                    </Link>
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="min-h-11 rounded-full px-5"
+                    onClick={() => setSummaryOpen(false)}
+                  >
+                    Keep learning
+                  </Button>
+                  <Button asChild variant="ghost" className="min-h-11 rounded-full px-4">
+                    <Link
+                      href={`${projectHref}/practice`}
+                      onClick={() => restartSitting(String(unit.id), Date.now())}
+                    >
+                      Practice this unit
+                    </Link>
+                  </Button>
+                </>
+              }
+            />
+          ) : null}
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={confirmRestart} onOpenChange={setConfirmRestart}>
         <DialogContent>
