@@ -7,6 +7,9 @@ import {
   AlertCircleIcon,
   BubbleChatNotificationIcon,
   Download01Icon,
+  Mortarboard01Icon,
+  PencilEdit02Icon,
+  Quiz01Icon,
   Search01Icon,
 } from "@hugeicons/core-free-icons"
 import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react"
@@ -36,8 +39,12 @@ function iconForKind(kind: NotificationRow["kind"]): IconSvgElement | null {
     case "card-reply":
     case "workspace-reply":
       return BubbleChatNotificationIcon
-    case "preparation":
-      return null
+    case "practice":
+      return Quiz01Icon
+    case "exam-paper":
+      return Mortarboard01Icon
+    case "exam-marking":
+      return PencilEdit02Icon
   }
 }
 

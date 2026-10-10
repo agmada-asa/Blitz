@@ -287,7 +287,9 @@ export default defineSchema({
     error: v.optional(v.string()),
     startedAt: v.number(),
     finishedAt: v.optional(v.number()),
-  }).index("by_unit_startedAt", ["unitId", "startedAt"]),
+  })
+    .index("by_unit_startedAt", ["unitId", "startedAt"])
+    .index("by_startedAt", ["startedAt"]),
 
   /**
    * A past paper imported from an upload, or a mock paper written from a
@@ -322,7 +324,8 @@ export default defineSchema({
     createdAt: v.number(),
   })
     .index("by_project_createdAt", ["projectId", "createdAt"])
-    .index("by_project_source", ["projectId", "sourceId"]),
+    .index("by_project_source", ["projectId", "sourceId"])
+    .index("by_createdAt", ["createdAt"]),
 
   /**
    * One sitting of an exam paper. Answers autosave while `in_progress`, so a
@@ -355,10 +358,14 @@ export default defineSchema({
     /** Identifies the grading run and acts as its lease. */
     gradingStartedAt: v.optional(v.number()),
     gradingError: v.optional(v.string()),
+    /** When the latest grading run finished or failed. */
+    gradedAt: v.optional(v.number()),
     /** Marks awarded so far and marks available on the paper. */
     awardedMarks: v.optional(v.number()),
     availableMarks: v.optional(v.number()),
-  }).index("by_paper_startedAt", ["paperId", "startedAt"]),
+  })
+    .index("by_paper_startedAt", ["paperId", "startedAt"])
+    .index("by_submittedAt", ["submittedAt"]),
 
   /** Previous explanation text retained when a new source revises a lesson. */
   lessonPageRevisions: defineTable({

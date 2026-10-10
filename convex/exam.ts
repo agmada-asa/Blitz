@@ -987,6 +987,7 @@ export const saveGrades = mutation({
       results,
       gradingStatus: "completed",
       gradingError: undefined,
+      gradedAt: Date.now(),
       awardedMarks: totals.awarded,
       availableMarks: totals.available,
     })
@@ -1005,6 +1006,10 @@ export const failGrading = mutation({
       attempt.gradingStartedAt !== gradingStartedAt
     )
       return
-    await ctx.db.patch(attemptId, { gradingStatus: "failed", gradingError: error.slice(0, 300) })
+    await ctx.db.patch(attemptId, {
+      gradingStatus: "failed",
+      gradingError: error.slice(0, 300),
+      gradedAt: Date.now(),
+    })
   },
 })

@@ -1,5 +1,7 @@
 /** Builds the notification center from durable jobs and AI reply records. */
 
+import { v } from "convex/values"
+
 import { query } from "./_generated/server"
 import type { Doc } from "./_generated/dataModel"
 
@@ -10,9 +12,21 @@ const MAX_NOTIFICATIONS = 40
 /** Maximum workspace chats inspected for their latest assistant message. */
 const MAX_WORKSPACE_CHATS = 24
 
+/**
+ * How long question bank, paper, and marking runs may stay running before
+ * they count as stopped. Matches the leases in practice.ts and exam.ts.
+ */
+const RUN_LEASE_MS = 10 * 60 * 1000
+
 /** Work types rendered with distinct labels and destinations. */
 export type NotificationKind =
-  "preparation" | "research" | "import" | "card-reply" | "workspace-reply"
+  | "practice"
+  | "exam-paper"
+  | "exam-marking"
+  | "research"
+  | "import"
+  | "card-reply"
+  | "workspace-reply"
 
 /** Shared row used by active tasks and finished notifications. */
 export type NotificationCenterRow = {
@@ -56,13 +70,18 @@ function timing(
 
 /** Lists current background work and recent results without source text or replies. */
 export const list = query({
-  args: {},
-  handler: async (ctx) => {
+  args: {
+    /**
+     * Current time from the client's minute clock. When given, runs past their
+     * lease show as stopped instead of running forever.
+     */
+    now: v.optional(v.number()),
+  },
+  handler: async (ctx, { now }) => {
     const [
-      prepQueued,
-      prepLeased,
-      prepFailed,
-      prepCompleted,
+      questionRuns,
+      examPapers,
+      examAttempts,
       researchQueued,
       researchRunning,
       researchFailed,
@@ -78,23 +97,18 @@ export const list = query({
       workspaceChats,
     ] = await Promise.all([
       ctx.db
-        .query("preparationJobs")
-        .withIndex("by_status_createdAt", (q) => q.eq("status", "queued"))
-        .order("asc")
-        .take(MAX_ROWS_PER_STATUS),
-      ctx.db
-        .query("preparationJobs")
-        .withIndex("by_status_createdAt", (q) => q.eq("status", "leased"))
+        .query("questionGenerations")
+        .withIndex("by_startedAt")
         .order("desc")
         .take(MAX_ROWS_PER_STATUS),
       ctx.db
-        .query("preparationJobs")
-        .withIndex("by_status_createdAt", (q) => q.eq("status", "failed"))
+        .query("examPapers")
+        .withIndex("by_createdAt")
         .order("desc")
         .take(MAX_ROWS_PER_STATUS),
       ctx.db
-        .query("preparationJobs")
-        .withIndex("by_status_createdAt", (q) => q.eq("status", "completed"))
+        .query("examAttempts")
+        .withIndex("by_submittedAt")
         .order("desc")
         .take(MAX_ROWS_PER_STATUS),
       ctx.db
@@ -164,12 +178,11 @@ export const list = query({
         .take(MAX_WORKSPACE_CHATS),
     ])
 
-    const preparation = [
-      ...prepQueued,
-      ...prepLeased,
-      ...prepFailed,
-      ...prepCompleted,
-    ]
+    const markedAttempts = examAttempts.filter(
+      (attempt) =>
+        attempt.gradingStatus !== undefined &&
+        attempt.gradingStatus !== "not_needed"
+    )
     const proposals = [
       ...researchQueued,
       ...researchRunning,
@@ -210,8 +223,28 @@ export const list = query({
         )
         .map((proposal) => [proposal._id, proposal])
     )
+    const units = new Map(
+      (
+        await Promise.all(
+          [...new Set(questionRuns.map((run) => run.unitId))].map((id) =>
+            ctx.db.get(id)
+          )
+        )
+      )
+        .filter((unit): unit is Doc<"units"> => unit !== null)
+        .map((unit) => [unit._id, unit])
+    )
+    const papers = new Map<string, Doc<"examPapers">>(
+      examPapers.map((paper) => [paper._id, paper])
+    )
+    for (const paperId of new Set(markedAttempts.map((a) => a.paperId))) {
+      if (papers.has(paperId)) continue
+      const paper = await ctx.db.get(paperId)
+      if (paper) papers.set(paper._id, paper)
+    }
     const projectIds = new Set([
-      ...preparation.map((job) => job.projectId),
+      ...questionRuns.map((run) => run.projectId),
+      ...[...papers.values()].map((paper) => paper.projectId),
       ...proposals.map((proposal) => proposal.projectId),
       ...imports.map((importRow) => importRow.projectId),
       ...[...conversations.values()].map(
@@ -255,35 +288,36 @@ export const list = query({
     )
 
     const rows: NotificationCenterRow[] = []
-    for (const job of preparation) {
-      const project = projects.get(job.projectId)
-      if (!project) continue
-      const status =
-        job.status === "completed" && job.generatedItemCount === 0
+    /** True when a run started before the lease and never finished. */
+    const stalled = (startedAt: number) =>
+      now !== undefined && startedAt <= now - RUN_LEASE_MS
+
+    for (const run of questionRuns) {
+      const project = projects.get(run.projectId)
+      const unit = units.get(run.unitId)
+      if (!project || !unit) continue
+      const status: NotificationCenterRow["status"] =
+        run.status === "running" && stalled(run.startedAt)
           ? "failed"
-          : job.status === "leased"
-            ? "running"
-            : (job.status as "queued" | "completed" | "failed")
-      const section = job.totalChunks
-        ? Math.min(job.nextChunkOrdinal + 1, job.totalChunks)
-        : null
+          : run.status
+      const updatedAt = run.finishedAt ?? run.startedAt
       rows.push({
-        id: `preparation:${job._id}`,
-        kind: "preparation",
+        id: `practice:${run._id}`,
+        kind: "practice",
         title:
           status === "completed"
-            ? `${job.sourceFilename} is ready`
+            ? `Practice questions ready for ${compact(unit.title, 64)}`
             : status === "failed"
-              ? `${job.sourceFilename} needs attention`
-              : `Preparing ${job.sourceFilename}`,
+              ? `Practice questions for ${compact(unit.title, 64)} need attention`
+              : `Writing practice questions for ${compact(unit.title, 64)}`,
         detail:
           status === "completed"
-            ? `${job.generatedItemCount ?? 0} ${job.generatedItemCount === 1 ? "study item" : "study items"} created`
-            : section && job.totalChunks
-              ? `Section ${section} of ${job.totalChunks}`
-              : status === "queued"
-                ? "Waiting to start"
-                : "Creating study material",
+            ? run.createdCount
+              ? `${run.createdCount} ${run.createdCount === 1 ? "question" : "questions"} added`
+              : "No new questions were needed"
+            : status === "failed"
+              ? "Open Practice to try again"
+              : "Writing questions from this unit's sources",
         context: project.title,
         status,
         stage:
@@ -291,19 +325,128 @@ export const list = query({
             ? "Ready"
             : status === "failed"
               ? "Failed"
-              : status === "queued"
-                ? "Queued"
-                : "Preparing",
-        href: `/projects/${job.projectId}`,
-        createdAt: job.createdAt,
-        updatedAt: job.updatedAt,
-        ...timing(status, job.createdAt, job.updatedAt),
-        generatedItemCount: job.generatedItemCount ?? null,
+              : "Writing",
+        href: `/projects/${run.projectId}/practice`,
+        createdAt: run.startedAt,
+        updatedAt,
+        ...timing(status, run.startedAt, updatedAt),
+        generatedItemCount: status === "completed" ? run.createdCount : null,
         error:
-          job.lastError?.trim().slice(0, 500) ||
-          (job.status === "completed" && job.generatedItemCount === 0
-            ? "No study items were created. Add clearer notes or another source."
-            : null),
+          status === "failed"
+            ? run.error?.trim().slice(0, 500) ||
+              "Writing questions stopped before finishing."
+            : null,
+      })
+    }
+
+    for (const paper of examPapers) {
+      const project = projects.get(paper.projectId)
+      if (!project) continue
+      const status: NotificationCenterRow["status"] =
+        paper.status === "processing"
+          ? stalled(paper.runStartedAt)
+            ? "failed"
+            : "running"
+          : paper.status === "ready"
+            ? "completed"
+            : "failed"
+      const title = compact(paper.title, 72)
+      const updatedAt = paper.finishedAt ?? paper.runStartedAt
+      rows.push({
+        id: `exam-paper:${paper._id}`,
+        kind: "exam-paper",
+        title:
+          status === "completed"
+            ? `${title} is ready`
+            : status === "failed"
+              ? `${title} needs attention`
+              : paper.kind === "past"
+                ? `Reading ${title}`
+                : `Writing ${title}`,
+        detail:
+          status === "completed"
+            ? `${paper.questions.length} ${paper.questions.length === 1 ? "question" : "questions"}${paper.totalMarks ? `, ${paper.totalMarks} marks` : ""}`
+            : status === "failed"
+              ? "Open exam prep to try again"
+              : paper.kind === "past"
+                ? "Finding the questions in your past paper"
+                : "Writing a mock exam from your units",
+        context: project.title,
+        status,
+        stage:
+          status === "completed"
+            ? "Ready"
+            : status === "failed"
+              ? "Failed"
+              : paper.kind === "past"
+                ? "Reading"
+                : "Writing",
+        href:
+          status === "completed"
+            ? `/projects/${paper.projectId}/practice/exam/${paper._id}`
+            : `/projects/${paper.projectId}/practice`,
+        createdAt: paper.runStartedAt,
+        updatedAt,
+        ...timing(status, paper.runStartedAt, updatedAt),
+        generatedItemCount: null,
+        error:
+          status === "failed"
+            ? paper.error?.trim().slice(0, 500) ||
+              "Preparing this paper stopped before finishing."
+            : null,
+      })
+    }
+
+    for (const attempt of markedAttempts) {
+      const paper = papers.get(attempt.paperId)
+      const project = projects.get(attempt.projectId)
+      if (!paper || !project) continue
+      const startedAt =
+        attempt.gradingStartedAt ?? attempt.submittedAt ?? attempt.updatedAt
+      const status: NotificationCenterRow["status"] =
+        attempt.gradingStatus === "running"
+          ? stalled(startedAt)
+            ? "failed"
+            : "running"
+          : attempt.gradingStatus === "completed"
+            ? "completed"
+            : "failed"
+      const title = compact(paper.title, 72)
+      const updatedAt = attempt.gradedAt ?? startedAt
+      rows.push({
+        // Includes the run start so marking again after a failure notifies again.
+        id: `exam-marking:${attempt._id}:${startedAt}`,
+        kind: "exam-marking",
+        title:
+          status === "completed"
+            ? `${title} is marked`
+            : status === "failed"
+              ? `Marking ${title} needs attention`
+              : `Marking ${title}`,
+        detail:
+          status === "completed" && attempt.availableMarks
+            ? `${attempt.awardedMarks ?? 0} of ${attempt.availableMarks} marks`
+            : status === "failed"
+              ? "Open your results to try marking again"
+              : "Marking your written answers",
+        context: project.title,
+        status,
+        stage:
+          status === "completed"
+            ? "Marked"
+            : status === "failed"
+              ? "Failed"
+              : "Marking",
+        href: `/projects/${attempt.projectId}/practice/exam/${attempt.paperId}?attempt=${attempt._id}`,
+        createdAt: startedAt,
+        updatedAt,
+        ...timing(status, startedAt, updatedAt),
+        generatedItemCount: null,
+        error:
+          status === "failed"
+            ? attempt.gradingError?.trim().slice(0, 500) ||
+              "Marking stopped before finishing."
+            : null,
       })
     }
 
@@ -367,10 +510,12 @@ export const list = query({
               : `Importing ${sourceTitle}`,
         detail:
           status === "completed"
-            ? "Source preparation will continue if needed"
-            : status === "queued"
-              ? "Waiting to download"
-              : "Downloading source",
+            ? "Added to your sources"
+            : status === "failed"
+              ? "Open the research plan to try again"
+              : status === "queued"
+                ? "Waiting to download"
+                : "Downloading source",
         context: project.title,
         status,
         stage:

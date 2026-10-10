@@ -11,7 +11,7 @@ export default function NotificationsPage() {
           Notifications
         </h1>
         <p className="mt-1 max-w-xl text-xs sm:text-sm text-muted-foreground">
-          Follow research, source preparation, and AI replies. Each notification
+          Follow practice questions, exam papers, marking, research, and AI replies. Each notification
           opens where the work happened.
         </p>
       </div>

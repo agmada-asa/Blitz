@@ -68,6 +68,7 @@ names the PR that delivers it once one exists.
 
 - [ ] Redesign starting from the Teach screen
 - [x] Podcasts can cover one unit or the whole module
+- [x] Notifications for practice questions, exam papers, and marking; retired lesson pipeline rows removed
 
 ## Phase 6: mobile and sync
 
