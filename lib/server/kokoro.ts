@@ -2,7 +2,6 @@
 
 import { createHash, randomUUID } from "node:crypto"
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process"
-import { createInterface } from "node:readline"
 import {
   access,
   chmod,
@@ -20,29 +19,12 @@ import { homedir } from "node:os"
 import { dirname, join, resolve } from "node:path"
 import { isKokoroVoiceId, type KokoroVoiceId } from "@/lib/kokoro-voices"
 import { SpeechQueue, type SpeechQueueOptions } from "./speech-queue"
+import { KokoroWorker, KokoroUnavailableError } from "./kokoro-worker"
+
+export { KokoroUnavailableError } from "./kokoro-worker"
 
 /** Maximum text accepted by a single inference request; callers can submit multiple chunks. */
 export const KOKORO_MAX_TEXT_LENGTH = 12_000
-
-/** Describes a local runtime setup or inference failure in user-facing language. */
-export class KokoroUnavailableError extends Error {
-  /** Creates an error suitable for an API response or background job status. */
-  constructor(message: string) {
-    super(message)
-    this.name = "KokoroUnavailableError"
-  }
-}
-
-type SpeechRequest = {
-  text: string
-  voiceId: KokoroVoiceId
-  outputPath: string
-}
-
-type WorkerReply =
-  | { ready: true }
-  | { ready: false; error: string }
-  | { ok: boolean; error?: string }
 
 const dataDirectory = resolve(
   /* turbopackIgnore: true */
@@ -64,9 +46,7 @@ const pythonExecutable =
 
 /** One process-wide runtime survives development reloads and shares startup with route bundles. */
 type KokoroState = {
-  worker?: ChildProcessWithoutNullStreams
-  workerReady?: Promise<void>
-  activeReply?: { resolve: () => void; reject: (error: Error) => void }
+  runtime?: KokoroWorker
   queue: SpeechQueue
   readAloudCacheMaintenance: Promise<void>
   readAloudCacheReady?: Promise<boolean>
@@ -103,150 +83,23 @@ function validateRequest(
   }
 }
 
-/** Starts the resident worker and waits for its one-time model load. */
-async function startWorker(): Promise<void> {
-  if (state.workerReady) return state.workerReady
-  const readiness = new Promise<void>((resolveReady, rejectReady) => {
-    void mkdir(dataDirectory, { recursive: true })
-      .then(() => {
-        const child = spawn(
-          /* turbopackIgnore: true */ pythonExecutable,
-          [workerScript],
-          {
-            cwd: dirname(workerScript),
-            env: { ...process.env, BLITZ_KOKORO_DIR: dataDirectory },
-            stdio: ["pipe", "pipe", "pipe"],
-          }
-        )
-        state.worker = child
-        let stderr = ""
-        child.stderr.on("data", (chunk: Buffer) => {
-          stderr = `${stderr}${chunk.toString()}`.slice(-4_000)
-        })
-        const lines = createInterface({ input: child.stdout })
-        const startupTimer = setTimeout(() => {
-          rejectReady(
-            new KokoroUnavailableError(
-              "Kokoro is taking too long to start. Check the local setup and try again."
-            )
-          )
-          child.kill()
-        }, 180_000)
-        let initialized = false
-        lines.on("line", (line) => {
-          if (state.worker !== child) return
-          let message: WorkerReply
-          try {
-            message = JSON.parse(line) as WorkerReply
-          } catch {
-            return
-          }
-          if (!initialized) {
-            initialized = true
-            clearTimeout(startupTimer)
-            if ("ready" in message && message.ready) resolveReady()
-            else
-              rejectReady(
-                new KokoroUnavailableError(
-                  "Kokoro could not start. Run scripts/setup-kokoro.sh and try again. " +
-                    (("error" in message && message.error) || "")
-                )
-              )
-            return
-          }
-          if ("ok" in message) {
-            const reply = state.activeReply
-            state.activeReply = undefined
-            if (message.ok) reply?.resolve()
-            else
-              reply?.reject(
-                new Error(message.error || "Kokoro could not create the audio.")
-              )
-          }
-        })
-        child.once("error", (error) => {
-          clearTimeout(startupTimer)
-          const failure = new KokoroUnavailableError(
-            error.message.includes("ENOENT")
-              ? "Kokoro is not installed. Run scripts/setup-kokoro.sh, then restart Blitz."
-              : `Kokoro could not start: ${error.message}`
-          )
-          if (!initialized) rejectReady(failure)
-          if (state.worker !== child) return
-          state.activeReply?.reject(failure)
-          state.activeReply = undefined
-          state.worker = undefined
-          state.workerReady = undefined
-        })
-        child.once("exit", (code) => {
-          clearTimeout(startupTimer)
-          const failure = new KokoroUnavailableError(
-            `The local Kokoro worker stopped${code === null ? "" : ` (exit ${code})`}.${stderr ? ` ${stderr.trim()}` : ""}`
-          )
-          if (!initialized) rejectReady(failure)
-          if (state.worker !== child) return
-          state.activeReply?.reject(failure)
-          state.activeReply = undefined
-          state.worker = undefined
-          state.workerReady = undefined
-        })
-      })
-      .catch((error: unknown) => {
-        rejectReady(
-          new KokoroUnavailableError(
-            error instanceof Error
-              ? error.message
-              : "Kokoro could not prepare its local data folder."
-          )
-        )
-      })
-  })
-  state.workerReady = readiness.catch((error: unknown) => {
-    state.workerReady = undefined
-    throw error
-  })
-  return state.workerReady
-}
+/** Shares bounded worker ownership across development reloads and route bundles. */
+const runtime = (state.runtime ??= new KokoroWorker({
+  spawnWorker: () =>
+    spawn(/* turbopackIgnore: true */ pythonExecutable, [workerScript], {
+      cwd: dirname(workerScript),
+      env: { ...process.env, BLITZ_KOKORO_DIR: dataDirectory },
+      stdio: ["pipe", "pipe", "pipe"],
+    }) as ChildProcessWithoutNullStreams,
+}))
 
-/** Sends one request to the resident process after startup has loaded the model. */
-async function sendRequest(request: SpeechRequest): Promise<void> {
-  await startWorker()
-  const child = state.worker
-  if (
-    !child ||
-    child.killed ||
-    child.exitCode !== null ||
-    child.stdin.destroyed
-  ) {
-    state.worker = undefined
-    state.workerReady = undefined
-    await startWorker()
-    return sendRequest(request)
-  }
-  await new Promise<void>((resolveReply, rejectReply) => {
-    state.activeReply = { resolve: resolveReply, reject: rejectReply }
-    child.stdin.write(`${JSON.stringify(request)}\n`, (error) => {
-      if (!error) return
-      state.activeReply = undefined
-      rejectReply(
-        new KokoroUnavailableError(
-          "The local Kokoro worker stopped accepting requests."
-        )
-      )
-    })
-  })
-}
-
-/** Stops only the failing resident process; queued cancellation never kills active inference. */
-async function runSynthesis(request: SpeechRequest): Promise<void> {
-  try {
-    await sendRequest(request)
-  } catch (error) {
-    state.worker?.kill()
-    state.worker = undefined
-    state.workerReady = undefined
-    throw error
-  }
+/** Runs one bounded inference; queued cancellation preserves other speech consumers. */
+async function runSynthesis(request: {
+  text: string
+  voiceId: KokoroVoiceId
+  outputPath: string
+}): Promise<void> {
+  await runtime.synthesize(request)
 }
 
 /** Loads installed assets ahead of the first click without downloading anything at server startup. */
@@ -261,7 +114,7 @@ export async function warmKokoro(): Promise<void> {
   } catch {
     return
   }
-  await Promise.all([startWorker(), prepareReadAloudCache()])
+  await Promise.all([runtime.start(), prepareReadAloudCache()])
 }
 
 /** Writes one WAV file using the persistent local Kokoro model. */
@@ -479,5 +332,5 @@ export async function synthesizeKokoroWav(
 /** Stops the resident worker when the Node.js process exits. */
 if (!state.exitHandlerInstalled) {
   state.exitHandlerInstalled = true
-  process.once("exit", () => state.worker?.kill())
+  process.once("exit", () => state.runtime?.killNow())
 }

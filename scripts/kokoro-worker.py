@@ -7,6 +7,8 @@ import os
 import shutil
 import ssl
 import sys
+import threading
+import time
 import urllib.request
 from pathlib import Path
 
@@ -15,6 +17,15 @@ import certifi
 
 MODEL_URL = "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.1/kokoro-v1.0.onnx"
 VOICES_URL = "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.1/voices-v1.0.bin"
+
+
+def watch_parent(parent_pid: int) -> None:
+    """Exit even during native inference if the owning Node server disappears."""
+    while True:
+        if os.getppid() != parent_pid or parent_pid == 1:
+            # A signal handler may wait for native inference to return; _exit does not.
+            os._exit(1)
+        time.sleep(1)
 
 
 def ensure_asset(path: Path, url: str) -> None:
@@ -35,9 +46,16 @@ def ensure_asset(path: Path, url: str) -> None:
 
 
 def initialize(data_dir: Path):
-    """Load Kokoro and its voice catalogue, downloading model files on first use."""
+    """Load CPU-bounded Kokoro, downloading model files only when missing."""
+    # Set numerical-library limits before importing ONNX, NumPy, or Kokoro.
+    for variable in (
+        "OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS",
+        "VECLIB_MAXIMUM_THREADS", "NUMEXPR_NUM_THREADS",
+    ):
+        os.environ[variable] = "2"
     try:
         import soundfile as sf
+        import onnxruntime as rt
         from kokoro_onnx import Kokoro
     except ImportError as error:
         raise RuntimeError(
@@ -48,11 +66,21 @@ def initialize(data_dir: Path):
     voices_path = data_dir / "voices-v1.0.bin"
     ensure_asset(model_path, MODEL_URL)
     ensure_asset(voices_path, VOICES_URL)
-    return Kokoro(str(model_path), str(voices_path)), sf
+    options = rt.SessionOptions()
+    options.intra_op_num_threads = 2
+    options.inter_op_num_threads = 1
+    options.execution_mode = rt.ExecutionMode.ORT_SEQUENTIAL
+    options.add_session_config_entry("session.intra_op.allow_spinning", "0")
+    options.add_session_config_entry("session.inter_op.allow_spinning", "0")
+    session = rt.InferenceSession(
+        str(model_path), sess_options=options, providers=["CPUExecutionProvider"]
+    )
+    return Kokoro.from_session(session, str(voices_path)), sf
 
 
 def main() -> None:
-    """Process requests sequentially while keeping the ONNX model resident in memory."""
+    """Serve sequential requests while Node enforces inference and idle deadlines."""
+    threading.Thread(target=watch_parent, args=(os.getppid(),), daemon=True).start()
     data_dir = Path(os.environ["BLITZ_KOKORO_DIR"]).expanduser()
     try:
         kokoro, soundfile = initialize(data_dir)

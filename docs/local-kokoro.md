@@ -1,6 +1,14 @@
 # Local Kokoro speech
 
-Blitz runs Kokoro on the local macOS Node.js host. The first speech request downloads the Kokoro ONNX model and voice catalogue into `~/Library/Application Support/Blitz/kokoro`; later requests reuse them. The ONNX model is loaded once into a persistent Python worker for the lifetime of the Blitz Node.js process. Server startup warms the worker in the background when the Python environment and model assets already exist. Startup does not download missing assets; the first requested synthesis still performs initial setup. The worker completes a tiny inference before announcing readiness.
+Blitz runs Kokoro on the local macOS Node.js host. The first speech request downloads the Kokoro ONNX model and voice catalogue into `~/Library/Application Support/Blitz/kokoro`; later requests reuse them. A Python worker keeps the model loaded while speech is in use and shuts down after one minute without inference. The next uncached speech request loads it again. Server startup warms the worker in the background when the Python environment and model assets already exist. Startup does not download missing assets; the first requested synthesis still performs initial setup. The worker completes a tiny inference before announcing readiness.
+
+## CPU and worker lifetime
+
+Local inference uses two ONNX threads, sequential operator execution, and no thread-pool spinning. Numerical libraries also receive a two-thread limit before import. These settings reduce CPU use and power consumption; they are thread limits, not a hard percentage cap on total CPU usage.
+
+Startup has a three-minute deadline, including any first-use model download. Each inference has a two-minute deadline, beginning after the worker is ready. A timeout or failed request rejects the caller, sends SIGTERM, and escalates to SIGKILL after one second if needed. The speech queue waits for the old process to exit before moving on, preventing overlapping replacement workers. A later request can start a fresh worker; a failed inference is never retried automatically. Idle shutdown does not interrupt an active inference.
+
+Node force-kills owned speech processes on exit. Python also checks its parent every second and exits if the owning server disappears, covering abrupt server termination that bypasses Node exit hooks. After switching Git branches, stop and restart the full `dev:lan` launcher so its servers use the same checkout; stopping one supervised server alone causes the launcher to restart it.
 
 Install Python 3.10 through 3.13, then run `scripts/setup-kokoro.sh` from the repository. The script creates an isolated environment under the same application support directory and installs pinned packages from `scripts/kokoro-requirements.txt`. For English phonemization, install `espeak-ng` with Homebrew (`brew install espeak-ng`) if it is not already available.
 
