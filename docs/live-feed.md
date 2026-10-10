@@ -1,3 +1,6 @@
+> **Superseded in part.** The feed's content now comes from `practice.feed`;
+> see [practice.md](practice.md). The UI behavior below still applies.
+
 # Live home feed
 
 The root route (`/`) renders the server-backed learning feed. It requests up to

@@ -33,17 +33,19 @@ names the PR that delivers it once one exists.
 
 ## Phase 2: practice and exam mode
 
-- [ ] Question bank per unit with all question types
-- [ ] Per-concept weakness model and drills
-- [ ] Relearn from practice into a focused teach session
+- [x] Question bank per unit (single, multiple, true/false), first bank automatic
+- [x] Per-concept strength and adaptive drills
+- [x] Relearn from practice into the unit's Teach session
+- [ ] More question types: cloze, ordering, matching, code output
 - [ ] Past paper import and mock exams
 - [ ] Long answer grading against sources
 
 ## Phase 3: home feed and habit
 
-- [ ] Weakness-weighted infinite feed of studied material
-- [ ] Streaks, XP, daily prompt
-- [ ] Progress visuals and session summaries
+- [x] Weakness-weighted infinite feed of studied material, with recaps
+- [x] Streaks, XP, daily goal, Today card with a seven-day chart
+- [ ] Daily prompt notification (desktop app)
+- [ ] Session summaries after Teach and drills
 
 ## Known issues
 
