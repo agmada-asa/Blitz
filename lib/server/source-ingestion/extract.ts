@@ -7,6 +7,7 @@ import { getDocument } from "pdfjs-dist/legacy/build/pdf.mjs"
 import { unzipSync } from "fflate"
 import { SourceIngestionError } from "./errors.ts"
 import { pdfPageReadingOrder } from "./pdf-reading-order.ts"
+import { isSubtitleTranscript, subtitleToTranscript } from "../../transcript.ts"
 
 /** Maximum downloaded bytes accepted by the research extraction boundary. */
 export const MAX_DOWNLOADED_SOURCE_BYTES = 5_000_000
@@ -393,7 +394,12 @@ export async function extractStoredSource(
     extractedText = extractPptxText(new Uint8Array(await readFile(input.path)))
   } else {
     const raw = await readStoredText(input.path)
-    extractedText = format === "html" ? extractHtmlText(raw) : raw
+    extractedText =
+      format === "html"
+        ? extractHtmlText(raw)
+        : isSubtitleTranscript(input.filename, raw)
+          ? subtitleToTranscript(raw)
+          : raw
   }
   const extension =
     format === "pdf"
