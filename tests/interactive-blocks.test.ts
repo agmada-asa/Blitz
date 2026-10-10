@@ -346,7 +346,8 @@ test("the prompt documents every block type with an example", () => {
   const examples = lexer(INTERACTIVE_BLOCKS_PROMPT).filter(
     (token): token is Tokens.Code => token.type === "code"
   )
-  assert.equal(examples.length, INTERACTIVE_BLOCK_LANGUAGES.length)
+  // One example per language, plus one for the recall quiz formats.
+  assert.equal(examples.length, INTERACTIVE_BLOCK_LANGUAGES.length + 1)
   for (const example of examples)
     assert.ok(parseInteractiveBlock(example.lang ?? "", example.text).ok)
 })
