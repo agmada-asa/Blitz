@@ -81,10 +81,14 @@ test("ordering shuffles deterministically, never into the answer order", () => {
   const first = quiz({ type: "ordering", question: "Order the steps, first to last.", options: steps })
   const second = quiz({ type: "ordering", question: "Order the steps, first to last.", options: steps })
   assert.deepEqual(first.options, second.options)
-  assert.deepEqual(first.correctOptionIds, ["a", "b", "c", "d"])
-  assert.notDeepEqual(first.options.map((option) => option.id), first.correctOptionIds)
-  assert.equal(gradeQuizAnswer(first, ["a", "b", "c", "d"]), true)
-  assert.equal(gradeQuizAnswer(first, ["b", "a", "c", "d"]), false)
+  // Ids follow the displayed order, so they reveal nothing about the answer.
+  assert.deepEqual(first.options.map((option) => option.id), ["a", "b", "c", "d"])
+  const textOf = (id: string) => first.options.find((option) => option.id === id)?.text
+  assert.deepEqual(first.correctOptionIds.map(textOf), steps)
+  assert.notDeepEqual(first.correctOptionIds, ["a", "b", "c", "d"])
+  const answer = [...first.correctOptionIds]
+  assert.equal(gradeQuizAnswer(first, answer), true)
+  assert.equal(gradeQuizAnswer(first, [answer[1], answer[0], answer[2], answer[3]]), false)
   // The starting answer is the displayed order, which is always wrong.
   assert.equal(gradeQuizAnswer(first, initialStructuredAnswer(first)), false)
   rejected({ type: "ordering", question: "Too short", options: ["a", "b"] })
@@ -114,10 +118,13 @@ test("matching pairs each prompt with one option, with optional extras", () => {
   })
   assert.deepEqual(block.prompts, ["Hash table", "Balanced BST", "Linked list"])
   assert.equal(block.options.length, 4)
-  assert.deepEqual(block.correctOptionIds, ["a", "b", "c"])
-  assert.equal(gradeQuizAnswer(block, ["a", "b", "c"]), true)
-  assert.equal(gradeQuizAnswer(block, ["a", "c", "b"]), false)
-  assert.equal(gradeQuizAnswer(block, ["a", "b", ""]), false)
+  assert.deepEqual(block.options.map((option) => option.id), ["a", "b", "c", "d"])
+  const textOf = (id: string) => block.options.find((option) => option.id === id)?.text
+  assert.deepEqual(block.correctOptionIds.map(textOf), ["O(1) average", "O(log n)", "O(n)"])
+  const [first, second, third] = block.correctOptionIds
+  assert.equal(gradeQuizAnswer(block, [first, second, third]), true)
+  assert.equal(gradeQuizAnswer(block, [first, third, second]), false)
+  assert.equal(gradeQuizAnswer(block, [first, second, ""]), false)
   assert.equal(structuredAnswerReady("matching", ["a", "b", ""]), false)
   assert.equal(structuredAnswerReady("matching", ["a", "b", "d"]), true)
   rejected({ type: "matching", question: "Too few", pairs: [["a", "1"], ["b", "2"]] })
@@ -139,10 +146,9 @@ test("code output requires code and compares output by line", () => {
 })
 
 test("the learning core scores structured answers and rejects malformed ones", () => {
-  const ordering = structuredQuestion(
-    quiz({ type: "ordering", question: "Order these.", options: ["x", "y", "z"] })
-  )
-  assert.equal(evaluateAnswer(ordering, ["a", "b", "c"]).status, "correct")
+  const orderingQuiz = quiz({ type: "ordering", question: "Order these.", options: ["x", "y", "z"] })
+  const ordering = structuredQuestion(orderingQuiz)
+  assert.equal(evaluateAnswer(ordering, [...orderingQuiz.correctOptionIds]).status, "correct")
   assert.equal(evaluateAnswer(ordering, ["a", "b"]).reason, "incomplete-answer")
   assert.equal(evaluateAnswer(ordering, ["a", "a", "b"]).reason, "duplicate-option")
   assert.equal(evaluateAnswer(ordering, ["a", "b", "q"]).reason, "unknown-option")
@@ -169,6 +175,7 @@ test("ordered answers are not equivalent when reordered", () => {
 test("blank normalization ignores case, spacing, quotes, and a trailing full stop", () => {
   assert.equal(normalizeBlankAnswer(" `Heap.` "), "heap")
   assert.equal(normalizeBlankAnswer("O( n )"), normalizeBlankAnswer("o(n)"))
+  assert.equal(normalizeBlankAnswer('"O(n)".'), normalizeBlankAnswer("O(n)"))
 })
 
 test("speech text and payloads never include the answer key", () => {
