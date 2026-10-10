@@ -87,3 +87,66 @@ export function computeStreak(
   }
   return { current, todayMet, longest: Math.max(longest, current) }
 }
+
+/** One answer counted in a session summary. */
+export type SessionAnswer = { conceptId: string; correct: boolean }
+
+/** How one concept went during a session. */
+export type SessionConceptTally = { conceptId: string; answered: number; correct: number }
+
+/** What a study session added up to. */
+export type SessionTotals = {
+  answered: number
+  correct: number
+  /** XP from answers and Teach milestones, using the same rules as the daily goal. */
+  xp: number
+  sections: number
+  unitsCompleted: number
+  /** Concepts answered, those with mistakes first, then the most practised. */
+  concepts: SessionConceptTally[]
+}
+
+/**
+ * Adds up a session's answers and Teach milestones.
+ * @param answers Answers recorded since the session started, in any order.
+ * @param milestones Teach milestones recorded since the session started.
+ * @returns Totals and a per-concept tally.
+ */
+export function summarizeSession(
+  answers: readonly SessionAnswer[],
+  milestones: ReadonlyArray<{ kind: "section" | "unit" }>
+): SessionTotals {
+  const byConcept = new Map<string, SessionConceptTally>()
+  let correct = 0
+  let xp = 0
+  for (const answer of answers) {
+    const tally = byConcept.get(answer.conceptId) ?? {
+      conceptId: answer.conceptId,
+      answered: 0,
+      correct: 0,
+    }
+    tally.answered += 1
+    if (answer.correct) {
+      tally.correct += 1
+      correct += 1
+      xp += XP.correctAnswer
+    } else xp += XP.incorrectAnswer
+    byConcept.set(answer.conceptId, tally)
+  }
+  let sections = 0
+  let unitsCompleted = 0
+  for (const milestone of milestones) {
+    if (milestone.kind === "unit") {
+      unitsCompleted += 1
+      xp += XP.unit
+    } else {
+      sections += 1
+      xp += XP.section
+    }
+  }
+  const concepts = [...byConcept.values()].sort(
+    (a, b) =>
+      b.answered - b.correct - (a.answered - a.correct) || b.answered - a.answered
+  )
+  return { answered: answers.length, correct, xp, sections, unitsCompleted, concepts }
+}
