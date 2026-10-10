@@ -366,14 +366,15 @@ export function normalizeTextAnswer(value: string): string {
 
 /**
  * Normalizes one typed blank for matching: case, surrounding quotes or
- * backticks, a trailing full stop, and spacing are ignored, so `O(n)`,
- * "`o(n)`" and "O( n )." all match. Unicode is NFKC-folded so pasted
+ * backticks, a trailing full stop inside or outside them, and spacing are
+ * ignored, so `O(n)`, "`o(n)`", "O( n )." and `"O(n)".` all match. Unicode is NFKC-folded so pasted
  * symbols compare equal to typed ones.
  */
 export function normalizeBlankAnswer(value: string): string {
   return value
     .normalize("NFKC")
     .trim()
+    .replace(/\.$/, "")
     .replace(/^[`'"“”‘’]+|[`'"“”‘’]+$/g, "")
     .replace(/\.$/, "")
     .replace(/\s+/g, "")
