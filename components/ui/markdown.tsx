@@ -604,6 +604,8 @@ function blocks(tokens: Token[], options: RenderOptions): ReactNode {
         )
       case "code": {
         const language = token.lang?.split(/[\s,]/)[0]?.toLowerCase() ?? ""
+        // Teach outline and section markers drive navigation, not reading.
+        if (language === "outline" || language === "section") return null
         if (options.interactive && isInteractiveBlockLanguage(language)) {
           const rendered = interactiveBlock(
             token as Tokens.Code,
