@@ -277,6 +277,72 @@ test("project chunk references keep their page, reject other projects, and retai
   assert.equal(read.snapshotOnly, true)
 })
 
+test("reference book passages past the stored excerpt are citable at their page", async () => {
+  const api = await handlers()
+  const db = new MemoryDb()
+  const projectId = db.seed("projects", {})
+  const chatId = db.seed("workspaceChats", { projectId, status: "running" })
+  const messageId = db.seed("workspaceChatMessages", {
+    chatId,
+    role: "assistant",
+    status: "running",
+    content: "",
+  })
+  await db.patch(chatId, { activeMessageId: messageId })
+  // The source row keeps only the start of the book; chunks hold the rest.
+  const sourceId = db.seed("sources", {
+    projectId,
+    filename: "textbook.pdf",
+    extractedText: "[Page 1]\nPreface.",
+    kind: "pdf",
+    relativeKey: "Sources/book.pdf",
+    mimeType: "application/pdf",
+  })
+  const chunkText = "Dijkstra's algorithm finds shortest paths.\n[Page 413]\nIt needs non-negative weights."
+  const chunkId = db.seed("sourceChunks", {
+    projectId,
+    sourceId,
+    ordinal: 900,
+    text: chunkText,
+    startOffset: 2_000_000,
+    endOffset: 2_000_000 + chunkText.length,
+    references: [
+      { kind: "page", label: "[Page 412]", value: "412", startOffset: 1_999_000, endOffset: 2_000_043 },
+      { kind: "page", label: "[Page 413]", value: "413", startOffset: 2_000_043, endOffset: 2_000_200 },
+    ],
+  })
+  const citations = (await api.prepare(
+    { db },
+    { chatId, messageId, question: "Dijkstra", chunkIds: [chunkId] }
+  )) as Array<{ id: string; page: number; label: string; chunkId: string }>
+  assert.deepEqual(
+    citations.map((citation) => [citation.label, citation.page]),
+    [
+      ["Page 412", 412],
+      ["Page 413", 413],
+    ]
+  )
+  assert.ok(citations.every((citation) => citation.chunkId === chunkId))
+  const read = (await api.read(
+    { db },
+    { chatId, messageId, citationId: citations[1].id }
+  )) as {
+    text: string
+    startOffset: number
+    endOffset: number
+    snapshotOnly: boolean
+    fileUrl: string
+  }
+  // The reader shows the surrounding section with the passage highlighted.
+  assert.equal(read.text, chunkText)
+  assert.equal(
+    read.text.slice(read.startOffset, read.endOffset),
+    "[Page 413]\nIt needs non-negative weights."
+  )
+  assert.equal(read.snapshotOnly, false)
+  assert.match(read.fileUrl, /sourceId=/)
+})
+
 test("submission rejects an ad hoc document from another project", async () => {
   const api = await handlers()
   const db = new MemoryDb()
