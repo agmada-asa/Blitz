@@ -67,16 +67,16 @@ const MODEL_FIELDS: Array<{
     providerField: "cardGenerationProvider",
     modelField: "cardGenerationModel",
     effortField: "cardGenerationEffort",
-    label: "Content generation",
-    description: "Turns sources into lessons and questions.",
+    label: "Practice questions",
+    description: "Writes practice questions and recaps from your units.",
   },
   {
     task: "reply",
     providerField: "replyProvider",
     modelField: "replyModel",
     effortField: "replyEffort",
-    label: "Replies",
-    description: "Answers questions in workspace chat and about study pages.",
+    label: "Teaching and chat",
+    description: "Teaches your units and answers questions in chat.",
   },
 ]
 
@@ -338,8 +338,8 @@ function ModelSettingsEditor({
                   {provider.id === "antigravity" ? (
                     <p className="mt-1 text-xs text-muted-foreground">
                       Workspace chat only. Native reads and administrator
-                      policies still apply. Content generation and background
-                      replies are unavailable.
+                      policies still apply. Writing practice questions is
+                      unavailable.
                     </p>
                   ) : null}
                 </div>
