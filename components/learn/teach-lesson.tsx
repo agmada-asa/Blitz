@@ -9,6 +9,7 @@
 import type { FunctionReturnType } from "convex/server"
 import { memo, useMemo } from "react"
 
+import { ReadAloudButton } from "@/components/chat/read-aloud-button"
 import { ElapsedTime } from "@/components/ui/elapsed-time"
 import { InteractiveBlocksProvider } from "@/components/ui/interactive-blocks"
 import { Markdown } from "@/components/ui/markdown"
@@ -127,7 +128,7 @@ type TutorReplyProps = {
 }
 
 /**
- * Renders one tutor reply with its section heading, the plan on the first
+ * Renders one tutor reply with its section heading and read aloud control, the plan on the first
  * reply, the lesson body, and a waiting state before the first words arrive.
  * Memoised because a streaming reply re-renders several times a second.
  */
@@ -194,6 +195,13 @@ const TutorReply = memo(function TutorReply({
             <h2 className="mt-0.5 font-heading text-2xl font-semibold tracking-tight text-balance">
               {outline!.sections[sectionNumber].title}
             </h2>
+            {!streaming && body.trim() ? (
+              <div className="mt-2 -ml-2.5 sm:-ml-2">
+                <ReadAloudButton
+                  text={`${outline!.sections[sectionNumber].title}\n\n${body}`}
+                />
+              </div>
+            ) : null}
           </div>
         </header>
       ) : marker?.kind === "done" ? (
@@ -202,6 +210,11 @@ const TutorReply = memo(function TutorReply({
           <h2 className="mt-1 font-heading text-2xl font-semibold tracking-tight">
             {outline?.title ?? unitTitle}
           </h2>
+          {!streaming && body.trim() ? (
+            <div className="mt-2 -ml-2.5 sm:-ml-2">
+              <ReadAloudButton text={body} />
+            </div>
+          ) : null}
         </header>
       ) : null}
       {body.trim() ? (
