@@ -124,7 +124,10 @@ export class ServiceManager {
     livenessIntervalMs = 5_000,
     livenessGraceMs = 30_000,
     livenessFailureLimit = 3,
-    shutdownGraceMs = 3_000,
+    // Longer than the launchers' own 3 s grace (scripts/process-groups.mjs), so
+    // `npm run dev` can force-kill a hung Next group before it is killed itself.
+    // Killing the launcher first would orphan Next with the port still bound.
+    shutdownGraceMs = 5_000,
     onStatus = () => undefined,
   }) {
     this.cwd = cwd
