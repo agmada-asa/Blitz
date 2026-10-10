@@ -1,6 +1,6 @@
 /**
- * Exercises card-chat orchestration with an in-memory transport. No Codex
- * process, model turn, subscription usage, or network connection is used.
+ * Exercises the Codex text-turn lifecycle with an in-memory transport. No
+ * Codex process, model turn, subscription usage, or network connection is used.
  */
 
 import {
@@ -11,12 +11,9 @@ import { test } from "node:test"
 import assert from "node:assert/strict"
 import {
   CardChatError,
-  buildCardChatPrompt,
   MAX_CARD_CHAT_STREAM_TEXT_LENGTH,
-  runCardChat,
-  type CardChatCard,
+  runCodexTextTurn,
   type CardChatEvent,
-  type CardChatSource,
   type CardChatTransport,
 } from "../lib/server/card-chat.ts"
 import type {
@@ -28,21 +25,6 @@ import type {
   CodexTurn,
   CodexTurnResponse,
 } from "../lib/server/codex-app-server.ts"
-
-/** Stable card fixture used by the orchestration tests. */
-const card: CardChatCard = {
-  id: "card-1",
-  title: "Envelope shaping",
-  body: "An envelope changes the amplitude contour of a sound over time.",
-  sourceLabel: "Sound notes",
-}
-
-/** Stable source fixture used by the orchestration tests. */
-const source: CardChatSource = {
-  id: "source-1",
-  filename: "notes.md",
-  extractedText: "An envelope describes changes in amplitude over time.",
-}
 
 /** Controllable transport that records lifecycle calls and emits notifications. */
 class FakeTransport implements CardChatTransport {
@@ -233,27 +215,11 @@ function factoryFor(transport: FakeTransport): () => FakeTransport {
   return () => transport
 }
 
-test("builds a bounded prompt that requires and preserves the learner question", () => {
-  const prompt = buildCardChatPrompt({
-    card,
-    source: { ...source, extractedText: "x".repeat(20_000) },
-    question: "Why does the envelope matter?",
-  })
-  assert.match(prompt, /Why does the envelope matter\?/)
-  assert.match(prompt, /context truncated by Blitz/)
-  assert.ok(prompt.length < 16_000)
-  assert.throws(
-    () => buildCardChatPrompt({ card, source, question: "   " }),
-    (error: unknown) =>
-      error instanceof CardChatError && error.reason === "invalid-input"
-  )
-})
-
 test("requires an explicit absolute workspace before creating a transport", async () => {
   let created = false
   await assert.rejects(
-    runCardChat(
-      { workspaceDirectory: "relative", card, source, question: "Why?" },
+    runCodexTextTurn(
+      { workspaceDirectory: "relative", prompt: "Why?" },
       {
         createTransport: () => {
           created = true
@@ -272,12 +238,10 @@ test("pre-aborted requests do not create a transport or leak a rejection", async
   controller.abort()
   let created = false
   await assert.rejects(
-    runCardChat(
+    runCodexTextTurn(
       {
         workspaceDirectory: "/tmp/blitz-owned-workspace",
-        card,
-        source,
-        question: "Why?",
+        prompt: "Why?",
         signal: controller.signal,
       },
       {
@@ -297,12 +261,10 @@ test("returns IDs and handles completion racing the turn/start response", async 
   const transport = new FakeTransport()
   transport.completeImmediately = true
   const events: CardChatEvent[] = []
-  const result = await runCardChat(
+  const result = await runCodexTextTurn(
     {
       workspaceDirectory: "/tmp/blitz-owned-workspace",
-      card,
-      source,
-      question: "What changes?",
+      prompt: "What changes?",
       model: "gpt-test",
       effort: "low",
     },
@@ -338,12 +300,10 @@ test("resumes a supplied persistent thread and streams activity", async () => {
   const transport = new FakeTransport()
   transport.completeImmediately = true
   const events: CardChatEvent[] = []
-  const result = await runCardChat(
+  const result = await runCodexTextTurn(
     {
       workspaceDirectory: "/tmp/blitz-owned-workspace",
-      card,
-      source,
-      question: "How does it shape sound?",
+      prompt: "How does it shape sound?",
       threadId: "thr_saved",
     },
     {
@@ -363,12 +323,10 @@ test("aborts an in-flight turn, interrupts it, closes transport, and emits one e
   transport.respondTurnImmediately = true
   const controller = new AbortController()
   const events: CardChatEvent[] = []
-  const run = runCardChat(
+  const run = runCodexTextTurn(
     {
       workspaceDirectory: "/tmp/blitz-owned-workspace",
-      card,
-      source,
-      question: "Explain this.",
+      prompt: "Explain this.",
       signal: controller.signal,
     },
     {
@@ -396,12 +354,10 @@ test("times out an in-flight turn and cleans up its transport", async () => {
   const transport = new FakeTransport()
   transport.respondTurnImmediately = true
   const events: CardChatEvent[] = []
-  const run = runCardChat(
+  const run = runCodexTextTurn(
     {
       workspaceDirectory: "/tmp/blitz-owned-workspace",
-      card,
-      source,
-      question: "How long does it last?",
+      prompt: "How long does it last?",
       timeoutMs: 10,
     },
     {
@@ -428,12 +384,10 @@ test("does not report success when completion contains no assistant text", async
   transport.emptyCompletion = true
   const events: CardChatEvent[] = []
   await assert.rejects(
-    runCardChat(
+    runCodexTextTurn(
       {
         workspaceDirectory: "/tmp/blitz-owned-workspace",
-        card,
-        source,
-        question: "Why?",
+        prompt: "Why?",
       },
       {
         createTransport: factoryFor(transport),
@@ -488,12 +442,10 @@ for (const limit of limitCases) {
       }
       const events: CardChatEvent[] = []
       await assert.rejects(
-        runCardChat(
+        runCodexTextTurn(
           {
             workspaceDirectory: "/tmp/blitz-owned-workspace",
-            card,
-            source,
-            question: "Why?",
+            prompt: "Why?",
           },
           {
             createTransport: factoryFor(transport),
@@ -527,12 +479,10 @@ test("lets the provider recover from retryable rate errors before reporting succ
     message: "Retrying",
   }
   const events: CardChatEvent[] = []
-  const result = await runCardChat(
+  const result = await runCodexTextTurn(
     {
       workspaceDirectory: "/tmp/blitz-owned-workspace",
-      card,
-      source,
-      question: "Why?",
+      prompt: "Why?",
     },
     {
       createTransport: factoryFor(transport),
@@ -556,12 +506,10 @@ test("keeps unknown turn failures generic while retaining provider diagnostics",
     error: providerError,
   }
   await assert.rejects(
-    runCardChat(
+    runCodexTextTurn(
       {
         workspaceDirectory: "/tmp/blitz-owned-workspace",
-        card,
-        source,
-        question: "Why?",
+        prompt: "Why?",
       },
       { createTransport: factoryFor(transport) }
     ),
@@ -580,12 +528,10 @@ test("fails when streamed assistant text exceeds the collection bound", async ()
   transport.completeImmediately = true
   transport.deltaText = "x".repeat(MAX_CARD_CHAT_STREAM_TEXT_LENGTH + 1)
   await assert.rejects(
-    runCardChat(
+    runCodexTextTurn(
       {
         workspaceDirectory: "/tmp/blitz-owned-workspace",
-        card,
-        source,
-        question: "Why?",
+        prompt: "Why?",
       },
       { createTransport: factoryFor(transport) }
     ),

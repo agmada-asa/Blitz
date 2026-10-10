@@ -6,8 +6,8 @@ import { setTimeout as pause } from "node:timers/promises"
 import { ConvexHttpClient } from "convex/browser"
 import { api } from "../convex/_generated/api.js"
 import type { Id } from "../convex/_generated/dataModel.js"
-import { defaultChatWorkspaceDirectory } from "../lib/server/chat-worker.ts"
 import {
+  defaultChatWorkspaceDirectory,
   runResearchProposalStep,
   type ResearchProposalClaim,
   type ResearchProposalQueue,

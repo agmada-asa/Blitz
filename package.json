@@ -13,7 +13,6 @@
     "test": "node --test --experimental-strip-types tests/*.test.ts",
     "format": "prettier --write \"**/*.{js,mjs,ts,tsx}\"",
     "typecheck": "tsc --noEmit",
-    "worker:chat": "node --experimental-strip-types scripts/chat-worker.ts",
     "worker:research": "node --experimental-strip-types scripts/research-worker.ts",
     "worker:ingestion": "node --experimental-strip-types scripts/ingestion-worker.ts",
     "eval:ingestion": "node --experimental-strip-types scripts/eval-ingestion.ts",

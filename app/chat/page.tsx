@@ -1,14 +1,13 @@
 "use client"
 
-/** Opens general workspace chat, a new card chat, or a legacy card deep link. */
+/**
+ * Opens general workspace chat or a new card chat. Legacy card deep links
+ * (`projectId` and `itemId`) open the project's workspace chat.
+ */
 
-import Link from "next/link"
 import { use } from "react"
 import { useQuery } from "convex/react"
-import { useRouter } from "next/navigation"
-import { FeedChatDialog } from "@/components/feed/feed-chat-dialog"
 import { ChatWorkspace } from "@/components/chat/chat-workspace"
-import { Button } from "@/components/ui/button"
 import { api } from "@/convex/_generated/api"
 import type { Id } from "@/convex/_generated/dataModel"
 
@@ -19,7 +18,7 @@ function chatIdFromQuery(value?: string): Id<"workspaceChats"> | undefined {
     : undefined
 }
 
-/** Routes new card links to workspace chat while keeping legacy card links readable. */
+/** Routes card links and legacy card links to workspace chat. */
 export default function ChatPage({
   searchParams,
 }: {
@@ -34,16 +33,6 @@ export default function ChatPage({
 }) {
   const { projectId, itemId, cardProjectId, cardId, prompt, chatId } =
     use(searchParams)
-  const router = useRouter()
-  const card = useQuery(
-    api.conversations.getAttachment,
-    projectId && itemId
-      ? {
-          projectId: projectId as Id<"projects">,
-          itemId: itemId as Id<"learningItems">,
-        }
-      : "skip"
-  )
   const newCard = useQuery(
     api.conversations.getAttachment,
     cardProjectId && cardId
@@ -109,27 +98,5 @@ export default function ChatPage({
           : undefined
       }
     />
-  )
-
-  return (
-    <main className="mx-auto max-w-4xl px-5 py-8 sm:px-8 sm:py-12">
-      <h1 className="text-3xl font-medium">Chat</h1>
-      {!card ? (
-        <p className="mt-4 text-sm text-muted-foreground" role="status">
-          Loading chat…
-        </p>
-      ) : (
-        <FeedChatDialog
-          card={card ?? null}
-          open
-          onOpenChange={(open) => {
-            if (!open) router.push("/notifications")
-          }}
-        />
-      )}
-      <Button asChild variant="outline" className="mt-6">
-        <Link href="/chat">Open workspace chat</Link>
-      </Button>
-    </main>
   )
 }

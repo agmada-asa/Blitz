@@ -1,6 +1,9 @@
 /** Runs approval-first research planning jobs on the local Mac through Codex. */
 
 import { randomUUID } from "node:crypto"
+import { mkdir } from "node:fs/promises"
+import { homedir } from "node:os"
+import { isAbsolute, join, resolve, sep } from "node:path"
 import { type CardChatEvent, type CardChatResult } from "./card-chat.ts"
 import { runProviderTextTurn } from "./providers/run-text-turn.ts"
 import { getProviderDefinition } from "./providers/registry.ts"
@@ -12,10 +15,33 @@ import {
   type ResearchActivityEvent,
   type ResearchProposal,
 } from "./research-proposal.ts"
-import {
-  defaultChatWorkspaceDirectory,
-  ensureChatWorkspaceDirectory,
-} from "./chat-worker.ts"
+
+/**
+ * Returns the stable user-owned provider workspace, outside the repository.
+ * `BLITZ_CODEX_WORKSPACE` overrides the default under `~/.local/share`.
+ */
+export function defaultChatWorkspaceDirectory(): string {
+  const configured = process.env.BLITZ_CODEX_WORKSPACE?.trim()
+  if (configured) return configured
+  return join(homedir(), ".local", "share", "blitz", "codex-workspace")
+}
+
+/**
+ * Creates the caller-selected workspace directory and returns it.
+ * Throws when the path is relative or inside the Blitz repository.
+ */
+export async function ensureChatWorkspaceDirectory(
+  directory: string
+): Promise<string> {
+  if (!isAbsolute(directory))
+    throw new Error("Chat workspace must be an absolute path")
+  const resolved = resolve(directory)
+  const repository = resolve(process.cwd())
+  if (resolved === repository || resolved.startsWith(`${repository}${sep}`))
+    throw new Error("Chat workspace must be outside the Blitz repository")
+  await mkdir(directory, { recursive: true })
+  return directory
+}
 
 /** A queued proposal request returned by Convex. */
 export interface ResearchProposalClaim {
