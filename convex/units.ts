@@ -91,12 +91,24 @@ function teachSummary(chat: Doc<"workspaceChats"> | null) {
     completed: total > 0 && reached >= total,
     /** Sections actually taught; a jump can leave earlier ones untaught. */
     taughtSectionIds: chat.teachTaughtSectionIds ?? [],
+    /** Section ids in outline order, for drawing one segment per section. */
+    sectionIds: chat.teachOutline?.sections.map((section) => section.id) ?? [],
     currentSectionTitle:
       total && reached >= 0 && reached < total
         ? chat.teachOutline!.sections[reached].title
         : null,
     updatedAt: chat.updatedAt,
   }
+}
+
+/**
+ * Returns how much of a unit has been taught, from 0 to 1, counting sections
+ * actually taught so jumping ahead does not inflate it. A finished unit is 1.
+ */
+function taughtShare(summary: ReturnType<typeof teachSummary>): number {
+  if (!summary?.sectionCount) return 0
+  if (summary.completed) return 1
+  return Math.min(1, summary.taughtSectionIds.length / summary.sectionCount)
 }
 
 /**
@@ -589,6 +601,8 @@ export const libraryProgress = query({
         lastStudiedAt: number
         /** True when a module without units already has sources to group. */
         hasUnsortedSources: boolean
+        /** Share of each unit's sections taught (0 to 1), in path order. */
+        unitProgress: number[]
       }
     >()
     const ordered = [...units].sort((a, b) => a.order - b.order)
@@ -600,10 +614,12 @@ export const libraryProgress = query({
         nextUnitTitle: null,
         lastStudiedAt: 0,
         hasUnsortedSources: false,
+        unitProgress: [],
       }
       entry.unitCount += 1
       const chat = await latestTeachChat(ctx, unit._id)
       const summary = teachSummary(chat)
+      entry.unitProgress.push(taughtShare(summary))
       if (summary?.completed) entry.taughtCount += 1
       else if (!entry.nextUnitTitle) entry.nextUnitTitle = unit.title
       entry.lastStudiedAt = Math.max(
@@ -631,6 +647,7 @@ export const libraryProgress = query({
           nextUnitTitle: null,
           lastStudiedAt: 0,
           hasUnsortedSources: true,
+          unitProgress: [],
         })
         break
       }
