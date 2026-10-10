@@ -2,8 +2,8 @@
 
 import { fileURLToPath } from "node:url"
 import { setTimeout as pause } from "node:timers/promises"
-import { ConvexHttpClient } from "convex/browser"
 import { api } from "../convex/_generated/api.js"
+import { serverConvexClient } from "../lib/server/convex.ts"
 
 /** Loads .env.local without replacing values supplied by the launcher. */
 function loadLocalEnvironment(): void {
@@ -32,12 +32,10 @@ function safeWorkerError(error: unknown): string {
 /** Polls the durable ingestion queue and invokes the canonical retry route. */
 async function main(): Promise<void> {
   loadLocalEnvironment()
-  const convexUrl =
-    process.env.BLITZ_CONVEX_URL ?? process.env.NEXT_PUBLIC_CONVEX_URL
   const serverUrl = process.env.BLITZ_SERVER_URL ?? "http://127.0.0.1:3007"
-  if (!convexUrl)
-    throw new Error("Set BLITZ_CONVEX_URL before starting the ingestion worker")
-  const client = new ConvexHttpClient(convexUrl)
+  const client = serverConvexClient(
+    () => new Error("Set BLITZ_CONVEX_URL before starting the ingestion worker")
+  )
   const controller = new AbortController()
   const stop = (): void => controller.abort()
   process.once("SIGINT", stop)
