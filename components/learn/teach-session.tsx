@@ -671,7 +671,7 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
                     : null
                 )
               }
-              className="absolute bottom-4 left-1/2 min-h-10 -translate-x-1/2 rounded-full bg-background px-4 shadow-md"
+              className="absolute bottom-4 left-1/2 min-h-10 -translate-x-1/2 rounded-full bg-background px-4 shadow-md dark:bg-background dark:hover:bg-muted"
             >
               Latest
               <ArrowDownIcon aria-hidden="true" />
