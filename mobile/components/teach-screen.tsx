@@ -37,6 +37,7 @@ import {
   parseTeachSectionMarker,
   type TeachOutline,
 } from "../../lib/teach"
+import { inlineMathToText } from "../../lib/math-text"
 import { MobileApiError } from "../lib/api"
 import {
   answerTeachQuiz,
@@ -310,6 +311,13 @@ export function TeachScreen({ serverUrl, unitId, initialAsk, onBack, onPractice,
       restored.current = true
       revealId.current = lastAssistant.id
     }
+    // The message may already be laid out; layout events can arrive before this effect.
+    const target = revealId.current
+    const y = target ? offsets.current.get(target) : undefined
+    if (target && y !== undefined) {
+      revealId.current = null
+      scrollRef.current?.scrollTo({ y: Math.max(0, y - 8), animated: true })
+    }
   }, [lastAssistant, data])
 
   /** Scrolls to a message once it has been laid out. */
@@ -580,23 +588,47 @@ function AssistantMessage({
   onAnswer,
   onFollowup,
 }: AssistantMessageProps) {
-  const parts = useMemo(() => teachParts(message.content, streaming), [message.content, streaming])
   const marker = parseTeachSectionMarker(message.content)
+  const plan = useMemo(() => parseTeachOutline(message.content), [message.content])
   const sectionIndex =
     marker?.kind === "section" && outline ? outline.sections.findIndex((section) => section.id === marker.id) : -1
+  const sectionTitle = sectionIndex >= 0 && outline ? outline.sections[sectionIndex].title : undefined
+  const parts = useMemo(
+    () => withoutRepeatedHeading(teachParts(message.content, streaming), sectionTitle),
+    [message.content, streaming, sectionTitle]
+  )
   return (
     <View style={styles.reply}>
+      {plan ? (
+        <View style={styles.plan}>
+          <Text style={styles.quizLabel}>Lesson plan</Text>
+          <Text style={styles.planTitle}>{plan.title}</Text>
+          {plan.sections.map((section, index) => (
+            <Text key={section.id} style={styles.small}>
+              {index + 1}. {section.title}
+            </Text>
+          ))}
+        </View>
+      ) : null}
       {sectionIndex >= 0 && outline ? (
         <View style={styles.sectionHeading}>
           <PathMarker state="current" number={sectionIndex + 1} />
-          <Text accessibilityRole="header" style={styles.sectionTitle}>
-            {outline.sections[sectionIndex].title}
-          </Text>
+          <View style={styles.grow}>
+            <Text style={styles.small}>
+              Section {sectionIndex + 1} of {outline.sections.length}
+            </Text>
+            <Text accessibilityRole="header" style={styles.sectionTitle}>
+              {sectionTitle}
+            </Text>
+          </View>
         </View>
       ) : marker?.kind === "done" ? (
-        <Text accessibilityRole="header" style={styles.sectionTitle}>
-          Recap
-        </Text>
+        <View>
+          <Text style={styles.quizLabel}>Unit recap</Text>
+          <Text accessibilityRole="header" style={styles.sectionTitle}>
+            {outline?.title ?? "Recap"}
+          </Text>
+        </View>
       ) : null}
       {parts.map((part, index) => {
         if (part.kind === "markdown") return <Markdown key={index} text={part.text} />
@@ -643,7 +675,7 @@ function AssistantMessage({
                   onPress={() => onFollowup(item)}
                   style={({ pressed }) => [styles.followup, busy && styles.disabled, pressed && styles.pressed]}
                 >
-                  <Text style={styles.followupText}>{item}</Text>
+                  <Text style={styles.followupText}>{inlineMathToText(item)}</Text>
                 </Pressable>
               ))}
             </View>
@@ -657,6 +689,19 @@ function AssistantMessage({
       })}
     </View>
   )
+}
+
+/**
+ * Drops a Markdown heading at the very start of a section when it repeats the
+ * section title already shown above it.
+ */
+function withoutRepeatedHeading(parts: ReturnType<typeof teachParts>, title: string | undefined) {
+  const first = parts[0]
+  if (!title || first?.kind !== "markdown") return parts
+  const match = /^#{1,6}[ \t]+(.+?)[ \t#]*(?:\n|$)/.exec(first.text)
+  if (!match || match[1].trim().toLowerCase() !== title.trim().toLowerCase()) return parts
+  const rest = first.text.slice(match[0].length).trim()
+  return rest ? [{ kind: "markdown" as const, text: rest }, ...parts.slice(1)] : parts.slice(1)
 }
 
 /** A worked example revealed one step at a time. */
@@ -761,8 +806,10 @@ const styles = StyleSheet.create({
   },
   lesson: { gap: 20, padding: 18, paddingBottom: 40 },
   reply: { gap: 14 },
-  sectionHeading: { alignItems: "center", flexDirection: "row", gap: 12, marginTop: 8 },
-  sectionTitle: { color: colors.foreground, flex: 1, fontSize: 20, fontWeight: "600", lineHeight: 26 },
+  sectionHeading: { alignItems: "flex-start", flexDirection: "row", gap: 12, marginTop: 8 },
+  sectionTitle: { color: colors.foreground, fontSize: 20, fontWeight: "600", lineHeight: 26 },
+  plan: { backgroundColor: colors.card, borderRadius: radius.lg, gap: 4, padding: 14 },
+  planTitle: { color: colors.foreground, fontSize: 16, fontWeight: "600", marginBottom: 4 },
   quickEcho: { alignSelf: "flex-end", color: colors.faint, fontSize: 12 },
   userBubble: {
     alignSelf: "flex-end",

@@ -60,6 +60,13 @@ function inline(tokens: Token[]): ReactNode {
           </Text>
         )
       case "link": {
+        // Source citations open in the desktop reader; here they read as a quiet label.
+        if (token.href.startsWith("citation:"))
+          return (
+            <Text key={key} style={styles.citation}>
+              {children}
+            </Text>
+          )
         const href = markdownHref(token.href)
         return href ? (
           <Text
@@ -210,6 +217,7 @@ const styles = StyleSheet.create({
   codeContent: { padding: 12, backgroundColor: "transparent" },
   link: { color: "#ff8065", textDecorationLine: "underline" },
   math: { color: "#f0f0f0", fontStyle: "italic" },
+  citation: { color: "#ff8065", fontSize: 12 },
   mathBlock: { textAlign: "center", paddingVertical: 4 },
   quote: {
     borderLeftWidth: 2,
