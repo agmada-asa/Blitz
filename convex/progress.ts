@@ -109,6 +109,14 @@ export const today = query({
       unitId: string
       unitTitle: string
       detail: string
+      /** Sections in the unit's outline; 0 before the outline arrives. */
+      sectionCount: number
+      /** Zero-based section being taught. */
+      sectionIndex: number
+      /** Ids of sections actually taught, for the segmented bar. */
+      taughtSectionIds: string[]
+      /** Section ids in outline order. */
+      sectionIds: string[]
     } | null = null
     for (const chat of chats) {
       if (chat.purpose !== "teach" || !chat.unitId || chat.isArchived || !chat.projectId) continue
@@ -126,6 +134,10 @@ export const today = query({
         detail: total
           ? `Section ${index + 1} of ${total}: ${chat.teachOutline!.sections[index].title}`
           : "Started",
+        sectionCount: total,
+        sectionIndex: index,
+        taughtSectionIds: chat.teachTaughtSectionIds ?? [],
+        sectionIds: chat.teachOutline?.sections.map((section) => section.id) ?? [],
       }
       break
     }

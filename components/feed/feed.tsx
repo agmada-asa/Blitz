@@ -9,7 +9,7 @@ import { FilterHorizontalIcon } from "@hugeicons/core-free-icons"
 import { HugeiconsIcon } from "@hugeicons/react"
 
 import { FeedCardView } from "@/components/feed/feed-card"
-import { TodayCard } from "@/components/feed/today-card"
+import { TodayCard, TodayXpChip } from "@/components/feed/today-card"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -478,6 +478,7 @@ export function Feed({ initialFilter }: { initialFilter?: FeedFilter }) {
   return (
     <main className="feed-backdrop relative isolate h-[calc(100svh-68px-env(safe-area-inset-bottom))] overflow-hidden bg-background text-foreground selection:bg-brand selection:text-brand-foreground md:h-svh">
       <div className="pointer-events-none absolute inset-x-0 top-0 z-20 flex items-center justify-end gap-3 px-4 pt-[max(1rem,env(safe-area-inset-top))] sm:px-8 sm:pt-6">
+        <TodayXpChip />
         <Dialog
           open={filterOpen}
           onOpenChange={(open) => {
@@ -490,7 +491,7 @@ export function Feed({ initialFilter }: { initialFilter?: FeedFilter }) {
               type="button"
               variant="outline"
               aria-label="Filter"
-              className="pointer-events-auto h-10 rounded-full border-border/80 bg-background/80 px-0 text-sm text-muted-foreground backdrop-blur-md hover:bg-muted hover:text-foreground sm:w-auto sm:px-3.5"
+              className="pointer-events-auto h-10 w-10 rounded-full border-border/80 bg-background/80 px-0 text-sm text-muted-foreground backdrop-blur-md hover:bg-muted hover:text-foreground sm:w-auto sm:px-3.5"
             >
               <HugeiconsIcon
                 icon={FilterHorizontalIcon}
