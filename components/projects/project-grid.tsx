@@ -214,7 +214,7 @@ export function ProjectGrid({ projects, progress, onCreate }: ProjectGridProps) 
                   href={`/projects/${project._id}`}
                   className="absolute inset-0 flex min-w-0 flex-col justify-between rounded-2xl px-3 pb-3 pt-9 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none sm:px-4"
                 >
-                  <h2 className="line-clamp-2 text-sm font-medium tracking-tight break-words sm:text-base">
+                  <h2 className="line-clamp-2 shrink-0 text-sm font-medium tracking-tight break-words sm:text-base">
                     {project.title}
                   </h2>
                   <div className="space-y-1.5">
@@ -232,7 +232,8 @@ export function ProjectGrid({ projects, progress, onCreate }: ProjectGridProps) 
                       </div>
                     ) : null}
                     {progress ? (
-                      <p className="line-clamp-2 text-xs text-muted-foreground">
+                      // One line, so a two-line title still fits the fixed card height.
+                      <p className="line-clamp-1 text-xs text-muted-foreground">
                         {progressLine(progress[project._id])}
                       </p>
                     ) : (
