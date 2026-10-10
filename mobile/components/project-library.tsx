@@ -16,7 +16,10 @@ import type {
   ProjectOperation,
   ProjectSummary,
 } from "../../lib/project-contracts"
+import type { MobileModuleSummary } from "../../lib/learning/mobile-contracts"
+import { fetchLibrary } from "../lib/learning-api"
 import { fetchProjects, updateProject } from "../lib/projects"
+import { SegmentedBar } from "./progress-path"
 import { Text, TextInput } from "./native-text"
 import { WebAddIcon, WebMoreIcon } from "./web-icon"
 
@@ -29,6 +32,15 @@ type Props = {
   onChange: (operation: ProjectOperation, id: string) => Promise<void>
   initialProjectId?: string
   initialMode?: "actions" | "rename" | "delete"
+}
+
+/** Describes a module's progress in one short line, as the web Library does. */
+function progressLine(progress: MobileModuleSummary | undefined): string {
+  if (!progress) return ""
+  if (progress.hasUnsortedSources) return "Sources aren't in a unit yet"
+  if (!progress.unitCount) return "No material yet"
+  const taught = `${progress.taughtCount} of ${progress.unitCount} unit${progress.unitCount === 1 ? "" : "s"} taught`
+  return progress.nextUnitTitle ? `${taught} · Next: ${progress.nextUnitTitle}` : taught
 }
 
 /** Renders a full-screen native library with one form at a time and recoverable network errors. */
@@ -44,7 +56,8 @@ export function ProjectLibrary({
   const insets = useSafeAreaInsets()
   const [projects, setProjects] = useState<ProjectSummary[]>()
   const [search, setSearch] = useState("")
-  const [sort, setSort] = useState<"newest" | "name">("newest")
+  const [sort, setSort] = useState<"recent" | "name">("recent")
+  const [progress, setProgress] = useState<Map<string, MobileModuleSummary>>()
   const [mode, setMode] = useState<
     "list" | "actions" | "create" | "rename" | "delete"
   >("list")
@@ -63,6 +76,10 @@ export function ProjectLibrary({
       try {
         const next = await fetchProjects(serverUrl, signal)
         if (!signal?.aborted) setProjects(next)
+        // Progress is extra detail; the list still works without it.
+        const library = await fetchLibrary(serverUrl).catch(() => undefined)
+        if (library && !signal?.aborted)
+          setProgress(new Map(library.modules.map((module) => [module.id, module])))
       } catch (cause) {
         if (!signal?.aborted)
           setError(
@@ -154,7 +171,8 @@ export function ProjectLibrary({
     .sort((a, b) =>
       sort === "name"
         ? a.title.localeCompare(b.title)
-        : b.createdAt - a.createdAt
+        : (progress?.get(b.id)?.lastStudiedAt ?? 0) - (progress?.get(a.id)?.lastStudiedAt ?? 0) ||
+          b.createdAt - a.createdAt
     )
   const editing = mode === "create" || mode === "rename"
 
@@ -218,9 +236,9 @@ export function ProjectLibrary({
                     style={[styles.input, styles.search]}
                   />
                   <Action
-                    label={sort === "newest" ? "Newest first" : "Name A–Z"}
+                    label={sort === "recent" ? "Recently studied" : "Name A–Z"}
                     onPress={() =>
-                      setSort(sort === "newest" ? "name" : "newest")
+                      setSort(sort === "recent" ? "name" : "recent")
                     }
                   />
                 </View>
@@ -253,14 +271,18 @@ export function ProjectLibrary({
                     ]}
                   >
                     <Text style={styles.projectTitle}>{project.title}</Text>
-                    <Text style={styles.date}>
-                      Created{" "}
-                      {new Date(project.createdAt).toLocaleDateString("en-GB", {
-                        day: "numeric",
-                        month: "short",
-                        year: "numeric",
-                        timeZone: "UTC",
-                      })}
+                    {progress?.get(project.id)?.unitProgress.length ? (
+                      <SegmentedBar
+                        thin
+                        style={styles.progressBar}
+                        segments={progress.get(project.id)!.unitProgress.map((fill, index) => ({
+                          key: String(index),
+                          fill,
+                        }))}
+                      />
+                    ) : null}
+                    <Text numberOfLines={1} style={styles.date}>
+                      {progressLine(progress?.get(project.id))}
                     </Text>
                   </Pressable>
                   <Pressable
@@ -279,7 +301,7 @@ export function ProjectLibrary({
             <>
               <Text style={styles.projectHeading}>{selected.title}</Text>
               <Action
-                label="Open workspace"
+                label="Open module"
                 onPress={() => onOpenProject(selected.id)}
                 accent
               />
@@ -458,6 +480,7 @@ const styles = StyleSheet.create({
   },
   project: { flex: 1, padding: 16, minHeight: 76, justifyContent: "center" },
   projectTitle: { color: "#f7f7f7", fontSize: 16, fontWeight: "500" },
+  progressBar: { marginTop: 10, maxWidth: 240 },
   date: { color: "#aaaaaa", fontSize: 12, marginTop: 5 },
   more: {
     minWidth: 48,
