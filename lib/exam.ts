@@ -367,11 +367,15 @@ function readWhole(value: unknown, min: number, max: number): number | undefined
   return rounded >= min && rounded <= max ? rounded : undefined
 }
 
-/** Fallback explanation for a past paper answer that came without one. */
+/**
+ * Fallback explanation for a past paper answer that came without one. The
+ * results screen separately notes when an answer was worked out without
+ * solutions, so this stays short.
+ */
 function fallbackExplanation(source: AnswerSource): string {
   return source === "solutions"
     ? "This is the answer given in the solutions."
-    : "No solutions were uploaded, so this answer was worked out for you. Check it against your notes."
+    : "No explanation came with this answer."
 }
 
 /**

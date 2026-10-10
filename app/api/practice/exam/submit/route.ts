@@ -68,7 +68,7 @@ export async function POST(request: Request): Promise<Response> {
     return Response.json({ attemptId })
   } catch {
     return Response.json(
-      { error: "Your paper could not be submitted. Your answers are saved; try again." },
+      { error: "Your paper could not be submitted. Your answers are still here; try again." },
       { status: 503 }
     )
   }
