@@ -4,7 +4,12 @@ import assert from "node:assert/strict"
 import test from "node:test"
 
 import { conceptStrength, selectDrillQuestions, type DrillCandidate } from "../lib/drill.ts"
-import { buildQuestionBankPrompt, parseQuestionBank } from "../lib/practice.ts"
+import {
+  buildQuestionBankPrompt,
+  extractJsonObject,
+  parseQuestionBank,
+  repairJsonEscapes,
+} from "../lib/practice.ts"
 import { relearnMessage } from "../lib/teach.ts"
 
 const now = 1_000_000
@@ -120,4 +125,14 @@ test("relearn messages name the concept and the missed question", () => {
   assert.match(message, /"Total correctness"/)
   assert.match(message, /"An algorithm is totally correct when…"/)
   assert.match(relearnMessage("Recursion"), /^I'm not getting "Recursion"\. Re-teach/)
+})
+
+test("repairs LaTeX backslashes that models leave unescaped in JSON", () => {
+  // \( and \Theta are not JSON escapes; \theta and \frac look like tab and form feed.
+  const raw = String.raw`{"a":"\(4n+3\\\) is \\(\Theta(n)\\)","b":"$\theta$ and $\frac{1}{2}$ and $\neq$","c":"line\nbreak \"quoted\" \\ \u00e9"}`
+  const value = JSON.parse(repairJsonEscapes(raw)) as Record<string, string>
+  assert.equal(value.a, String.raw`\(4n+3\\) is \(\Theta(n)\)`)
+  assert.equal(value.b, String.raw`$\theta$ and $\frac{1}{2}$ and $\neq$`)
+  assert.equal(value.c, 'line\nbreak "quoted" \\ é')
+  assert.deepEqual(extractJsonObject('```json\n{"q":"$O(\\log n)$"}\n```'), { q: "$O(\\log n)$" })
 })

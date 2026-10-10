@@ -49,6 +49,7 @@ export function buildQuestionBankPrompt(input: BankPromptInput): string {
     `Write exactly ${count} new questions about the unit material below. Cover the whole unit, not just its start. Mix recall of definitions, application to a new example, calculation or tracing (code, algorithms, formulas), and spotting a common misconception. About 45% single-choice, 25% multiple-answer, 5% true-false, and 25% recall formats that choices would give away: cloze, ordering, matching, and, when the material has code, code-output. Use a recall format only where it fits naturally: ordering for real sequences (algorithm steps, lifecycle stages), matching for paired facts (term to definition, structure to complexity), cloze for a key term or value, code-output for short deterministic programs.`,
     "Distractors must be plausible to someone who half-understands the idea: typical errors, off-by-one results, confused terms. Never use joke options or 'all of the above'. Keep options parallel in length and form so the answer is not guessable from style.",
     "Questions and options may use Markdown, inline code, fenced code blocks, and LaTeX ($…$). Each question must stand alone without referring to 'the lecture' or 'the slides'.",
+    'Your reply is JSON, so escape every backslash inside strings: $\\Theta(n)$ is written "$\\\\Theta(n)$" and \\frac is written "\\\\frac".',
     input.weakConcepts.length
       ? `The learner keeps getting these concepts wrong; give each at least two questions from new angles: ${input.weakConcepts.join("; ")}.`
       : "",
@@ -122,8 +123,65 @@ function parseRecaps(value: unknown): ConceptRecap[] {
   return recaps
 }
 
+/** Characters that may follow a backslash in a JSON string. */
+const JSON_ESCAPES = new Set(['"', "\\", "/", "b", "f", "n", "r", "t", "u"])
+
 /**
- * Pulls the first JSON object out of a reply that may wrap it in a code fence.
+ * LaTeX commands whose first letters form a valid JSON escape, so `\theta`
+ * would silently become a tab followed by "heta". Matched after the backslash.
+ */
+const LATEX_LOOKALIKE =
+  /^(?:b(?:eta|ig|inom|ar|egin|f|oxed|ullet)|f(?:rac|orall|lat)|t(?:heta|imes|ext|au|ilde|riangle|op|o\b|frac)|r(?:ho|ight|angle|ceil|floor|m\b)|n(?:eq|abla|eg|ot|u\b|ewline|leq|geq)|u(?:psilon|nderline|nion))/
+
+/**
+ * Repairs the backslash mistakes models make when writing LaTeX inside JSON
+ * strings: an unknown escape such as `\(` or `\Theta` becomes a literal
+ * backslash, and a LaTeX command that looks like an escape (`\theta`,
+ * `\frac`, `\neq`) keeps its backslash instead of turning into a control
+ * character. Text outside strings and well-formed escapes are untouched.
+ * @param json JSON text from a model reply.
+ * @returns The repaired JSON text.
+ */
+export function repairJsonEscapes(json: string): string {
+  let result = ""
+  let inString = false
+  for (let index = 0; index < json.length; index += 1) {
+    const char = json[index]
+    if (!inString) {
+      if (char === '"') inString = true
+      result += char
+      continue
+    }
+    if (char === '"') {
+      inString = false
+      result += char
+      continue
+    }
+    if (char !== "\\") {
+      result += char
+      continue
+    }
+    const next = json[index + 1] ?? ""
+    const rest = json.slice(index + 1, index + 12)
+    const validUnicode = next === "u" && /^u[0-9a-fA-F]{4}/.test(rest)
+    if (
+      !JSON_ESCAPES.has(next) ||
+      (next === "u" && !validUnicode) ||
+      (next !== "u" && next !== '"' && next !== "\\" && next !== "/" && LATEX_LOOKALIKE.test(rest))
+    ) {
+      // A literal backslash; the next character is read on its own.
+      result += "\\\\"
+      continue
+    }
+    result += char + next
+    index += 1
+  }
+  return result
+}
+
+/**
+ * Pulls the first JSON object out of a reply that may wrap it in a code fence,
+ * repairing LaTeX backslashes the model forgot to escape.
  * Shared with exam papers and grading in `lib/exam.ts`.
  * @throws When the text holds no parsable JSON object.
  */
@@ -133,7 +191,7 @@ export function extractJsonObject(text: string): unknown {
   const start = candidate.indexOf("{")
   const end = candidate.lastIndexOf("}")
   if (start < 0 || end <= start) throw new Error("The reply contained no JSON object")
-  return JSON.parse(candidate.slice(start, end + 1))
+  return JSON.parse(repairJsonEscapes(candidate.slice(start, end + 1)))
 }
 
 /**
