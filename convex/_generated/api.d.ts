@@ -17,8 +17,6 @@ import type * as chatAgents from "../chatAgents.js";
 import type * as chatCitations from "../chatCitations.js";
 import type * as chatContext from "../chatContext.js";
 import type * as citationFields from "../citationFields.js";
-import type * as conceptMap from "../conceptMap.js";
-import type * as contentGeneration from "../contentGeneration.js";
 import type * as conversations from "../conversations.js";
 import type * as learning from "../learning.js";
 import type * as preparation from "../preparation.js";
@@ -51,8 +49,6 @@ declare const fullApi: ApiFromModules<{
   chatCitations: typeof chatCitations;
   chatContext: typeof chatContext;
   citationFields: typeof citationFields;
-  conceptMap: typeof conceptMap;
-  contentGeneration: typeof contentGeneration;
   conversations: typeof conversations;
   learning: typeof learning;
   preparation: typeof preparation;

@@ -668,7 +668,7 @@ export const claimNextImport = mutation({
   },
 })
 
-/** Atomically persists a fetched source and queues its preparation job. */
+/** Atomically persists a fetched source and its completed preparation checkpoint. */
 export const completeImport = mutation({
   args: {
     importId: v.id("researchProposalImports"),
@@ -781,7 +781,7 @@ export const completeImport = mutation({
       sourceTextSnapshot: extractedText,
       sourceFilename: filename,
       sourceKind: args.kind,
-      // Research checkpoints still refer to this legacy job; the agent job owns content.
+      // Research checkpoints still refer to this legacy job; no worker reads it.
       status: "completed",
       nextChunkOrdinal: 0,
       learningScope: proposal.scope,

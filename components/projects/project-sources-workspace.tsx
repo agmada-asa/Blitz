@@ -53,10 +53,6 @@ export function ProjectSourcesWorkspace({
     projectId: convexProjectId,
     sourceIds: sources.map((source) => source._id),
   })
-  const contentJobs = useQuery(api.contentGeneration.listForProject, {
-    projectId: convexProjectId,
-    sourceIds: sources.map((source) => source._id),
-  })
   const artifacts = useQuery(api.projectAgents.listArtifacts, {
     projectId: convexProjectId,
   })
@@ -140,7 +136,7 @@ export function ProjectSourcesWorkspace({
   if (project === undefined) return <SourcesLoadingState />
   if (!project) return <SourcesNotFoundState />
 
-  const legacyJobs = preparation?.map((job) => ({
+  const preparationJobs = preparation?.map((job) => ({
     jobId: String(job.jobId),
     sourceId: String(job.sourceId),
     status: job.status,
@@ -150,21 +146,6 @@ export function ProjectSourcesWorkspace({
     generatedItemCount: job.generatedItemCount ?? undefined,
     leaseExpired: job.leaseExpired,
   }))
-  const agentJobs = contentJobs?.map((job) => ({
-    jobId: String(job.jobId),
-    sourceId: String(job.sourceId),
-    status: job.status,
-    error: job.error ?? undefined,
-    nextChunkOrdinal: job.importedPages,
-    totalChunks: job.totalPages ?? undefined,
-    leaseExpired: job.leaseExpired,
-    stage: job.stage ?? undefined,
-    isContentGeneration: true,
-  })) ?? []
-  const preparationJobs = [
-    ...(legacyJobs ?? []).filter((job) => !agentJobs.some((agent) => agent.sourceId === job.sourceId)),
-    ...agentJobs,
-  ]
 
   return (
     <main className="mx-auto w-full max-w-6xl px-4 py-5 pb-24 sm:px-7 sm:py-8">

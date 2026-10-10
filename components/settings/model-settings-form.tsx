@@ -228,13 +228,6 @@ function ModelSettingsEditor({
                     >
                       {description}
                     </p>
-                    {task === "cardGeneration" &&
-                    selectedProvider !== "codex" ? (
-                      <p className="mt-1 text-sm leading-5 text-muted-foreground">
-                        New lessons use the default Codex model because this
-                        provider cannot write validated lesson drafts.
-                      </p>
-                    ) : null}
                   </div>
                   <div className="space-y-1.5">
                     <span className="text-xs font-medium">

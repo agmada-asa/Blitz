@@ -24,8 +24,7 @@ The code already has useful boundaries, but they are named around one implementa
 - `lib/ai-model-settings.ts`, `convex/settings.ts`, and the settings components own the current flat model and reasoning configuration.
 - `lib/server/codex-app-server.ts` owns the Codex JSON-RPC transport. `lib/server/card-chat.ts` turns it into streaming text, activity, interruption, and approval events.
 - General chat persists `codexThreadId` and `codexTurnId` on `workspaceChats` and `workspaceChatMessages`. Card chat has the same shape on `conversations` and `conversationMessages`.
-- `lib/server/learning-generation.ts` is already mostly provider-neutral. It accepts an injected text generator, bounds the response, validates the shared learning schema, and performs one repair attempt.
-- `scripts/preparation-worker.ts`, `scripts/chat-worker.ts`, and `scripts/research-worker.ts` resolve settings before they call the Codex runner. Those workers are the main places that should move to one provider resolver.
+- `scripts/research-worker.ts` resolves settings before it calls the provider runner. The preparation and card chat workers that did the same were removed when Teach replaced batch generation.
 - `lib/server/codex.ts` is the older one-shot card-generation path. It should either use the same adapter contract or be retired after its callers are confirmed.
 
 ## Reference implementation: T3 Code
@@ -131,7 +130,7 @@ The data changes should:
 - show approval controls only when the provider advertises approvals. A provider without safe write support must stay read-only for Blitz tasks that do not have an equivalent policy;
 - make provider-unavailable errors recoverable. The user should be able to retry the same provider or start a new chat with another available provider without losing the transcript.
 
-The current chat route, card-chat worker, approval bridge, and project-agent policy should depend on the normalized service. Provider-specific policy translation belongs in the adapter, not in `app/api/chat/route.ts` or Convex mutations.
+The current chat route, approval bridge, and project-agent policy should depend on the normalized service. Provider-specific policy translation belongs in the adapter, not in `app/api/chat/route.ts` or Convex mutations.
 
 ## Card generation and research
 

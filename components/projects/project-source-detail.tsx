@@ -6,7 +6,6 @@ import Link from "next/link"
 import { useEffect, useState } from "react"
 import { useQuery } from "convex/react"
 import { Badge } from "@/components/ui/badge"
-import { ThoughtTrace } from "@/components/chat/thought-trace"
 import { Button } from "@/components/ui/button"
 import { PdfReader } from "@/components/ui/pdf-reader"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -19,7 +18,6 @@ import {
 } from "@/components/ui/icon"
 import { api } from "@/convex/_generated/api"
 import type { Id } from "@/convex/_generated/dataModel"
-import { contentGenerationStageLabel } from "@/lib/content-generation-progress"
 import type {} from "@/lib/client/desktop"
 
 /** Props identifying one source within its owning project. */
@@ -45,18 +43,6 @@ export function ProjectSourceDetail({
   const preparation = useQuery(api.preparation.listJobsForProject, {
     projectId: projectIdValue,
     sourceIds: [sourceIdValue],
-  })
-  const contentJobs = useQuery(api.contentGeneration.listForProject, {
-    projectId: projectIdValue,
-    sourceIds: [sourceIdValue],
-  })
-  const generationProgress = useQuery(api.contentGeneration.getProgress, {
-    projectId: projectIdValue,
-    sourceId: sourceIdValue,
-  })
-  const coverage = useQuery(api.contentGeneration.getCoverage, {
-    projectId: projectIdValue,
-    sourceId: sourceIdValue,
   })
   const [retrying, setRetrying] = useState(false)
   const [retryError, setRetryError] = useState("")
@@ -119,26 +105,22 @@ export function ProjectSourceDetail({
   const preparationJob = preparation?.find(
     (job) => String(job.sourceId) === sourceId
   )
-  const contentJob = contentJobs?.find(
-    (job) => String(job.sourceId) === sourceId
-  )
-  const generationJob = contentJob ?? preparationJob
   const needsAttention =
     source.status === "failed" ||
     ingestionJob?.status === "failed" ||
-    generationJob?.status === "failed" ||
-    generationJob?.leaseExpired
+    preparationJob?.status === "failed" ||
+    preparationJob?.leaseExpired
   const isBusy =
     source.status === "processing" ||
     ingestionJob?.status === "queued" ||
     ingestionJob?.status === "running" ||
-    generationJob?.status === "queued" ||
-    generationJob?.status === "leased"
+    preparationJob?.status === "queued" ||
+    preparationJob?.status === "leased"
   const statusLabel = needsAttention
     ? "Needs attention"
     : isBusy
       ? "Preparing"
-      : source.unsupported && !generationJob
+      : source.unsupported && !preparationJob
         ? "Original saved"
         : "Ready"
   const downloadUrl = `/api/sources/file?projectId=${encodeURIComponent(projectId)}&sourceId=${encodeURIComponent(sourceId)}`
@@ -217,9 +199,9 @@ export function ProjectSourceDetail({
           <p role="alert" className="text-sm">
             {retryError ||
               ingestionJob?.error ||
-              generationJob?.error ||
+              preparationJob?.error ||
               source.error ||
-              "Content generation could not finish."}
+              "This file could not be prepared."}
           </p>
           <Button
             className="mt-3"
@@ -239,79 +221,10 @@ export function ProjectSourceDetail({
           </Button>
         </div>
       ) : null}
-      {source.unsupported && !contentJob ? (
+      {source.unsupported ? (
         <p className="mb-4 rounded-lg bg-muted p-3 text-sm text-muted-foreground">
           The original is saved. Ask an agent to work with this file.
         </p>
-      ) : null}
-
-      {contentJob ? (
-        <section
-          className="mb-6 max-w-4xl"
-          aria-labelledby="generation-heading"
-        >
-          <h2
-            id="generation-heading"
-            className="font-heading text-lg font-medium"
-          >
-            Content generation
-          </h2>
-          <p className="mt-1 text-sm text-muted-foreground" role="status">
-            {contentJob.status === "queued"
-              ? "Queued for generation"
-              : contentJob.status === "leased"
-                ? contentGenerationStageLabel(contentJob.stage)
-                : contentJob.status === "failed"
-                  ? "Generation stopped. Review the activity and try again."
-                  : `Completed ${contentJob.importedPages} ${contentJob.importedPages === 1 ? "lesson" : "lessons"}.`}
-          </p>
-          <ThoughtTrace
-            className="mt-3"
-            thought={generationProgress?.thought}
-            events={generationProgress?.activity}
-            startedAt={generationProgress?.startedAt ?? undefined}
-            durationMs={generationProgress?.durationMs}
-            status={
-              contentJob.status === "leased"
-                ? "running"
-                : contentJob.status === "failed"
-                  ? "failed"
-                  : "completed"
-            }
-          />
-        </section>
-      ) : null}
-
-      {contentJob && coverage ? (
-        <section className="mb-6 max-w-4xl" aria-labelledby="coverage-heading">
-          <h2
-            id="coverage-heading"
-            className="font-heading text-lg font-medium"
-          >
-            Learning coverage
-          </h2>
-          <p className="mt-1 text-sm text-muted-foreground">
-            {contentJob.includedSections ?? 0} sections included
-            {contentJob.skippedSections
-              ? `, ${contentJob.skippedSections} skipped`
-              : ""}
-            .
-          </p>
-          {coverage.some((entry) => entry.status === "skipped") ? (
-            <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-muted-foreground">
-              {coverage.map((entry, index) =>
-                entry.status === "skipped" ? (
-                  <li key={entry.sectionId}>
-                    {entry.sectionId.startsWith("chunk_")
-                      ? `Section ${index + 1}`
-                      : entry.sectionId}
-                    : {entry.reason}
-                  </li>
-                ) : null
-              )}
-            </ul>
-          ) : null}
-        </section>
       ) : null}
 
       <Tabs defaultValue="original" className="min-w-0">
