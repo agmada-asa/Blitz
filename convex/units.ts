@@ -101,7 +101,9 @@ function teachSummary(chat: Doc<"workspaceChats"> | null) {
 
 /**
  * Lists a module's units in path order with their sources and Teach progress,
- * plus sources that were imported before units existed.
+ * plus sources that were imported before units existed. Past papers and their
+ * solutions are unit-less module sources too, but they belong to exam prep, so
+ * they are left out of the unsorted list.
  */
 export const listForProject = query({
   args: { projectId: v.id("projects") },
@@ -114,13 +116,22 @@ export const listForProject = query({
       .query("sources")
       .withIndex("by_project", (q) => q.eq("projectId", projectId))
       .collect()
+    const examSources = new Set<string>()
+    const papers = await ctx.db
+      .query("examPapers")
+      .withIndex("by_project_createdAt", (q) => q.eq("projectId", projectId))
+      .collect()
+    for (const paper of papers)
+      for (const id of [paper.sourceId, paper.solutionsSourceId]) if (id) examSources.add(id)
     const byUnit = new Map<string, Doc<"sources">[]>()
     const unsorted: Doc<"sources">[] = []
     const references: Doc<"sources">[] = []
     for (const source of sources) {
       if (source.role === "reference") references.push(source)
-      else if (!source.unitId) unsorted.push(source)
-      else byUnit.set(source.unitId, [...(byUnit.get(source.unitId) ?? []), source])
+      else if (!source.unitId) {
+        // Exam papers and their solutions are not taught, so they are not listed here.
+        if (!examSources.has(source._id)) unsorted.push(source)
+      } else byUnit.set(source.unitId, [...(byUnit.get(source.unitId) ?? []), source])
     }
     const result = await Promise.all(
       units.map(async (unit) => ({

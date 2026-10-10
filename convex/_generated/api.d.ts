@@ -18,6 +18,8 @@ import type * as chatCitations from "../chatCitations.js";
 import type * as chatContext from "../chatContext.js";
 import type * as citationFields from "../citationFields.js";
 import type * as conversations from "../conversations.js";
+import type * as exam from "../exam.js";
+import type * as examFields from "../examFields.js";
 import type * as learning from "../learning.js";
 import type * as practice from "../practice.js";
 import type * as preparation from "../preparation.js";
@@ -52,6 +54,8 @@ declare const fullApi: ApiFromModules<{
   chatContext: typeof chatContext;
   citationFields: typeof citationFields;
   conversations: typeof conversations;
+  exam: typeof exam;
+  examFields: typeof examFields;
   learning: typeof learning;
   practice: typeof practice;
   preparation: typeof preparation;

@@ -1,4 +1,4 @@
-/** Shows a module's Practice screen: the adaptive drill, weak concepts, and question banks. */
+/** Shows a module's Practice screen: the adaptive drill, exam prep, weak concepts, and question banks. */
 
 import { PracticeHub } from "@/components/practice/practice-hub"
 

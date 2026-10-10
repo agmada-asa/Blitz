@@ -5,7 +5,10 @@
  *
  * Questions are ordinary learning items (`origin: "bank"` for generated ones,
  * `"teach"` for lesson quizzes), so answers flow through
- * `learning.recordAnswerEvent` and update the same review state.
+ * `learning.recordAnswerEvent` and update the same review state. Exam paper
+ * questions (`origin: "exam"`, see `convex/exam.ts`) count toward concept
+ * strength but are never drilled or shown in the feed, so a paper's answers
+ * stay hidden until it is taken.
  */
 
 import { v } from "convex/values"
@@ -53,6 +56,11 @@ function conceptTitle(title: string): string {
 /** Returns whether a learning item is an answerable question. */
 function isQuestion(item: Doc<"learningItems">): boolean {
   return QUESTION_TYPES.has(item.type) && !item.archivedAt && Boolean(item.question)
+}
+
+/** Returns whether a question may be drilled or shown in the feed; exam paper questions may not. */
+function isPracticeQuestion(item: Doc<"learningItems">): boolean {
+  return isQuestion(item) && item.origin !== "exam"
 }
 
 /** Loads every concept review in a project, keyed by concept. */
@@ -374,12 +382,14 @@ export const overview = query({
     const weak: Array<ConceptSummary & { unitId: Id<"units">; unitTitle: string }> = []
     const result = []
     for (const unit of units) {
-      const items = (
+      const allQuestions = (
         await ctx.db
           .query("learningItems")
           .withIndex("by_unit", (q) => q.eq("unitId", unit._id))
           .collect()
       ).filter(isQuestion)
+      // Exam questions shape concept strength but are not drillable bank questions.
+      const items = allQuestions.filter(isPracticeQuestion)
       let answered = 0
       let correct = 0
       for (const item of items) {
@@ -392,7 +402,7 @@ export const overview = query({
         else missed += 1
       }
       const concepts: ConceptSummary[] = []
-      for (const conceptId of [...new Set(items.map((item) => item.conceptId))]) {
+      for (const conceptId of [...new Set(allQuestions.map((item) => item.conceptId))]) {
         const concept = await ctx.db.get(conceptId)
         if (!concept) continue
         const review = reviews.get(String(conceptId))
@@ -476,7 +486,7 @@ export const drill = query({
             .query("learningItems")
             .withIndex("by_unit", (q) => q.eq("unitId", unit._id))
             .collect()
-        ).filter(isQuestion)
+        ).filter(isPracticeQuestion)
       )
     const reviews = await reviewsByConcept(ctx, projectId)
     const candidates: DrillCandidate[] = []
@@ -570,7 +580,7 @@ export const feed = query({
           recaps.set(String(item.conceptId), item)
           continue
         }
-        if (!isQuestion(item)) continue
+        if (!isPracticeQuestion(item)) continue
         const review = reviews.get(String(item.conceptId))
         unitQuestions.push({
           item,
