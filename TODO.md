@@ -25,7 +25,7 @@ names the PR that delivers it once one exists.
 - [x] Quick replies and inline questions in a session
 - [x] Lesson quizzes saved as learning items and study events
 - [x] Remove batch generation, old Learn, concept map UI, legacy card chat
-- [ ] Single prompts module
+- [x] Prompt map (`docs/prompts.md`); dead card-generation prompt removed
 - [ ] Whole-textbook sources: batched chunk writes, chapter-sized units
 - [ ] Research imports into units with passages
 - [ ] Consolidate the remaining workers into one supervised process
@@ -47,16 +47,11 @@ names the PR that delivers it once one exists.
 - [ ] Daily prompt notification (desktop app)
 - [ ] Session summaries after Teach and drills
 
-## Known issues
-
-- Four model-settings tests fail on `main` as well
-  (`ai-model-settings`, `codex-models`, `provider-capabilities`). Fix during
-  the prompts and provider cleanup.
-
 ## Phase 4: chat
 
-- [ ] `Agent` toggle, off by default
-- [ ] Chat actions into units, questions, and lessons
+- [x] Agent controls already sit behind Options; access is chosen in the model picker
+- [x] Interactive blocks in chat, follow-up chips, and Quiz me
+- [ ] Save chat quizzes into a unit's question bank
 - [ ] Citations for every source type
 
 ## Phase 5: polish and redesign
