@@ -47,6 +47,14 @@ names the PR that delivers it once one exists.
 - [ ] Daily prompt notification (desktop app)
 - [ ] Session summaries after Teach and drills
 
+## Known limits
+
+- `units.listForProject` reads whole source rows, including up to 450 KB of
+  extracted text each. Fine for a semester module (tens of sources); moving
+  text into its own table would remove the limit.
+- Past streak days are judged against the current daily goal, so raising the
+  goal can shorten an existing streak.
+
 ## Phase 4: chat
 
 - [x] Agent controls already sit behind Options; access is chosen in the model picker
