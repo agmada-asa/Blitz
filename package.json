@@ -17,7 +17,6 @@
     "worker:chat": "node --experimental-strip-types scripts/chat-worker.ts",
     "worker:research": "node --experimental-strip-types scripts/research-worker.ts",
     "worker:ingestion": "node --experimental-strip-types scripts/ingestion-worker.ts",
-    "worker:content": "node --experimental-strip-types scripts/content-generation-worker.ts",
     "eval:ingestion": "node --experimental-strip-types scripts/eval-ingestion.ts",
     "benchmark:teach": "node --experimental-strip-types scripts/benchmark-teach.ts"
   },

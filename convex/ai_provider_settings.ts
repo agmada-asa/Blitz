@@ -62,13 +62,3 @@ export async function resolveQueuedAiSelection(
   const settings = await loadValidatedSettings(ctx)
   return resolveAiTaskSelection(settings, task)
 }
-
-/** Uses a file-capable agent for lesson drafts while honoring a saved Codex model. */
-export async function resolveQueuedContentSelection(
-  ctx: Pick<QueryCtx, "db">
-): Promise<ReturnType<typeof resolveAiTaskSelection>> {
-  const selection = await resolveQueuedAiSelection(ctx, "cardGeneration")
-  return selection.providerId === "codex"
-    ? selection
-    : resolveAiTaskSelection(null, "cardGeneration")
-}
