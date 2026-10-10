@@ -7,6 +7,7 @@ import { serverConvexClient } from "@/lib/server/convex"
 import { api } from "@/convex/_generated/api"
 import { resolveProjectFile } from "@/lib/server/project-files"
 import { SourceIngestionError } from "@/lib/server/source-ingestion/errors"
+import { persistedChunkRows } from "@/lib/server/source-ingestion/chunk-rows"
 import { prepareStoredSource } from "@/lib/server/source-ingestion/prepare"
 
 /** Uses Node.js streams and the local filesystem for durable upload storage. */
@@ -185,20 +186,7 @@ export async function POST(request: Request): Promise<Response> {
         },
         String(record.sourceId)
       )
-      const rows = chunks.map((chunk) => ({
-          ordinal: chunk.ordinal,
-          text: chunk.text,
-          textHash: chunk.id.replace(/^chunk_/, ""),
-          startOffset: chunk.startOffset,
-          endOffset: chunk.endOffset,
-          references: chunk.references.map((reference) => ({
-            ...(reference.marker ? { kind: reference.marker.kind } : {}),
-            value: reference.marker?.value ?? "",
-            label: reference.marker?.label ?? reference.filename ?? "Source",
-            startOffset: reference.startOffset,
-            endOffset: reference.endOffset,
-          })),
-        }))
+      const rows = persistedChunkRows(chunks)
       // Large sources are written in batches: the first replaces any earlier
       // sections, the rest append, all under the same ingestion lease.
       for (let start = 0; start === 0 || start < rows.length; start += CHUNK_BATCH) {

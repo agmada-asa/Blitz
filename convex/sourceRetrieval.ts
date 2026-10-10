@@ -1,6 +1,11 @@
 /** Provides bounded exact retrieval over persisted source chunks and citations. */
 
-import { mutation, query, type QueryCtx } from "./_generated/server"
+import {
+  mutation,
+  query,
+  type MutationCtx,
+  type QueryCtx,
+} from "./_generated/server"
 import type { Doc, Id } from "./_generated/dataModel"
 import { v } from "convex/values"
 import {
@@ -318,6 +323,59 @@ export const retrieveContext = query({
   },
 })
 
+/** Validator for one persisted chunk row, shared with research imports. */
+export const sourceChunkRow = v.object({
+  ordinal: v.number(),
+  text: v.string(),
+  textHash: v.string(),
+  startOffset: v.number(),
+  endOffset: v.number(),
+  sectionTitle: v.optional(v.string()),
+  references: v.array(reference),
+})
+
+/**
+ * Validates and inserts chunk rows for a source.
+ *
+ * @param options.ordinals Ordinals already written in this call; duplicates are rejected.
+ * @throws When a chunk is oversized, out of order, or has a malformed hash.
+ */
+export async function insertSourceChunks(
+  ctx: Pick<MutationCtx, "db">,
+  source: Doc<"sources">,
+  chunks: ReadonlyArray<typeof sourceChunkRow.type>,
+  options: {
+    ordinals?: Set<number>
+    now?: number
+    ingestionJobId?: Id<"ingestionJobs">
+  } = {}
+): Promise<void> {
+  const ordinals = options.ordinals ?? new Set<number>()
+  const now = options.now ?? Date.now()
+  for (const chunk of chunks) {
+    if (
+      chunk.text.length > MAX_CHUNK_TEXT ||
+      chunk.ordinal < 0 ||
+      !Number.isInteger(chunk.ordinal) ||
+      ordinals.has(chunk.ordinal) ||
+      chunk.endOffset < chunk.startOffset ||
+      !/^[a-f0-9]{8,128}$/i.test(chunk.textHash)
+    )
+      throw new Error("Invalid source chunk")
+    ordinals.add(chunk.ordinal)
+    await ctx.db.insert("sourceChunks", {
+      ...chunk,
+      projectId: source.projectId,
+      sourceId: source._id,
+      sourceFilename: source.filename,
+      ...(options.ingestionJobId
+        ? { ingestionJobId: options.ingestionJobId }
+        : {}),
+      createdAt: now,
+    })
+  }
+}
+
 /** Persists one bounded ingestion batch after validating project and source ownership. */
 export const replaceChunks = mutation({
   args: {
@@ -330,17 +388,7 @@ export const replaceChunks = mutation({
      * chunks. Large sources are written as one replacing batch, then appends.
      */
     append: v.optional(v.boolean()),
-    chunks: v.array(
-      v.object({
-        ordinal: v.number(),
-        text: v.string(),
-        textHash: v.string(),
-        startOffset: v.number(),
-        endOffset: v.number(),
-        sectionTitle: v.optional(v.string()),
-        references: v.array(reference),
-      })
-    ),
+    chunks: v.array(sourceChunkRow),
   },
   handler: async (ctx, args) => {
     const source = await ctx.db.get(args.sourceId)
@@ -374,26 +422,11 @@ export const replaceChunks = mutation({
       for (const chunk of existing) await ctx.db.delete(chunk._id)
     }
     const now = Date.now()
-    for (const chunk of args.chunks) {
-      if (
-        chunk.text.length > MAX_CHUNK_TEXT ||
-        chunk.ordinal < 0 ||
-        !Number.isInteger(chunk.ordinal) ||
-        ordinals.has(chunk.ordinal) ||
-        chunk.endOffset < chunk.startOffset ||
-        !/^[a-f0-9]{8,128}$/i.test(chunk.textHash)
-      )
-        throw new Error("Invalid source chunk")
-      ordinals.add(chunk.ordinal)
-      await ctx.db.insert("sourceChunks", {
-        ...chunk,
-        projectId: args.projectId,
-        sourceId: args.sourceId,
-        sourceFilename: source.filename,
-        ...(args.ingestionJobId ? { ingestionJobId: args.ingestionJobId } : {}),
-        createdAt: now,
-      })
-    }
+    await insertSourceChunks(ctx, source, args.chunks, {
+      ordinals,
+      now,
+      ...(args.ingestionJobId ? { ingestionJobId: args.ingestionJobId } : {}),
+    })
     const oldOutlines = await ctx.db
       .query("sourceOutlines")
       .withIndex("by_source_ordinal", (q) => q.eq("sourceId", args.sourceId))
