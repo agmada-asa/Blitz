@@ -90,8 +90,6 @@ export const list = query({
       importRunning,
       importFailed,
       importCompleted,
-      cardQueued,
-      cardRunning,
       cardFailed,
       cardCompleted,
       workspaceChats,
@@ -151,16 +149,9 @@ export const list = query({
         .withIndex("by_status_createdAt", (q) => q.eq("status", "imported"))
         .order("desc")
         .take(MAX_ROWS_PER_STATUS),
-      ctx.db
-        .query("conversationMessages")
-        .withIndex("by_status_createdAt", (q) => q.eq("status", "queued"))
-        .order("asc")
-        .take(MAX_ROWS_PER_STATUS),
-      ctx.db
-        .query("conversationMessages")
-        .withIndex("by_status_createdAt", (q) => q.eq("status", "running"))
-        .order("desc")
-        .take(MAX_ROWS_PER_STATUS),
+      // Card chat has no worker any more (docs/card-chat.md), so queued and
+      // running card questions never progress. Listing them would show
+      // permanent in-progress work; only their settled history is shown.
       ctx.db
         .query("conversationMessages")
         .withIndex("by_status_createdAt", (q) => q.eq("status", "failed"))
@@ -196,8 +187,6 @@ export const list = query({
       ...importCompleted,
     ]
     const cardMessages = [
-      ...cardQueued,
-      ...cardRunning,
       ...cardFailed,
       ...cardCompleted,
     ]
