@@ -15,7 +15,11 @@ import { useMutation, useQuery } from "convex/react"
 import type { FunctionReturnType } from "convex/server"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 
-import { SourcePane, type LearningSourceSelection, type SourceSelection } from "@/components/chat/source-pane"
+import {
+  SourcePane,
+  type LearningSourceSelection,
+  type SourceSelection,
+} from "@/components/chat/source-pane"
 import { TeachDock, type TeachDockState } from "@/components/learn/teach-dock"
 import { TeachLesson } from "@/components/learn/teach-lesson"
 import { TeachOutlineList } from "@/components/learn/teach-outline"
@@ -35,12 +39,17 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { ArrowDownIcon, ArrowLeftIcon, FileIcon } from "@/components/ui/icon"
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover"
 import { Skeleton } from "@/components/ui/skeleton"
 import { cn } from "@/lib/utils"
 import { api } from "@/convex/_generated/api"
 import type { Id } from "@/convex/_generated/dataModel"
 import type { ChatCitation } from "@/lib/citations"
+import { consumeRelearn } from "@/lib/client/relearn"
 import { createClientMessageId, sendTeachTurn } from "@/lib/client/teach-turn"
 import type { QuizBlock } from "@/lib/interactive-blocks"
 import {
@@ -52,7 +61,10 @@ import {
 } from "@/lib/teach"
 
 /** Scrolls an element into view, respecting the reduced-motion preference. */
-function reveal(element: Element | null, block: ScrollLogicalPosition = "start") {
+function reveal(
+  element: Element | null,
+  block: ScrollLogicalPosition = "start"
+) {
   if (!element) return
   const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches
   element.scrollIntoView({ block, behavior: reduce ? "auto" : "smooth" })
@@ -63,7 +75,13 @@ function reveal(element: Element | null, block: ScrollLogicalPosition = "start")
  * @param unitId The unit to teach.
  * @param ask A message to send once the session is ready, such as a Relearn request from Practice.
  */
-export function TeachSession({ unitId, ask }: { unitId: string; ask?: string }) {
+export function TeachSession({
+  unitId,
+  ask,
+}: {
+  unitId: string
+  ask?: string
+}) {
   const unit = useQuery(api.units.get, { unitId: unitId as Id<"units"> })
   if (unit === undefined)
     return (
@@ -77,7 +95,11 @@ export function TeachSession({ unitId, ask }: { unitId: string; ask?: string }) 
     return (
       <main className="mx-auto max-w-3xl px-4 py-12 sm:px-6">
         <h1 className="font-heading text-2xl font-semibold">Unit not found</h1>
-        <Button asChild variant="outline" className="mt-5 min-h-11 rounded-full">
+        <Button
+          asChild
+          variant="outline"
+          className="mt-5 min-h-11 rounded-full"
+        >
           <Link href="/library">Back to projects</Link>
         </Button>
       </main>
@@ -97,7 +119,9 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
   const [chatId, setChatId] = useState<Id<"workspaceChats">>()
   const [sending, setSending] = useState(false)
   const [error, setError] = useState("")
-  const [source, setSource] = useState<SourceSelection | LearningSourceSelection>()
+  const [source, setSource] = useState<
+    SourceSelection | LearningSourceSelection
+  >()
   const [confirmRestart, setConfirmRestart] = useState(false)
   const [outlineOpen, setOutlineOpen] = useState(false)
   const [showJump, setShowJump] = useState(false)
@@ -124,7 +148,10 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
   }, [sessionChatId, startTeach, unit.id])
   const activeChatId = sessionChatId ?? chatId
 
-  const chat = useQuery(api.workspaceChats.get, activeChatId ? { chatId: activeChatId } : "skip")
+  const chat = useQuery(
+    api.workspaceChats.get,
+    activeChatId ? { chatId: activeChatId } : "skip"
+  )
   const answered = useQuery(
     api.teach.answeredQuizzes,
     activeChatId ? { chatId: activeChatId } : "skip"
@@ -140,22 +167,31 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
     return first ? (parseTeachOutline(first.content) ?? null) : null
   }, [unit.outline, messages])
 
-  // Progress shown while streaming comes from section markers already written.
-  const sectionIndex = useMemo(() => {
-    if (!outline) return 0
+  // The latest section marker is the current section; every marker seen is a
+  // taught section. Reading them from messages keeps progress live while a
+  // reply streams; the saved values cover anything not loaded.
+  const { sectionIndex, taughtSectionIds } = useMemo(() => {
+    const taught = new Set(unit.teach?.taughtSectionIds ?? [])
     let index = Math.max(0, unit.teach?.sectionIndex ?? 0)
+    if (!outline) return { sectionIndex: 0, taughtSectionIds: taught }
     for (const message of messages) {
       if (message.role !== "assistant") continue
       const marker = parseTeachSectionMarker(message.content)
       if (marker?.kind === "done") index = outline.sections.length
       else if (marker) {
-        const found = outline.sections.findIndex((section) => section.id === marker.id)
-        if (found > index) index = found
+        const found = outline.sections.findIndex(
+          (section) => section.id === marker.id
+        )
+        if (found >= 0) {
+          index = found
+          taught.add(marker.id)
+        }
       }
     }
-    return index
-  }, [outline, messages, unit.teach?.sectionIndex])
-  const complete = Boolean(outline) && sectionIndex >= (outline?.sections.length ?? 0)
+    return { sectionIndex: index, taughtSectionIds: taught }
+  }, [outline, messages, unit.teach?.sectionIndex, unit.teach?.taughtSectionIds])
+  const complete =
+    Boolean(outline) && sectionIndex >= (outline?.sections.length ?? 0)
 
   /** Sends a learner message or quick reply, or resumes a paused reply. */
   const send = useCallback(
@@ -180,26 +216,40 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
   )
 
   // Sends a Relearn request from Practice once, then drops it from the URL so
-  // a reload does not send it again.
+  // a reload does not send it again. Only requests armed by Blitz's own
+  // Relearn links are sent; any other `?ask=` is ignored.
   useEffect(() => {
-    if (!ask?.trim() || askSentRef.current || !chat || chat.status !== "idle") return
+    if (
+      !ask?.trim() ||
+      askSentRef.current ||
+      !chat ||
+      chat.status === "running"
+    )
+      return
     askSentRef.current = true
-    autoStartedRef.current = chat.id
     router.replace(pathname, { scroll: false })
-    void send(ask.trim().slice(0, 4_000))
+    if (!consumeRelearn(ask)) return
+    autoStartedRef.current = chat.id
+    const message = ask.trim().slice(0, 4_000)
+    // Send after this effect so the request's state updates are not synchronous here.
+    queueMicrotask(() => void send(message))
   }, [ask, chat, send, router, pathname])
 
   // Starts teaching as soon as a new session opens; the learner chose this unit.
   useEffect(() => {
     if (ask?.trim() && !askSentRef.current) return
     if (!chat || chat.status !== "idle" || chat.messages.length) return
+    // Never teach from a title alone: wait until the unit has readable material.
+    if (!unit.sources.some((source) => source.hasText)) return
     if (autoStartedRef.current === chat.id) return
     autoStartedRef.current = chat.id
-    void send(TEACH_QUICK_REPLIES.start)
-  }, [ask, chat, send])
+    queueMicrotask(() => void send(TEACH_QUICK_REPLIES.start))
+  }, [ask, chat, send, unit.sources])
 
   // Brings a new reply's opening into view once it appears.
-  const lastAssistantId = [...messages].reverse().find((message) => message.role === "assistant")?.id
+  const lastAssistantId = [...messages]
+    .reverse()
+    .find((message) => message.role === "assistant")?.id
   useEffect(() => {
     if (!lastAssistantId || !revealNextReplyRef.current) return
     revealNextReplyRef.current = false
@@ -212,7 +262,9 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
     if (restoredRef.current || !chat) return
     restoredRef.current = true
     if (chat.messages.length < 3) return
-    const latest = chat.messages.findLast((message) => message.role === "assistant")
+    const latest = chat.messages.findLast(
+      (message) => message.role === "assistant"
+    )
     if (latest)
       document
         .querySelector(`[data-message-id="${latest.id}"]`)
@@ -221,9 +273,12 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
 
   /** Pauses the reply being written; the saved text stays and can be continued. */
   const pause = useCallback(async () => {
-    const active = [...messages].reverse().find(
-      (message) => message.role === "assistant" && message.status === "running"
-    )
+    const active = [...messages]
+      .reverse()
+      .find(
+        (message) =>
+          message.role === "assistant" && message.status === "running"
+      )
     if (!activeChatId || !active) return
     const response = await fetch("/api/chat/pause", {
       method: "POST",
@@ -236,7 +291,11 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
 
   /** Scores a lesson quiz on the server and records it as study evidence. */
   const answerQuiz = useCallback(
-    async (messageId: string, block: QuizBlock, selectedOptionIds: string[]) => {
+    async (
+      messageId: string,
+      block: QuizBlock,
+      selectedOptionIds: string[]
+    ) => {
       if (!activeChatId) return null
       const response = await fetch("/api/teach/answer", {
         method: "POST",
@@ -255,7 +314,9 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
       } | null
       if (!response.ok || typeof payload?.correct !== "boolean")
         throw new Error(
-          typeof payload?.error === "string" ? payload.error : "Your answer could not be saved."
+          typeof payload?.error === "string"
+            ? payload.error
+            : "Your answer could not be saved."
         )
       return { correct: payload.correct }
     },
@@ -300,31 +361,38 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
   const onScroll = useCallback(() => {
     const element = scrollRef.current
     if (!element) return
-    setShowJump(element.scrollHeight - element.scrollTop - element.clientHeight > 600)
+    setShowJump(
+      element.scrollHeight - element.scrollTop - element.clientHeight > 600
+    )
   }, [])
 
   const projectHref = `/projects/${encodeURIComponent(String(unit.projectId))}`
+  const hasMaterial = unit.sources.some((source) => source.hasText)
   const dockState: TeachDockState = !chat
     ? { kind: "starting" }
-    : running
-      ? { kind: outline ? "writing" : "starting" }
-      : lastMessage?.role === "assistant" && lastMessage.status === "failed"
-        ? { kind: "paused", hasText: Boolean(lastMessage.content.trim()) }
-        : complete
-          ? {
-              kind: "complete",
-              practiceHref: `${projectHref}/practice`,
-              nextUnit: unit.nextUnit
-                ? {
-                    href: `${projectHref}/learn/${encodeURIComponent(String(unit.nextUnit.id))}`,
-                    title: unit.nextUnit.title,
-                  }
-                : null,
-            }
-          : {
-              kind: "ready",
-              isLastSection: Boolean(outline) && sectionIndex >= (outline?.sections.length ?? 0) - 1,
-            }
+    : !hasMaterial && !messages.length
+      ? { kind: "no-material" }
+      : running
+        ? { kind: outline ? "writing" : "starting" }
+        : lastMessage?.role === "assistant" && lastMessage.status === "failed"
+          ? { kind: "paused", hasText: Boolean(lastMessage.content.trim()) }
+          : complete
+            ? {
+                kind: "complete",
+                practiceHref: `${projectHref}/practice`,
+                nextUnit: unit.nextUnit
+                  ? {
+                      href: `${projectHref}/learn/${encodeURIComponent(String(unit.nextUnit.id))}`,
+                      title: unit.nextUnit.title,
+                    }
+                  : null,
+              }
+            : {
+                kind: "ready",
+                isLastSection:
+                  Boolean(outline) &&
+                  sectionIndex >= (outline?.sections.length ?? 0) - 1,
+              }
   const progressLabel = outline
     ? complete
       ? "Unit complete"
@@ -337,6 +405,7 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
     <TeachOutlineList
       outline={outline}
       sectionIndex={sectionIndex}
+      taughtSectionIds={taughtSectionIds}
       busy={running}
       onOpenSection={openSection}
       onJumpToSection={jumpToSection}
@@ -355,7 +424,12 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
           source ? "2xl:flex" : "lg:flex"
         )}
       >
-        <Button asChild variant="ghost" size="sm" className="mb-4 min-h-9 self-start">
+        <Button
+          asChild
+          variant="ghost"
+          size="sm"
+          className="mb-4 min-h-9 self-start"
+        >
           <Link href={projectHref}>
             <ArrowLeftIcon aria-hidden="true" /> {unit.projectTitle}
           </Link>
@@ -368,8 +442,13 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
           </div>
         )}
         {unit.sources.length ? (
-          <section aria-label="Unit sources" className="mt-8 border-t border-border/70 pt-4">
-            <h2 className="px-3 text-xs font-medium text-muted-foreground">Sources</h2>
+          <section
+            aria-label="Unit sources"
+            className="mt-8 border-t border-border/70 pt-4"
+          >
+            <h2 className="px-3 text-xs font-medium text-muted-foreground">
+              Sources
+            </h2>
             <ul className="mt-2 space-y-0.5">
               {unit.sources.map((item) => (
                 <li key={item.id}>
@@ -404,12 +483,17 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
             size="icon"
             className={cn("size-10", source ? "2xl:hidden" : "lg:hidden")}
           >
-            <Link href={projectHref} aria-label={`Back to ${unit.projectTitle}`}>
+            <Link
+              href={projectHref}
+              aria-label={`Back to ${unit.projectTitle}`}
+            >
               <ArrowLeftIcon aria-hidden="true" />
             </Link>
           </Button>
           <div className="min-w-0 flex-1">
-            <h1 className="truncate font-heading text-lg font-semibold">{unit.title}</h1>
+            <h1 className="truncate font-heading text-lg font-semibold">
+              {unit.title}
+            </h1>
             {progressLabel ? (
               <>
                 <p
@@ -437,7 +521,10 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
                         <ArrowDownIcon aria-hidden="true" className="size-3" />
                       </button>
                     </PopoverTrigger>
-                    <PopoverContent align="start" className="w-[min(22rem,calc(100vw-2rem))] p-2">
+                    <PopoverContent
+                      align="start"
+                      className="w-[min(22rem,calc(100vw-2rem))] p-2"
+                    >
                       {outlineList}
                     </PopoverContent>
                   </Popover>
@@ -447,12 +534,19 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
           </div>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="ghost" className="min-h-10 rounded-full px-3" aria-label="Unit options">
+              <Button
+                variant="ghost"
+                className="min-h-10 rounded-full px-3"
+                aria-label="Unit options"
+              >
                 ⋯
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
-              <DropdownMenuItem disabled={running} onSelect={() => setConfirmRestart(true)}>
+              <DropdownMenuItem
+                disabled={running}
+                onSelect={() => setConfirmRestart(true)}
+              >
                 Start this unit over
               </DropdownMenuItem>
             </DropdownMenuContent>
@@ -461,7 +555,11 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
 
         <div className="relative min-h-0 flex-1">
           {/* `relative` contains KaTeX's absolutely positioned accessible copies. */}
-          <div ref={scrollRef} onScroll={onScroll} className="relative h-full overflow-y-auto">
+          <div
+            ref={scrollRef}
+            onScroll={onScroll}
+            className="relative h-full overflow-y-auto"
+          >
             <div className="mx-auto w-full max-w-3xl px-4 py-8 sm:px-6">
               {chat ? (
                 <TeachLesson
@@ -481,10 +579,15 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
                   <Skeleton className="h-4 w-5/6" />
                 </div>
               )}
-              {!unit.sources.length && chat && !messages.length ? (
+              {!unit.sources.some((source) => source.hasText) &&
+              chat &&
+              !messages.length ? (
                 <p className="mt-6 text-sm text-muted-foreground">
-                  This unit has no sources yet.{" "}
-                  <Link href={projectHref} className="underline underline-offset-4">
+                  This unit has no readable material yet.{" "}
+                  <Link
+                    href={projectHref}
+                    className="underline underline-offset-4"
+                  >
                     Add material
                   </Link>{" "}
                   for the tutor to teach from.
@@ -499,7 +602,9 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
               onClick={() =>
                 reveal(
                   lastAssistantId
-                    ? document.querySelector(`[data-message-id="${lastAssistantId}"]`)
+                    ? document.querySelector(
+                        `[data-message-id="${lastAssistantId}"]`
+                      )
                     : null
                 )
               }
@@ -541,8 +646,8 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
           <DialogHeader>
             <DialogTitle>Start this unit over?</DialogTitle>
             <DialogDescription>
-              The tutor plans and teaches the unit again from the beginning. Your
-              answers to earlier questions stay in your practice history.
+              The tutor plans and teaches the unit again from the beginning.
+              Your answers to earlier questions stay in your practice history.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>

@@ -337,21 +337,21 @@ export const MAX_AI_MODEL_NAME_LENGTH = 120
 const AI_MODEL_FIELD_LABELS: Record<AiModelField, string> = {
   researchModel: "Research",
   replyModel: "Reply",
-  cardGenerationModel: "Card generation",
+  cardGenerationModel: "Practice questions",
 }
 
 /** Labels reasoning settings in validation messages without leaking implementation field names. */
 const AI_REASONING_FIELD_LABELS: Record<AiReasoningField, string> = {
   researchEffort: "Research",
   replyEffort: "Reply",
-  cardGenerationEffort: "Card generation",
+  cardGenerationEffort: "Practice questions",
 }
 
 /** Labels provider fields in validation messages without exposing schema names. */
 const AI_PROVIDER_FIELD_LABELS: Record<AiProviderField, string> = {
   researchProvider: "Research",
   replyProvider: "Reply",
-  cardGenerationProvider: "Card generation",
+  cardGenerationProvider: "Practice questions",
 }
 
 /** Looks up curated model capabilities without constraining previously saved custom model IDs. */
@@ -778,7 +778,7 @@ export function validateAiTaskProviders(settings: AiModelSettings): void {
     )
   )
     throw new Error(
-      "Antigravity supports interactive workspace chat only. Choose another provider for card generation."
+      "Antigravity supports interactive workspace chat only. Choose another provider for practice questions."
     )
 }
 

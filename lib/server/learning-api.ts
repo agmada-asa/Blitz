@@ -196,6 +196,7 @@ export async function fetchLearningFeed(input: {
       projectId,
       seen,
       limit,
+      now: Date.now(),
     })
     const shown = [...seen, ...result.cards.map((card) => card.id)]
     return {

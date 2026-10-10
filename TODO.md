@@ -25,8 +25,8 @@ names the PR that delivers it once one exists.
 - [x] Quick replies and inline questions in a session
 - [x] Lesson quizzes saved as learning items and study events
 - [x] Remove batch generation, old Learn, concept map UI, legacy card chat
-- [ ] Single prompts module
-- [ ] Whole-textbook sources: batched chunk writes, chapter-sized units
+- [x] Prompt map (`docs/prompts.md`); dead card-generation prompt removed
+- [x] Whole textbooks as module-wide reference books searched by Teach
 - [ ] Research imports into units with passages
 - [ ] Consolidate the remaining workers into one supervised process
 - [ ] Share one server Convex client helper across API routes (new code uses `lib/server/convex.ts`)
@@ -47,16 +47,19 @@ names the PR that delivers it once one exists.
 - [ ] Daily prompt notification (desktop app)
 - [ ] Session summaries after Teach and drills
 
-## Known issues
+## Known limits
 
-- Four model-settings tests fail on `main` as well
-  (`ai-model-settings`, `codex-models`, `provider-capabilities`). Fix during
-  the prompts and provider cleanup.
+- `units.listForProject` reads whole source rows, including up to 450 KB of
+  extracted text each. Fine for a semester module (tens of sources); moving
+  text into its own table would remove the limit.
+- Past streak days are judged against the current daily goal, so raising the
+  goal can shorten an existing streak.
 
 ## Phase 4: chat
 
-- [ ] `Agent` toggle, off by default
-- [ ] Chat actions into units, questions, and lessons
+- [x] Agent controls already sit behind Options; access is chosen in the model picker
+- [x] Interactive blocks in chat, follow-up chips, and Quiz me
+- [ ] Save chat quizzes into a unit's question bank
 - [ ] Citations for every source type
 
 ## Phase 5: polish and redesign

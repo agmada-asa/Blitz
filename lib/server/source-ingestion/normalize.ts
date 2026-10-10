@@ -13,9 +13,9 @@ import type {
 /** Maximum filename length accepted at the ingestion boundary. */
 export const MAX_SOURCE_FILENAME_LENGTH = 255
 /** Maximum normalized characters accepted from one source. */
-export const MAX_SOURCE_TEXT_LENGTH = 2_000_000
+export const MAX_SOURCE_TEXT_LENGTH = 20_000_000
 /** Maximum UTF-8 bytes accepted from one source. */
-export const MAX_SOURCE_TEXT_BYTES = 8_000_000
+export const MAX_SOURCE_TEXT_BYTES = 25_000_000
 
 const SOURCE_KINDS = new Set<SourceDocumentInput["kind"]>([
   "pdf",

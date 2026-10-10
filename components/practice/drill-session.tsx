@@ -12,7 +12,7 @@ import { useConvex } from "convex/react"
 import type { FunctionReturnType } from "convex/server"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 
-import { relearnHref } from "@/components/practice/practice-hub"
+import { relearnLink } from "@/components/practice/practice-hub"
 import { Button } from "@/components/ui/button"
 import { InteractiveBlocksProvider } from "@/components/ui/interactive-blocks"
 import { plainMarkdownRenderer } from "@/components/ui/markdown"
@@ -91,9 +91,11 @@ export function DrillSession({ projectId, unitId }: { projectId: string; unitId?
         projectId: projectId as Id<"projects">,
         ...(unitId ? { unitId: unitId as Id<"units"> } : {}),
         limit: DRILL_LENGTH,
+        now: Date.now(),
       })
       .then((questions) => {
         if (!active) return
+        setLoadError("")
         setDeck(questions)
         setIndex(0)
         setResults({})
@@ -151,7 +153,14 @@ export function DrillSession({ projectId, unitId }: { projectId: string; unitId?
       {loadError ? (
         <div className="mt-10" role="alert">
           <p className="text-sm text-destructive">{loadError}</p>
-          <Button className="mt-4 min-h-11 rounded-full" onClick={() => setRound((value) => value + 1)}>
+          <Button
+            className="mt-4 min-h-11 rounded-full"
+            onClick={() => {
+              setLoadError("")
+              setDeck(null)
+              setRound((value) => value + 1)
+            }}
+          >
             Try again
           </Button>
         </div>
@@ -193,7 +202,7 @@ export function DrillSession({ projectId, unitId }: { projectId: string; unitId?
                       <p className="text-xs text-muted-foreground">{question.unitTitle}</p>
                     </div>
                     <Button asChild variant="outline" className="min-h-10 shrink-0 rounded-full px-4">
-                      <Link href={relearnHref(projectId, question.unitId, question.quiz.concept, question.quiz.question)}>
+                      <Link {...relearnLink(projectId, question.unitId, question.quiz.concept, question.quiz.question)}>
                         Relearn
                       </Link>
                     </Button>
@@ -245,7 +254,7 @@ export function DrillSession({ projectId, unitId }: { projectId: string; unitId?
               </Button>
               {!answered.correct ? (
                 <Button asChild variant="outline" className="min-h-11 rounded-full px-5">
-                  <Link href={relearnHref(projectId, current.unitId, current.quiz.concept, current.quiz.question)}>
+                  <Link {...relearnLink(projectId, current.unitId, current.quiz.concept, current.quiz.question)}>
                     Relearn this
                   </Link>
                 </Button>

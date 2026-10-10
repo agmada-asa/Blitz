@@ -180,7 +180,7 @@ test("rejects malformed reasoning effort values", () => {
         replyProvider: "claude-code",
         cardGenerationProvider: "opencode",
       }),
-    /not available/
+    /not supported/
   )
 })
 

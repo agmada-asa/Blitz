@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto"
 import { ConvexHttpClient } from "convex/browser"
 import { api } from "@/convex/_generated/api"
 import { resolveProjectFile } from "@/lib/server/project-files"
+import { SourceIngestionError } from "@/lib/server/source-ingestion/errors"
 import { prepareStoredSource } from "@/lib/server/source-ingestion/prepare"
 
 /** Uses Node.js streams and the local filesystem for durable upload storage. */
@@ -54,6 +55,15 @@ function sourceFormat(filename: string): {
  * capped near 1 MB; the complete text stays searchable through source chunks.
  */
 const MAX_STORED_TEXT_BYTES = 450_000
+
+/** Sections written per Convex call, keeping each request well under its size limit. */
+const CHUNK_BATCH = 200
+
+/**
+ * Extracted characters above which a source is a module-wide reference, about
+ * 250 dense pages. Teach searches references instead of reading them whole.
+ */
+const REFERENCE_SOURCE_CHARACTERS = 600_000
 
 /** Truncates text to a UTF-8 byte budget without splitting a character. */
 function boundedStoredText(text: string): string {
@@ -130,6 +140,10 @@ export async function POST(request: Request): Promise<Response> {
           ...stored,
           sourceId: record.sourceId,
           duplicate: true,
+          // Which unit the existing copy belongs to, so the uploader can tell
+          // whether this unit gained anything.
+          ...("unitId" in record && record.unitId ? { unitId: record.unitId } : {}),
+          ...("reference" in record && record.reference ? { reference: true } : {}),
           pending: ingestionStillRunning,
           unsupported: "unsupported" in record ? record.unsupported : false,
         },
@@ -174,12 +188,7 @@ export async function POST(request: Request): Promise<Response> {
         },
         String(record.sourceId)
       )
-      await convex.mutation(api.sourceRetrieval.replaceChunks, {
-        projectId: projectId as never,
-        sourceId: record.sourceId,
-        ingestionJobId: record.ingestionJobId,
-        leaseToken,
-        chunks: chunks.map((chunk) => ({
+      const rows = chunks.map((chunk) => ({
           ordinal: chunk.ordinal,
           text: chunk.text,
           textHash: chunk.id.replace(/^chunk_/, ""),
@@ -192,8 +201,27 @@ export async function POST(request: Request): Promise<Response> {
             startOffset: reference.startOffset,
             endOffset: reference.endOffset,
           })),
-        })),
-      })
+        }))
+      // Large sources are written in batches: the first replaces any earlier
+      // sections, the rest append, all under the same ingestion lease.
+      for (let start = 0; start === 0 || start < rows.length; start += CHUNK_BATCH) {
+        await convex.mutation(api.sourceRetrieval.replaceChunks, {
+          projectId: projectId as never,
+          sourceId: record.sourceId,
+          ingestionJobId: record.ingestionJobId,
+          leaseToken,
+          append: start > 0,
+          chunks: rows.slice(start, start + CHUNK_BATCH),
+        })
+      }
+      // A whole book backs up every unit instead of being taught as one. Mark
+      // it before completing, while the lease is still held, so a failure here
+      // fails the upload cleanly instead of leaving a book taught as a unit.
+      const reference = normalized.text.length > REFERENCE_SOURCE_CHARACTERS
+      if (reference)
+        await convex.mutation(api.sources.markReference, {
+          sourceId: record.sourceId,
+        })
       await convex.mutation(api.sources.completeOriginalIngestion, {
         sourceId: record.sourceId,
         ingestionJobId: record.ingestionJobId,
@@ -207,20 +235,30 @@ export async function POST(request: Request): Promise<Response> {
           sourceId: record.sourceId,
           ingestionJobId: record.ingestionJobId,
           extracted: true,
+          ...(reference ? { reference: true } : {}),
         },
         { headers: { "Cache-Control": "no-store" } }
       )
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "Source extraction failed"
+      // A document Blitz cannot read (no text layer, unknown format) stays
+      // saved but unreadable; anything else is a failure the learner can retry.
+      const unreadable = error instanceof SourceIngestionError
       await convex.mutation(api.sources.completeOriginalIngestion, {
         sourceId: record.sourceId,
         ingestionJobId: record.ingestionJobId,
         leaseToken,
         extractedText: "",
-        status: "completed",
-        unsupported: true,
+        status: unreadable ? "completed" : "failed",
+        ...(unreadable ? { unsupported: true } : {}),
+        error: message.slice(0, 300),
       })
+      if (!unreadable)
+        return Response.json(
+          { error: "This file could not be prepared. Try again." },
+          { status: 500, headers: { "Cache-Control": "no-store" } }
+        )
       return Response.json(
         {
           ...stored,

@@ -16,11 +16,16 @@ import { TEACH_QUICK_REPLIES } from "@/lib/teach"
 
 /** What the dock should offer for the session's current state. */
 export type TeachDockState =
+  | { kind: "no-material" }
   | { kind: "starting" }
   | { kind: "writing" }
   | { kind: "paused"; hasText: boolean }
   | { kind: "ready"; isLastSection: boolean }
-  | { kind: "complete"; practiceHref: string; nextUnit: { href: string; title: string } | null }
+  | {
+      kind: "complete"
+      practiceHref: string
+      nextUnit: { href: string; title: string } | null
+    }
 
 /** Props for the dock. */
 type TeachDockProps = {
@@ -42,7 +47,13 @@ const SECONDARY_REPLIES = [
  * Renders quick replies and the question box. `Next section` is the primary
  * action; the other replies and the question box are visibly secondary.
  */
-export function TeachDock({ state, error, onSend, onPause, onResume }: TeachDockProps) {
+export function TeachDock({
+  state,
+  error,
+  onSend,
+  onPause,
+  onResume,
+}: TeachDockProps) {
   const [draft, setDraft] = useState("")
   const canAsk = state.kind === "ready" || state.kind === "complete"
 
@@ -57,7 +68,11 @@ export function TeachDock({ state, error, onSend, onPause, onResume }: TeachDock
 
   /** Sends on Enter; Shift+Enter keeps a newline. */
   function onKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
-    if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+    if (
+      event.key === "Enter" &&
+      !event.shiftKey &&
+      !event.nativeEvent.isComposing
+    ) {
       event.preventDefault()
       submit()
     }
@@ -72,13 +87,20 @@ export function TeachDock({ state, error, onSend, onPause, onResume }: TeachDock
           </p>
         ) : null}
 
-        {state.kind === "complete" ? (
+        {state.kind === "no-material" ? null : state.kind === "complete" ? (
           <div className="flex flex-wrap gap-2">
-            <Button asChild className="min-h-11 rounded-full bg-brand px-5 text-brand-foreground hover:bg-brand/85">
+            <Button
+              asChild
+              className="min-h-11 rounded-full bg-brand px-5 text-brand-foreground hover:bg-brand/85"
+            >
               <Link href={state.practiceHref}>Practice this unit</Link>
             </Button>
             {state.nextUnit ? (
-              <Button asChild variant="outline" className="min-h-11 rounded-full px-5">
+              <Button
+                asChild
+                variant="outline"
+                className="min-h-11 rounded-full px-5"
+              >
                 <Link href={state.nextUnit.href}>
                   Next: {state.nextUnit.title}
                   <ArrowRightIcon aria-hidden="true" />
@@ -87,7 +109,7 @@ export function TeachDock({ state, error, onSend, onPause, onResume }: TeachDock
             ) : null}
           </div>
         ) : state.kind === "ready" ? (
-          <div className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-0.5 [scrollbar-width:none]">
+          <div className="-mx-1 flex [scrollbar-width:none] gap-2 overflow-x-auto px-1 pb-0.5">
             <Button
               type="button"
               onClick={() => onSend(TEACH_QUICK_REPLIES.next)}
@@ -119,41 +141,54 @@ export function TeachDock({ state, error, onSend, onPause, onResume }: TeachDock
         ) : (
           <div className="flex min-h-11 items-center justify-between gap-3">
             <p role="status" className="text-sm text-muted-foreground">
-              {state.kind === "starting" ? "Preparing your lesson…" : "Writing…"}
+              {state.kind === "starting"
+                ? "Preparing your lesson…"
+                : "Writing…"}
             </p>
             {state.kind === "writing" ? (
-              <Button type="button" variant="outline" onClick={onPause} className="min-h-11 rounded-full px-4">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={onPause}
+                className="min-h-11 rounded-full px-4"
+              >
                 Pause
               </Button>
             ) : null}
           </div>
         )}
 
-        <form onSubmit={submit} className="flex items-end gap-2">
-          <label htmlFor="teach-question" className="sr-only">
-            Ask the tutor a question
-          </label>
-          <Textarea
-            id="teach-question"
-            value={draft}
-            onChange={(event) => setDraft(event.target.value)}
-            onKeyDown={onKeyDown}
-            maxLength={4_000}
-            rows={1}
-            placeholder={canAsk ? "Ask about this section" : "You can ask once the tutor finishes"}
-            disabled={!canAsk}
-            className="max-h-40 min-h-11 resize-none rounded-2xl px-4 py-2.5"
-          />
-          <Button
-            type="submit"
-            size="icon"
-            disabled={!canAsk || !draft.trim()}
-            aria-label="Send question"
-            className="size-11 shrink-0 rounded-full"
-          >
-            <SendIcon aria-hidden="true" />
-          </Button>
-        </form>
+        {state.kind === "no-material" ? null : (
+          <form onSubmit={submit} className="flex items-end gap-2">
+            <label htmlFor="teach-question" className="sr-only">
+              Ask the tutor a question
+            </label>
+            <Textarea
+              id="teach-question"
+              value={draft}
+              onChange={(event) => setDraft(event.target.value)}
+              onKeyDown={onKeyDown}
+              maxLength={4_000}
+              rows={1}
+              placeholder={
+                canAsk
+                  ? "Ask about this section"
+                  : "You can ask once the tutor finishes"
+              }
+              disabled={!canAsk}
+              className="max-h-40 min-h-11 resize-none rounded-2xl px-4 py-2.5"
+            />
+            <Button
+              type="submit"
+              size="icon"
+              disabled={!canAsk || !draft.trim()}
+              aria-label="Send question"
+              className="size-11 shrink-0 rounded-full"
+            >
+              <SendIcon aria-hidden="true" />
+            </Button>
+          </form>
+        )}
       </div>
     </div>
   )

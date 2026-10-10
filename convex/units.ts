@@ -13,6 +13,13 @@ import { mutation, query, type QueryCtx } from "./_generated/server"
 import type { Doc, Id } from "./_generated/dataModel"
 import { passageScore } from "../lib/citations"
 import { teachTurnFocus } from "../lib/teach-focus"
+import { searchTerms } from "../lib/search-terms"
+
+/** Reference-book passages added to one Teach turn. */
+const MAX_REFERENCE_EXCERPTS = 6
+
+/** Characters kept from each reference passage. */
+const MAX_REFERENCE_EXCERPT_TEXT = 2_500
 
 /** Longest unit title accepted from the learner or the tutor. */
 const MAX_UNIT_TITLE = 160
@@ -78,10 +85,12 @@ function teachSummary(chat: Doc<"workspaceChats"> | null) {
     chatId: chat._id,
     status: chat.status,
     sectionCount: total,
-    /** Zero-based furthest section taught, or -1 before the outline arrives. */
+    /** Zero-based section being taught, or -1 before the outline arrives. */
     sectionIndex: reached,
     /** Set once the tutor has sent its end-of-unit recap. */
     completed: total > 0 && reached >= total,
+    /** Sections actually taught; a jump can leave earlier ones untaught. */
+    taughtSectionIds: chat.teachTaughtSectionIds ?? [],
     currentSectionTitle:
       total && reached >= 0 && reached < total
         ? chat.teachOutline!.sections[reached].title
@@ -107,8 +116,10 @@ export const listForProject = query({
       .collect()
     const byUnit = new Map<string, Doc<"sources">[]>()
     const unsorted: Doc<"sources">[] = []
+    const references: Doc<"sources">[] = []
     for (const source of sources) {
-      if (!source.unitId) unsorted.push(source)
+      if (source.role === "reference") references.push(source)
+      else if (!source.unitId) unsorted.push(source)
       else byUnit.set(source.unitId, [...(byUnit.get(source.unitId) ?? []), source])
     }
     const result = await Promise.all(
@@ -127,6 +138,10 @@ export const listForProject = query({
     return {
       units: result,
       unsortedSources: unsorted
+        .sort((a, b) => a.createdAt - b.createdAt)
+        .map(sourceSummary),
+      /** Whole books and other large sources that back up every unit. */
+      referenceSources: references
         .sort((a, b) => a.createdAt - b.createdAt)
         .map(sourceSummary),
     }
@@ -351,7 +366,9 @@ export const teachContext = query({
     // Every chunk is citable when the unit is small; otherwise the passages
     // closest to this turn's focus win, with document order as the tiebreak.
     const candidates: Array<{ id: Id<"sourceChunks">; score: number; order: number }> = []
-    for (const source of sources) {
+    for (const [sourceIndex, source] of sources.entries()) {
+      // Document order across the unit: source position, then chunk position.
+      const orderOf = (ordinal: number) => sourceIndex * 1_000_000 + ordinal
       const chunks = await ctx.db
         .query("sourceChunks")
         .withIndex("by_source_ordinal", (q) => q.eq("sourceId", source._id))
@@ -370,14 +387,66 @@ export const teachContext = query({
                 focus
               )
             : 0,
-          order: candidates.length,
+          order: orderOf(chunk.ordinal),
         })
+      // Long sources: also search the whole source, so passages past the
+      // scanned start can be cited when they match this turn's focus.
+      if (focus && chunks.length >= MAX_CHUNKS_SCANNED_PER_SOURCE) {
+        const terms = searchTerms(focus)
+        if (terms) {
+          const matches = await ctx.db
+            .query("sourceChunks")
+            .withSearchIndex("search_text", (q) =>
+              q.search("text", terms).eq("projectId", unit.projectId).eq("sourceId", source._id)
+            )
+            .take(8)
+          for (const match of matches)
+            if (!candidates.some((candidate) => candidate.id === match._id))
+              candidates.push({ id: match._id, score: 100, order: orderOf(match.ordinal) })
+        }
+      }
     }
-    const chunkIds = candidates
-      .sort((a, b) => b.score - a.score || a.order - b.order)
-      .slice(0, MAX_TEACH_CITATION_CHUNKS)
-      .sort((a, b) => a.order - b.order)
-      .map((candidate) => candidate.id)
+    // Reference books for the module are searched for this turn's topic.
+    const references = await ctx.db
+      .query("sources")
+      .withIndex("by_project_role", (q) =>
+        q.eq("projectId", unit.projectId).eq("role", "reference")
+      )
+      .collect()
+    // The unit's topic anchors every search so a section title's common words
+    // do not pull in unrelated chapters.
+    const topic = chat.teachOutline?.title ?? unit.title
+    const terms = searchTerms(
+      focus
+        ? `${topic} ${topic} ${focus}`
+        : [topic, ...sources.map((source) => source.extractedText.slice(0, 3_000))].join(" ")
+    )
+    const referenceExcerpts: Array<{ chunkId: Id<"sourceChunks">; filename: string; text: string }> = []
+    if (terms && references.length) {
+      const perReference = Math.max(1, Math.floor(MAX_REFERENCE_EXCERPTS / references.length))
+      for (const reference of references) {
+        const matches = await ctx.db
+          .query("sourceChunks")
+          .withSearchIndex("search_text", (q) =>
+            q.search("text", terms).eq("projectId", unit.projectId).eq("sourceId", reference._id)
+          )
+          .take(perReference)
+        for (const match of matches)
+          referenceExcerpts.push({
+            chunkId: match._id,
+            filename: reference.filename,
+            text: match.text.slice(0, MAX_REFERENCE_EXCERPT_TEXT),
+          })
+      }
+    }
+    const chunkIds = [
+      ...candidates
+        .sort((a, b) => b.score - a.score || a.order - b.order)
+        .slice(0, MAX_TEACH_CITATION_CHUNKS - referenceExcerpts.length)
+        .sort((a, b) => a.order - b.order)
+        .map((candidate) => candidate.id),
+      ...referenceExcerpts.map((excerpt) => excerpt.chunkId),
+    ]
     return {
       projectId: project._id,
       moduleTitle: project.title,
@@ -396,6 +465,7 @@ export const teachContext = query({
           truncated: source.extractedText.length > MAX_TEACH_SOURCE_TEXT,
         })),
       citationChunkIds: chunkIds,
+      referenceExcerpts: referenceExcerpts.map(({ filename, text }) => ({ filename, text })),
     }
   },
 })
@@ -428,39 +498,48 @@ export const recordTeachProgress = mutation({
     if (!outline) return
     if (outline.sections.length > 12 || !outline.sections.length)
       throw new Error("Outline is invalid")
+    // The index is the section being taught now (a jump moves it anywhere);
+    // `taught` records which sections were actually taught.
     let index = chat.teachSectionIndex ?? 0
+    const taught = new Set(chat.teachTaughtSectionIds ?? [])
+    let newlyTaught: string | undefined
     if (args.sectionId === "done") index = outline.sections.length
     else if (args.sectionId) {
       const found = outline.sections.findIndex(
         (section) => section.id === args.sectionId
       )
-      if (found >= 0) index = Math.max(index, found)
+      if (found >= 0) {
+        index = found
+        if (!taught.has(args.sectionId)) newlyTaught = args.sectionId
+        taught.add(args.sectionId)
+      }
     }
     await ctx.db.patch(chat._id, {
       teachOutline: outline,
       teachSectionIndex: index,
+      teachTaughtSectionIds: [...taught],
     })
-    // Milestones feed XP and streaks; each section and each unit counts once,
-    // even if the unit is restarted.
+    const startedUnit = await ctx.db.get(chat.unitId)
+    if (startedUnit && !startedUnit.startedAt)
+      await ctx.db.patch(startedUnit._id, { startedAt: Date.now() })
+    // Milestones feed XP and streaks. Only sections actually taught count,
+    // each once per unit, even if the unit is restarted.
     const now = Date.now()
-    const previous = chat.teachOutline ? (chat.teachSectionIndex ?? 0) : -1
-    const reachedSections = outline.sections.slice(
-      Math.max(0, previous + 1),
-      Math.min(index, outline.sections.length - 1) + 1
-    )
     const logged = await ctx.db
       .query("learningActivity")
       .withIndex("by_unit_kind", (q) => q.eq("unitId", chat.unitId!))
       .collect()
-    for (const section of reachedSections)
-      if (!logged.some((entry) => entry.kind === "section" && entry.sectionId === section.id))
-        await ctx.db.insert("learningActivity", {
-          kind: "section",
-          projectId: chat.projectId!,
-          unitId: chat.unitId,
-          sectionId: section.id,
-          occurredAt: now,
-        })
+    if (
+      newlyTaught &&
+      !logged.some((entry) => entry.kind === "section" && entry.sectionId === newlyTaught)
+    )
+      await ctx.db.insert("learningActivity", {
+        kind: "section",
+        projectId: chat.projectId!,
+        unitId: chat.unitId,
+        sectionId: newlyTaught,
+        occurredAt: now,
+      })
     if (index >= outline.sections.length && !logged.some((entry) => entry.kind === "unit"))
       await ctx.db.insert("learningActivity", {
         kind: "unit",

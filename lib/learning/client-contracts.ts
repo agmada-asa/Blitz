@@ -13,6 +13,11 @@ export type FeedOption = {
 /** Shared identity and attribution fields on every feed card. */
 type FeedCardBase = {
   id: string
+  /**
+   * Unique within one feed session. A card repeated in a later round has the
+   * same `id` but a new `key`, so clients render it as a new card.
+   */
+  key?: string
   projectId: string
   conceptId: string
   topicId?: string

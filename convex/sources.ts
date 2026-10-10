@@ -267,7 +267,8 @@ export const createOriginalSource = mutation({
       throw new Error("Original source metadata is invalid")
     if (args.unitId) {
       const unit = await ctx.db.get(args.unitId)
-      if (!unit || unit.projectId !== args.projectId)
+      if (!unit) throw new Error("Unit not found")
+      if (unit.projectId !== args.projectId)
         throw new Error("Unit belongs to another project")
     }
     const duplicate = await ctx.db
@@ -277,6 +278,11 @@ export const createOriginalSource = mutation({
       )
       .first()
     if (duplicate) {
+      // Re-uploading an unsorted file into a unit files it there; a file that
+      // already belongs to another unit or is a reference book stays put.
+      if (args.unitId && !duplicate.unitId && duplicate.role !== "reference")
+        await ctx.db.patch(duplicate._id, { unitId: args.unitId })
+      const unitId = duplicate.unitId ?? (duplicate.role === "reference" ? undefined : args.unitId)
       const job = await ctx.db
         .query("ingestionJobs")
         .withIndex("by_source", (q) => q.eq("sourceId", duplicate._id))
@@ -300,6 +306,7 @@ export const createOriginalSource = mutation({
           ingestionJobId: job._id,
           ingestionStatus: "queued" as const,
           duplicate: false,
+          ...(unitId ? { unitId } : {}),
         }
       }
       return {
@@ -311,6 +318,8 @@ export const createOriginalSource = mutation({
           ? { ingestionLeaseExpiresAt: job.leaseExpiresAt }
           : {}),
         duplicate: true,
+        ...(unitId ? { unitId } : {}),
+        reference: duplicate.role === "reference",
       }
     }
     const sourceId = await ctx.db.insert("sources", {
@@ -420,6 +429,21 @@ export const getSource = query({
     const source = await ctx.db.get(args.sourceId)
     if (!source || source.projectId !== args.projectId) return null
     return source
+  },
+})
+
+/**
+ * Marks a very large source as a module-wide reference and takes it out of
+ * its unit. The unit is kept even if this empties it, because more files in
+ * the same upload may still be on their way; the uploader removes a unit
+ * that ends up empty.
+ */
+export const markReference = mutation({
+  args: { sourceId: v.id("sources") },
+  handler: async (ctx, { sourceId }) => {
+    const source = await ctx.db.get(sourceId)
+    if (!source) throw new Error("Source not found")
+    await ctx.db.patch(sourceId, { role: "reference", unitId: undefined })
   },
 })
 

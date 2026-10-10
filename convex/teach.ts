@@ -74,12 +74,15 @@ export const registerQuiz = mutation({
       : []
     const sourceIds = unitSources.map((source) => source._id)
     const title = conceptKey(quiz.concept) || "Unit check"
-    let concept = await ctx.db
-      .query("concepts")
-      .withIndex("by_project_title", (q) =>
-        q.eq("projectId", projectId).eq("title", title)
-      )
-      .first()
+    // Concepts are per unit: a generic title in two weeks is two concepts.
+    let concept = (
+      await ctx.db
+        .query("concepts")
+        .withIndex("by_project_title", (q) =>
+          q.eq("projectId", projectId).eq("title", title)
+        )
+        .collect()
+    ).find((candidate) => candidate.unitId === chat.unitId)
     const now = Date.now()
     if (!concept) {
       const conceptId = await ctx.db.insert("concepts", {

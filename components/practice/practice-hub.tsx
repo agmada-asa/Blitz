@@ -16,9 +16,11 @@ import { ElapsedTime } from "@/components/ui/elapsed-time"
 import { ArrowLeftIcon, ArrowRightIcon, LoadingIcon } from "@/components/ui/icon"
 import { Skeleton } from "@/components/ui/skeleton"
 import { api } from "@/convex/_generated/api"
+import { useMinuteClock } from "@/hooks/use-minute-clock"
 import type { Id } from "@/convex/_generated/dataModel"
 import type { ConceptStrength } from "@/lib/drill"
 import { DEFAULT_BANK_BATCH } from "@/lib/practice"
+import { armRelearn } from "@/lib/client/relearn"
 import { relearnMessage } from "@/lib/teach"
 import { cn } from "@/lib/utils"
 
@@ -33,21 +35,29 @@ const strengthStyle: Record<ConceptStrength, { label: string; dot: string }> = {
   new: { label: "Not practised", dot: "bg-muted-foreground/40" },
 }
 
-/** Builds the Teach link that re-teaches a concept the learner keeps missing. */
-export function relearnHref(
+/**
+ * Builds props for a Relearn link: the Teach URL carrying the request, and a
+ * click handler that arms it so the Teach screen will send it.
+ */
+export function relearnLink(
   projectId: string,
   unitId: string,
   concept: string,
   question?: string
-): string {
-  return `/projects/${encodeURIComponent(projectId)}/learn/${encodeURIComponent(unitId)}?ask=${encodeURIComponent(relearnMessage(concept, question))}`
+): { href: string; onClick: () => void } {
+  const message = relearnMessage(concept, question)
+  return {
+    href: `/projects/${encodeURIComponent(projectId)}/learn/${encodeURIComponent(unitId)}?ask=${encodeURIComponent(message)}`,
+    onClick: () => armRelearn(message),
+  }
 }
 
 /** Renders the Practice screen for one module. */
 export function PracticeHub({ projectId }: { projectId: string }) {
   const convexProjectId = projectId as Id<"projects">
   const project = useQuery(api.projects.getProject, { projectId: convexProjectId })
-  const data = useQuery(api.practice.overview, { projectId: convexProjectId })
+  const now = useMinuteClock()
+  const data = useQuery(api.practice.overview, { projectId: convexProjectId, now })
   const base = `/projects/${encodeURIComponent(projectId)}`
 
   if (project === null)
@@ -135,7 +145,7 @@ export function PracticeHub({ projectId }: { projectId: string }) {
                     </div>
                     <div className="flex shrink-0 gap-2">
                       <Button asChild variant="outline" className="min-h-10 rounded-full px-4">
-                        <Link href={relearnHref(projectId, concept.unitId, concept.title)}>Relearn</Link>
+                        <Link {...relearnLink(projectId, concept.unitId, concept.title)}>Relearn</Link>
                       </Button>
                       <Button asChild variant="ghost" className="min-h-10 rounded-full px-4">
                         <Link href={`${base}/practice/drill?unit=${encodeURIComponent(concept.unitId)}`}>

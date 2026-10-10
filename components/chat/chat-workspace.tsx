@@ -61,6 +61,7 @@ import {
   writeCachedAgentAutonomy,
 } from "@/components/chat/chat-agent-controls"
 import { AnnotatedAssistantMessage } from "@/components/chat/annotated-assistant-message"
+import { InteractiveBlocksProvider } from "@/components/ui/interactive-blocks"
 import { ReadAloudButton } from "@/components/chat/read-aloud-button"
 import { type FloatingAnnotation } from "@/components/chat/floating-annotation-chip"
 import { ReplyModelPicker } from "@/components/chat/reply-model-picker"
@@ -109,6 +110,10 @@ import {
   clipboardImageFiles,
   droppedFiles,
 } from "@/lib/client/chat-composer-input"
+
+/** Sent by the Quiz me action; the reply uses interactive quiz blocks. */
+const QUIZ_ME_MESSAGE =
+  "Quiz me on this: ask three questions that check I understood the key ideas, then tell me what to review."
 
 /** Maximum project collections accepted with one message. */
 const MAX_PROJECT_ATTACHMENTS = 3
@@ -2338,6 +2343,18 @@ export function ChatWorkspace({
                             requests={messageRequests}
                           />
                           {message.content ? (
+                            <InteractiveBlocksProvider
+                              value={{
+                                streaming: message.status === "running",
+                                // Suggested follow-ups send a new message from the latest reply only.
+                                ...(latest && !isRunning
+                                  ? {
+                                      onFollowUp: (text: string) =>
+                                        void sendMessage({ message: text }),
+                                    }
+                                  : {}),
+                              }}
+                            >
                             <AnnotatedAssistantMessage
                               messageId={message.id}
                               content={message.content}
@@ -2363,6 +2380,7 @@ export function ChatWorkspace({
                               onSaveAnnotation={saveAnnotation}
                               onDeleteAnnotation={deleteAnnotation}
                             />
+                            </InteractiveBlocksProvider>
                           ) : message.status === "failed" ? (
                             <p>
                               {activeChat?.lastError ||
@@ -2522,6 +2540,20 @@ export function ChatWorkspace({
                                   )}
                                   Branch
                                 </Button>
+                                {latest && message.status === "completed" ? (
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="sm"
+                                    className="h-10 gap-1.5 px-2.5 text-xs font-normal sm:h-7 sm:px-2"
+                                    disabled={isRunning || Boolean(messageActionId)}
+                                    onClick={() =>
+                                      void sendMessage({ message: QUIZ_ME_MESSAGE })
+                                    }
+                                  >
+                                    Quiz me
+                                  </Button>
+                                ) : null}
                               </>
                             ) : null}
                             {latest && message.status === "failed" ? (
