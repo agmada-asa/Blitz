@@ -217,6 +217,8 @@ export default defineSchema({
      * Teach session, so answering it twice reuses one item.
      */
     teachKey: v.optional(v.string()),
+    /** `teach` for lesson quizzes, `bank` for generated practice questions. */
+    origin: v.optional(v.union(v.literal("teach"), v.literal("bank"))),
     sourceIds: v.array(v.id("sources")),
     type: learningItemType,
     title: v.string(),
@@ -246,7 +248,26 @@ export default defineSchema({
     .index("by_project_order", ["projectId", "order"])
     .index("by_project_concept_order", ["projectId", "conceptId", "order"])
     .index("by_concept_order", ["conceptId", "order"])
-    .index("by_project_teachKey", ["projectId", "teachKey"]),
+    .index("by_project_teachKey", ["projectId", "teachKey"])
+    .index("by_unit", ["unitId"]),
+
+  /** One run that writes practice questions for a unit's question bank. */
+  questionGenerations: defineTable({
+    projectId: v.id("projects"),
+    unitId: v.id("units"),
+    status: v.union(
+      v.literal("running"),
+      v.literal("completed"),
+      v.literal("failed")
+    ),
+    requestedCount: v.number(),
+    createdCount: v.number(),
+    /** Questions dropped by validation. */
+    rejectedCount: v.optional(v.number()),
+    error: v.optional(v.string()),
+    startedAt: v.number(),
+    finishedAt: v.optional(v.number()),
+  }).index("by_unit_startedAt", ["unitId", "startedAt"]),
 
   /** Previous explanation text retained when a new source revises a lesson. */
   lessonPageRevisions: defineTable({

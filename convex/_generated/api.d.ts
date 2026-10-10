@@ -21,6 +21,7 @@ import type * as conceptMap from "../conceptMap.js";
 import type * as contentGeneration from "../contentGeneration.js";
 import type * as conversations from "../conversations.js";
 import type * as learning from "../learning.js";
+import type * as practice from "../practice.js";
 import type * as preparation from "../preparation.js";
 import type * as projectAgents from "../projectAgents.js";
 import type * as projects from "../projects.js";
@@ -55,6 +56,7 @@ declare const fullApi: ApiFromModules<{
   contentGeneration: typeof contentGeneration;
   conversations: typeof conversations;
   learning: typeof learning;
+  practice: typeof practice;
   preparation: typeof preparation;
   projectAgents: typeof projectAgents;
   projects: typeof projects;
