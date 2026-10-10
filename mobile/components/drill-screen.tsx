@@ -20,7 +20,7 @@ import { submitAnswer } from "../lib/api"
 import type { MobileAnswer, MobileAnswerFeedback } from "../lib/contracts"
 import { fetchDrill } from "../lib/learning-api"
 import { loadCached, saveCached } from "../lib/offline-cache"
-import { colors, radius, TOUCH_TARGET } from "../lib/theme"
+import { brandAlpha, colors, radius, TOUCH_TARGET } from "../lib/theme"
 import { questionResult } from "./learning-card"
 import { Text } from "./native-text"
 import { SegmentedBar } from "./progress-path"
@@ -91,11 +91,18 @@ export function DrillScreen({ serverUrl, projectId, unitId, onBack, onRelearn }:
   const segments = useMemo(
     () =>
       (questions ?? []).map((question, position) => {
+        // Correct answers fill in brand, misses fill faintly, skipped questions stay grey.
         const result = feedback[question.card.id]
         return {
           key: question.card.id,
           fill: result || position < index ? 1 : position === index ? 0.5 : 0,
-          color: result?.status === "incorrect" ? colors.faint : colors.brand,
+          color: !result
+            ? position < index
+              ? colors.border
+              : colors.brand
+            : result.status === "incorrect"
+              ? brandAlpha(0.3)
+              : colors.brand,
         }
       }),
     [questions, feedback, index]
