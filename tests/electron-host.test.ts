@@ -58,11 +58,12 @@ function harness(options: Record<string, unknown> = {}) {
 /** Waits long enough for millisecond restart timers to fire. */
 const settle = (ms = 30) => new Promise((resolve) => setTimeout(resolve, ms))
 
-test("starts Convex and Next, checks both, then starts every worker", async () => {
+test("starts Convex and Next, checks both, then starts the one worker process", async () => {
   const { manager, children, healthUrls } = harness()
   const convexPorts = await resolveLocalConvexPorts(process.cwd())
   await manager.start()
-  assert.equal(children.length, 4)
+  assert.equal(children.length, 3)
+  assert.deepEqual(children[2].args, ["run", "worker"])
   assert.equal(children[0].command, "npx")
   assert.deepEqual(children[0].args.slice(-4), [
     "--local-cloud-port",
@@ -73,7 +74,7 @@ test("starts Convex and Next, checks both, then starts every worker", async () =
   assert.ok(healthUrls.includes(`http://127.0.0.1:${convexPorts.cloud}`))
   assert.equal(manager.snapshot().next.state, "ready")
   assert.equal(manager.snapshot().convex.state, "ready")
-  assert.equal(manager.snapshot().ingestion.state, "running")
+  assert.equal(manager.snapshot().worker.state, "running")
   await manager.stop()
 })
 
@@ -81,16 +82,16 @@ test("keeps restarting a crashing worker without stopping other services", async
   const { manager, latest } = harness()
   await manager.start()
   for (let crash = 0; crash < 4; crash += 1) {
-    latest("worker:ingestion")?.emit("exit", 1, null)
-    assert.equal(manager.snapshot().ingestion.state, "restarting")
+    latest("worker")?.emit("exit", 1, null)
+    assert.equal(manager.snapshot().worker.state, "restarting")
     await settle()
   }
   const status = manager.snapshot()
-  assert.equal(status.ingestion.state, "running")
-  assert.equal(status.ingestion.restarts, 4)
-  assert.equal(status.ingestion.lastExit, "1")
+  assert.equal(status.worker.state, "running")
+  assert.equal(status.worker.restarts, 4)
+  assert.equal(status.worker.lastExit, "1")
   assert.equal(status.next.state, "ready")
-  assert.equal(status.research.state, "running")
+  assert.equal(status.convex.state, "ready")
   await manager.stop()
 })
 
@@ -104,7 +105,7 @@ test("restarts Next and Convex instead of shutting the stack down", async () => 
   assert.equal(status.convex.state, "running")
   assert.equal(status.convex.lastExit, "SIGKILL")
   assert.equal(status.next.state, "running")
-  assert.equal(status.research.state, "running")
+  assert.equal(status.worker.state, "running")
   await manager.stop()
 })
 
@@ -117,14 +118,14 @@ test("grows the restart delay for quick crashes and caps it", async () => {
   const delays: number[] = []
   for (let crash = 0; crash < 4; crash += 1) {
     const before = Date.now()
-    latest("worker:research")?.emit("exit", 1, null)
-    const { nextRestartAt } = manager.snapshot().research
+    latest("worker")?.emit("exit", 1, null)
+    const { nextRestartAt } = manager.snapshot().worker
     delays.push(Math.round(((nextRestartAt ?? 0) - before) / 1_000))
     // Start the next attempt immediately rather than waiting for the timer.
     manager.restartTimers.forEach((timer: NodeJS.Timeout) =>
       clearTimeout(timer)
     )
-    manager.startService("research")
+    manager.startService("worker")
   }
   assert.deepEqual(delays, [1, 2, 4, 4])
   await manager.stop()
@@ -139,13 +140,13 @@ test("resets the backoff after a service stays up", async () => {
   await manager.start()
   for (let crash = 0; crash < 3; crash += 1) {
     const before = Date.now()
-    latest("worker:ingestion")?.emit("exit", 1, null)
-    const { nextRestartAt } = manager.snapshot().ingestion
+    latest("worker")?.emit("exit", 1, null)
+    const { nextRestartAt } = manager.snapshot().worker
     assert.equal(Math.round(((nextRestartAt ?? 0) - before) / 1_000), 1)
     manager.restartTimers.forEach((timer: NodeJS.Timeout) =>
       clearTimeout(timer)
     )
-    manager.startService("ingestion")
+    manager.startService("worker")
   }
   await manager.stop()
 })
@@ -153,7 +154,7 @@ test("resets the backoff after a service stays up", async () => {
 test("stops every service and cancels pending restarts", async () => {
   const { manager, latest, children } = harness({ restartBaseDelayMs: 50 })
   await manager.start()
-  latest("worker:research")?.emit("exit", 1, null)
+  latest("worker")?.emit("exit", 1, null)
   await manager.stop()
   const spawned = children.length
   await settle(80)
@@ -161,19 +162,19 @@ test("stops every service and cancels pending restarts", async () => {
   const states = Object.values(manager.snapshot()).map(
     (status) => (status as { state: string }).state
   )
-  assert.equal(states.length, 4)
+  assert.equal(states.length, 3)
   assert.ok(states.every((state) => state === "stopped"))
 })
 
 test("reports state transitions to the launcher", async () => {
   const { manager, latest, statusEvents } = harness()
   await manager.start()
-  latest("worker:ingestion")?.emit("exit", 1, null)
+  latest("worker")?.emit("exit", 1, null)
   await settle()
-  const ingestion = statusEvents
-    .filter(([name]) => name === "ingestion")
+  const worker = statusEvents
+    .filter(([name]) => name === "worker")
     .map(([, state]) => state)
-  assert.deepEqual(ingestion, ["running", "restarting", "running"])
+  assert.deepEqual(worker, ["running", "restarting", "running"])
   await manager.stop()
 })
 

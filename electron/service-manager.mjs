@@ -11,14 +11,13 @@ import { join } from "node:path"
 /** @typedef {(pid: number, signal?: string) => unknown} ProcessKiller */
 
 /**
- * Background workers started after Next and Convex answer. Teach replaces the
- * old lesson, preparation, and card-chat workers, so only source recovery and
- * Deep Research run in the background.
+ * Background workers started after Next and Convex answer, as
+ * `[service name, npm script]` pairs. Source recovery and Deep Research run as
+ * two isolated loops inside the one `worker` process (`scripts/worker.ts`), so
+ * one failing loop backs off without stopping the other. The Kokoro speech
+ * worker is started on demand by Next and is not supervised here.
  */
-const workerDefinitions = [
-  ["ingestion", "worker:ingestion"],
-  ["research", "worker:research"],
-]
+const workerDefinitions = [["worker", "worker"]]
 
 /**
  * Reads the saved Blitz port pair, then checks upward by pairs when occupied.
@@ -169,7 +168,7 @@ export class ServiceManager {
 
   /**
    * Resolves ports, starts Convex and Next, waits until both answer, then
-   * starts the workers so their first requests do not fail.
+   * starts the worker so its first requests do not fail.
    * @throws When Next or Convex does not become healthy before the timeout.
    */
   async start() {
