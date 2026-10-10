@@ -72,6 +72,11 @@ export async function POST(
       if (![15, 30, 60, 90].includes(body.durationMinutes as number))
         throw new Error("Choose a 15, 30, 60, or 90 minute episode")
       input.durationMinutes = body.durationMinutes as 15 | 30 | 60 | 90
+      if (body.unitId !== undefined) {
+        if (typeof body.unitId !== "string" || !/^[A-Za-z0-9]{1,64}$/.test(body.unitId))
+          return Response.json({ error: "Choose a valid unit" }, { status: 400 })
+        input.unitId = body.unitId
+      }
       if (body.focus !== undefined) {
         if (typeof body.focus !== "string" || body.focus.length > 500)
           throw new Error("Keep the podcast focus under 500 characters")

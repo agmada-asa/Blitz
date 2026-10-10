@@ -65,7 +65,7 @@ names the PR that delivers it once one exists.
 ## Phase 5: polish and redesign
 
 - [ ] Redesign starting from the Teach screen
-- [ ] Podcasts from units
+- [x] Podcasts can cover one unit or the whole module
 
 ## Phase 6: mobile and sync
 

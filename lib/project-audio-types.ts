@@ -20,6 +20,8 @@ export type ProjectAudioItem = {
   error?: string
   audioUrl?: string
   sourceId?: string
+  /** Unit a podcast covers; unset when it covers the whole module. */
+  unitId?: string
   stage?: ProjectAudioStage
   completedChunks?: number
   totalChunks?: number
