@@ -36,10 +36,13 @@ async function dailyGoal(ctx: Pick<QueryCtx, "db">) {
  * @param tzOffsetMinutes The browser's `Date#getTimezoneOffset()`, so days follow local midnight.
  */
 export const today = query({
-  args: { tzOffsetMinutes: v.number() },
-  handler: async (ctx, { tzOffsetMinutes }) => {
+  args: {
+    tzOffsetMinutes: v.number(),
+    /** Client clock rounded to the minute, so the day rolls over at local midnight. */
+    now: v.number(),
+  },
+  handler: async (ctx, { tzOffsetMinutes, now }) => {
     const offset = Math.max(-840, Math.min(840, Math.round(tzOffsetMinutes)))
-    const now = Date.now()
     const since = now - HISTORY_DAYS * 86_400_000
     const xpByDay = new Map<string, number>()
     /** Adds XP to the local day of a timestamp. */
@@ -49,8 +52,9 @@ export const today = query({
     }
     const answers = await ctx.db
       .query("studyEvents")
-      .withIndex("by_occurredAt", (q) => q.gte("occurredAt", since))
-      .filter((q) => q.eq(q.field("eventType"), "answer"))
+      .withIndex("by_eventType_occurredAt", (q) =>
+        q.eq("eventType", "answer").gte("occurredAt", since)
+      )
       .collect()
     let answeredToday = 0
     const todayKey = localDayKey(now, offset)

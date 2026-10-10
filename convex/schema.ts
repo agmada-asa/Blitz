@@ -83,6 +83,8 @@ export default defineSchema({
     titleSource: v.union(v.literal("auto"), v.literal("user")),
     /** Position in the module's learning path; lower comes first. */
     order: v.number(),
+    /** When the learner first started this unit in Teach or answered one of its questions. */
+    startedAt: v.optional(v.number()),
     createdAt: v.number(),
     updatedAt: v.number(),
   }).index("by_project_order", ["projectId", "order"]),
@@ -226,6 +228,12 @@ export default defineSchema({
     teachKey: v.optional(v.string()),
     /** `teach` for lesson quizzes, `bank` for generated practice questions. */
     origin: v.optional(v.union(v.literal("teach"), v.literal("bank"))),
+    /**
+     * Outcome and time of the latest answer, kept on the item so drills and
+     * the feed can rank questions without reading every answer event.
+     */
+    lastOutcome: v.optional(v.union(v.literal("correct"), v.literal("incorrect"))),
+    lastAnsweredAt: v.optional(v.number()),
     sourceIds: v.array(v.id("sources")),
     type: learningItemType,
     title: v.string(),
@@ -329,7 +337,8 @@ export default defineSchema({
       "occurredAt",
     ])
     .index("by_item_occurredAt", ["itemId", "occurredAt"])
-    .index("by_occurredAt", ["occurredAt"]),
+    .index("by_occurredAt", ["occurredAt"])
+    .index("by_eventType_occurredAt", ["eventType", "occurredAt"]),
 
   /**
    * Learning milestones other than answers, used for XP and streaks: a Teach
@@ -663,8 +672,10 @@ export default defineSchema({
         sections: v.array(v.object({ id: v.string(), title: v.string() })),
       })
     ),
-    /** Zero-based index of the furthest section the tutor has taught. */
+    /** Zero-based index of the section being taught; the outline length once complete. */
     teachSectionIndex: v.optional(v.number()),
+    /** Ids of the outline sections actually taught. */
+    teachTaughtSectionIds: v.optional(v.array(v.string())),
     title: v.string(),
     /** Optional chat agent policy; legacy chats use approval with no extra instructions. */
     agentAutonomy: v.optional(

@@ -1363,6 +1363,17 @@ export const recordAnswerEvent = mutation({
       answer: args.answer,
       outcome: evaluation.status,
     })
+    // Keep the latest outcome on the item, and mark its unit as started.
+    if ((item.lastAnsweredAt ?? 0) <= args.occurredAt)
+      await ctx.db.patch(item._id, {
+        lastOutcome: evaluation.status,
+        lastAnsweredAt: args.occurredAt,
+      })
+    if (item.unitId) {
+      const unit = await ctx.db.get(item.unitId)
+      if (unit && !unit.startedAt)
+        await ctx.db.patch(unit._id, { startedAt: receivedAt })
+    }
     const reviewProgress = await recomputeReview(
       ctx,
       args.projectId,

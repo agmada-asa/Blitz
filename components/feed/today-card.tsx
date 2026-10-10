@@ -15,6 +15,7 @@ import { ArrowRightIcon, ZapIcon } from "@/components/ui/icon"
 import { Progress } from "@/components/ui/progress"
 import { Skeleton } from "@/components/ui/skeleton"
 import { api } from "@/convex/_generated/api"
+import { useMinuteClock } from "@/hooks/use-minute-clock"
 import { cn } from "@/lib/utils"
 
 /** Formats a `YYYY-MM-DD` key as a short weekday label. */
@@ -29,7 +30,8 @@ function weekday(day: string, style: "narrow" | "long"): string {
 export function TodayCard() {
   // Days follow the learner's local midnight.
   const [tzOffsetMinutes] = useState(() => new Date().getTimezoneOffset())
-  const summary = useQuery(api.progress.today, { tzOffsetMinutes })
+  const now = useMinuteClock()
+  const summary = useQuery(api.progress.today, { tzOffsetMinutes, now })
 
   return (
     <section

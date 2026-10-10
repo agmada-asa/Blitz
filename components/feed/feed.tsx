@@ -55,8 +55,11 @@ function mergeFeedResponses(
   current: FeedResponse | null,
   next: FeedResponse
 ): FeedResponse {
-  const cards = new Map((current?.cards ?? []).map((card) => [card.id, card]))
-  for (const card of next.cards) cards.set(card.id, card)
+  // Cards repeat across rounds with a new key, so merge by key when present.
+  const cards = new Map(
+    (current?.cards ?? []).map((card) => [card.key ?? card.id, card])
+  )
+  for (const card of next.cards) cards.set(card.key ?? card.id, card)
   const projects = new Map(
     (current?.projects ?? []).map((project) => [project.id, project])
   )
@@ -193,7 +196,7 @@ export function Feed({ initialFilter }: { initialFilter?: FeedFilter }) {
       }
       if (requestGeneration.current !== generation || !nextData) return
       setData(nextData)
-      setActiveIndex(0)
+      setActiveIndex(-LEAD_PAGES)
       feedRef.current?.scrollTo({ top: 0, behavior: "auto" })
     }
 
@@ -638,7 +641,7 @@ export function Feed({ initialFilter }: { initialFilter?: FeedFilter }) {
           <TodayCard />
           {data?.cards.map((card, index) => (
             <FeedCardView
-              key={card.id}
+              key={card.key ?? card.id}
               card={card}
               onAsk={openCardChat}
               onSkip={(nextCard) => skipCard(nextCard, index)}

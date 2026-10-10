@@ -10,7 +10,7 @@
 
 import { v } from "convex/values"
 
-import { mutation, query, type QueryCtx } from "./_generated/server"
+import { internalMutation, mutation, query, type QueryCtx } from "./_generated/server"
 import type { Doc, Id } from "./_generated/dataModel"
 import {
   conceptStrength,
@@ -256,10 +256,15 @@ export const saveGeneratedQuestions = mutation({
     /** Finds a concept by title in the project, creating it under this unit. */
     const conceptFor = async (name: string) => {
       const title = conceptTitle(name)
-      const existing = await ctx.db
-        .query("concepts")
-        .withIndex("by_project_title", (q) => q.eq("projectId", run.projectId).eq("title", title))
-        .first()
+      // Concepts are per unit: a generic title in two weeks is two concepts.
+      const existing = (
+        await ctx.db
+          .query("concepts")
+          .withIndex("by_project_title", (q) =>
+            q.eq("projectId", run.projectId).eq("title", title)
+          )
+          .collect()
+      ).find((candidate) => candidate.unitId === run.unitId)
       if (existing) return existing
       const conceptId = await ctx.db.insert("concepts", {
         projectId: run.projectId,
@@ -352,14 +357,17 @@ type ConceptSummary = {
  * module's weak concepts and how many questions are waiting to be retried.
  */
 export const overview = query({
-  args: { projectId: v.id("projects") },
-  handler: async (ctx, { projectId }) => {
+  args: {
+    projectId: v.id("projects"),
+    /** Client clock, rounded to the minute, so due counts refresh as time passes. */
+    now: v.number(),
+  },
+  handler: async (ctx, { projectId, now }) => {
     const units = await ctx.db
       .query("units")
       .withIndex("by_project_order", (q) => q.eq("projectId", projectId))
       .collect()
     const reviews = await reviewsByConcept(ctx, projectId)
-    const now = Date.now()
     let missed = 0
     let unanswered = 0
     let due = 0
@@ -375,13 +383,12 @@ export const overview = query({
       let answered = 0
       let correct = 0
       for (const item of items) {
-        const last = await latestAnswer(ctx, item._id)
-        if (!last) {
+        if (!item.lastOutcome) {
           unanswered += 1
           continue
         }
         answered += 1
-        if (last.outcome === "correct") correct += 1
+        if (item.lastOutcome === "correct") correct += 1
         else missed += 1
       }
       const concepts: ConceptSummary[] = []
@@ -451,8 +458,10 @@ export const drill = query({
     projectId: v.id("projects"),
     unitId: v.optional(v.id("units")),
     limit: v.optional(v.number()),
+    /** Client clock, so concepts that fell due recently count as due. */
+    now: v.number(),
   },
-  handler: async (ctx, { projectId, unitId, limit }) => {
+  handler: async (ctx, { projectId, unitId, limit, now }) => {
     const units = await ctx.db
       .query("units")
       .withIndex("by_project_order", (q) => q.eq("projectId", projectId))
@@ -472,20 +481,21 @@ export const drill = query({
     const reviews = await reviewsByConcept(ctx, projectId)
     const candidates: DrillCandidate[] = []
     for (const item of items) {
-      const last = await latestAnswer(ctx, item._id)
       const review = reviews.get(String(item.conceptId))
       candidates.push({
         itemId: String(item._id),
         conceptId: String(item.conceptId),
         createdAt: item.createdAt,
-        ...(last?.outcome ? { lastOutcome: last.outcome, lastAnsweredAt: last.occurredAt } : {}),
+        ...(item.lastOutcome
+          ? { lastOutcome: item.lastOutcome, lastAnsweredAt: item.lastAnsweredAt }
+          : {}),
         strength: conceptStrength(historyOf(review)),
         ...(review && review.attemptCount > 0 ? { conceptDueAt: review.dueAt } : {}),
       })
     }
     const order = selectDrillQuestions(
       candidates,
-      Date.now(),
+      now,
       Math.max(1, Math.min(MAX_DRILL_QUESTIONS, Math.round(limit ?? 10)))
     )
     const byId = new Map(items.map((item) => [String(item._id), item]))
@@ -521,8 +531,10 @@ export const feed = query({
     /** Item IDs already shown in this feed session, newest last. */
     seen: v.array(v.string()),
     limit: v.number(),
+    /** Server clock from the route, so due reviews are judged at request time. */
+    now: v.number(),
   },
-  handler: async (ctx, { projectId, seen, limit }) => {
+  handler: async (ctx, { projectId, seen, limit, now }) => {
     const pageSize = Math.max(1, Math.min(30, Math.round(limit)))
     const allUnits = projectId
       ? await ctx.db
@@ -530,13 +542,15 @@ export const feed = query({
           .withIndex("by_project_order", (q) => q.eq("projectId", projectId))
           .collect()
       : await ctx.db.query("units").collect()
+    // Only units the learner has started belong in the feed.
+    const startedUnits = allUnits.filter((unit) => unit.startedAt)
     const projectTitles = new Map<string, string>()
     const reviewCache = new Map<string, Awaited<ReturnType<typeof reviewsByConcept>>>()
     const questions: Array<{ item: Doc<"learningItems">; candidate: DrillCandidate }> = []
     const recaps = new Map<string, Doc<"learningItems">>()
     const strengthByConcept = new Map<string, ConceptStrength>()
     const studiedProjects = new Set<string>()
-    for (const unit of allUnits) {
+    for (const unit of startedUnits) {
       const items = (
         await ctx.db
           .query("learningItems")
@@ -544,17 +558,11 @@ export const feed = query({
           .collect()
       ).filter((item) => !item.archivedAt)
       if (!items.length) continue
-      const teach = await ctx.db
-        .query("workspaceChats")
-        .withIndex("by_unit_updatedAt", (q) => q.eq("unitId", unit._id))
-        .order("desc")
-        .first()
       const projectKey = String(unit.projectId)
       if (!reviewCache.has(projectKey))
         reviewCache.set(projectKey, await reviewsByConcept(ctx, unit.projectId))
       const reviews = reviewCache.get(projectKey)!
       const unitQuestions: typeof questions = []
-      let answered = false
       for (const item of items) {
         const strength = conceptStrength(historyOf(reviews.get(String(item.conceptId))))
         strengthByConcept.set(String(item.conceptId), strength)
@@ -563,8 +571,6 @@ export const feed = query({
           continue
         }
         if (!isQuestion(item)) continue
-        const last = await latestAnswer(ctx, item._id)
-        if (last) answered = true
         const review = reviews.get(String(item.conceptId))
         unitQuestions.push({
           item,
@@ -572,16 +578,13 @@ export const feed = query({
             itemId: String(item._id),
             conceptId: String(item.conceptId),
             createdAt: item.createdAt,
-            ...(last?.outcome ? { lastOutcome: last.outcome, lastAnsweredAt: last.occurredAt } : {}),
+            ...(item.lastOutcome
+              ? { lastOutcome: item.lastOutcome, lastAnsweredAt: item.lastAnsweredAt }
+              : {}),
             strength,
             ...(review && review.attemptCount > 0 ? { conceptDueAt: review.dueAt } : {}),
           },
         })
-      }
-      // Only material from units the learner has started belongs in the feed.
-      if (!teach?.teachOutline && !answered) {
-        for (const item of items) if (item.type === "explain") recaps.delete(String(item.conceptId))
-        continue
       }
       questions.push(...unitQuestions)
       studiedProjects.add(projectKey)
@@ -603,15 +606,19 @@ export const feed = query({
     }
     const order = selectDrillQuestions(
       pool.map((entry) => entry.candidate),
-      Date.now(),
+      now,
       pageSize
     )
     const byId = new Map(questions.map((entry) => [entry.candidate.itemId, entry.item]))
 
-    /** Shapes a learning item as a feed card. */
+    /**
+     * Shapes a learning item as a feed card. `key` is unique within the feed
+     * session, so a card repeated in a later round is still a new card.
+     */
     const card = (item: Doc<"learningItems">) => {
       const base = {
         id: String(item._id),
+        key: `${String(item._id)}:${seen.length + cards.length}`,
         projectId: String(item.projectId),
         conceptId: String(item.conceptId),
         title: item.title,
@@ -657,5 +664,46 @@ export const feed = query({
       topics: [] as Array<{ id: string; projectId: string; title: string }>,
       hasMaterial: questions.length > 0,
     }
+  },
+})
+
+/**
+ * One-off backfill for data created before items stored their latest answer
+ * and units stored when they were started. Safe to run more than once.
+ * Run with `npx convex run practice:backfillProgressFields`.
+ */
+export const backfillProgressFields = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    let items = 0
+    let units = 0
+    for (const unit of await ctx.db.query("units").collect()) {
+      let started = unit.startedAt
+      const unitItems = await ctx.db
+        .query("learningItems")
+        .withIndex("by_unit", (q) => q.eq("unitId", unit._id))
+        .collect()
+      for (const item of unitItems) {
+        const last = await latestAnswer(ctx, item._id)
+        if (last?.outcome && item.lastAnsweredAt !== last.occurredAt) {
+          await ctx.db.patch(item._id, {
+            lastOutcome: last.outcome,
+            lastAnsweredAt: last.occurredAt,
+          })
+          items += 1
+        }
+        if (last && (!started || last.occurredAt < started)) started = last.occurredAt
+      }
+      const chat = await ctx.db
+        .query("workspaceChats")
+        .withIndex("by_unit_updatedAt", (q) => q.eq("unitId", unit._id))
+        .first()
+      if (chat?.teachOutline && (!started || chat.createdAt < started)) started = chat.createdAt
+      if (started && started !== unit.startedAt) {
+        await ctx.db.patch(unit._id, { startedAt: started })
+        units += 1
+      }
+    }
+    return { items, units }
   },
 })
