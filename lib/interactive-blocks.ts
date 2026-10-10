@@ -651,7 +651,8 @@ const vizBaseStyles = `
 html, body { margin: 0; background: var(--background); color: var(--foreground); }
 body { padding: 12px; font-family: var(--font-sans); font-size: 15px; line-height: 1.5; overflow-wrap: anywhere; }
 #blitz-viz-root { display: flow-root; }
-svg, canvas, img, video { max-width: 100%; height: auto; }
+canvas, img, video { max-width: 100%; height: auto; }
+svg { max-width: 100%; }
 button, input, select, textarea { font: inherit; color: inherit; }
 button { min-height: 36px; padding: 6px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--muted); cursor: pointer; }
 button:hover { border-color: var(--brand); }
