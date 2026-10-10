@@ -85,10 +85,12 @@ function teachSummary(chat: Doc<"workspaceChats"> | null) {
     chatId: chat._id,
     status: chat.status,
     sectionCount: total,
-    /** Zero-based furthest section taught, or -1 before the outline arrives. */
+    /** Zero-based section being taught, or -1 before the outline arrives. */
     sectionIndex: reached,
     /** Set once the tutor has sent its end-of-unit recap. */
     completed: total > 0 && reached >= total,
+    /** Sections actually taught; a jump can leave earlier ones untaught. */
+    taughtSectionIds: chat.teachTaughtSectionIds ?? [],
     currentSectionTitle:
       total && reached >= 0 && reached < total
         ? chat.teachOutline!.sections[reached].title
@@ -364,7 +366,9 @@ export const teachContext = query({
     // Every chunk is citable when the unit is small; otherwise the passages
     // closest to this turn's focus win, with document order as the tiebreak.
     const candidates: Array<{ id: Id<"sourceChunks">; score: number; order: number }> = []
-    for (const source of sources) {
+    for (const [sourceIndex, source] of sources.entries()) {
+      // Document order across the unit: source position, then chunk position.
+      const orderOf = (ordinal: number) => sourceIndex * 1_000_000 + ordinal
       const chunks = await ctx.db
         .query("sourceChunks")
         .withIndex("by_source_ordinal", (q) => q.eq("sourceId", source._id))
@@ -383,8 +387,24 @@ export const teachContext = query({
                 focus
               )
             : 0,
-          order: candidates.length,
+          order: orderOf(chunk.ordinal),
         })
+      // Long sources: also search the whole source, so passages past the
+      // scanned start can be cited when they match this turn's focus.
+      if (focus && chunks.length >= MAX_CHUNKS_SCANNED_PER_SOURCE) {
+        const terms = searchTerms(focus)
+        if (terms) {
+          const matches = await ctx.db
+            .query("sourceChunks")
+            .withSearchIndex("search_text", (q) =>
+              q.search("text", terms).eq("projectId", unit.projectId).eq("sourceId", source._id)
+            )
+            .take(8)
+          for (const match of matches)
+            if (!candidates.some((candidate) => candidate.id === match._id))
+              candidates.push({ id: match._id, score: 100, order: orderOf(match.ordinal) })
+        }
+      }
     }
     // Reference books for the module are searched for this turn's topic.
     const references = await ctx.db
@@ -478,39 +498,48 @@ export const recordTeachProgress = mutation({
     if (!outline) return
     if (outline.sections.length > 12 || !outline.sections.length)
       throw new Error("Outline is invalid")
+    // The index is the section being taught now (a jump moves it anywhere);
+    // `taught` records which sections were actually taught.
     let index = chat.teachSectionIndex ?? 0
+    const taught = new Set(chat.teachTaughtSectionIds ?? [])
+    let newlyTaught: string | undefined
     if (args.sectionId === "done") index = outline.sections.length
     else if (args.sectionId) {
       const found = outline.sections.findIndex(
         (section) => section.id === args.sectionId
       )
-      if (found >= 0) index = Math.max(index, found)
+      if (found >= 0) {
+        index = found
+        if (!taught.has(args.sectionId)) newlyTaught = args.sectionId
+        taught.add(args.sectionId)
+      }
     }
     await ctx.db.patch(chat._id, {
       teachOutline: outline,
       teachSectionIndex: index,
+      teachTaughtSectionIds: [...taught],
     })
-    // Milestones feed XP and streaks; each section and each unit counts once,
-    // even if the unit is restarted.
+    const startedUnit = await ctx.db.get(chat.unitId)
+    if (startedUnit && !startedUnit.startedAt)
+      await ctx.db.patch(startedUnit._id, { startedAt: Date.now() })
+    // Milestones feed XP and streaks. Only sections actually taught count,
+    // each once per unit, even if the unit is restarted.
     const now = Date.now()
-    const previous = chat.teachOutline ? (chat.teachSectionIndex ?? 0) : -1
-    const reachedSections = outline.sections.slice(
-      Math.max(0, previous + 1),
-      Math.min(index, outline.sections.length - 1) + 1
-    )
     const logged = await ctx.db
       .query("learningActivity")
       .withIndex("by_unit_kind", (q) => q.eq("unitId", chat.unitId!))
       .collect()
-    for (const section of reachedSections)
-      if (!logged.some((entry) => entry.kind === "section" && entry.sectionId === section.id))
-        await ctx.db.insert("learningActivity", {
-          kind: "section",
-          projectId: chat.projectId!,
-          unitId: chat.unitId,
-          sectionId: section.id,
-          occurredAt: now,
-        })
+    if (
+      newlyTaught &&
+      !logged.some((entry) => entry.kind === "section" && entry.sectionId === newlyTaught)
+    )
+      await ctx.db.insert("learningActivity", {
+        kind: "section",
+        projectId: chat.projectId!,
+        unitId: chat.unitId,
+        sectionId: newlyTaught,
+        occurredAt: now,
+      })
     if (index >= outline.sections.length && !logged.some((entry) => entry.kind === "unit"))
       await ctx.db.insert("learningActivity", {
         kind: "unit",

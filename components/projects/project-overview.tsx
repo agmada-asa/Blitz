@@ -80,7 +80,8 @@ function unitProgress(unit: UnitRow): number {
   const teach = unit.teach
   if (!teach || !teach.sectionCount) return 0
   if (teach.completed) return 100
-  return Math.round((teach.sectionIndex / teach.sectionCount) * 100)
+  // Count sections actually taught, so jumping ahead does not inflate progress.
+  return Math.round((teach.taughtSectionIds.length / teach.sectionCount) * 100)
 }
 
 /**

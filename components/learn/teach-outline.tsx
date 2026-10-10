@@ -13,8 +13,10 @@ import { cn } from "@/lib/utils"
 /** Outline plus the learner's position and navigation callbacks. */
 export type TeachOutlineProps = {
   outline: TeachOutline
-  /** Zero-based furthest section taught; equal to the section count when complete. */
+  /** Zero-based section being taught; equal to the section count when complete. */
   sectionIndex: number
+  /** Sections actually taught; others can be jumped to even if earlier. */
+  taughtSectionIds: ReadonlySet<string>
   /** Disables jumping ahead while a reply is being written. */
   busy: boolean
   /** Scrolls to a section already taught. */
@@ -26,12 +28,14 @@ export type TeachOutlineProps = {
 /**
  * Renders the outline as an ordered list of section buttons.
  *
- * Taught sections scroll to their place in the lesson. Later sections ask the
- * tutor to jump ahead, which is disabled while a reply is in progress.
+ * Taught sections scroll to their place in the lesson. Sections not taught yet,
+ * including ones skipped by jumping ahead, ask the tutor to teach them, which
+ * is disabled while a reply is in progress.
  */
 export function TeachOutlineList({
   outline,
   sectionIndex,
+  taughtSectionIds,
   busy,
   onOpenSection,
   onJumpToSection,
@@ -40,8 +44,13 @@ export function TeachOutlineList({
     <ol className="space-y-1">
       {outline.sections.map((section, index) => {
         const state =
-          index < sectionIndex ? "done" : index === sectionIndex ? "current" : "ahead"
-        const reached = index <= sectionIndex
+          index === sectionIndex
+            ? "current"
+            : taughtSectionIds.has(section.id)
+              ? "done"
+              : "ahead"
+        // Only taught sections have a place in the lesson to scroll to.
+        const reached = state !== "ahead"
         return (
           <li key={section.id}>
             <button
