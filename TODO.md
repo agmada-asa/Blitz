@@ -37,8 +37,10 @@ names the PR that delivers it once one exists.
 - [x] Per-concept strength and adaptive drills
 - [x] Relearn from practice into the unit's Teach session
 - [ ] More question types: cloze, ordering, matching, code output
-- [ ] Past paper import and mock exams
-- [ ] Long answer grading against sources
+- [x] Past paper import and mock exams (`docs/exam-mode.md`)
+- [x] Long answer grading against sources (exam written answers, marked
+      against each question's mark scheme and model answer)
+- [ ] Delete exam papers and edit extracted questions
 
 ## Phase 3: home feed and habit
 
