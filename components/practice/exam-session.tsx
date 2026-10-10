@@ -4,8 +4,9 @@
  * The exam screen for one paper. It shows, in order of precedence: the
  * results of the attempt named in `?attempt=`, the attempt in progress (so a
  * reload resumes the timed paper), or a start screen with the paper's size,
- * time allowed, and earlier attempts. Papers still being prepared or that
- * failed point back to Practice.
+ * time allowed, earlier attempts, and a menu to edit its questions or
+ * delete it. Papers still being prepared or that failed point back to
+ * Practice. The question editor lives in `exam-editor.tsx` at `?edit=1`.
  */
 
 import Link from "next/link"
@@ -14,6 +15,7 @@ import { useRouter } from "next/navigation"
 import { useCallback, useState } from "react"
 
 import { LengthChoice } from "@/components/practice/exam-dialogs"
+import { ExamPaperActions } from "@/components/practice/exam-paper-actions"
 import { ExamPaper } from "@/components/practice/exam-paper"
 import { ExamResults } from "@/components/practice/exam-results"
 import { Button } from "@/components/ui/button"
@@ -168,9 +170,22 @@ export function ExamSession({
   return (
     <main className="mx-auto w-full max-w-3xl px-4 py-6 sm:px-6 sm:py-10">
       {back}
-      <h1 className="mt-6 font-heading text-3xl font-semibold tracking-tight break-words sm:text-4xl">
-        {paper.title}
-      </h1>
+      <div className="mt-6 flex items-start justify-between gap-3">
+        <h1 className="min-w-0 font-heading text-3xl font-semibold tracking-tight break-words sm:text-4xl">
+          {paper.title}
+        </h1>
+        <ExamPaperActions
+          paper={{
+            id: paper.id,
+            title: paper.title,
+            status: paper.status,
+            changeLock: paper.changeLock,
+            hasOpenAttempt: Boolean(session.active),
+          }}
+          editHref={`${paperHref}?edit=1`}
+          onDeleted={() => router.replace(practiceHref)}
+        />
+      </div>
 
       {paper.status === "processing" ? (
         <p role="status" className="mt-4 flex items-center gap-2 text-sm text-muted-foreground">

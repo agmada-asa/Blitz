@@ -329,6 +329,8 @@ export const list = query({
     }
 
     for (const paper of examPapers) {
+      // A deleted past paper keeps an empty failed row; it is not work to report.
+      if (paper.deletedAt) continue
       const project = projects.get(paper.projectId)
       if (!project) continue
       const status: NotificationCenterRow["status"] =

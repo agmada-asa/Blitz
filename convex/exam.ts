@@ -9,20 +9,31 @@
  * `learning.recordAnswerEvent`, so exams update concept review like any other
  * practice. Those items are kept out of the feed and drills (see
  * `convex/practice.ts`) so a paper's answers are never shown before it is
- * taken. Answer keys are only returned for submitted attempts.
+ * taken. Answer keys are only returned for submitted attempts and to the
+ * question editor.
+ *
+ * The learner can edit or delete a ready paper's questions and delete a
+ * whole paper, but not while it is being prepared or an attempt is being
+ * marked. Edits keep each question's learning item in sync and mark earlier
+ * attempts again (`rescoreResults` in `lib/exam-scoring.ts`). Deleting a
+ * question or paper archives its learning items rather than deleting them,
+ * so answers already recorded keep pointing at a real item and concept
+ * review history stays consistent.
  */
 
-import { v } from "convex/values"
+import { ConvexError, v } from "convex/values"
 
 import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server"
 import type { Doc, Id } from "./_generated/dataModel"
-import { examAnswerFields, examQuestionFields } from "./examFields"
+import { examAnswerFields, examQuestionEditFields, examQuestionFields } from "./examFields"
 import { conceptStrength } from "../lib/drill"
 import {
+  answerKeyChanged,
   attemptTotals,
   clampMarks,
   conceptBreakdown,
   DEFAULT_EXAM_MINUTES,
+  EXAM_CHANGE_LOCK_MESSAGES,
   EXAM_DEADLINE_GRACE_MS,
   EXAM_LIMITS,
   EXAM_MARK_RANGE,
@@ -30,8 +41,12 @@ import {
   MAX_PAPER_QUESTIONS,
   MAX_WRITTEN_ANSWER_CHARS,
   MOCK_EXAM_MINUTES,
+  optionIdMap,
+  remapAnswers,
+  rescoreResults,
   scoreAttempt,
   type ExamAnswer,
+  type ExamChangeLock,
   type ExamQuestionResult,
 } from "../lib/exam-scoring"
 
@@ -74,6 +89,46 @@ function gradingStatus(attempt: Doc<"examAttempts">, now: number) {
       error: "Marking stopped before finishing. Try again.",
     }
   return { status: attempt.gradingStatus ?? null, error: attempt.gradingError ?? null }
+}
+
+/**
+ * Returns why the paper can't be edited or deleted right now (see
+ * `ExamChangeLock`). Runs past their lease no longer block.
+ */
+function changeLock(
+  paper: Doc<"examPapers">,
+  attempts: Doc<"examAttempts">[],
+  now: number
+): ExamChangeLock | null {
+  if (paperStatus(paper, now).status === "processing") return "processing"
+  if (attempts.some((attempt) => gradingStatus(attempt, now).status === "running")) return "marking"
+  return null
+}
+
+/**
+ * Loads a paper for a change, refusing a missing or deleted paper and any
+ * paper under a change lock.
+ * @param requireReady Whether the paper must be ready, as editing its questions needs.
+ * @returns The paper and every one of its attempts.
+ * @throws ConvexError with a learner-facing message.
+ */
+async function changeablePaper(
+  ctx: MutationCtx,
+  paperId: Id<"examPapers">,
+  now: number,
+  requireReady: boolean
+) {
+  const paper = await ctx.db.get(paperId)
+  if (!paper || paper.deletedAt) throw new ConvexError("This paper was deleted.")
+  const attempts = await ctx.db
+    .query("examAttempts")
+    .withIndex("by_paper_startedAt", (q) => q.eq("paperId", paperId))
+    .collect()
+  const lock = changeLock(paper, attempts, now)
+  if (lock) throw new ConvexError(EXAM_CHANGE_LOCK_MESSAGES[lock])
+  if (requireReady && paperStatus(paper, now).status !== "ready")
+    throw new ConvexError("This paper has no questions to edit.")
+  return { paper, attempts }
 }
 
 /** Shapes a question for the paper being sat: no answers, explanations, or mark schemes. */
@@ -170,6 +225,7 @@ export const listPapers = query({
     const now = Date.now()
     const result = []
     for (const paper of papers) {
+      if (paper.deletedAt) continue
       const attempts = await attemptsFor(ctx, paper._id)
       const submitted = attempts.filter((attempt) => attempt.status === "submitted")
       const percentages = submitted
@@ -192,6 +248,7 @@ export const listPapers = query({
           attempts.find((attempt) => attempt.status === "in_progress")?._id ?? null,
         latestAttemptId: submitted[0]?._id ?? null,
         attemptCount: submitted.length,
+        changeLock: changeLock(paper, attempts, now),
       })
     }
     return result
@@ -235,6 +292,20 @@ export const createPastPaper = mutation({
       .query("examPapers")
       .withIndex("by_project_source", (q) => q.eq("projectId", projectId).eq("sourceId", sourceId))
       .first()
+    if (existing?.deletedAt) {
+      // The same file added again after its paper was deleted: start afresh.
+      await ctx.db.patch(existing._id, {
+        deletedAt: undefined,
+        title: titleFromFilename(source.filename),
+        status: "processing",
+        error: undefined,
+        solutionsSourceId,
+        runStartedAt: now,
+        finishedAt: undefined,
+        createdAt: now,
+      })
+      return { paperId: existing._id, runStartedAt: now }
+    }
     if (existing) {
       if (paperStatus(existing, now).status !== "failed")
         return { paperId: existing._id, runStartedAt: null }
@@ -312,7 +383,7 @@ export const restartPaper = mutation({
   args: { paperId: v.id("examPapers") },
   handler: async (ctx, { paperId }) => {
     const paper = await ctx.db.get(paperId)
-    if (!paper) throw new Error("Paper not found")
+    if (!paper || paper.deletedAt) throw new Error("Paper not found")
     const now = Date.now()
     if (paperStatus(paper, now).status !== "failed")
       return { kind: paper.kind, runStartedAt: null }
@@ -341,7 +412,7 @@ export const paperContext = query({
   args: { paperId: v.id("examPapers") },
   handler: async (ctx, { paperId }) => {
     const paper = await ctx.db.get(paperId)
-    if (!paper) return null
+    if (!paper || paper.deletedAt) return null
     const project = await ctx.db.get(paper.projectId)
     if (!project) return null
     const allUnits = await ctx.db
@@ -462,14 +533,26 @@ function bounded(text: string | undefined, max: number): string {
   return (text ?? "").trim().slice(0, max)
 }
 
-/** Re-checks a validated question's bounds before it is stored. */
-function storedQuestion(question: ExamQuestionDoc, index: number): ExamQuestionDoc {
+/**
+ * Re-checks a validated question's bounds and answer rules before it is
+ * stored: options with distinct ids, exactly one correct option for
+ * single-choice and true-false, and at least two correct and one incorrect
+ * for multiple-answer.
+ * @param index Position on the paper, used for a missing number.
+ * @param id Id to store; a fresh paper numbers its questions q1, q2, …
+ * @throws When a required field is missing or the answer key is invalid.
+ */
+function storedQuestion(
+  question: Omit<ExamQuestionDoc, "id">,
+  index: number,
+  id = `q${index + 1}`
+): ExamQuestionDoc {
   const marks = clampMarks(question.marks, EXAM_MARK_RANGE.max)
   if (marks < EXAM_MARK_RANGE.min) throw new Error("A question has no marks")
   const prompt = bounded(question.prompt, EXAM_LIMITS.promptChars)
   if (!prompt) throw new Error("A question has no prompt")
   const base = {
-    id: `q${index + 1}`,
+    id,
     number: bounded(question.number, EXAM_LIMITS.numberChars) || String(index + 1),
     marks,
     type: question.type,
@@ -495,9 +578,17 @@ function storedQuestion(question: ExamQuestionDoc, index: number): ExamQuestionD
     text: bounded(option.text, EXAM_LIMITS.optionChars),
   }))
   const optionIds = new Set(options.map((option) => option.id))
-  const correctOptionIds = (question.correctOptionIds ?? []).filter((id) => optionIds.has(id))
-  if (options.length < 2 || !correctOptionIds.length)
+  const correctOptionIds = [...new Set(question.correctOptionIds ?? [])].filter((id) =>
+    optionIds.has(id)
+  )
+  if (options.length < 2 || optionIds.size !== options.length || !correctOptionIds.length)
     throw new Error("A choice question has no valid answer")
+  if (
+    question.type === "multiple-answer"
+      ? correctOptionIds.length < 2 || correctOptionIds.length >= options.length
+      : correctOptionIds.length !== 1
+  )
+    throw new Error("A choice question has the wrong number of correct options")
   return {
     ...base,
     options,
@@ -558,7 +649,7 @@ export const savePaper = mutation({
       return { saved: false }
     if (!args.questions.length || args.questions.length > MAX_PAPER_QUESTIONS)
       throw new Error("A paper needs 1 to 60 questions")
-    const questions = args.questions.map(storedQuestion)
+    const questions = args.questions.map((question, index) => storedQuestion(question, index))
     for (const question of questions)
       if (question.unitId) {
         const unit = await ctx.db.get(question.unitId)
@@ -711,7 +802,7 @@ export const paperSession = query({
   args: { paperId: v.id("examPapers"), attemptId: v.optional(v.id("examAttempts")) },
   handler: async (ctx, { paperId, attemptId }) => {
     const paper = await ctx.db.get(paperId)
-    if (!paper) return null
+    if (!paper || paper.deletedAt) return null
     const now = Date.now()
     const attempts = await attemptsFor(ctx, paperId)
     const active = attempts.find((attempt) => attempt.status === "in_progress")
@@ -732,6 +823,7 @@ export const paperSession = query({
         inferredAnswerCount: paper.questions.filter(
           (question) => question.answerSource === "inferred"
         ).length,
+        changeLock: changeLock(paper, attempts, now),
       },
       questions: status === "ready" ? paper.questions.map(publicQuestion) : [],
       active: active
@@ -1017,5 +1109,292 @@ export const failGrading = mutation({
       gradingError: error.slice(0, 300),
       gradedAt: Date.now(),
     })
+  },
+})
+
+/**
+ * Everything the question editor needs for one paper: its details, the
+ * change lock, how many attempts were submitted, and every question with
+ * its answer key, explanation, model answer, and mark scheme. The route that
+ * saves an edit also reads the current question from here. Returns null for
+ * a missing or deleted paper.
+ */
+export const editorSession = query({
+  args: { paperId: v.id("examPapers") },
+  handler: async (ctx, { paperId }) => {
+    const paper = await ctx.db.get(paperId)
+    if (!paper || paper.deletedAt) return null
+    const now = Date.now()
+    const attempts = await attemptsFor(ctx, paperId)
+    const { status, error } = paperStatus(paper, now)
+    return {
+      paper: {
+        id: paper._id,
+        projectId: paper.projectId,
+        kind: paper.kind,
+        title: paper.title,
+        status,
+        error,
+        changeLock: changeLock(paper, attempts, now),
+        submittedAttemptCount: attempts.filter((attempt) => attempt.status === "submitted").length,
+      },
+      questions:
+        status === "ready"
+          ? paper.questions.map((question) => ({
+              id: question.id,
+              number: question.number,
+              marks: question.marks,
+              type: question.type,
+              prompt: question.prompt,
+              options: question.options ?? [],
+              correctOptionIds: question.correctOptionIds ?? [],
+              explanation: question.explanation ?? "",
+              modelAnswer: question.modelAnswer ?? "",
+              markScheme: question.markScheme ?? [],
+              answerSource: question.answerSource ?? null,
+              concept: question.concept,
+            }))
+          : [],
+    }
+  },
+})
+
+/** Returns whether one question format may replace another: only the two option-list formats can. */
+function sameFormatFamily(before: ExamQuestionDoc["type"], after: ExamQuestionDoc["type"]): boolean {
+  const family = (type: ExamQuestionDoc["type"]) =>
+    type === "single-choice" || type === "multiple-answer" ? "options" : type
+  return family(before) === family(after)
+}
+
+/**
+ * Carries a question change into every attempt on the paper. Answers to the
+ * changed question follow its options (or are dropped when it was deleted);
+ * submitted attempts are marked again with `rescoreResults` and their totals
+ * updated. An attempt whose marking had failed and has no written answer
+ * left waiting is settled, so it does not offer a retry with nothing to mark.
+ * @param map Option id map for an edited choice question, null for a deleted
+ *   question, or undefined when saved answers stay as they are.
+ */
+async function applyToAttempts(
+  ctx: MutationCtx,
+  attempts: Doc<"examAttempts">[],
+  questions: ExamQuestionDoc[],
+  questionId: string,
+  map: Map<string, string> | null | undefined
+) {
+  const scorableQuestions = scorable(questions)
+  for (const attempt of attempts) {
+    const answers =
+      map === undefined ? attempt.answers : remapAnswers(attempt.answers, questionId, map)
+    if (attempt.status !== "submitted") {
+      if (map !== undefined) await ctx.db.patch(attempt._id, { answers })
+      continue
+    }
+    const results = rescoreResults(scorableQuestions, answers, attempt.results ?? [])
+    const totals = attemptTotals(scorableQuestions, results)
+    const settled =
+      (attempt.gradingStatus === "failed" || attempt.gradingStatus === "running") &&
+      !results.some((result) => result.outcome === "pending")
+    await ctx.db.patch(attempt._id, {
+      answers,
+      results,
+      awardedMarks: totals.awarded,
+      availableMarks: totals.available,
+      ...(settled
+        ? {
+            gradingStatus: results.some((result) => result.outcome === "marked")
+              ? ("completed" as const)
+              : ("not_needed" as const),
+            gradingError: undefined,
+          }
+        : {}),
+    })
+  }
+}
+
+/**
+ * Saves the learner's edit to one question of a ready paper. The edit must
+ * already have passed `validateQuestionEdit` (the questions route runs it);
+ * this re-checks bounds and the answer key, keeps the question's id, unit,
+ * and learning item, and:
+ *
+ * - updates the learning item's question, options, answer key, explanation,
+ *   and concept, so later practice evidence uses the new key (answers
+ *   already recorded keep their outcome);
+ * - clears the past paper answer source when the answer changed, since the
+ *   learner set it, not the solutions or the model;
+ * - carries saved answers across option changes and marks earlier attempts
+ *   again (choice questions against the new key; written answers keep their
+ *   marks, clamped to the new maximum).
+ *
+ * @param previousOptionIds Single-choice and multiple-answer: the id each
+ *   option had before the edit, or null for a new option.
+ * @throws ConvexError with a learner-facing message when the paper is locked,
+ *   the question is gone, or the options no longer match.
+ */
+export const updateQuestion = mutation({
+  args: {
+    paperId: v.id("examPapers"),
+    questionId: v.string(),
+    question: examQuestionEditFields,
+    previousOptionIds: v.optional(v.array(v.union(v.string(), v.null()))),
+  },
+  handler: async (ctx, { paperId, questionId, question, previousOptionIds }) => {
+    const now = Date.now()
+    const { paper, attempts } = await changeablePaper(ctx, paperId, now, true)
+    const index = paper.questions.findIndex((entry) => entry.id === questionId)
+    if (index < 0)
+      throw new ConvexError("This question was deleted. Reload the page to see the paper.")
+    const current = paper.questions[index]
+    if (!sameFormatFamily(current.type, question.type))
+      throw new ConvexError("This question's format can't change.")
+    const next = storedQuestion(
+      { ...question, ...(current.unitId ? { unitId: current.unitId } : {}) },
+      index,
+      current.id
+    )
+
+    // Map the old option ids to the new ones so saved selections follow their option.
+    let map: Map<string, string> | undefined
+    if (next.type === "true-false")
+      map = new Map([
+        ["true", "true"],
+        ["false", "false"],
+      ])
+    else if (next.type !== "written") {
+      const built = optionIdMap(
+        previousOptionIds ?? [],
+        (next.options ?? []).map((option) => option.id),
+        (current.options ?? []).map((option) => option.id)
+      )
+      if (!built)
+        throw new ConvexError(
+          "This question changed while you were editing it. Reload the page and try again."
+        )
+      map = built
+    }
+    if (current.answerSource && !answerKeyChanged(current, next, map))
+      next.answerSource = current.answerSource
+
+    if (current.itemId && isChoiceType(next.type)) {
+      next.itemId = current.itemId
+      const item = await ctx.db.get(current.itemId)
+      if (item) {
+        const concept = await conceptFor(
+          ctx,
+          paper.projectId,
+          next.concept,
+          next.unitId,
+          item.sourceIds,
+          now
+        )
+        await ctx.db.patch(item._id, {
+          conceptId: concept._id,
+          title: concept.title,
+          type: next.type as "single-choice" | "multiple-answer" | "true-false",
+          question: next.prompt,
+          body: next.explanation ?? "",
+          ...(next.type === "true-false"
+            ? {
+                correctAnswer: next.correctOptionIds?.[0] === "true",
+                options: undefined,
+                correctOptionId: undefined,
+                correctOptionIds: undefined,
+              }
+            : {
+                options: next.options,
+                correctAnswer: undefined,
+                correctOptionId:
+                  next.type === "single-choice" ? next.correctOptionIds?.[0] : undefined,
+                correctOptionIds:
+                  next.type === "multiple-answer" ? next.correctOptionIds : undefined,
+              }),
+          updatedAt: now,
+        })
+      }
+    }
+
+    const questions = paper.questions.map((entry, position) => (position === index ? next : entry))
+    await ctx.db.patch(paperId, {
+      questions,
+      totalMarks: questions.reduce((sum, entry) => sum + entry.marks, 0),
+    })
+    await applyToAttempts(ctx, attempts, questions, questionId, map)
+    return { saved: true }
+  },
+})
+
+/**
+ * Removes one question from a ready paper. Its learning item is archived,
+ * its saved answers and results are dropped from every attempt, and
+ * submitted attempts' totals are updated. A paper keeps at least one
+ * question; deleting the paper is the way to remove the last one.
+ * @throws ConvexError with a learner-facing message when the paper is locked
+ *   or this is its only question.
+ */
+export const deleteQuestion = mutation({
+  args: { paperId: v.id("examPapers"), questionId: v.string() },
+  handler: async (ctx, { paperId, questionId }) => {
+    const now = Date.now()
+    const { paper, attempts } = await changeablePaper(ctx, paperId, now, true)
+    const removed = paper.questions.find((question) => question.id === questionId)
+    if (!removed) return { deleted: false }
+    if (paper.questions.length <= 1)
+      throw new ConvexError("A paper needs at least one question. Delete the paper instead.")
+    if (removed.itemId) {
+      const item = await ctx.db.get(removed.itemId)
+      if (item && !item.archivedAt) await ctx.db.patch(item._id, { archivedAt: now })
+    }
+    const questions = paper.questions.filter((question) => question.id !== questionId)
+    await ctx.db.patch(paperId, {
+      questions,
+      totalMarks: questions.reduce((sum, question) => sum + question.marks, 0),
+    })
+    await applyToAttempts(ctx, attempts, questions, questionId, null)
+    return { deleted: true }
+  },
+})
+
+/**
+ * Deletes a past or mock paper with all its attempts and marks. Not allowed
+ * while the paper is being prepared or an attempt is being marked; a paper
+ * whose preparation stopped or failed can be deleted.
+ *
+ * The paper's learning items are archived rather than deleted: answers from
+ * earlier attempts were recorded against them, and archiving keeps that
+ * study history and concept review consistent while taking the items out of
+ * every live view. A past paper's row is kept as an empty, deleted record so
+ * its uploaded files stay out of the module's units (`units.listForProject`
+ * hides files that belong to a paper); a mock paper's row is removed.
+ * @returns The module the paper belonged to, or null when it was already gone.
+ */
+export const deletePaper = mutation({
+  args: { paperId: v.id("examPapers") },
+  handler: async (ctx, { paperId }) => {
+    const existing = await ctx.db.get(paperId)
+    if (!existing || existing.deletedAt) return { projectId: existing?.projectId ?? null }
+    const now = Date.now()
+    const { paper, attempts } = await changeablePaper(ctx, paperId, now, false)
+    for (const attempt of attempts) await ctx.db.delete(attempt._id)
+    for (const question of paper.questions) {
+      if (!question.itemId) continue
+      const item = await ctx.db.get(question.itemId)
+      if (item && !item.archivedAt) await ctx.db.patch(item._id, { archivedAt: now })
+    }
+    if (paper.kind === "mock") await ctx.db.delete(paperId)
+    else
+      await ctx.db.patch(paperId, {
+        deletedAt: now,
+        // Failed, so a run that started before the deletion can never save into it.
+        status: "failed",
+        error: undefined,
+        questions: [],
+        totalMarks: undefined,
+        statedTotalMarks: undefined,
+        durationMinutes: undefined,
+        rejectedCount: undefined,
+        finishedAt: now,
+      })
+    return { projectId: paper.projectId }
   },
 })

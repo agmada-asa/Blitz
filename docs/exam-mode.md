@@ -49,13 +49,69 @@ lives in the **Exam prep** section of the Practice screen and at
    with the learner's answer, the correct or model answer, the mark scheme,
    and feedback.
 
+## Editing and deleting
+
+Both are refused while a paper is being prepared or written answers on one of
+its attempts are being marked (`ExamChangeLock` in `lib/exam-scoring.ts`;
+stalled runs past their lease no longer block). The screens show the reason
+instead of the action.
+
+- **Edit questions.** The paper's menu (on its page and in the Exam prep list)
+  links to `?edit=1`, which shows `components/practice/exam-editor.tsx`:
+  every question with its answer, explanation or model answer and mark
+  scheme, and concept. Answers are visible there, so the screen says so. Each
+  question opens in a dialog that edits the number, marks, concept, wording,
+  options and correct options (and switches between one and more than one
+  correct answer), the true or false answer, the explanation, or the model
+  answer and mark scheme. Other format changes are not allowed.
+- **Validation.** `POST /api/practice/exam/questions` checks the edit with
+  `validateQuestionEdit` in `lib/exam.ts`, which gives a specific message for
+  each problem and then runs the extractor's own question parser
+  (`parseExamQuestion`, which reuses the lesson quiz rules). Unlike
+  extraction, nothing is filled in or dropped: marks, a number, a concept, an
+  explanation, and complete mark scheme points are required, and the wording
+  may not repeat another question on the paper. `exam.updateQuestion`
+  re-checks the bounds and answer key before saving, as `exam.savePaper`
+  does.
+- **What an edit changes.** The question keeps its id, unit, and learning
+  item. The item's question, options, answer key, explanation, and concept
+  are updated, so later evidence is checked against the new key; answers
+  already recorded keep their outcome. Each option the editor sends names the
+  option it came from, so saved selections follow their option when options
+  are added, removed, or reworded (`optionIdMap`, `remapAnswers`). Submitted
+  attempts are marked again (`rescoreResults`): choice questions against the
+  new key, deterministically; written answers keep the marks and feedback
+  they were given, clamped to the question's new marks, because marking them
+  again would need another model run. The editor says this when the paper has
+  attempts. Changing a past paper question's answer clears its answer source,
+  since the learner set it rather than the solutions or the model.
+- **Delete a question.** `exam.deleteQuestion` removes it from the paper and
+  from every attempt's answers and results, and updates the totals. Question
+  ids are not renumbered, so other answers keep pointing at their question. A
+  paper keeps at least one question.
+- **Delete a paper.** `exam.deletePaper` deletes the paper's attempts (with
+  their marks, including one in progress). A mock paper's row is removed. A
+  past paper's row is kept, emptied, with `deletedAt` set and status
+  `failed`, because `units.listForProject` hides a module's paper files only
+  while a paper refers to them; without it, the uploaded paper and solutions
+  would appear as unsorted material that could be taught. Every exam view and
+  the notification center skip deleted papers, and adding the same file again
+  starts that paper afresh.
+- **Learning items are archived, not deleted.** Deleting a question or paper
+  sets `archivedAt` on its learning items. Answer events and concept reviews
+  refer to those items, so archiving keeps study history and concept
+  strengths consistent while taking the items out of every live view, which
+  already skips archived items.
+
 ## Data
 
 - `examPapers`: module, kind, title, status and error, the paper and solutions
   source IDs (past) or unit IDs (mock), time allowed, stated and summed total
   marks, and the questions. `runStartedAt` identifies the current run and acts
   as a ten-minute lease; a run that saves late after a retry is ignored.
-- Each question has an id (`q1`, `q2`, … in paper order), the printed number,
+  `deletedAt` marks a deleted past paper (see above).
+- Each question has an id (`q1`, `q2`, … in paper order, with gaps once a
+  question is deleted), the printed number,
   marks (half marks allowed), type (`single-choice`, `multiple-answer`,
   `true-false`, or `written`), a Markdown prompt (code and LaTeX allowed), a
   concept name, and the matched unit when there is one. Choice questions carry
@@ -74,7 +130,7 @@ lives in the **Exam prep** section of the Practice screen and at
   They do count toward a unit's concept strengths on the Practice screen.
 - `exam.paperSession` never returns answer keys, explanations, model answers,
   or mark schemes for a paper being sat; they are only returned in the review
-  of a submitted attempt.
+  of a submitted attempt and by `exam.editorSession` for the question editor.
 
 ## Prompts and validation
 
@@ -117,6 +173,9 @@ All prompts and parsers live in `lib/exam.ts` and are covered by
 - Multiple-answer choice questions are marked all or nothing, as in drills.
 - Choice-question answers from a past paper without solutions are the model's
   best answer and are labelled as worked out without solutions.
-- Papers cannot be deleted yet, and a paper's questions cannot be edited.
+- Editing a written question's mark scheme does not mark earlier written
+  answers again.
+- A paper's uploaded files stay stored after the paper is deleted; there is no
+  way to delete a source yet.
 - Only three provider turns exist: one per paper extraction, one per mock, and
   one per grading run.

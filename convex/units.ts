@@ -121,6 +121,7 @@ export const listForProject = query({
       .query("examPapers")
       .withIndex("by_project_createdAt", (q) => q.eq("projectId", projectId))
       .collect()
+    // Deleted past papers count too: their files stay out of the units after the paper is gone.
     for (const paper of papers)
       for (const id of [paper.sourceId, paper.solutionsSourceId]) if (id) examSources.add(id)
     const byUnit = new Map<string, Doc<"sources">[]>()

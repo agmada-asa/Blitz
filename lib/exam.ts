@@ -8,6 +8,8 @@
  * learning item. Scoring and the per-concept breakdown live in
  * `lib/exam-scoring.ts`, which Convex functions import without these
  * dependencies. Server runs that call the provider live in `lib/server/exam.ts`.
+ * The learner's own edits to a question go through `validateQuestionEdit`,
+ * which applies the same rules as extraction.
  */
 
 import { isChoiceQuiz, parseInteractiveBlock, type QuizOption } from "./interactive-blocks.ts"
@@ -629,4 +631,255 @@ export function parseExamGrading(
     rejected,
     missing: expected.map((item) => item.id).filter((id) => !grades.some((grade) => grade.id === id)),
   }
+}
+
+/** A question as it stands before an edit, with the fields an edit is checked against. */
+export type EditableExamQuestion = {
+  type: ExamQuestionType
+  options?: QuizOption[]
+  answerSource?: AnswerSource
+}
+
+/**
+ * A learner's edit to one question, as sent by the question editor. Untrusted
+ * until `validateQuestionEdit` accepts it.
+ */
+export type ExamQuestionEditInput = {
+  number: string
+  marks: number
+  type: ExamQuestionType
+  prompt: string
+  concept: string
+  /** Single-choice and multiple-answer: options in order, with the id each had before the edit (null when new). */
+  options?: Array<{ text: string; previousId: string | null }>
+  /** Single-choice and multiple-answer: 0-based indices of the correct options. */
+  correctIndices?: number[]
+  /** True-false only. */
+  answer?: boolean
+  /** Choice questions: why the answer is right. */
+  explanation?: string
+  /** Written questions only. */
+  modelAnswer?: string
+  /** Written questions only. */
+  markScheme?: MarkSchemePoint[]
+}
+
+/** The fields of an edited question that passed the extractor's rules. */
+export type EditedExamQuestion = Pick<
+  ExamQuestion,
+  | "number"
+  | "marks"
+  | "type"
+  | "prompt"
+  | "concept"
+  | "options"
+  | "correctOptionIds"
+  | "explanation"
+  | "modelAnswer"
+  | "markScheme"
+>
+
+/** Result of checking an edit: the validated question, or a learner-facing reason. */
+export type QuestionEditResult =
+  | {
+      ok: true
+      question: EditedExamQuestion
+      /** Single-choice and multiple-answer: the id each option had before the edit, in order. */
+      previousOptionIds?: Array<string | null>
+    }
+  | { ok: false; error: string }
+
+/** Message for edits that fail a check the editor never produces, such as a malformed request. */
+const GENERIC_EDIT_ERROR = "Check this question and try again."
+
+/** Returns whether two formats may replace each other in an edit: only the two option-list formats can. */
+function sameFormatFamily(before: ExamQuestionType, after: ExamQuestionType): boolean {
+  const family = (type: ExamQuestionType) =>
+    type === "single-choice" || type === "multiple-answer" ? "options" : type
+  return family(before) === family(after)
+}
+
+/** Returns a trimmed string, or an empty string for anything that is not a string. */
+function trimmed(value: unknown): string {
+  return typeof value === "string" ? value.trim() : ""
+}
+
+/** Normalises a prompt for the duplicate check, as `parseExamPaper` does. */
+function promptKey(prompt: string): string {
+  return prompt.trim().toLowerCase().replace(/\s+/g, " ")
+}
+
+/** Formats a character limit for a message, such as "4,000". */
+function chars(limit: number): string {
+  return limit.toLocaleString("en")
+}
+
+/**
+ * Checks the answer part of a written question edit and adds it to `reply`.
+ * @returns A learner-facing reason, or null when it is valid.
+ */
+function checkWrittenEdit(data: Record<string, unknown>, reply: Record<string, unknown>): string | null {
+  const modelAnswer = trimmed(data.modelAnswer)
+  if (!modelAnswer) return "Write a model answer."
+  if (modelAnswer.length > EXAM_LIMITS.modelAnswerChars)
+    return `Shorten the model answer to ${chars(EXAM_LIMITS.modelAnswerChars)} characters or fewer.`
+  if (!Array.isArray(data.markScheme) || !data.markScheme.length) return "Add at least one mark scheme point."
+  if (data.markScheme.length > EXAM_LIMITS.maxMarkPoints)
+    return `A mark scheme can have up to ${EXAM_LIMITS.maxMarkPoints} points.`
+  const markScheme: MarkSchemePoint[] = []
+  for (const entry of data.markScheme) {
+    const fields = entry && typeof entry === "object" ? (entry as Record<string, unknown>) : {}
+    const point = trimmed(fields.point)
+    const marks = typeof fields.marks === "number" ? readMarks(fields.marks) : undefined
+    if (!point || point.length > EXAM_LIMITS.markPointChars || marks === undefined || marks !== fields.marks)
+      return `Give every mark scheme point a description of up to ${EXAM_LIMITS.markPointChars} characters and ${EXAM_MARK_RANGE.min} to ${EXAM_MARK_RANGE.max} marks.`
+    markScheme.push({ point, marks })
+  }
+  reply.modelAnswer = modelAnswer
+  reply.markScheme = markScheme
+  return null
+}
+
+/**
+ * Checks the options and correct answers of a single-choice or
+ * multiple-answer edit and adds them to `reply` as option texts and indices.
+ * @param currentIds Option ids before the edit, which `previousId` must name.
+ * @returns The id each option had before the edit, or a learner-facing reason.
+ */
+function checkOptionsEdit(
+  data: Record<string, unknown>,
+  type: "single-choice" | "multiple-answer",
+  currentIds: Set<string>,
+  reply: Record<string, unknown>
+): { previousOptionIds: Array<string | null> } | { error: string } {
+  const options = Array.isArray(data.options) ? data.options : []
+  if (options.length < 2 || options.length > EXAM_LIMITS.maxOptions)
+    return { error: `Give 2 to ${EXAM_LIMITS.maxOptions} options.` }
+  const texts: string[] = []
+  const previousOptionIds: Array<string | null> = []
+  for (const option of options) {
+    const fields = option && typeof option === "object" ? (option as Record<string, unknown>) : {}
+    const text = trimmed(fields.text)
+    if (!text) return { error: "Fill in every option or remove the empty ones." }
+    if (text.length > EXAM_LIMITS.optionChars)
+      return { error: `Shorten each option to ${chars(EXAM_LIMITS.optionChars)} characters or fewer.` }
+    const previousId = fields.previousId ?? null
+    if (
+      previousId !== null &&
+      (typeof previousId !== "string" || !currentIds.has(previousId) || previousOptionIds.includes(previousId))
+    )
+      return { error: "This question changed while you were editing it. Reload the page and try again." }
+    texts.push(text)
+    previousOptionIds.push(previousId)
+  }
+  if (new Set(texts).size !== texts.length) return { error: "Each option must be different." }
+  const indices = Array.isArray(data.correctIndices) ? data.correctIndices : []
+  const validIndices =
+    indices.every(
+      (index) => typeof index === "number" && Number.isInteger(index) && index >= 0 && index < texts.length
+    ) && new Set(indices).size === indices.length
+  if (!validIndices) return { error: GENERIC_EDIT_ERROR }
+  if (type === "single-choice" && indices.length !== 1) return { error: "Choose the one correct option." }
+  if (type === "multiple-answer" && (indices.length < 2 || indices.length >= texts.length))
+    return { error: "Choose at least two correct options and leave at least one incorrect." }
+  reply.options = texts
+  reply.answer = type === "single-choice" ? indices[0] : indices
+  return { previousOptionIds }
+}
+
+/**
+ * Checks a learner's edit to one question with the same rules the extractor
+ * applies to model output (`parseExamQuestion`, which reuses the lesson quiz
+ * rules for choice questions). Specific checks come first so the learner
+ * sees what to fix; the extractor then has the final say.
+ *
+ * Unlike extraction, nothing is filled in or dropped silently: marks, a
+ * number, a concept, and an explanation are required, and every mark scheme
+ * point must be complete. A question's format may only switch between
+ * single-choice and multiple-answer, and its wording may not repeat another
+ * question on the paper, as the extractor removes duplicates.
+ * @param current The question before the edit.
+ * @param raw The untrusted edit from the editor (`ExamQuestionEditInput`).
+ * @param kind Whether the paper is a past paper or a mock.
+ * @param otherPrompts Prompts of the paper's other questions.
+ */
+export function validateQuestionEdit(
+  current: EditableExamQuestion,
+  raw: unknown,
+  kind: "past" | "mock",
+  otherPrompts: string[] = []
+): QuestionEditResult {
+  const fail = (error: string): QuestionEditResult => ({ ok: false, error })
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return fail(GENERIC_EDIT_ERROR)
+  const data = raw as Record<string, unknown>
+  const type = data.type
+  if (type !== "single-choice" && type !== "multiple-answer" && type !== "true-false" && type !== "written")
+    return fail(GENERIC_EDIT_ERROR)
+  if (!sameFormatFamily(current.type, type)) return fail("This question's format can't change.")
+
+  const prompt = trimmed(data.prompt)
+  if (!prompt) return fail("Write the question.")
+  if (prompt.length > EXAM_LIMITS.promptChars)
+    return fail(`Shorten the question to ${chars(EXAM_LIMITS.promptChars)} characters or fewer.`)
+  if (otherPrompts.some((other) => promptKey(other) === promptKey(prompt)))
+    return fail("Another question on this paper already has this wording.")
+  const number = trimmed(data.number)
+  if (!number || number.length > EXAM_LIMITS.numberChars)
+    return fail(`Give the question a number of up to ${EXAM_LIMITS.numberChars} characters, such as 3 or 2b.`)
+  const concept = trimmed(data.concept)
+  if (!concept || concept.length > EXAM_LIMITS.conceptChars)
+    return fail(`Name the concept this question tests in up to ${EXAM_LIMITS.conceptChars} characters.`)
+  const marks = typeof data.marks === "number" ? readMarks(data.marks) : undefined
+  if (marks === undefined || marks !== data.marks)
+    return fail(`Give the question ${EXAM_MARK_RANGE.min} to ${EXAM_MARK_RANGE.max} marks, in whole or half marks.`)
+
+  // Rebuild the reply shape the extractor reads: option texts, and answers as indices or a boolean.
+  const reply: Record<string, unknown> = {
+    number,
+    marks,
+    type,
+    prompt,
+    concept,
+    ...(current.answerSource ? { answerSource: current.answerSource } : {}),
+  }
+  let previousOptionIds: Array<string | null> | undefined
+  if (type === "written") {
+    const error = checkWrittenEdit(data, reply)
+    if (error) return fail(error)
+  } else {
+    const explanation = trimmed(data.explanation)
+    if (!explanation) return fail("Explain why the answer is right.")
+    if (explanation.length > EXAM_LIMITS.explanationChars)
+      return fail(`Shorten the explanation to ${chars(EXAM_LIMITS.explanationChars)} characters or fewer.`)
+    reply.explanation = explanation
+    if (type === "true-false") {
+      if (typeof data.answer !== "boolean") return fail("Choose whether the statement is true or false.")
+      reply.answer = data.answer
+    } else {
+      const currentIds = new Set((current.options ?? []).map((option) => option.id))
+      const checked = checkOptionsEdit(data, type, currentIds, reply)
+      if ("error" in checked) return fail(checked.error)
+      previousOptionIds = checked.previousOptionIds
+    }
+  }
+
+  const parsed = parseExamQuestion(reply, 0, {
+    kind,
+    unitKeys: [],
+    hasSolutions: current.answerSource === "solutions",
+  })
+  if (!parsed) return fail(GENERIC_EDIT_ERROR)
+  const question: EditedExamQuestion = {
+    number: parsed.number,
+    marks: parsed.marks,
+    type: parsed.type,
+    prompt: parsed.prompt,
+    concept: parsed.concept,
+    ...(parsed.options ? { options: parsed.options } : {}),
+    ...(parsed.correctOptionIds ? { correctOptionIds: parsed.correctOptionIds } : {}),
+    ...(parsed.explanation ? { explanation: parsed.explanation } : {}),
+    ...(parsed.modelAnswer ? { modelAnswer: parsed.modelAnswer } : {}),
+    ...(parsed.markScheme ? { markScheme: parsed.markScheme } : {}),
+  }
+  return { ok: true, question, ...(previousOptionIds ? { previousOptionIds } : {}) }
 }
