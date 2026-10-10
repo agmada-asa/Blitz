@@ -49,6 +49,19 @@ export function teachJumpMessage(index: number, section: TeachSection): string {
   return `Teach section ${index + 1}: ${section.title}`
 }
 
+/**
+ * Builds the message that sends a learner back to Teach after missing a
+ * practice question, so the tutor re-teaches that concept differently.
+ * @param concept The concept the question tested.
+ * @param question The missed question, when there is one.
+ */
+export function relearnMessage(concept: string, question?: string): string {
+  const missed = question?.trim()
+    ? ` I just got this practice question wrong: "${question.trim().replace(/\s+/g, " ").slice(0, 600)}".`
+    : ""
+  return `I'm not getting "${concept.trim().slice(0, 120)}".${missed} Re-teach it from a different angle with a fresh example, then check me with a new question.`
+}
+
 /** Collects every fenced code token, including those nested in lists or quotes. */
 function fencedBlocks(markdown: string): Array<{ lang: string; text: string }> {
   const found: Array<{ lang: string; text: string }> = []
@@ -237,10 +250,11 @@ export type TeachPromptInput = {
 }
 
 /**
- * Splits the source budget across files so every file is represented and
- * short files keep their full text.
+ * Splits a character budget across sources so every file is represented and
+ * short files keep their full text; longer files share what remains equally.
+ * @returns Each source with its text cut to its share and a `truncated` flag.
  */
-function budgetSources(sources: TeachSourceInput[], budget: number) {
+export function budgetSources<T extends { text: string }>(sources: T[], budget: number) {
   const sorted = [...sources.keys()].sort(
     (a, b) => sources[a].text.length - sources[b].text.length
   )
@@ -268,9 +282,9 @@ const TEACH_RULES = [
   LESSON_TEACHING_GUIDANCE,
   "Exception to the rule above: you may cite the course material with citation links as described below, but do not narrate it (no 'the slides say').",
   "Protocol:",
-  "1. On the first turn, start with an ```outline fenced block containing JSON {\"title\": string, \"sections\": [{\"id\": \"s1\", \"title\": string}, ...]}. The title names the unit's topic in a few words (no week numbers). Plan 3 to 8 sections of about five minutes each, ordered from foundations to the hardest ideas, together covering everything examinable in the material. Then teach section 1 only.",
+  "1. On the first turn, start with an ```outline fenced block containing JSON {\"title\": string, \"sections\": [{\"id\": \"s1\", \"title\": string}, ...]}. The title names the unit's topic in a few words (no week numbers). Plan 3 to 8 sections of about five minutes each, ordered from foundations to the hardest ideas, together covering everything examinable in the material. Then teach section 1 only. If the first message is a question instead of a request to teach the unit, still send the outline, then answer the question instead of teaching section 1.",
   "2. Begin every reply that teaches a section with a ```section fenced block whose body is only the section id, for example:\n```section\ns2\n```",
-  "3. Blitz shows each section's number and title above your text, so never repeat the section title as a heading or bold line. A section: open with the intuition and why it matters, then precise definitions, notation and formulas, then a worked example. End with one or two quiz blocks that check the section's key ideas, then a followups block with two or three short questions the learner might ask next. Aim for 300 to 700 words of prose per section, plus blocks.",
+  "3. Blitz shows each section's number and title above your text, so never repeat the section title as a heading or bold line. A section: open with the intuition and why it matters, then precise definitions, notation and formulas, then a worked example. End with one or two quiz blocks that check the section's key ideas (set each quiz's concept to the section title, so practice can track it), then a followups block with two or three short questions the learner might ask next. Aim for 300 to 700 words of prose per section, plus blocks.",
   `4. When the learner sends "${TEACH_QUICK_REPLIES.next}", teach the next section. "Teach section N: …" jumps to that section. "${TEACH_QUICK_REPLIES.deeper}" adds depth to the current section, "${TEACH_QUICK_REPLIES.example}" gives a fresh worked example, and "${TEACH_QUICK_REPLIES.confused}" re-explains the current idea from a different angle with a simpler example. These replies stay in the current section and do not start with a section block.`,
   `5. Any other message is the learner's own question: ${TUTOR_REPLY_GUIDANCE} Then offer to continue. Do not start a section block for an answer.`,
   "6. After the last section, when the learner continues, send a ```section block with body done, a short recap of the unit's key ideas, and a final mixed quiz of three to five questions across the unit.",

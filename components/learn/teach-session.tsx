@@ -10,6 +10,7 @@
  */
 
 import Link from "next/link"
+import { usePathname, useRouter } from "next/navigation"
 import { useMutation, useQuery } from "convex/react"
 import type { FunctionReturnType } from "convex/server"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
@@ -57,8 +58,12 @@ function reveal(element: Element | null, block: ScrollLogicalPosition = "start")
   element.scrollIntoView({ block, behavior: reduce ? "auto" : "smooth" })
 }
 
-/** Loads a unit and renders its Teach session, or a not-found state. */
-export function TeachSession({ unitId }: { unitId: string }) {
+/**
+ * Loads a unit and renders its Teach session, or a not-found state.
+ * @param unitId The unit to teach.
+ * @param ask A message to send once the session is ready, such as a Relearn request from Practice.
+ */
+export function TeachSession({ unitId, ask }: { unitId: string; ask?: string }) {
   const unit = useQuery(api.units.get, { unitId: unitId as Id<"units"> })
   if (unit === undefined)
     return (
@@ -77,14 +82,16 @@ export function TeachSession({ unitId }: { unitId: string }) {
         </Button>
       </main>
     )
-  return <LoadedTeachSession unit={unit} />
+  return <LoadedTeachSession unit={unit} ask={ask} />
 }
 
 /** Unit data returned by `units.get`. */
 type LoadedUnit = NonNullable<FunctionReturnType<typeof api.units.get>>
 
-/** Runs the session for a loaded unit. */
-function LoadedTeachSession({ unit }: { unit: LoadedUnit }) {
+/** Runs the session for a loaded unit, sending `ask` once when it is provided. */
+function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
+  const router = useRouter()
+  const pathname = usePathname()
   const startTeach = useMutation(api.units.startTeach)
   const restartTeach = useMutation(api.units.restartTeach)
   const [chatId, setChatId] = useState<Id<"workspaceChats">>()
@@ -100,6 +107,7 @@ function LoadedTeachSession({ unit }: { unit: LoadedUnit }) {
   const revealNextReplyRef = useRef(false)
   const restoredRef = useRef(false)
   const abortRef = useRef<AbortController | undefined>(undefined)
+  const askSentRef = useRef(false)
 
   // Opens the unit's session, creating it on first visit or after a restart.
   const sessionChatId = unit.teach?.chatId
@@ -171,13 +179,24 @@ function LoadedTeachSession({ unit }: { unit: LoadedUnit }) {
     [activeChatId, sending, chat?.status]
   )
 
+  // Sends a Relearn request from Practice once, then drops it from the URL so
+  // a reload does not send it again.
+  useEffect(() => {
+    if (!ask?.trim() || askSentRef.current || !chat || chat.status !== "idle") return
+    askSentRef.current = true
+    autoStartedRef.current = chat.id
+    router.replace(pathname, { scroll: false })
+    void send(ask.trim().slice(0, 4_000))
+  }, [ask, chat, send, router, pathname])
+
   // Starts teaching as soon as a new session opens; the learner chose this unit.
   useEffect(() => {
+    if (ask?.trim() && !askSentRef.current) return
     if (!chat || chat.status !== "idle" || chat.messages.length) return
     if (autoStartedRef.current === chat.id) return
     autoStartedRef.current = chat.id
     void send(TEACH_QUICK_REPLIES.start)
-  }, [chat, send])
+  }, [ask, chat, send])
 
   // Brings a new reply's opening into view once it appears.
   const lastAssistantId = [...messages].reverse().find((message) => message.role === "assistant")?.id
