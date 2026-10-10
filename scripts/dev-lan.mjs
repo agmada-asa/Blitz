@@ -1,119 +1,76 @@
-/** Starts the local web, database, and learning workers with a shared LAN address. */
+/**
+ * Starts the local web app, database, and workers for this Mac and the LAN.
+ *
+ * Uses the same supervisor as the desktop app, so a crashed worker or server
+ * restarts with backoff instead of taking the whole stack down. Without a
+ * network connection Blitz still runs on this Mac; phone access needs Wi-Fi.
+ */
 
-import { spawn } from "node:child_process"
 import { existsSync } from "node:fs"
 import { networkInterfaces } from "node:os"
 import { isIP } from "node:net"
 import { fileURLToPath } from "node:url"
 import { formatTerminalQr } from "./lan-qr.mjs"
-import { resolveLocalConvexPorts } from "../electron/service-manager.mjs"
-import {
-  killProcessGroups,
-  processGroupExists,
-  registerLauncherShutdown,
-  terminateProcessGroups,
-} from "./process-groups.mjs"
+import { ServiceManager } from "../electron/service-manager.mjs"
 
-const port = process.env.BLITZ_PORT ?? "3007"
-const lanAddress = process.env.BLITZ_LAN_ADDRESS?.trim() || findLanAddress()
-const convexPorts = await resolveLocalConvexPorts(process.cwd(), process.env)
+const port = Number(process.env.BLITZ_PORT ?? "3007")
+const configuredLanAddress = process.env.BLITZ_LAN_ADDRESS?.trim()
+const lanAddress =
+  configuredLanAddress && isIP(configuredLanAddress) === 4
+    ? configuredLanAddress
+    : findLanAddress()
 const defaultApkPath = fileURLToPath(
   new URL("../build/android/blitz-android-debug.apk", import.meta.url)
 )
 const apkPath =
   process.env.BLITZ_ANDROID_APK_PATH?.trim() ||
   (existsSync(defaultApkPath) ? defaultApkPath : undefined)
-const children = new Set()
-const processGroups = new Set()
+
+const services = new ServiceManager({
+  cwd: fileURLToPath(new URL("..", import.meta.url)),
+  port,
+  host: "0.0.0.0",
+  desktop: false,
+  environment: {
+    ...process.env,
+    ...(lanAddress ? { BLITZ_LAN_ADDRESS: lanAddress } : {}),
+    ...(apkPath ? { BLITZ_ANDROID_APK_PATH: apkPath } : {}),
+  },
+  onStatus: reportStatus,
+})
+
 let stopping = false
-
-if (!lanAddress || isIP(lanAddress) !== 4) {
-  console.error(
-    "Blitz could not find a local network address. Connect to Wi-Fi and try again."
-  )
-  process.exit(1)
-}
-
-const sharedEnvironment = {
-  ...process.env,
-  BLITZ_LAN_ADDRESS: lanAddress,
-  BLITZ_CONVEX_URL: `http://127.0.0.1:${convexPorts.cloud}`,
-  NEXT_PUBLIC_CONVEX_URL: `http://${lanAddress}:${convexPorts.cloud}`,
-  NEXT_PUBLIC_CONVEX_SITE_URL: `http://${lanAddress}:${convexPorts.site}`,
-  ...(apkPath ? { BLITZ_ANDROID_APK_PATH: apkPath } : {}),
-}
-
-const lanUrl = `http://${lanAddress}:${port}`
+process.on("SIGINT", () => void stop(0))
+process.on("SIGTERM", () => void stop(0))
+process.on("SIGHUP", () => void stop(129))
+process.once("exit", () => services.killNow())
 
 console.log(`\nBlitz will be available on this Mac at http://localhost:${port}`)
-console.log(
-  `Open ${lanUrl} on a phone connected to the same Wi-Fi or scan the QR code:\n`
-)
-
-try {
-  const qrCode = await formatTerminalQr(lanUrl)
-  console.log(qrCode)
-  console.log()
-} catch (error) {
-  console.error("Could not render QR code for terminal:", error)
+if (lanAddress) {
+  const lanUrl = `http://${lanAddress}:${port}`
+  console.log(
+    `Open ${lanUrl} on a phone connected to the same Wi-Fi or scan the QR code:\n`
+  )
+  try {
+    console.log(await formatTerminalQr(lanUrl))
+    console.log()
+  } catch (error) {
+    console.error("Could not render QR code for terminal:", error)
+  }
+  if (apkPath) console.log(`Android installer: ${lanUrl}/api/android\n`)
+} else {
+  console.log(
+    "No Wi-Fi address found, so phones cannot connect. Blitz still runs on this Mac.\n"
+  )
 }
 
-if (apkPath) console.log(`Android installer: ${lanUrl}/api/android\n`)
-
-registerLauncherShutdown(processGroups, stop)
-
-start(
-  "npx",
-  [
-    "convex",
-    "dev",
-    "--tail-logs",
-    "disable",
-    "--local-cloud-port",
-    String(convexPorts.cloud),
-    "--local-site-port",
-    String(convexPorts.site),
-  ],
-  sharedEnvironment
-)
-start(
-  process.execPath,
-  [
-    "node_modules/next/dist/bin/next",
-    "dev",
-    "--hostname",
-    "0.0.0.0",
-    "--port",
-    port,
-  ],
-  sharedEnvironment
-)
-
-start(
-  process.execPath,
-  ["--experimental-strip-types", "scripts/preparation-worker.ts"],
-  sharedEnvironment
-)
-start(
-  process.execPath,
-  ["--experimental-strip-types", "scripts/content-generation-worker.ts"],
-  sharedEnvironment
-)
-start(
-  process.execPath,
-  ["--experimental-strip-types", "scripts/ingestion-worker.ts"],
-  sharedEnvironment
-)
-start(
-  process.execPath,
-  ["--experimental-strip-types", "scripts/chat-worker.ts"],
-  sharedEnvironment
-)
-start(
-  process.execPath,
-  ["--experimental-strip-types", "scripts/research-worker.ts"],
-  sharedEnvironment
-)
+try {
+  await services.start()
+  console.log(`\nBlitz is ready at http://localhost:${port}\n`)
+} catch (error) {
+  console.error(error instanceof Error ? error.message : error)
+  await stop(1)
+}
 
 /** Returns the first external IPv4 address, or undefined when no LAN is available. */
 function findLanAddress() {
@@ -124,53 +81,25 @@ function findLanAddress() {
   }
 }
 
-/** Starts a child service and shuts down the full stack if that service exits. */
-function start(command, args, environment) {
-  // A process group keeps npm/npx grandchildren owned by this launcher on macOS.
-  const child = spawn(command, args, {
-    env: environment,
-    stdio: "inherit",
-    detached: process.platform !== "win32",
-  })
-  children.add(child)
-  if (process.platform !== "win32" && child.pid) processGroups.add(child.pid)
-  child.on("error", () => {
-    console.error(`Could not start ${command}. Shutting Blitz down.`)
-    stop("SIGTERM", 1)
-  })
-  child.on("exit", (code, signal) => {
-    children.delete(child)
-    if (
-      process.platform !== "win32" &&
-      child.pid &&
-      !processGroupExists(child.pid)
+/** Prints restarts and recoveries so a crash is visible without stopping Blitz. */
+function reportStatus(name, status) {
+  if (status.state === "restarting") {
+    const seconds = Math.max(
+      0,
+      Math.round(((status.nextRestartAt ?? Date.now()) - Date.now()) / 1000)
     )
-      processGroups.delete(child.pid)
-    if (!stopping) {
-      console.error(
-        `${command} stopped (${signal ?? code ?? "unknown"}). Shutting Blitz down.`
-      )
-      stop("SIGTERM", code ?? 1)
-    }
-  })
+    console.error(
+      `[blitz] ${name} stopped (${status.lastExit}). Restarting in ${seconds}s.`
+    )
+  } else if (status.state === "running" && status.restarts > 0) {
+    console.log(`[blitz] ${name} restarted.`)
+  }
 }
 
-/** Stops every owned service group and force-kills survivors after a short grace period. */
-function stop(signal, exitCode = 0) {
-  if (stopping) {
-    if (process.platform !== "win32") killProcessGroups(processGroups)
-    else for (const child of children) child.kill("SIGKILL")
-    process.exit(exitCode)
-  }
+/** Stops every supervised service once, then exits with the given code. */
+async function stop(exitCode) {
+  if (stopping) process.exit(exitCode)
   stopping = true
-  if (process.platform === "win32") {
-    for (const child of children) child.kill(signal)
-    process.exitCode = exitCode
-    return
-  }
-  void terminateProcessGroups(processGroups, { signal })
-    .catch(() => {
-      killProcessGroups(processGroups)
-    })
-    .finally(() => process.exit(exitCode))
+  await services.stop()
+  process.exit(exitCode)
 }
