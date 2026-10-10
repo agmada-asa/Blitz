@@ -128,10 +128,22 @@ const JSON_ESCAPES = new Set(['"', "\\", "/", "b", "f", "n", "r", "t", "u"])
 
 /**
  * LaTeX commands whose first letters form a valid JSON escape, so `\theta`
- * would silently become a tab followed by "heta". Matched after the backslash.
+ * would silently become a tab followed by "heta". Matched after the backslash,
+ * and only as a whole command name: a real `\n` before "other" or "equal" is a
+ * newline followed by a word, not `\not` or `\neq`.
  */
-const LATEX_LOOKALIKE =
-  /^(?:b(?:eta|ig|inom|ar|egin|f|oxed|ullet)|f(?:rac|orall|lat)|t(?:heta|imes|ext|au|ilde|riangle|op|o\b|frac)|r(?:ho|ight|angle|ceil|floor|m\b)|n(?:eq|abla|eg|ot|u\b|ewline|leq|geq)|u(?:psilon|nderline|nion))/
+const LATEX_LOOKALIKE = new RegExp(
+  "^(?:" +
+    [
+      "b(?:eta|ig(?:g?[lr])?|igcup|igcap|inom|ar|egin|f|oxed|ullet|mod|ackslash|oldsymbol)",
+      "f(?:rac|orall|lat)",
+      "t(?:heta|imes|ext(?:bf|it|rm)?|au|ilde|riangle|op|o|frac|an|anh)",
+      "r(?:ho|ight(?:arrow)?|angle|ceil|floor|m|vert|brace)",
+      "n(?:eq|abla|eg|ot|otin|u|ewline|leq|geq|exists)",
+      "u(?:psilon|nderline|nion)",
+    ].join("|") +
+    ")(?![A-Za-z])"
+)
 
 /**
  * Repairs the backslash mistakes models make when writing LaTeX inside JSON
