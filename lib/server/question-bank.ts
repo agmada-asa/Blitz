@@ -13,6 +13,7 @@ import { join } from "node:path"
 import { api } from "../../convex/_generated/api.js"
 import type { Id } from "../../convex/_generated/dataModel.js"
 import { resolveAiTaskSelection } from "../ai-model-settings.ts"
+import { quizPayload } from "../interactive-blocks.ts"
 import { buildQuestionBankPrompt, DEFAULT_BANK_BATCH, parseQuestionBank } from "../practice.ts"
 import { loadSavedAiModelSettings } from "./ai-model-settings.ts"
 import { serverConvexClient } from "./convex.ts"
@@ -75,14 +76,7 @@ export async function runQuestionBank(
       generationId,
       rejectedCount: rejected,
       recaps,
-      questions: questions.map((question) => ({
-        concept: question.concept,
-        type: question.type,
-        question: question.question,
-        options: question.options,
-        correctOptionIds: question.correctOptionIds,
-        explanation: question.explanation,
-      })),
+      questions: questions.map(quizPayload),
     })
     await client.mutation(api.practice.finishGeneration, { generationId })
   } catch (error) {

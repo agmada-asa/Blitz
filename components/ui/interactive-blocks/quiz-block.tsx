@@ -4,13 +4,21 @@
  * Renders an inline quiz from a ```quiz Markdown block.
  *
  * Single-choice and true-false questions submit as soon as an option is chosen; multiple-answer
- * questions use checkboxes and a `Check answer` button. Answers are scored by the provider's
+ * questions use checkboxes and a `Check answer` button. Cloze, ordering, matching, and code-output
+ * questions use `StructuredAnswer` and also submit with `Check answer`. Answers are scored by the provider's
  * `onQuizAnswer` handler when present (falling back to local grading when it returns null) and shown
  * with icons and text, the explanation, and `Try again` for incorrect answers. Recorded answers from
  * the provider restore the answered state after a reload.
  */
 import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react"
-import { gradeQuizAnswer, type QuizBlock } from "@/lib/interactive-blocks"
+import {
+  clozeDisplayText,
+  gradeQuizAnswer,
+  initialStructuredAnswer,
+  isChoiceQuiz,
+  structuredAnswerReady,
+  type QuizBlock,
+} from "@/lib/interactive-blocks"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -24,6 +32,10 @@ import {
   useInteractiveBlocks,
   type MarkdownRenderer,
 } from "@/components/ui/interactive-blocks/context"
+import {
+  StructuredAnswer,
+  structuredHints,
+} from "@/components/ui/interactive-blocks/structured-answer"
 
 /** Progress of the learner's current attempt. */
 type QuizAttempt =
@@ -40,6 +52,7 @@ const quizHints: Record<QuizBlock["type"], string> = {
   "single-choice": "Choose one answer.",
   "multiple-answer": "Choose all that apply.",
   "true-false": "Choose true or false.",
+  ...structuredHints,
 }
 
 /** Visible text and screen reader text for each answered option mark. */
@@ -128,16 +141,27 @@ export function QuizBlockView({
 
   const recorded = answeredQuizzes?.[block.id]
   const validIds = new Set(block.options.map((option) => option.id))
+  const structured = !isChoiceQuiz(block.type)
+  /** The attempt a new or retried question starts from. */
+  const freshAttempt = (): QuizAttempt => ({
+    status: "idle",
+    selected: structured ? initialStructuredAnswer(block) : [],
+  })
   const attempt: QuizAttempt =
     localAttempt ??
     (recorded
       ? {
           status: "answered",
-          selected: recorded.selectedOptionIds.filter((id) => validIds.has(id)),
+          // Structured answers are typed or arranged values, not option ids.
+          selected: structured
+            ? recorded.selectedOptionIds
+            : recorded.selectedOptionIds.filter((id) => validIds.has(id)),
           correct: recorded.correct,
         }
-      : { status: "idle", selected: [] })
+      : freshAttempt())
   const multiple = block.type === "multiple-answer"
+  // Formats that collect an answer first and check it with a button.
+  const checked = multiple || structured
   const locked = attempt.status === "pending" || attempt.status === "answered"
 
   /**
@@ -147,6 +171,7 @@ export function QuizBlockView({
    */
   async function submit(selected: string[]) {
     if (attempt.status === "pending" || selected.length === 0) return
+    if (structured && !structuredAnswerReady(block.type, selected)) return
     setLocalAttempt({ status: "pending", selected })
     try {
       const result = onQuizAnswer ? await onQuizAnswer(block, selected) : null
@@ -155,8 +180,8 @@ export function QuizBlockView({
     } catch {
       setLocalAttempt({ status: "error", selected })
     }
-    // The Check answer button disappears after a multiple-answer submission, so keep focus nearby.
-    if (multiple) feedbackRef.current?.focus()
+    // The Check answer button disappears after a checked submission, so keep focus nearby.
+    if (checked) feedbackRef.current?.focus()
   }
 
   // After Try again, the button disappears, so focus moves to the first option once it is unlocked.
@@ -164,14 +189,16 @@ export function QuizBlockView({
     if (!focusFirstOption.current || attempt.status !== "idle") return
     focusFirstOption.current = false
     optionsRef.current
-      ?.querySelector<HTMLElement>("[data-quiz-option]")
+      ?.querySelector<HTMLElement>(
+        "[data-quiz-option], input, textarea, button:not(:disabled)"
+      )
       ?.focus()
   }, [attempt.status])
 
   /** Starts a new attempt and returns focus to the first option. */
   function tryAgain() {
     focusFirstOption.current = true
-    setLocalAttempt({ status: "idle", selected: [] })
+    setLocalAttempt(freshAttempt())
   }
 
   /**
@@ -239,106 +266,142 @@ export function QuizBlockView({
             {block.concept}
           </span>
           <span id={questionId} className="mt-1 block font-medium">
-            {renderMarkdown(block.question, { inline: true })}
+            {structured
+              ? // Structured prompts often hold code blocks, so they render as full Markdown.
+                renderMarkdown(
+                  block.type === "cloze"
+                    ? clozeDisplayText(block.question)
+                    : block.question
+                )
+              : renderMarkdown(block.question, { inline: true })}
           </span>
         </legend>
         <p id={hintId} className="mt-1 text-sm text-muted-foreground">
           {quizHints[block.type]}
         </p>
 
-        <div
-          ref={optionsRef}
-          className="mt-3 grid gap-2"
-          aria-busy={attempt.status === "pending"}
-          onKeyDown={multiple ? undefined : moveFocus}
-        >
-          {block.options.map((option, index) => {
-            const mark = optionMark(block, attempt, option.id)
-            const selected = attempt.selected.includes(option.id)
-            const pendingChoice = attempt.status === "pending" && selected
-            const marker =
-              block.type === "true-false"
-                ? null
-                : String.fromCharCode(65 + index)
+        {structured ? (
+          <div
+            ref={optionsRef}
+            className="mt-3"
+            aria-busy={attempt.status === "pending"}
+          >
+            <StructuredAnswer
+              shape={block}
+              value={attempt.selected}
+              onChange={(selected) => {
+                if (!locked) setLocalAttempt({ status: "idle", selected })
+              }}
+              disabled={locked}
+              answerKey={attempt.status === "answered" ? block : undefined}
+              correct={
+                attempt.status === "answered" ? attempt.correct : undefined
+              }
+              renderMarkdown={renderMarkdown}
+              idBase={baseId}
+            />
+          </div>
+        ) : (
+          <div
+            ref={optionsRef}
+            className="mt-3 grid gap-2"
+            aria-busy={attempt.status === "pending"}
+            onKeyDown={multiple ? undefined : moveFocus}
+          >
+            {block.options.map((option, index) => {
+              const mark = optionMark(block, attempt, option.id)
+              const selected = attempt.selected.includes(option.id)
+              const pendingChoice = attempt.status === "pending" && selected
+              const marker =
+                block.type === "true-false"
+                  ? null
+                  : String.fromCharCode(65 + index)
 
-            if (multiple) {
-              const checkboxId = `${baseId}-option-${option.id}`
+              if (multiple) {
+                const checkboxId = `${baseId}-option-${option.id}`
+                return (
+                  <label
+                    key={option.id}
+                    htmlFor={checkboxId}
+                    className={cn(
+                      optionRowClass(mark, false),
+                      locked
+                        ? "cursor-default"
+                        : "cursor-pointer hover:bg-muted"
+                    )}
+                  >
+                    <Checkbox
+                      id={checkboxId}
+                      data-quiz-option=""
+                      checked={selected}
+                      disabled={locked}
+                      // Radix renders a button, so name it explicitly from the option text and mark.
+                      aria-labelledby={`${checkboxId}-text`}
+                      aria-describedby={mark ? `${checkboxId}-mark` : undefined}
+                      onCheckedChange={(checked) =>
+                        toggle(option.id, checked === true)
+                      }
+                    />
+                    <span id={`${checkboxId}-text`} className="min-w-0 flex-1">
+                      {renderMarkdown(option.text, { inline: true })}
+                    </span>
+                    {mark ? (
+                      <OptionMarkLabel id={`${checkboxId}-mark`} mark={mark} />
+                    ) : null}
+                  </label>
+                )
+              }
+
               return (
-                <label
+                <Button
                   key={option.id}
-                  htmlFor={checkboxId}
+                  type="button"
+                  variant="ghost"
+                  role="radio"
+                  aria-checked={selected}
+                  aria-disabled={locked}
+                  data-quiz-option=""
+                  onClick={() => {
+                    if (!locked) void submit([option.id])
+                  }}
                   className={cn(
-                    optionRowClass(mark, false),
-                    locked ? "cursor-default" : "cursor-pointer hover:bg-muted"
+                    "h-auto",
+                    optionRowClass(mark, pendingChoice),
+                    locked && "pointer-events-none"
                   )}
                 >
-                  <Checkbox
-                    id={checkboxId}
-                    data-quiz-option=""
-                    checked={selected}
-                    disabled={locked}
-                    // Radix renders a button, so name it explicitly from the option text and mark.
-                    aria-labelledby={`${checkboxId}-text`}
-                    aria-describedby={mark ? `${checkboxId}-mark` : undefined}
-                    onCheckedChange={(checked) =>
-                      toggle(option.id, checked === true)
-                    }
-                  />
-                  <span id={`${checkboxId}-text`} className="min-w-0 flex-1">
+                  {marker || pendingChoice ? (
+                    <span
+                      className="flex size-7 shrink-0 items-center justify-center rounded-full border border-border text-xs text-muted-foreground"
+                      aria-hidden="true"
+                    >
+                      {pendingChoice ? (
+                        <LoadingIcon size={15} className="animate-spin" />
+                      ) : (
+                        marker
+                      )}
+                    </span>
+                  ) : null}
+                  <span className="min-w-0 flex-1">
                     {renderMarkdown(option.text, { inline: true })}
                   </span>
-                  {mark ? (
-                    <OptionMarkLabel id={`${checkboxId}-mark`} mark={mark} />
-                  ) : null}
-                </label>
+                  {mark ? <OptionMarkLabel mark={mark} /> : null}
+                </Button>
               )
-            }
-
-            return (
-              <Button
-                key={option.id}
-                type="button"
-                variant="ghost"
-                role="radio"
-                aria-checked={selected}
-                aria-disabled={locked}
-                data-quiz-option=""
-                onClick={() => {
-                  if (!locked) void submit([option.id])
-                }}
-                className={cn(
-                  "h-auto",
-                  optionRowClass(mark, pendingChoice),
-                  locked && "pointer-events-none"
-                )}
-              >
-                {marker || pendingChoice ? (
-                  <span
-                    className="flex size-7 shrink-0 items-center justify-center rounded-full border border-border text-xs text-muted-foreground"
-                    aria-hidden="true"
-                  >
-                    {pendingChoice ? (
-                      <LoadingIcon size={15} className="animate-spin" />
-                    ) : (
-                      marker
-                    )}
-                  </span>
-                ) : null}
-                <span className="min-w-0 flex-1">
-                  {renderMarkdown(option.text, { inline: true })}
-                </span>
-                {mark ? <OptionMarkLabel mark={mark} /> : null}
-              </Button>
-            )
-          })}
-        </div>
+            })}
+          </div>
+        )}
       </fieldset>
 
-      {multiple && !locked ? (
+      {checked && !locked ? (
         <Button
           type="button"
           className="mt-3 h-11 px-4 sm:h-9"
-          disabled={attempt.selected.length === 0}
+          disabled={
+            structured
+              ? !structuredAnswerReady(block.type, attempt.selected)
+              : attempt.selected.length === 0
+          }
           onClick={() => void submit(attempt.selected)}
         >
           Check answer
@@ -385,7 +448,7 @@ export function QuizBlockView({
           ) : null}
         </p>
 
-        {attempt.status === "answered" ? (
+        {attempt.status === "answered" && block.explanation ? (
           <div className="text-sm">{renderMarkdown(block.explanation)}</div>
         ) : null}
 

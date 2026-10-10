@@ -12,21 +12,10 @@ import { v } from "convex/values"
 
 import { mutation, query } from "./_generated/server"
 import type { Id } from "./_generated/dataModel"
+import { quizFields, quizItemFields } from "./quizFields"
 
 /** Quiz shape accepted from the server route after it parsed the saved reply. */
-const quizValidator = v.object({
-  id: v.string(),
-  concept: v.string(),
-  type: v.union(
-    v.literal("single-choice"),
-    v.literal("multiple-answer"),
-    v.literal("true-false")
-  ),
-  question: v.string(),
-  options: v.array(v.object({ id: v.string(), text: v.string() })),
-  correctOptionIds: v.array(v.string()),
-  explanation: v.string(),
-})
+const teachQuizValidator = v.object({ id: v.string(), ...quizFields })
 
 /** Normalises a concept title for matching without changing how it is shown. */
 function conceptKey(title: string): string {
@@ -42,7 +31,7 @@ export const registerQuiz = mutation({
   args: {
     chatId: v.id("workspaceChats"),
     messageId: v.id("workspaceChatMessages"),
-    quiz: quizValidator,
+    quiz: teachQuizValidator,
   },
   handler: async (ctx, { chatId, messageId, quiz }) => {
     const chat = await ctx.db.get(chatId)
@@ -94,7 +83,6 @@ export const registerQuiz = mutation({
       })
       concept = (await ctx.db.get(conceptId))!
     }
-    const correct = quiz.correctOptionIds
     const itemId: Id<"learningItems"> = await ctx.db.insert("learningItems", {
       projectId,
       conceptId: concept._id,
@@ -102,18 +90,8 @@ export const registerQuiz = mutation({
       teachKey,
       origin: "teach",
       sourceIds,
-      type: quiz.type,
       title,
-      body: quiz.explanation.slice(0, 4_000),
-      question: quiz.question.slice(0, 2_000),
-      ...(quiz.type === "true-false"
-        ? { correctAnswer: correct[0] === "true" }
-        : {
-            options: quiz.options,
-            ...(quiz.type === "single-choice"
-              ? { correctOptionId: correct[0] }
-              : { correctOptionIds: correct }),
-          }),
+      ...quizItemFields(quiz),
       order: now,
       createdAt: now,
     })

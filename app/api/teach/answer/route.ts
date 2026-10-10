@@ -9,7 +9,12 @@
 
 import { api } from "@/convex/_generated/api"
 import type { Id } from "@/convex/_generated/dataModel"
-import { findQuizBlocks } from "@/lib/interactive-blocks"
+import {
+  findQuizBlocks,
+  isChoiceQuiz,
+  quizPayload,
+  type QuizBlock,
+} from "@/lib/interactive-blocks"
 import { serverConvexClient } from "@/lib/server/convex"
 import { isTrustedBlitzOrigin } from "@/lib/server/request-origin"
 
@@ -35,6 +40,9 @@ function boundedId(value: unknown, label: string): string {
   return value
 }
 
+/** Longest single answer value: typed program output can run to several lines. */
+const MAX_ANSWER_CHARS = 1_100
+
 /** Parses the untrusted JSON body into a narrow request. */
 function parseRequest(value: unknown): TeachAnswerRequest {
   if (!value || typeof value !== "object")
@@ -45,16 +53,37 @@ function parseRequest(value: unknown): TeachAnswerRequest {
     !Array.isArray(selected) ||
     !selected.length ||
     selected.length > 8 ||
-    new Set(selected).size !== selected.length
+    selected.some((entry) => typeof entry !== "string" || entry.length > MAX_ANSWER_CHARS)
   )
     throw new TeachAnswerError("Choose an answer first")
   return {
     chatId: boundedId(body.chatId, "Session") as Id<"workspaceChats">,
     messageId: boundedId(body.messageId, "Message") as Id<"workspaceChatMessages">,
     quizId: boundedId(body.quizId, "Question"),
-    selectedOptionIds: selected.map((id) => boundedId(id, "Answer")),
+    // Option ids for choice questions; typed or arranged values otherwise, checked once the quiz is known.
+    selectedOptionIds: selected as string[],
     clientEventId: boundedId(body.clientEventId, "Answer"),
   }
+}
+
+/**
+ * Rejects an answer whose shape cannot belong to the quiz. Scoring itself
+ * happens in `learning.recordAnswerEvent`.
+ * @throws TeachAnswerError when the answer does not fit the quiz format.
+ */
+function checkAnswerShape(quiz: QuizBlock, answer: string[]): void {
+  const optionIds = new Set(quiz.options.map((option) => option.id))
+  if (!isChoiceQuiz(quiz.type)) {
+    if ((quiz.type === "ordering" || quiz.type === "matching") && answer.some((id) => !optionIds.has(id)))
+      throw new TeachAnswerError("That answer does not match the question")
+    return
+  }
+  if (
+    new Set(answer).size !== answer.length ||
+    answer.some((id) => !optionIds.has(id)) ||
+    (quiz.type !== "multiple-answer" && answer.length !== 1)
+  )
+    throw new TeachAnswerError("That answer does not match the question")
 }
 
 /** Records one Teach quiz answer and returns whether it was correct. */
@@ -74,24 +103,11 @@ export async function POST(request: Request): Promise<Response> {
       (block) => block.id === input.quizId
     )
     if (!quiz) throw new TeachAnswerError("That question is no longer available")
-    const optionIds = new Set(quiz.options.map((option) => option.id))
-    if (
-      input.selectedOptionIds.some((id) => !optionIds.has(id)) ||
-      (quiz.type !== "multiple-answer" && input.selectedOptionIds.length !== 1)
-    )
-      throw new TeachAnswerError("That answer does not match the question")
+    checkAnswerShape(quiz, input.selectedOptionIds)
     const { projectId, itemId } = await client.mutation(api.teach.registerQuiz, {
       chatId: input.chatId,
       messageId: input.messageId,
-      quiz: {
-        id: quiz.id,
-        concept: quiz.concept,
-        type: quiz.type,
-        question: quiz.question,
-        options: quiz.options,
-        correctOptionIds: quiz.correctOptionIds,
-        explanation: quiz.explanation,
-      },
+      quiz: { id: quiz.id, ...quizPayload(quiz) },
     })
     const [first] = input.selectedOptionIds
     const result = await client.mutation(api.learning.recordAnswerEvent, {

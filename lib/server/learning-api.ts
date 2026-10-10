@@ -21,7 +21,8 @@ export const MAX_LEARNING_REQUEST_BYTES = 32_000
 const MAX_ID_LENGTH = 128
 const MAX_TEXT_ANSWER_LENGTH = 2_000
 const MAX_MULTI_ANSWER_COUNT = 30
-const MAX_MULTI_ANSWER_LENGTH = 128
+/** Longest list entry: typed program output and cloze blanks share the text limit. */
+const MAX_MULTI_ANSWER_LENGTH = MAX_TEXT_ANSWER_LENGTH
 
 /** Safe route error that carries an HTTP status without exposing backend details. */
 export class LearningApiError extends Error {
@@ -77,6 +78,8 @@ function parseAnswer(value: unknown): LearningAnswer {
     return answer
   }
   if (typeof value === "boolean") return value
+  // Lists hold option ids, an arranged order, or typed blanks; a blank may be
+  // left empty, but at least one entry must say something.
   if (
     Array.isArray(value) &&
     value.length > 0 &&
@@ -84,9 +87,9 @@ function parseAnswer(value: unknown): LearningAnswer {
     value.every(
       (entry) =>
         typeof entry === "string" &&
-        entry.trim().length > 0 &&
         entry.trim().length <= MAX_MULTI_ANSWER_LENGTH
-    )
+    ) &&
+    value.some((entry) => (entry as string).trim().length > 0)
   ) {
     return value.map((entry) => (entry as string).trim())
   }

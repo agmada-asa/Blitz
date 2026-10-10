@@ -7,10 +7,12 @@ import {
   ArrowDown01Icon,
   ArrowLeft01Icon,
   ArrowRight01Icon,
+  ArrowUp01Icon,
   ArrowUpRight01Icon,
   BookOpen01Icon,
   BulbIcon,
   Cancel01Icon,
+  DragDropVerticalIcon,
   Chat01Icon,
   CheckmarkCircle02Icon,
   CheckIcon as CheckmarkIcon,
@@ -50,6 +52,10 @@ export const AddIcon = makeIcon(Add01Icon)
 export const AiSearch01Icon = makeIcon(AiSearch01Glyph)
 /** Downward direction glyph. */
 export const ArrowDownIcon = makeIcon(ArrowDown01Icon)
+/** Upward direction glyph. */
+export const ArrowUpIcon = makeIcon(ArrowUp01Icon)
+/** Drag handle glyph for reorderable rows. */
+export const DragHandleIcon = makeIcon(DragDropVerticalIcon)
 /** Forward direction glyph. */
 export const ArrowRightIcon = makeIcon(ArrowRight01Icon)
 /** Back navigation glyph. */

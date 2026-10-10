@@ -18,6 +18,25 @@ invalid, and selecting only some of the correct options is incorrect. Unknown
 option IDs are invalid. Written answers use trimmed, lower-case text with
 repeated whitespace collapsed, then compare exactly with the accepted answers.
 
+Four structured formats are answered with a list of strings rather than a
+choice:
+
+- `cloze`: a prompt with numbered blanks (`{{1}}`, `{{2}}`, …) and accepted
+  answers per blank. `normalizeBlankAnswer` ignores case, spaces, surrounding
+  quotes or backticks, and a trailing full stop, so `O(n)` matches `o( n ).`.
+  The answer lists one string per blank; at least one must be filled.
+- `ordering`: every option ID in the learner's order; correct only when it
+  matches `correctOrder` exactly.
+- `matching`: the chosen option ID for each prompt, in prompt order; every
+  prompt needs a match. Options may include unused extras.
+- `code-output`: one string compared with the accepted outputs after
+  `normalizeOutputAnswer`, which ignores line endings, trailing spaces, runs of
+  spaces, and blank lines at either end. Case and line breaks still count.
+
+A list of the wrong length, an unknown or repeated option ID, or an unmatched
+prompt is invalid rather than wrong. `lib/interactive-blocks.ts` grades the
+same formats in the browser by converting a quiz with `structuredQuestion`.
+
 The evaluator has no side effects. A caller should record review evidence only
 for a scored result, using `outcome: "correct"` or `outcome: "incorrect"`.
 

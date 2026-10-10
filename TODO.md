@@ -36,7 +36,7 @@ names the PR that delivers it once one exists.
 - [x] Question bank per unit (single, multiple, true/false), first bank automatic
 - [x] Per-concept strength and adaptive drills
 - [x] Relearn from practice into the unit's Teach session
-- [ ] More question types: cloze, ordering, matching, code output
+- [x] More question types: cloze, ordering, matching, code output
 - [x] Past paper import and mock exams (`docs/exam-mode.md`)
 - [x] Long answer grading against sources (exam written answers, marked
       against each question's mark scheme and model answer)

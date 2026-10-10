@@ -16,7 +16,9 @@ import { paginationOptsValidator } from "convex/server"
 import type { Doc, Id } from "./_generated/dataModel"
 import { v } from "convex/values"
 import {
+  answerOrderMatters,
   evaluateAnswer,
+  isStructuredQuestionType,
   selectFeedItems,
   type AnswerInput,
   type ConceptReviewState,
@@ -535,6 +537,29 @@ function questionFromItem(item: Doc<"learningItems">): Question {
       type: "true-false",
       correctAnswer: item.correctAnswer ?? false,
     }
+  if (item.type === "cloze")
+    return { ...base, type: "cloze", acceptedAnswers: item.acceptedAnswers ?? [] }
+  if (item.type === "code-output")
+    return {
+      ...base,
+      type: "code-output",
+      acceptedOutputs: item.acceptedAnswers?.[0] ?? [],
+    }
+  if (item.type === "ordering")
+    return {
+      ...base,
+      type: "ordering",
+      options: item.options ?? [],
+      correctOrder: item.correctOptionIds ?? [],
+    }
+  if (item.type === "matching")
+    return {
+      ...base,
+      type: "matching",
+      prompts: item.matchPrompts ?? [],
+      options: item.options ?? [],
+      correctOptionIds: item.correctOptionIds ?? [],
+    }
   throw new Error("Explain items cannot receive answers")
 }
 
@@ -620,6 +645,7 @@ function answerFeedbackForItem(item: Doc<"learningItems">) {
     ...(item.correctAnswer !== undefined
       ? { correctAnswer: item.correctAnswer }
       : {}),
+    ...(item.acceptedAnswers ? { acceptedAnswers: item.acceptedAnswers } : {}),
   }
 }
 
@@ -1125,7 +1151,9 @@ export const getLearningFeed = query({
       nextItemAnchors[projectIndex] = itemPage.at(-1)?._creationTime ?? null
       nextItemDone[projectIndex] = page.length <= scanCount
       for (const item of itemPage) {
-        if (item.type === "explain" || item.archivedAt) continue
+        // This feed's cards only carry choice questions, so structured ones stay in drills.
+        if (item.type === "explain" || item.archivedAt || isStructuredQuestionType(item.type))
+          continue
         const concept = await ctx.db.get(item.conceptId)
         if (!concept) continue
         if (requestedTopic && concept.topicId !== requestedTopic._id) continue
@@ -1318,7 +1346,8 @@ export const recordAnswerEvent = mutation({
         existing.answer === undefined ||
         !answersEquivalent(
           existing.answer as AnswerInput,
-          args.answer as AnswerInput
+          args.answer as AnswerInput,
+          answerOrderMatters(item.type)
         )
       )
         throw new Error("Client event id payload conflicts with stored event")

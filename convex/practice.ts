@@ -15,6 +15,7 @@ import { v } from "convex/values"
 
 import { internalMutation, mutation, query, type QueryCtx } from "./_generated/server"
 import type { Doc, Id } from "./_generated/dataModel"
+import { quizFromItem, quizItemFields, quizValidator } from "./quizFields"
 import {
   conceptStrength,
   selectDrillQuestions,
@@ -32,21 +33,15 @@ const MAX_GENERATION_SOURCE_TEXT = 300_000
 const MAX_DRILL_QUESTIONS = 30
 
 /** Question formats a drill can ask. */
-const QUESTION_TYPES = new Set(["single-choice", "multiple-answer", "true-false"])
-
-/** A generated question as saved by the server route after validation. */
-const generatedQuestion = v.object({
-  concept: v.string(),
-  type: v.union(
-    v.literal("single-choice"),
-    v.literal("multiple-answer"),
-    v.literal("true-false")
-  ),
-  question: v.string(),
-  options: v.array(v.object({ id: v.string(), text: v.string() })),
-  correctOptionIds: v.array(v.string()),
-  explanation: v.string(),
-})
+const QUESTION_TYPES = new Set([
+  "single-choice",
+  "multiple-answer",
+  "true-false",
+  "cloze",
+  "ordering",
+  "matching",
+  "code-output",
+])
 
 /** Normalises a concept title for matching. */
 function conceptTitle(title: string): string {
@@ -94,31 +89,7 @@ async function latestAnswer(ctx: Pick<QueryCtx, "db">, itemId: Id<"learningItems
 
 /** Shapes a question item for the quiz renderer, including its answer key. */
 function quizShape(item: Doc<"learningItems">) {
-  const options =
-    item.type === "true-false"
-      ? [
-          { id: "true", text: "True" },
-          { id: "false", text: "False" },
-        ]
-      : (item.options ?? [])
-  const correctOptionIds =
-    item.type === "true-false"
-      ? [String(item.correctAnswer ?? false)]
-      : item.type === "single-choice"
-        ? item.correctOptionId
-          ? [item.correctOptionId]
-          : []
-        : (item.correctOptionIds ?? [])
-  return {
-    kind: "quiz" as const,
-    id: String(item._id),
-    concept: item.title,
-    type: item.type as "single-choice" | "multiple-answer" | "true-false",
-    question: item.question ?? "",
-    options,
-    correctOptionIds,
-    explanation: item.body,
-  }
+  return { kind: "quiz" as const, id: String(item._id), ...quizFromItem(item) }
 }
 
 /**
@@ -243,7 +214,7 @@ export const startGeneration = mutation({
 export const saveGeneratedQuestions = mutation({
   args: {
     generationId: v.id("questionGenerations"),
-    questions: v.array(generatedQuestion),
+    questions: v.array(quizValidator),
     /** Short concept reminders shown in the feed; one per concept per unit. */
     recaps: v.optional(
       v.array(v.object({ concept: v.string(), title: v.string(), body: v.string() }))
@@ -313,18 +284,8 @@ export const saveGeneratedQuestions = mutation({
         unitId: run.unitId,
         origin: "bank",
         sourceIds,
-        type: question.type,
         title,
-        body: question.explanation.slice(0, 4_000),
-        question: question.question.slice(0, 2_000),
-        ...(question.type === "true-false"
-          ? { correctAnswer: question.correctOptionIds[0] === "true" }
-          : {
-              options: question.options,
-              ...(question.type === "single-choice"
-                ? { correctOptionId: question.correctOptionIds[0] }
-                : { correctOptionIds: question.correctOptionIds }),
-            }),
+        ...quizItemFields(question),
         order: now + index,
         createdAt: now,
       })
@@ -639,9 +600,13 @@ export const feed = query({
         return { ...base, type: "explain" as const, body: item.body }
       return {
         ...base,
-        type: item.type as "single-choice" | "multiple-answer" | "true-false",
+        type: item.type,
         question: item.question ?? "",
-        ...(item.type === "true-false" ? {} : { options: item.options ?? [] }),
+        ...(item.type === "true-false" || item.type === "cloze" || item.type === "code-output"
+          ? {}
+          : { options: item.options ?? [] }),
+        // Matching cards need their left-hand items; the answer key stays on the server.
+        ...(item.matchPrompts ? { prompts: item.matchPrompts } : {}),
       }
     }
 

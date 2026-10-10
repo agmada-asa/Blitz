@@ -14,6 +14,15 @@ the sections taught so far, weak concepts, existing concept names to reuse, and
 existing questions to avoid. The reply is JSON in the lesson quiz format plus
 one short recap per concept. `parseQuestionBank` validates each question with
 the same rules as lesson quizzes; invalid ones are dropped and counted.
+`extractJsonObject` repairs LaTeX backslashes the model leaves unescaped, which
+used to fail whole batches.
+
+Most questions are single choice or multiple answer, because that is what the
+exams ask. About a quarter use the recall formats where they fit: cloze for a
+key term or value, ordering for real sequences, matching for paired facts, and
+code output for short deterministic programs (see `docs/learning-core.md` for
+how each is scored). Ordering and matching items are shuffled with a stable
+seed, so the browser and server always agree on the order shown.
 
 A unit's first bank starts automatically, once, when Teach reaches its second
 section (`startFirstQuestionBank`, called from the chat route). Later batches
