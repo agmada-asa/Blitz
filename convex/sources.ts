@@ -5,8 +5,7 @@ import { mutation, query, type QueryCtx } from "./_generated/server"
 import type { Id } from "./_generated/dataModel"
 import { v } from "convex/values"
 import { sourceImportFingerprint } from "../lib/source-fingerprint"
-import { DEFAULT_CONTENT_DEPTH } from "../lib/content-generation"
-import { resolveQueuedAiSelection, resolveQueuedContentSelection } from "./ai_provider_settings"
+import { resolveQueuedAiSelection } from "./ai_provider_settings"
 
 /** Validator for source formats accepted by the extraction interface. */
 const sourceKind = v.union(
@@ -249,6 +248,10 @@ export const createAndEnqueue = mutation({
 export const createOriginalSource = mutation({
   args: {
     projectId: v.id("projects"),
+    /** Unit the upload belongs to; must be in the same project. */
+    unitId: v.optional(v.id("units")),
+    /** Public page a fetched link source came from. */
+    originalUrl: v.optional(v.string()),
     filename: v.string(),
     kind: sourceKind,
     relativeKey: v.string(),
@@ -262,6 +265,11 @@ export const createOriginalSource = mutation({
       throw new Error("Project not found")
     if (!args.relativeKey.startsWith("Sources/") || args.sizeBytes < 1)
       throw new Error("Original source metadata is invalid")
+    if (args.unitId) {
+      const unit = await ctx.db.get(args.unitId)
+      if (!unit || unit.projectId !== args.projectId)
+        throw new Error("Unit belongs to another project")
+    }
     const duplicate = await ctx.db
       .query("sources")
       .withIndex("by_project_contentHash", (q) =>
@@ -307,6 +315,10 @@ export const createOriginalSource = mutation({
     }
     const sourceId = await ctx.db.insert("sources", {
       projectId: args.projectId,
+      ...(args.unitId ? { unitId: args.unitId } : {}),
+      ...(args.originalUrl && /^https?:\/\//i.test(args.originalUrl)
+        ? { originalUrl: args.originalUrl.slice(0, 2_000) }
+        : {}),
       filename: args.filename.trim().slice(0, 255),
       kind: args.kind,
       extractedText: "",
@@ -437,32 +449,12 @@ export const completeOriginalIngestion = mutation({
         !args.extractedText.trim() ||
         new TextEncoder().encode(args.extractedText).byteLength > 500_000
       )) throw new Error("Extracted source text is empty or exceeds 500 KB")
-      const existing = await ctx.db.query("contentGenerationJobs")
-        .withIndex("by_project_source", (q) =>
-          q.eq("projectId", source.projectId).eq("sourceId", source._id)
-        ).first()
-      if (!existing) {
-        const project = await ctx.db.get(source.projectId)
-        if (!project) throw new Error("Project not found")
-        const selection = await resolveQueuedContentSelection(ctx)
-        const now = Date.now()
-        await ctx.db.insert("contentGenerationJobs", {
-          projectId: source.projectId,
-          sourceId: source._id,
-          status: "queued",
-          depth: project.contentDepth ?? DEFAULT_CONTENT_DEPTH,
-          providerId: selection.providerId,
-          generationModel: selection.model,
-          generationEffort: selection.effort,
-          importedPages: 0,
-          createdAt: now,
-          updatedAt: now,
-        })
-      }
     }
     await ctx.db.patch(source._id, {
       extractedText: args.extractedText,
-      status: args.status === "completed" ? "processing" : "failed",
+      // Teach reads extracted text directly, so a source is usable as soon as
+      // extraction finishes; there is no generation step to wait for.
+      status: args.status === "completed" ? "ready" : "failed",
       unsupported: args.unsupported ?? false,
       error: args.error ? args.error.slice(0, 500) : undefined,
     })

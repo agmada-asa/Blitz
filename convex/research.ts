@@ -8,8 +8,7 @@ import {
   researchImportPartMatchesSource,
   validateResearchImportPartSequence,
 } from "../lib/research-import-checkpoint"
-import { resolveQueuedAiSelection, resolveQueuedContentSelection } from "./ai_provider_settings"
-import { DEFAULT_CONTENT_DEPTH } from "../lib/content-generation"
+import { resolveQueuedAiSelection } from "./ai_provider_settings"
 
 /** Maximum request text retained for one proposal. */
 export const MAX_RESEARCH_REQUEST_LENGTH = 2_000
@@ -772,7 +771,8 @@ export const completeImport = mutation({
       kind: args.kind,
       extractedText,
       originalUrl,
-      status: "processing",
+      // The extracted text is stored, so Teach and chat can use it immediately.
+      status: "ready",
       createdAt: now,
     })
     const preparationJobId = await ctx.db.insert("preparationJobs", {
@@ -790,22 +790,6 @@ export const completeImport = mutation({
       generationEffort: selection.effort,
       generatedItemCount: 0,
       attemptCount: 0,
-      createdAt: now,
-      updatedAt: now,
-    })
-    const project = await ctx.db.get(row.projectId)
-    if (!project) throw new Error("Project not found")
-    const contentSelection = await resolveQueuedContentSelection(ctx)
-    await ctx.db.insert("contentGenerationJobs", {
-      projectId: row.projectId,
-      sourceId,
-      status: "queued",
-      depth: project.contentDepth ?? DEFAULT_CONTENT_DEPTH,
-      learningScope: proposal.scope,
-      providerId: contentSelection.providerId,
-      generationModel: contentSelection.model,
-      generationEffort: contentSelection.effort,
-      importedPages: 0,
       createdAt: now,
       updatedAt: now,
     })

@@ -1,15 +1,21 @@
-/** Replays a retained original source through the durable server ingestion pipeline. */
+/**
+ * Replays a retained original source through the upload route's extraction.
+ *
+ * Extraction is the only preparation a source needs before Teach can use it,
+ * so a retry re-reads the stored original. The ingestion worker also calls
+ * this route to recover uploads interrupted by a restart.
+ */
 
-import { ConvexHttpClient } from "convex/browser"
 import { api } from "@/convex/_generated/api"
 import { createReadStream } from "node:fs"
 import { Readable } from "node:stream"
+import { serverConvexClient } from "@/lib/server/convex"
 import { resolveProjectFile } from "@/lib/server/project-files"
 
 /** Runs on Node because retries read project-local files and call Convex. */
 export const runtime = "nodejs"
 
-/** Requeues one failed source by replaying its original bytes through upload. */
+/** Re-extracts one source unless it is already extracted or being extracted. */
 export async function POST(request: Request): Promise<Response> {
   try {
     const body = (await request.json()) as {
@@ -21,79 +27,16 @@ export async function POST(request: Request): Promise<Response> {
         { error: "Project and source are required" },
         { status: 400 }
       )
-    const endpoint =
-      process.env.BLITZ_CONVEX_URL ??
-      process.env.NEXT_PUBLIC_CONVEX_URL ??
-      process.env.CONVEX_URL
-    if (!endpoint) throw new Error("Convex is unavailable")
-    const convex = new ConvexHttpClient(endpoint)
+    const convex = serverConvexClient()
     const source = await convex.query(api.sources.getOriginalSource, {
       projectId: body.projectId as never,
       sourceId: body.sourceId as never,
     })
     if (!source)
       return Response.json({ error: "Source not found" }, { status: 404 })
-    const contentJobs = await convex.query(api.contentGeneration.listForProject, {
-      projectId: body.projectId as never,
-      sourceIds: [body.sourceId as never],
-    })
-    const contentJob = contentJobs[0]
-    if (contentJob) {
-      if (contentJob.status === "failed" || contentJob.leaseExpired)
-        return Response.json(
-          await convex.mutation(api.contentGeneration.enqueue, {
-            projectId: body.projectId as never,
-            sourceId: body.sourceId as never,
-          }),
-          { headers: { "Cache-Control": "no-store" } }
-        )
+    if (source.ingestionStatus === "completed" && source.status !== "failed")
       return Response.json(
-        { jobId: contentJob.jobId, status: contentJob.status },
-        { headers: { "Cache-Control": "no-store" } }
-      )
-    }
-    const jobs = await convex.query(api.preparation.listJobsForProject, {
-      projectId: body.projectId as never,
-      sourceIds: [body.sourceId as never],
-    })
-    const preparation = jobs[0]
-    const preparationCanResume =
-      preparation?.status === "failed" || preparation?.leaseExpired === true
-    if (preparationCanResume)
-      return Response.json(
-        await convex.mutation(api.preparation.retry, {
-          jobId: preparation.jobId,
-        }),
-        { headers: { "Cache-Control": "no-store" } }
-      )
-    if (preparation?.status === "queued" || preparation?.status === "leased")
-      return Response.json(
-        {
-          jobId: preparation.jobId,
-          status: preparation.status === "leased" ? "running" : "queued",
-          pending: true,
-        },
-        { status: 202, headers: { "Cache-Control": "no-store" } }
-      )
-    if (preparation?.status === "completed")
-      return Response.json(
-        {
-          jobId: preparation.jobId,
-          status: "completed",
-          alreadyPrepared: true,
-        },
-        { headers: { "Cache-Control": "no-store" } }
-      )
-    if (
-      !source.relativeKey ||
-      source.ingestionStatus === "completed" ||
-      (source.ingestionJobId === undefined && source.hasExtractedText)
-    )
-      return Response.json(
-        await convex.mutation(api.preparation.enqueue, {
-          projectId: body.projectId as never,
-          sourceId: body.sourceId as never,
-        }),
+        { sourceId: body.sourceId, status: "completed" },
         { headers: { "Cache-Control": "no-store" } }
       )
     if (
@@ -101,12 +44,13 @@ export async function POST(request: Request): Promise<Response> {
       (source.ingestionLeaseExpiresAt ?? 0) > Date.now()
     )
       return Response.json(
-        {
-          sourceId: body.sourceId,
-          status: "running",
-          pending: true,
-        },
+        { sourceId: body.sourceId, status: "running", pending: true },
         { status: 202, headers: { "Cache-Control": "no-store" } }
+      )
+    if (!source.relativeKey)
+      return Response.json(
+        { error: "This source has no stored original to read again." },
+        { status: 422 }
       )
     const fileStream = Readable.toWeb(
       createReadStream(
@@ -117,7 +61,7 @@ export async function POST(request: Request): Promise<Response> {
       method: "POST",
       headers: {
         "x-blitz-project-id": body.projectId,
-        "x-blitz-filename": source.filename,
+        "x-blitz-filename": encodeURIComponent(source.filename),
         ...(source.mimeType ? { "content-type": source.mimeType } : {}),
       },
       body: fileStream as ReadableStream<Uint8Array>,

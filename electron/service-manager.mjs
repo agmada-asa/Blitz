@@ -10,11 +10,13 @@ import { join } from "node:path"
 /** @typedef {(url: string, options?: object) => Promise<{ok: boolean, status: number}>} HealthFetch */
 /** @typedef {(pid: number, signal?: string) => unknown} ProcessKiller */
 
+/**
+ * Background workers started after Next and Convex answer. Teach replaces the
+ * old lesson, preparation, and card-chat workers, so only source recovery and
+ * Deep Research run in the background.
+ */
 const workerDefinitions = [
   ["ingestion", "worker:ingestion"],
-  ["preparation", "worker"],
-  ["content", "worker:content"],
-  ["chat", "worker:chat"],
   ["research", "worker:research"],
 ]
 
