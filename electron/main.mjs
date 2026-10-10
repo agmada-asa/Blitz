@@ -116,3 +116,5 @@ app.on("before-quit", (event) => {
   shutdown().finally(() => app.quit())
 })
 app.on("window-all-closed", () => app.quit())
+// Detached service groups must not outlive a crashed desktop host.
+process.once("exit", () => services.killNow())

@@ -1,4 +1,4 @@
-/** Supervises Blitz's local Next, Convex, and worker processes for the desktop host. */
+/** Supervises Blitz's local Next, Convex, and worker processes for the desktop app and `dev:lan`. */
 
 import { spawn } from "node:child_process"
 import { readFile } from "node:fs/promises"
@@ -83,174 +83,350 @@ function isPortAvailable(port) {
   })
 }
 
-/** Manages process groups, health checks, and one bounded worker restart. */
+/**
+ * @typedef {"running" | "ready" | "restarting" | "stopped"} ServiceState
+ * @typedef {{state: ServiceState, restarts: number, since: number, lastExit?: string, nextRestartAt?: number}} ServiceStatus
+ */
+
+/**
+ * Supervises every local Blitz process and keeps the stack alive.
+ *
+ * Any service that exits unexpectedly is restarted with exponential backoff.
+ * Convex and Next are also probed while running: `convex dev` keeps its
+ * process alive when the database it hosts dies, so a service that stops
+ * answering is killed and restarted like a crash.
+ * The backoff resets once a process has stayed up for `stableUptimeMs`, so a
+ * worker that crashes once a day restarts immediately while a crash loop
+ * settles at `restartMaxDelayMs`. One failing service never stops the others;
+ * only `stop()` ends the stack.
+ */
 export class ServiceManager {
-  /** Creates a stopped supervisor with the supplied repository and port settings. */
   /**
-   * @param {{cwd: string, port?: number, host?: string, spawnProcess?: SpawnProcess, fetchImpl?: HealthFetch, killProcess?: ProcessKiller, workerRestartDelayMs?: number, healthIntervalMs?: number, shutdownGraceMs?: number}} options
+   * Creates a stopped supervisor with the supplied repository and port settings.
+   * @param {{cwd: string, port?: number, host?: string, desktop?: boolean, environment?: NodeJS.ProcessEnv, spawnProcess?: SpawnProcess, fetchImpl?: HealthFetch, killProcess?: ProcessKiller, restartBaseDelayMs?: number, restartMaxDelayMs?: number, stableUptimeMs?: number, healthIntervalMs?: number, healthTimeoutMs?: number, livenessIntervalMs?: number, livenessGraceMs?: number, livenessFailureLimit?: number, shutdownGraceMs?: number, onStatus?: (name: string, status: ServiceStatus) => void}} options
    */
   constructor({
     cwd,
     port = Number(process.env.BLITZ_PORT || 3001),
     host = process.env.BLITZ_DESKTOP_HOST || "127.0.0.1",
+    desktop = true,
+    environment = process.env,
     spawnProcess = spawn,
     fetchImpl = globalThis.fetch,
     killProcess = process.kill,
-    workerRestartDelayMs = 500,
+    restartBaseDelayMs = 500,
+    restartMaxDelayMs = 30_000,
+    stableUptimeMs = 60_000,
     healthIntervalMs = 250,
-    shutdownGraceMs = 3_000,
+    healthTimeoutMs = Number(
+      process.env.BLITZ_DESKTOP_HEALTH_TIMEOUT_MS || 60_000
+    ),
+    livenessIntervalMs = 5_000,
+    livenessGraceMs = 30_000,
+    livenessFailureLimit = 3,
+    // Longer than the launchers' own 3 s grace (scripts/process-groups.mjs), so
+    // `npm run dev` can force-kill a hung Next group before it is killed itself.
+    // Killing the launcher first would orphan Next with the port still bound.
+    shutdownGraceMs = 5_000,
+    onStatus = () => undefined,
   }) {
     this.cwd = cwd
     this.port = port
     this.host = host
+    this.desktop = desktop
+    this.baseEnvironment = environment
+    /** @type {Map<string, ManagedChild>} */
     this.children = new Map()
-    this.restartCounts = new Map()
-    this.stopping = false
+    /** @type {Map<string, ServiceStatus>} */
     this.status = new Map()
+    /** Consecutive quick failures per service, used for backoff. */
+    this.attempts = new Map()
+    /** Pending restart timers, cleared on shutdown. */
+    this.restartTimers = new Map()
+    /** Spawn time per service, used for backoff and the liveness grace period. */
+    this.startedAt = new Map()
+    /** Consecutive failed liveness probes per service. */
+    this.livenessFailures = new Map()
+    /** Exit reason to report instead of the signal when Blitz killed a service itself. */
+    this.killReasons = new Map()
+    this.stopping = false
     this.spawnProcess = spawnProcess
     this.fetchImpl = fetchImpl
     this.killProcess = killProcess
-    this.workerRestartDelayMs = workerRestartDelayMs
+    this.restartBaseDelayMs = restartBaseDelayMs
+    this.restartMaxDelayMs = restartMaxDelayMs
+    this.stableUptimeMs = stableUptimeMs
     this.healthIntervalMs = healthIntervalMs
+    this.healthTimeoutMs = healthTimeoutMs
+    this.livenessIntervalMs = livenessIntervalMs
+    this.livenessGraceMs = livenessGraceMs
+    this.livenessFailureLimit = livenessFailureLimit
     this.shutdownGraceMs = shutdownGraceMs
+    this.onStatus = onStatus
   }
 
-  /** Resolves Blitz's local Convex ports, starts services, and waits for Next. */
+  /**
+   * Resolves ports, starts Convex and Next, waits until both answer, then
+   * starts the workers so their first requests do not fail.
+   * @throws When Next or Convex does not become healthy before the timeout.
+   */
   async start() {
-    const convexPorts = await resolveLocalConvexPorts(this.cwd)
-    const convexHost = process.env.BLITZ_LAN_ADDRESS || "127.0.0.1"
+    const base = this.baseEnvironment
+    const convexPorts = await resolveLocalConvexPorts(this.cwd, base)
+    // Browsers rewrite this loopback host to the page's own hostname, so the
+    // same build works on this Mac, over LAN, and after a network change.
     const environment = {
-      ...process.env,
+      ...base,
       BLITZ_PORT: String(this.port),
       BLITZ_SERVER_URL: `http://127.0.0.1:${this.port}`,
       BLITZ_CONVEX_URL: `http://127.0.0.1:${convexPorts.cloud}`,
-      NEXT_PUBLIC_CONVEX_URL: `http://${convexHost}:${convexPorts.cloud}`,
-      NEXT_PUBLIC_CONVEX_SITE_URL: `http://${convexHost}:${convexPorts.site}`,
-      BLITZ_DESKTOP: "1",
-      BLITZ_NEXT_DIST_DIR: process.env.BLITZ_NEXT_DIST_DIR || ".next-desktop",
+      NEXT_PUBLIC_CONVEX_URL: `http://127.0.0.1:${convexPorts.cloud}`,
+      NEXT_PUBLIC_CONVEX_SITE_URL: `http://127.0.0.1:${convexPorts.site}`,
+      ...(this.desktop
+        ? {
+            BLITZ_DESKTOP: "1",
+            BLITZ_NEXT_DIST_DIR: base.BLITZ_NEXT_DIST_DIR || ".next-desktop",
+          }
+        : {}),
     }
     this.environment = environment
-    if (process.env.BLITZ_DESKTOP_SKIP_CONVEX !== "1")
-      this.startService(
+    this.definitions = new Map()
+    if (base.BLITZ_DESKTOP_SKIP_CONVEX !== "1")
+      this.define("convex", "npx", [
         "convex",
-        "npx",
-        [
-          "convex",
-          "dev",
-          "--tail-logs",
-          "disable",
-          "--local-cloud-port",
-          String(convexPorts.cloud),
-          "--local-site-port",
-          String(convexPorts.site),
-        ],
-        environment
-      )
-    this.startService(
-      "next",
-      "npm",
-      [
-        "run",
         "dev",
-        "--",
-        "--hostname",
-        this.host,
-        "--port",
-        String(this.port),
-      ],
-      environment
-    )
+        "--tail-logs",
+        "disable",
+        "--local-cloud-port",
+        String(convexPorts.cloud),
+        "--local-site-port",
+        String(convexPorts.site),
+      ])
+    this.define("next", "npm", [
+      "run",
+      "dev",
+      "--",
+      "--hostname",
+      this.host,
+      "--port",
+      String(this.port),
+    ])
+    for (const name of this.definitions.keys()) this.startService(name)
     await this.waitForHealth()
-    if (process.env.BLITZ_DESKTOP_SKIP_WORKERS !== "1")
-      for (const [name, script] of workerDefinitions)
-        this.startService(name, "npm", ["run", script], environment)
+    this.livenessTimer = setInterval(
+      () => void this.checkLiveness(),
+      this.livenessIntervalMs
+    )
+    this.livenessTimer.unref?.()
+    if (base.BLITZ_DESKTOP_SKIP_WORKERS !== "1")
+      for (const [name, script] of workerDefinitions) {
+        this.define(name, "npm", ["run", script])
+        this.startService(name)
+      }
   }
 
-  /** Returns a stable snapshot for diagnostics and the preload status method. */
+  /** Returns each service's current status for diagnostics and the preload bridge. */
   snapshot() {
     return Object.fromEntries(
-      [...this.status].map(([name, value]) => [name, value])
+      [...this.status].map(([name, value]) => [name, { ...value }])
     )
   }
 
-  /** Stops every managed process group and waits for exits where possible. */
+  /** Stops every managed process group, cancels pending restarts, and waits for exits. */
   async stop() {
     if (this.stopping) return
     this.stopping = true
-    const children = [...this.children.values()]
-    await Promise.all(children.map((child) => this.stopChild(child)))
+    clearInterval(this.livenessTimer)
+    for (const timer of this.restartTimers.values()) clearTimeout(timer)
+    this.restartTimers.clear()
+    const running = [...this.children.entries()]
+    await Promise.all(running.map(([, child]) => this.stopChild(child)))
+    for (const [name] of running) this.setStatus(name, { state: "stopped" })
+    for (const [name, status] of this.status)
+      if (status.state === "restarting")
+        this.setStatus(name, { state: "stopped", nextRestartAt: undefined })
     this.children.clear()
   }
 
-  /** Starts one process and restarts a worker once after an unexpected exit. */
-  startService(name, command, args, environment) {
+  /**
+   * Synchronously kills every running process group. Used from a launcher's
+   * `exit` hook, where asynchronous shutdown cannot run, so detached children
+   * never outlive a crashed launcher.
+   */
+  killNow() {
+    for (const child of this.children.values()) {
+      if (!child.pid) continue
+      try {
+        if (process.platform !== "win32") this.killProcess(-child.pid, "SIGKILL")
+        else child.kill("SIGKILL")
+      } catch {}
+    }
+  }
+
+  /** Records how to launch one named service so restarts reuse the same command. */
+  define(name, command, args) {
+    this.definitions.set(name, { command, args })
+  }
+
+  /** Spawns one defined service and schedules a backoff restart if it exits unexpectedly. */
+  startService(name) {
     if (this.stopping) return
+    const definition = this.definitions.get(name)
+    if (!definition) return
     const executable =
-      process.platform === "win32" && command === "npm" ? "npm.cmd" : command
-    const child = this.spawnProcess(executable, args, {
+      process.platform === "win32" && definition.command === "npm"
+        ? "npm.cmd"
+        : definition.command
+    const child = this.spawnProcess(executable, definition.args, {
       cwd: this.cwd,
-      env: environment,
+      env: this.environment,
       stdio: "inherit",
       detached: process.platform !== "win32",
     })
+    const startedAt = Date.now()
+    this.startedAt.set(name, startedAt)
+    this.livenessFailures.set(name, 0)
+    this.restartTimers.delete(name)
     this.children.set(name, child)
-    this.status.set(name, "starting")
-    child.once("error", (error) => {
-      this.status.set(name, `error: ${error.message}`)
-    })
-    child.once("exit", (code, signal) => {
-      this.children.delete(name)
+    let handled = false
+    /** Handles the first of `error` or `exit`; Node may emit both for one failure. */
+    const onEnded = (reason) => {
+      if (handled) return
+      handled = true
+      if (this.children.get(name) === child) this.children.delete(name)
       if (this.stopping) {
-        this.status.set(name, "stopped")
+        this.setStatus(name, { state: "stopped", lastExit: reason })
         return
       }
-      const restartCount = this.restartCounts.get(name) || 0
-      if (
-        workerDefinitions.some(([worker]) => worker === name) &&
-        restartCount < 1
-      ) {
-        this.restartCounts.set(name, restartCount + 1)
-        this.status.set(name, "restarting")
-        setTimeout(
-          () => this.startService(name, command, args, environment),
-          this.workerRestartDelayMs
-        )
-        return
-      }
-      this.status.set(name, `stopped (${signal || code || "unknown"})`)
-      if (name === "next" || name === "convex") this.stop()
-    })
+      const killReason = this.killReasons.get(name)
+      this.killReasons.delete(name)
+      this.scheduleRestart(name, startedAt, killReason ?? reason)
+    }
+    child.once("error", (error) => onEnded(`error: ${error.message}`))
+    child.once("exit", (code, signal) =>
+      onEnded(String(signal || code || "unknown"))
+    )
+    this.setStatus(name, { state: "running", nextRestartAt: undefined })
   }
 
-  /** Waits for the web process to accept requests before opening the BrowserWindow. */
+  /** Restarts a service after a delay that grows with consecutive quick failures. */
+  scheduleRestart(name, startedAt, reason) {
+    const uptime = Date.now() - startedAt
+    const attempt =
+      uptime >= this.stableUptimeMs ? 0 : this.attempts.get(name) || 0
+    const delay = Math.min(
+      this.restartBaseDelayMs * 2 ** attempt,
+      this.restartMaxDelayMs
+    )
+    this.attempts.set(name, attempt + 1)
+    const previous = this.status.get(name)
+    this.setStatus(name, {
+      state: "restarting",
+      restarts: (previous?.restarts || 0) + 1,
+      lastExit: reason,
+      nextRestartAt: Date.now() + delay,
+    })
+    this.restartTimers.set(
+      name,
+      setTimeout(() => this.startService(name), delay)
+    )
+  }
+
+  /** Returns the URL that proves each probed service is answering. */
+  livenessTargets() {
+    const targets = [["next", `http://127.0.0.1:${this.port}/`]]
+    if (this.definitions.has("convex"))
+      targets.push(["convex", this.environment.BLITZ_CONVEX_URL])
+    return targets
+  }
+
+  /**
+   * Probes Next and Convex once. A service that misses `livenessFailureLimit`
+   * probes in a row after its startup grace period is killed, and its exit
+   * handler schedules the restart.
+   */
+  async checkLiveness() {
+    if (this.checkingLiveness || this.stopping) return
+    this.checkingLiveness = true
+    try {
+      for (const [name, url] of this.livenessTargets()) {
+        const child = this.children.get(name)
+        if (
+          !child ||
+          Date.now() - (this.startedAt.get(name) || 0) < this.livenessGraceMs
+        )
+          continue
+        let healthy = false
+        try {
+          const response = await this.fetchImpl(url, {
+            signal: AbortSignal.timeout(5_000),
+          })
+          healthy = response.status < 500
+        } catch {}
+        const failures = healthy ? 0 : (this.livenessFailures.get(name) || 0) + 1
+        this.livenessFailures.set(name, failures)
+        if (failures >= this.livenessFailureLimit && !this.stopping) {
+          this.livenessFailures.set(name, 0)
+          this.killReasons.set(name, "unresponsive")
+          void this.stopChild(child)
+        }
+      }
+    } finally {
+      this.checkingLiveness = false
+    }
+  }
+
+  /** Merges a status change and notifies the launcher. */
+  setStatus(name, change) {
+    const previous = this.status.get(name) || {
+      state: "stopped",
+      restarts: 0,
+      since: Date.now(),
+    }
+    const next = {
+      ...previous,
+      ...change,
+      since: change.state && change.state !== previous.state
+        ? Date.now()
+        : previous.since,
+    }
+    this.status.set(name, next)
+    if (change.state && change.state !== previous.state) this.onStatus(name, next)
+  }
+
+  /**
+   * Waits for Next and Convex to accept requests. Restarts while waiting are
+   * allowed; only the overall timeout fails startup.
+   */
   async waitForHealth() {
-    const deadline =
-      Date.now() + Number(process.env.BLITZ_DESKTOP_HEALTH_TIMEOUT_MS || 30_000)
+    const deadline = Date.now() + this.healthTimeoutMs
+    const checkConvex = this.definitions.has("convex")
     let lastError
+    let nextReady = false
+    let convexReady = !checkConvex
     while (Date.now() < deadline) {
       try {
-        const response = await this.fetchImpl(
-          `http://127.0.0.1:${this.port}/`,
-          {
-            signal: AbortSignal.timeout(1_500),
-          }
-        )
-        if (response.ok || response.status < 500) {
-          if (process.env.BLITZ_DESKTOP_SKIP_CONVEX !== "1") {
-            const convexResponse = await this.fetchImpl(
-              this.environment?.BLITZ_CONVEX_URL || "http://127.0.0.1:3220",
-              { signal: AbortSignal.timeout(1_500) }
-            )
-            if (convexResponse.status >= 500) {
-              lastError = new Error(`Convex HTTP ${convexResponse.status}`)
-              continue
-            }
-            this.status.set("convex", "ready")
-          }
-          this.status.set("next", "ready")
-          return
+        if (!nextReady) {
+          const response = await this.fetchImpl(
+            `http://127.0.0.1:${this.port}/`,
+            { signal: AbortSignal.timeout(1_500) }
+          )
+          if (response.status < 500) {
+            nextReady = true
+            this.setStatus("next", { state: "ready" })
+          } else lastError = new Error(`Next HTTP ${response.status}`)
         }
-        lastError = new Error(`HTTP ${response.status}`)
+        if (!convexReady) {
+          const response = await this.fetchImpl(
+            this.environment.BLITZ_CONVEX_URL,
+            { signal: AbortSignal.timeout(1_500) }
+          )
+          if (response.status < 500) {
+            convexReady = true
+            this.setStatus("convex", { state: "ready" })
+          } else lastError = new Error(`Convex HTTP ${response.status}`)
+        }
+        if (nextReady && convexReady) return
       } catch (error) {
         lastError = error
       }
@@ -258,7 +434,7 @@ export class ServiceManager {
     }
     await this.stop()
     throw new Error(
-      `Blitz web host did not become healthy: ${lastError?.message || "timeout"}`
+      `Blitz did not become healthy: ${lastError?.message || "timeout"}`
     )
   }
 

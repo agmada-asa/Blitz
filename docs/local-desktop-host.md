@@ -1,19 +1,30 @@
 # Local desktop host
 
 `npm run desktop` starts the Mac-only Electron shell for Blitz. The shell starts
-the same local services as the LAN launcher on loopback: Convex at `3210`, its
-site server at `3211`, Next at `3001`, and the ingestion, preparation, chat, and research
-workers. The native shell uses the shared Blitz PNG for the macOS Dock icon and
+the same local services as the LAN launcher on loopback: Convex on the port pair
+saved in `.convex/local/default/config.json` (or the next free pair from
+`3220`), Next at `3001`, and the ingestion, preparation, content, chat, and
+research workers. The native shell uses the shared Blitz PNG for the macOS Dock icon and
 window icon. The BrowserWindow waits for Next to answer before it loads the app.
 
-The desktop supervisor owns each process group. Closing the window or quitting
-the app sends `SIGTERM` to every group and escalates to `SIGKILL` after three
-seconds, so workers and their Codex child processes do not remain behind. A
-worker may restart once after an unexpected exit; a second failure stops that
-worker and leaves the saved queue state available for a deliberate retry. Next or
-Convex failure stops the host immediately. Startup waits up to 30 seconds for
-the loopback Next health check (override with
-`BLITZ_DESKTOP_HEALTH_TIMEOUT_MS`).
+The desktop supervisor in `electron/service-manager.mjs` owns each process
+group, and `npm run dev:lan` uses the same supervisor. Closing the window or
+quitting the app sends `SIGTERM` to every group and escalates to `SIGKILL` after
+three seconds, so workers and their Codex child processes do not remain behind.
+
+Any service that exits unexpectedly, including Next and Convex, restarts with
+exponential backoff from half a second up to 30 seconds. The backoff resets
+after a service stays up for a minute. One failing service never stops the
+others. Every five seconds after startup the supervisor also probes Next and
+Convex; `convex dev` keeps running when the database it hosts dies, so a
+service that misses three probes in a row is killed and restarted as
+`unresponsive`. Workers start only after Next and Convex answer. Startup waits
+up to 60 seconds (override with `BLITZ_DESKTOP_HEALTH_TIMEOUT_MS`).
+
+Browsers rewrite a local `NEXT_PUBLIC_CONVEX_URL` to the hostname that served
+the page (`lib/client/convex-url.ts`), so the same build works on the Mac, from
+a phone on the LAN, over Tailscale, and after the Mac changes networks. The
+app shows `Reconnecting to Blitz…` while its live connection is down.
 
 The host takes the normal `.env.local` configuration and supports
 `BLITZ_PORT` plus `BLITZ_DATA_DIR`. The data root defaults to
@@ -26,7 +37,7 @@ context isolation, disabled Node integration, and a sandboxed preload. Native
 paths are checked after realpath resolution to block traversal and symlink
 escapes.
 
-The existing `npm run dev:lan` flow is unchanged. For a desktop session that
+For a desktop session that
 also serves browser or Android clients, set `BLITZ_LAN_ADDRESS` to the Mac's
 LAN address before `npm run desktop`; the host then binds Next for that LAN
 while the BrowserWindow continues to use loopback. The desktop host is

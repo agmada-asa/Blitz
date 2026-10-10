@@ -13,7 +13,7 @@ npm ci
 npm run dev:lan
 ```
 
-The launcher starts Next.js, local Convex, content generation, and the other background workers. Open the printed LAN address on a phone connected to the same Wi-Fi. Keep the process running while using the web app. Pressing `Ctrl+C` or closing its terminal stops every process group; a service that does not exit within three seconds is killed so it cannot retain a development port. The separate `npm run dev` launcher also stops Next when its terminal closes. Set `BLITZ_PORT` to change the web port from `3001`.
+The launcher starts Next.js, local Convex, content generation, and the other background workers, then prints the LAN address and a QR code. Open that address on a phone connected to the same Wi-Fi. A crashed or unresponsive service restarts automatically with backoff instead of stopping Blitz; restarts are printed as `[blitz] <service> stopped … Restarting`. Without Wi-Fi, Blitz still runs on this Mac. Pressing `Ctrl+C` or closing its terminal stops every process group; a service that does not exit within three seconds is killed so it cannot retain a development port. Set `BLITZ_PORT` to change the web port from `3007`.
 
 For separate terminals:
 
@@ -27,7 +27,7 @@ npm run worker:chat
 npm run worker:research
 ```
 
-The workers load `.env.local`. `BLITZ_CONVEX_URL` can point them at a loopback address while `NEXT_PUBLIC_CONVEX_URL` points browser clients at the LAN address. No cloud deployment or API key is required for this local setup.
+The workers load `.env.local`. `BLITZ_CONVEX_URL` points server code and workers at Convex. Browsers rewrite a local `NEXT_PUBLIC_CONVEX_URL` to the hostname that served the page, so one value works on the Mac and on the LAN. No cloud deployment or API key is required for this local setup.
 
 ## Provider controls
 
