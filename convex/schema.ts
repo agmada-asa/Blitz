@@ -360,6 +360,11 @@ export default defineSchema({
     scope: v.literal("global"),
     /** XP that counts as a completed day for the streak. */
     dailyGoalXp: v.number(),
+    /**
+     * Local hour (0–23) after which the desktop app reminds the learner if the
+     * goal is not met; null turns reminders off, unset uses the default.
+     */
+    reminderHour: v.optional(v.union(v.number(), v.null())),
     updatedAt: v.number(),
   }).index("by_scope", ["scope"]),
 

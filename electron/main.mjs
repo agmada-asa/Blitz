@@ -1,7 +1,10 @@
 /** Boots the Mac desktop shell, local Blitz services, and project-scoped native bridge. */
 
-import { app, BrowserWindow, dialog, ipcMain, shell } from "electron"
+import { app, BrowserWindow, dialog, ipcMain, Notification, shell } from "electron"
+import { ConvexHttpClient } from "convex/browser"
+import { anyApi } from "convex/server"
 import { join } from "node:path"
+import { startStudyReminders } from "./reminders.mjs"
 import { ServiceManager } from "./service-manager.mjs"
 import { assertProjectPath, repositoryRoot } from "./paths.mjs"
 
@@ -90,6 +93,33 @@ async function boot() {
   registerIpc()
   await services.start()
   await createWindow()
+  startReminders()
+}
+
+/**
+ * Starts the daily study reminder. Clicking the notification opens the unit
+ * the learner is working through, or Home.
+ */
+function startReminders() {
+  if (!Notification.isSupported()) return
+  const convex = new ConvexHttpClient(services.environment.BLITZ_CONVEX_URL)
+  startStudyReminders({
+    loadSummary: (now) =>
+      convex.query(anyApi.progress.today, {
+        tzOffsetMinutes: now.getTimezoneOffset(),
+        now: now.getTime(),
+      }),
+    notify: ({ title, body, path }) => {
+      const notification = new Notification({ title, body })
+      notification.on("click", () => {
+        if (!mainWindow) return
+        void mainWindow.loadURL(`http://127.0.0.1:${port}${path}`)
+        mainWindow.show()
+        mainWindow.focus()
+      })
+      notification.show()
+    },
+  })
 }
 
 /** Stops every managed process group before the Electron process exits. */

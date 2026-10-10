@@ -55,3 +55,11 @@ for review. The daily goal (default 50 XP) is set under Settings.
 
 The Today card (`components/feed/today-card.tsx`) is the first page of the home
 feed.
+
+## Daily reminder
+
+The desktop app checks every ten minutes (`electron/reminders.mjs`). At or
+after the reminder hour (default 19:00, set or turned off in Settings), if
+today's goal is not met and no reminder has been shown today, it shows a
+native notification. Clicking it opens the unit in progress, or Home. Browser
+and `dev:lan` sessions do not send reminders.

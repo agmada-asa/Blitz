@@ -11,6 +11,7 @@ import {
   computeStreak,
   DAILY_GOAL_RANGE,
   DEFAULT_DAILY_GOAL_XP,
+  DEFAULT_REMINDER_HOUR,
   localDayKey,
   previousDayKey,
   XP,
@@ -22,13 +23,17 @@ const HISTORY_DAYS = 120
 /** Recent chats inspected to find the Teach session to continue. */
 const RECENT_CHATS = 60
 
-/** Returns the saved daily goal, or the default. */
-async function dailyGoal(ctx: Pick<QueryCtx, "db">) {
-  const preferences = await ctx.db
+/** Returns the saved study preferences, filling in defaults. */
+async function preferences(ctx: Pick<QueryCtx, "db">) {
+  const saved = await ctx.db
     .query("studyPreferences")
     .withIndex("by_scope", (q) => q.eq("scope", "global"))
     .unique()
-  return preferences?.dailyGoalXp ?? DEFAULT_DAILY_GOAL_XP
+  return {
+    goal: saved?.dailyGoalXp ?? DEFAULT_DAILY_GOAL_XP,
+    reminderHour:
+      saved?.reminderHour === undefined ? DEFAULT_REMINDER_HOUR : saved.reminderHour,
+  }
 }
 
 /**
@@ -72,7 +77,7 @@ export const today = query({
       if (milestone.kind === "section" && localDayKey(milestone.occurredAt, offset) === todayKey)
         sectionsToday += 1
     }
-    const goal = await dailyGoal(ctx)
+    const { goal, reminderHour } = await preferences(ctx)
     const streak = computeStreak(xpByDay, todayKey, goal)
     const week = Array.from({ length: 7 }, (_, index) => {
       const day = previousDayKey(todayKey, 6 - index)
@@ -131,6 +136,7 @@ export const today = query({
       sectionsToday,
       resume,
       dueConcepts,
+      reminderHour,
     }
   },
 })
@@ -156,8 +162,33 @@ export const setDailyGoal = mutation({
   },
 })
 
-/** Returns the saved daily goal for Settings. */
+/** Returns the saved daily goal and reminder hour for Settings. */
 export const dailyGoalSetting = query({
   args: {},
-  handler: async (ctx) => ({ xp: await dailyGoal(ctx) }),
+  handler: async (ctx) => {
+    const { goal, reminderHour } = await preferences(ctx)
+    return { xp: goal, reminderHour }
+  },
+})
+
+/** Saves the desktop reminder hour (0–23), or turns reminders off with null. */
+export const setReminderHour = mutation({
+  args: { hour: v.union(v.number(), v.null()) },
+  handler: async (ctx, { hour }) => {
+    if (hour !== null && (!Number.isInteger(hour) || hour < 0 || hour > 23))
+      throw new Error("Choose an hour between 0 and 23")
+    const existing = await ctx.db
+      .query("studyPreferences")
+      .withIndex("by_scope", (q) => q.eq("scope", "global"))
+      .unique()
+    if (existing)
+      await ctx.db.patch(existing._id, { reminderHour: hour, updatedAt: Date.now() })
+    else
+      await ctx.db.insert("studyPreferences", {
+        scope: "global",
+        dailyGoalXp: DEFAULT_DAILY_GOAL_XP,
+        reminderHour: hour,
+        updatedAt: Date.now(),
+      })
+  },
 })

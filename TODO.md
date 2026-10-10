@@ -44,7 +44,7 @@ names the PR that delivers it once one exists.
 
 - [x] Weakness-weighted infinite feed of studied material, with recaps
 - [x] Streaks, XP, daily goal, Today card with a seven-day chart
-- [ ] Daily prompt notification (desktop app)
+- [x] Daily reminder notification in the desktop app (time set in Settings)
 - [ ] Session summaries after Teach and drills
 
 ## Known limits
