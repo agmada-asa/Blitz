@@ -289,44 +289,47 @@ function MatchingAnswer({
             key={prompt}
             className={cn(
               rowClass(mark),
-              "flex-col items-stretch gap-2 sm:flex-row sm:items-center"
+              // A grid keeps the item readable when feedback adds a second line.
+              "grid items-center gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]"
             )}
           >
-            <span id={labelId} className="min-w-0 flex-1 font-medium">
+            <span id={labelId} className="min-w-0 font-medium break-words">
               {renderMarkdown(prompt, { inline: true })}
             </span>
-            <div className="flex min-w-0 items-center gap-2 sm:w-[48%]">
-              <Select
-                value={value[index] || undefined}
-                disabled={disabled}
-                onValueChange={(choice) => {
-                  const next = [...value]
-                  next[index] = choice
-                  onChange(next)
-                }}
+            <Select
+              value={value[index] || undefined}
+              disabled={disabled}
+              onValueChange={(choice) => {
+                const next = [...value]
+                next[index] = choice
+                onChange(next)
+              }}
+            >
+              <SelectTrigger
+                className="h-11 w-full min-w-0 sm:h-9"
+                aria-labelledby={labelId}
               >
-                <SelectTrigger
-                  className="h-11 min-w-0 flex-1 sm:h-9"
-                  aria-labelledby={labelId}
-                >
-                  <SelectValue placeholder="Choose a match" />
-                </SelectTrigger>
-                <SelectContent>
-                  {shape.options.map((option) => (
-                    <SelectItem key={option.id} value={option.id}>
-                      {option.text}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              {mark !== undefined ? <RowMark correct={mark} /> : null}
-            </div>
-            {mark === false && expected ? (
-              <p className="text-xs text-muted-foreground sm:basis-full">
-                Matches{" "}
-                {renderMarkdown(byId.get(expected)?.text ?? "", {
-                  inline: true,
-                })}
+                <SelectValue placeholder="Choose a match" />
+              </SelectTrigger>
+              <SelectContent>
+                {shape.options.map((option) => (
+                  <SelectItem key={option.id} value={option.id}>
+                    {option.text}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {mark !== undefined ? (
+              <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground sm:col-span-2">
+                <RowMark correct={mark} />
+                {mark === false && expected ? (
+                  <span>
+                    Matches{" "}
+                    {renderMarkdown(byId.get(expected)?.text ?? "", {
+                      inline: true,
+                    })}
+                  </span>
+                ) : null}
               </p>
             ) : null}
           </div>
