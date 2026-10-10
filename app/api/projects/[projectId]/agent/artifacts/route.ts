@@ -1,5 +1,5 @@
 /** Lists project agent artifacts and synchronizes filesystem metadata in Convex. */
-import { ConvexHttpClient } from "convex/browser"
+import { serverConvexClient } from "@/lib/server/convex"
 import { api } from "@/convex/_generated/api"
 import {
   prepareProjectAgentWorkspace,
@@ -18,12 +18,9 @@ export async function GET(
 ): Promise<Response> {
   try {
     const { projectId } = await context.params
-    const endpoint =
-      process.env.BLITZ_CONVEX_URL ??
-      process.env.NEXT_PUBLIC_CONVEX_URL ??
-      process.env.CONVEX_URL
-    if (!endpoint) throw new Error("Projects are unavailable")
-    const convex = new ConvexHttpClient(endpoint)
+    const convex = serverConvexClient(
+      () => new Error("Projects are unavailable")
+    )
     const project = await convex.query(api.projects.getProject, {
       projectId: projectId as never,
     })

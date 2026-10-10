@@ -1,5 +1,6 @@
 /** Stores ad hoc chat originals and serves them through owned document IDs. */
-import { ConvexHttpClient } from "convex/browser"
+import type { ConvexHttpClient } from "convex/browser"
+import { serverConvexClient } from "@/lib/server/convex"
 import { randomBytes } from "node:crypto"
 import { api } from "@/convex/_generated/api"
 import type { Id } from "@/convex/_generated/dataModel"
@@ -66,12 +67,7 @@ function inferMimeType(filename: string, candidate: string | null): string {
 
 /** Connects to the same personal deployment as the chat route. */
 function client(): ConvexHttpClient {
-  const url =
-    process.env.BLITZ_CONVEX_URL ??
-    process.env.NEXT_PUBLIC_CONVEX_URL ??
-    process.env.CONVEX_URL
-  if (!url) throw new Error("Chat files are unavailable")
-  return new ConvexHttpClient(url)
+  return serverConvexClient(() => new Error("Chat files are unavailable"))
 }
 
 /** Characters of extracted text kept in the stored preview once the full text is too large. */

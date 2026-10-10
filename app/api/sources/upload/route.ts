@@ -2,7 +2,8 @@
 
 import { storeOriginalSource } from "@/lib/server/source-files"
 import { randomUUID } from "node:crypto"
-import { ConvexHttpClient } from "convex/browser"
+import type { ConvexHttpClient } from "convex/browser"
+import { serverConvexClient } from "@/lib/server/convex"
 import { api } from "@/convex/_generated/api"
 import { resolveProjectFile } from "@/lib/server/project-files"
 import { SourceIngestionError } from "@/lib/server/source-ingestion/errors"
@@ -13,12 +14,7 @@ export const runtime = "nodejs"
 
 /** Connects this local route to the configured personal Convex deployment. */
 function convexClient(): ConvexHttpClient {
-  const endpoint =
-    process.env.BLITZ_CONVEX_URL ??
-    process.env.NEXT_PUBLIC_CONVEX_URL ??
-    process.env.CONVEX_URL
-  if (!endpoint) throw new Error("Convex is unavailable")
-  return new ConvexHttpClient(endpoint)
+  return serverConvexClient(() => new Error("Convex is unavailable"))
 }
 
 /**

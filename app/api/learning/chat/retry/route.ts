@@ -1,6 +1,6 @@
 /** Requeues one failed card-chat message after an explicit client retry action. */
 
-import { ConvexHttpClient } from "convex/browser"
+import { serverConvexClient } from "@/lib/server/convex"
 import { api } from "@/convex/_generated/api"
 import type { Id } from "@/convex/_generated/dataModel"
 import { LearningApiError, readLearningJson } from "@/lib/server/learning-api"
@@ -22,13 +22,9 @@ export async function POST(request: Request): Promise<Response> {
     if (!body || typeof body !== "object")
       throw new LearningApiError("Retry request is invalid", 400)
     const input = body as Record<string, unknown>
-    const endpoint =
-      process.env.BLITZ_CONVEX_URL ??
-      process.env.NEXT_PUBLIC_CONVEX_URL ??
-      process.env.CONVEX_URL
-    if (!endpoint)
-      throw new LearningApiError("Chat service is unavailable", 503)
-    const client = new ConvexHttpClient(endpoint)
+    const client = serverConvexClient(
+      () => new LearningApiError("Chat service is unavailable", 503)
+    )
     const result = await client.mutation(api.conversations.retry, {
       projectId: requiredId(input.projectId, "Project ID") as Id<"projects">,
       itemId: requiredId(input.itemId, "Item ID") as Id<"learningItems">,

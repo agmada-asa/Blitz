@@ -1,5 +1,5 @@
 /** Receives an explicit, single-use response for an agent request shown in the composer. */
-import { ConvexHttpClient } from "convex/browser"
+import { serverConvexClient } from "@/lib/server/convex"
 import { z } from "zod"
 import { api } from "@/convex/_generated/api"
 import type { Id } from "@/convex/_generated/dataModel"
@@ -22,12 +22,9 @@ export async function POST(request: Request): Promise<Response> {
         response: z.string().max(20_000).optional(),
       })
       .parse(await request.json())
-    const url =
-      process.env.BLITZ_CONVEX_URL ??
-      process.env.NEXT_PUBLIC_CONVEX_URL ??
-      process.env.CONVEX_URL
-    if (!url) throw new Error("Chats are unavailable.")
-    await new ConvexHttpClient(url).mutation(api.chatAgents.decideApproval, {
+    await serverConvexClient(
+      () => new Error("Chats are unavailable.")
+    ).mutation(api.chatAgents.decideApproval, {
       ...body,
       chatId: body.chatId as Id<"workspaceChats">,
       messageId: body.messageId as Id<"workspaceChatMessages">,

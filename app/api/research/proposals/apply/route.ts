@@ -1,6 +1,7 @@
 /** Enqueues explicitly approved source indexes from a stored research proposal. */
 
-import { ConvexHttpClient } from "convex/browser"
+import type { ConvexHttpClient } from "convex/browser"
+import { serverConvexClient } from "@/lib/server/convex"
 import { api } from "@/convex/_generated/api"
 import type { Id } from "@/convex/_generated/dataModel"
 import { LearningApiError, readLearningJson } from "@/lib/server/learning-api"
@@ -32,13 +33,9 @@ function sourceIndexes(value: unknown): number[] {
 
 /** Creates a client for the configured local Convex deployment. */
 function convexClient(): ConvexHttpClient {
-  const endpoint =
-    process.env.BLITZ_CONVEX_URL ??
-    process.env.NEXT_PUBLIC_CONVEX_URL ??
-    process.env.CONVEX_URL
-  if (!endpoint)
-    throw new LearningApiError("Research service is unavailable", 503)
-  return new ConvexHttpClient(endpoint)
+  return serverConvexClient(
+    () => new LearningApiError("Research service is unavailable", 503)
+  )
 }
 
 /** Queues selected sources using indexes from the persisted ready proposal. */

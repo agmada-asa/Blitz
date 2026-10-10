@@ -1,7 +1,8 @@
 /** Returns bounded project-detail data and accepts native paste/link source actions. */
 
 import { ConvexError } from "convex/values"
-import { ConvexHttpClient } from "convex/browser"
+import type { ConvexHttpClient } from "convex/browser"
+import { serverConvexClient } from "@/lib/server/convex"
 
 import { api } from "@/convex/_generated/api"
 import type { Id } from "@/convex/_generated/dataModel"
@@ -17,13 +18,9 @@ const MAX_URL_LENGTH = 2_048
 
 /** Creates the configured Convex HTTP client without exposing its URL to native code. */
 function client(): ConvexHttpClient {
-  const endpoint =
-    process.env.BLITZ_CONVEX_URL ??
-    process.env.NEXT_PUBLIC_CONVEX_URL ??
-    process.env.CONVEX_URL
-  if (!endpoint)
-    throw new LearningApiError("Projects are unavailable. Try again.", 503)
-  return new ConvexHttpClient(endpoint)
+  return serverConvexClient(
+    () => new LearningApiError("Projects are unavailable. Try again.", 503)
+  )
 }
 
 /** Rejects malformed route identifiers before they reach Convex. */

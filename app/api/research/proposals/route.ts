@@ -1,6 +1,7 @@
 /** Provides the approval-first research proposal polling contract. */
 
-import { ConvexHttpClient } from "convex/browser"
+import type { ConvexHttpClient } from "convex/browser"
+import { serverConvexClient } from "@/lib/server/convex"
 import { api } from "@/convex/_generated/api"
 import type { Id } from "@/convex/_generated/dataModel"
 import { LearningApiError, readLearningJson } from "@/lib/server/learning-api"
@@ -21,17 +22,9 @@ function requiredText(value: unknown, label: string, maximum: number): string {
 
 /** Creates a Convex client for the configured local deployment. */
 function convexClient(): ConvexHttpClient {
-  const endpoint =
-    process.env.BLITZ_CONVEX_URL ??
-    process.env.NEXT_PUBLIC_CONVEX_URL ??
-    process.env.CONVEX_URL
-  if (!endpoint)
-    throw new LearningApiError("Research service is unavailable", 503)
-  try {
-    return new ConvexHttpClient(endpoint)
-  } catch {
-    throw new LearningApiError("Research service is unavailable", 503)
-  }
+  return serverConvexClient(
+    () => new LearningApiError("Research service is unavailable", 503)
+  )
 }
 
 /** Reads the three-field proposal request accepted by browser and native clients. */

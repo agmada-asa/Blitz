@@ -1,6 +1,7 @@
 /** Adapts bounded HTTP learning requests to the server-side Convex API. */
 
-import { ConvexHttpClient } from "convex/browser"
+import type { ConvexHttpClient } from "convex/browser"
+import { serverConvexClient } from "./convex.ts"
 
 import { api } from "../../convex/_generated/api.js"
 import type { Id } from "../../convex/_generated/dataModel.js"
@@ -138,16 +139,9 @@ export function parseEventRequest(value: unknown): EventRequest {
 
 /** Creates a server-only Convex HTTP client or raises a configuration-safe error. */
 function convexClient(): ConvexHttpClient {
-  const url =
-    process.env.BLITZ_CONVEX_URL ??
-    process.env.CONVEX_URL ??
-    process.env.NEXT_PUBLIC_CONVEX_URL
-  if (!url) throw new LearningApiError("Learning service is unavailable", 503)
-  try {
-    return new ConvexHttpClient(url)
-  } catch {
-    throw new LearningApiError("Learning service is unavailable", 503)
-  }
+  return serverConvexClient(
+    () => new LearningApiError("Learning service is unavailable", 503)
+  )
 }
 
 /** Item IDs remembered in a feed cursor; enough to avoid repeats within a session. */

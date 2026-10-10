@@ -1,6 +1,7 @@
 /** Exposes the bounded written-practice mutations to the native client. */
 
-import { ConvexHttpClient } from "convex/browser"
+import type { ConvexHttpClient } from "convex/browser"
+import { serverConvexClient } from "@/lib/server/convex"
 
 import { api } from "@/convex/_generated/api"
 import type { Id } from "@/convex/_generated/dataModel"
@@ -11,17 +12,9 @@ export const runtime = "nodejs"
 
 /** Returns a configured Convex client or a safe service error. */
 function convexClient(): ConvexHttpClient {
-  const endpoint =
-    process.env.BLITZ_CONVEX_URL ??
-    process.env.CONVEX_URL ??
-    process.env.NEXT_PUBLIC_CONVEX_URL
-  if (!endpoint)
-    throw new LearningApiError("Learning service is unavailable", 503)
-  try {
-    return new ConvexHttpClient(endpoint)
-  } catch {
-    throw new LearningApiError("Learning service is unavailable", 503)
-  }
+  return serverConvexClient(
+    () => new LearningApiError("Learning service is unavailable", 503)
+  )
 }
 
 /** Reads a bounded project or topic identifier from query or mutation data. */
