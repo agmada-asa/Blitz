@@ -61,7 +61,9 @@ export function buildQuestionBankPrompt(input: BankPromptInput): string {
           .map((question) => `- ${question.replace(/\s+/g, " ").slice(0, 200)}`)
           .join("\n")}`
       : "",
-    'Reply with only one JSON object and nothing else: {"questions":[QUESTION, ...]}. Each QUESTION has this exact shape:',
+    'Reply with only one JSON object and nothing else: {"recaps":[RECAP, ...],"questions":[QUESTION, ...]}.',
+    'Write one RECAP for each concept you use: {"concept":"same name as in the questions","title":"short noun phrase","body":"…"}. A recap is a self-contained reminder for someone who was taught the idea and is starting to forget it: 50 to 120 words of Markdown, the core idea first, then one concrete example or formula. LaTeX and inline code are allowed.',
+    "Each QUESTION has this exact shape:",
     '{"id":"b1","concept":"short concept name","type":"single-choice","question":"…","options":["…","…","…","…"],"answer":2,"explanation":"…"}',
     '- type "single-choice": 3–5 options, answer is the 0-based index of the one correct option.',
     '- type "multiple-answer": 4–6 options, answer is an array of 0-based indices with at least 2 correct and at least 1 incorrect.',
@@ -82,11 +84,38 @@ export function buildQuestionBankPrompt(input: BankPromptInput): string {
     .join("\n\n")
 }
 
+/** A short reminder of one concept, shown in the feed before its questions. */
+export type ConceptRecap = { concept: string; title: string; body: string }
+
 /** Result of validating a generated batch. */
 export type ParsedQuestionBank = {
   questions: QuizBlock[]
+  /** Valid recaps, at most one per concept. */
+  recaps: ConceptRecap[]
   /** Questions dropped because they failed validation. */
   rejected: number
+}
+
+/** Validates recaps, keeping one per concept and dropping malformed ones. */
+function parseRecaps(value: unknown): ConceptRecap[] {
+  if (!Array.isArray(value)) return []
+  const recaps: ConceptRecap[] = []
+  const seen = new Set<string>()
+  for (const raw of value.slice(0, 12)) {
+    if (!raw || typeof raw !== "object") continue
+    const { concept, title, body } = raw as Record<string, unknown>
+    if (typeof concept !== "string" || typeof title !== "string" || typeof body !== "string")
+      continue
+    const key = concept.replace(/\s+/g, " ").trim().toLowerCase()
+    if (!key || seen.has(key) || !title.trim() || body.trim().length < 20) continue
+    seen.add(key)
+    recaps.push({
+      concept: concept.trim().slice(0, 120),
+      title: title.trim().slice(0, 160),
+      body: body.trim().slice(0, 1_500),
+    })
+  }
+  return recaps
 }
 
 /** Pulls the first JSON object out of a reply that may wrap it in a code fence. */
@@ -109,7 +138,7 @@ function extractJsonObject(text: string): unknown {
  * @throws When the reply holds no parsable JSON object with a `questions` array.
  */
 export function parseQuestionBank(text: string, idPrefix = "b"): ParsedQuestionBank {
-  const value = extractJsonObject(text) as { questions?: unknown }
+  const value = extractJsonObject(text) as { questions?: unknown; recaps?: unknown }
   if (!value || !Array.isArray(value.questions))
     throw new Error("The reply had no questions list")
   const questions: QuizBlock[] = []
@@ -136,5 +165,5 @@ export function parseQuestionBank(text: string, idPrefix = "b"): ParsedQuestionB
     seen.add(key)
     questions.push(parsed.block)
   }
-  return { questions, rejected }
+  return { questions, recaps: parseRecaps(value.recaps), rejected }
 }

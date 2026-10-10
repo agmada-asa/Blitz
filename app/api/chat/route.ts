@@ -36,6 +36,7 @@ import { providerCommand } from "@/lib/server/providers/registry"
 import type { ProviderImageAttachment } from "@/lib/server/providers/types"
 import { isTrustedBlitzOrigin } from "@/lib/server/request-origin"
 import { generateChatTitle } from "@/lib/server/chat-title"
+import { startFirstQuestionBank } from "@/lib/server/question-bank"
 import { registerChatRun } from "@/lib/server/chat-run-registry"
 import {
   MAX_PROVIDER_ACTIVITY_EVENTS,
@@ -1061,6 +1062,19 @@ export async function POST(request: Request): Promise<Response> {
             })
             .catch((error: unknown) => {
               console.error("Teach progress could not be saved", {
+                message: error instanceof Error ? error.message : "Unknown error",
+              })
+            })
+          // Once a unit is under way, write its first question bank in the
+          // background so Practice and the feed have material to use.
+          const knownOutline = teach.outline ?? outline
+          const reachedSecond =
+            marker?.kind === "done" ||
+            (marker?.kind === "section" &&
+              (knownOutline?.sections.findIndex((section) => section.id === marker.id) ?? -1) >= 1)
+          if (reachedSecond)
+            void startFirstQuestionBank(teach.unitId).catch((error: unknown) => {
+              console.error("First question bank could not start", {
                 message: error instanceof Error ? error.message : "Unknown error",
               })
             })

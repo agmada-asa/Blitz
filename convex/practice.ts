@@ -186,10 +186,22 @@ export const generationContext = query({
  * @returns The run ID, or `alreadyRunning` with the active run's ID.
  */
 export const startGeneration = mutation({
-  args: { unitId: v.id("units"), count: v.number() },
-  handler: async (ctx, { unitId, count }) => {
+  args: {
+    unitId: v.id("units"),
+    count: v.number(),
+    /** Skip when the unit already has generated questions, for automatic first banks. */
+    onlyIfEmpty: v.optional(v.boolean()),
+  },
+  handler: async (ctx, { unitId, count, onlyIfEmpty }) => {
     const unit = await ctx.db.get(unitId)
     if (!unit) throw new Error("Unit not found")
+    if (onlyIfEmpty) {
+      const existing = await ctx.db
+        .query("questionGenerations")
+        .withIndex("by_unit_startedAt", (q) => q.eq("unitId", unitId))
+        .first()
+      if (existing) return { generationId: existing._id, alreadyRunning: true, skipped: true }
+    }
     const now = Date.now()
     const latest = await ctx.db
       .query("questionGenerations")
@@ -197,7 +209,7 @@ export const startGeneration = mutation({
       .order("desc")
       .first()
     if (latest?.status === "running" && latest.startedAt > now - GENERATION_LEASE_MS)
-      return { generationId: latest._id, alreadyRunning: true }
+      return { generationId: latest._id, alreadyRunning: true, skipped: false }
     if (latest?.status === "running")
       await ctx.db.patch(latest._id, {
         status: "failed",
@@ -212,7 +224,7 @@ export const startGeneration = mutation({
       createdCount: 0,
       startedAt: now,
     })
-    return { generationId, alreadyRunning: false }
+    return { generationId, alreadyRunning: false, skipped: false }
   },
 })
 
@@ -224,9 +236,13 @@ export const saveGeneratedQuestions = mutation({
   args: {
     generationId: v.id("questionGenerations"),
     questions: v.array(generatedQuestion),
+    /** Short concept reminders shown in the feed; one per concept per unit. */
+    recaps: v.optional(
+      v.array(v.object({ concept: v.string(), title: v.string(), body: v.string() }))
+    ),
     rejectedCount: v.number(),
   },
-  handler: async (ctx, { generationId, questions, rejectedCount }) => {
+  handler: async (ctx, { generationId, questions, recaps, rejectedCount }) => {
     const run = await ctx.db.get(generationId)
     if (!run || run.status !== "running") throw new Error("Question run is not active")
     if (questions.length > 30) throw new Error("Too many questions")
@@ -237,22 +253,47 @@ export const saveGeneratedQuestions = mutation({
         .collect()
     ).map((source) => source._id)
     const now = Date.now()
-    for (const [index, question] of questions.entries()) {
-      const title = conceptTitle(question.concept)
-      let concept = await ctx.db
+    /** Finds a concept by title in the project, creating it under this unit. */
+    const conceptFor = async (name: string) => {
+      const title = conceptTitle(name)
+      const existing = await ctx.db
         .query("concepts")
         .withIndex("by_project_title", (q) => q.eq("projectId", run.projectId).eq("title", title))
         .first()
-      if (!concept) {
-        const conceptId = await ctx.db.insert("concepts", {
-          projectId: run.projectId,
-          unitId: run.unitId,
-          title,
-          sourceIds,
-          createdAt: now,
-        })
-        concept = (await ctx.db.get(conceptId))!
-      }
+      if (existing) return existing
+      const conceptId = await ctx.db.insert("concepts", {
+        projectId: run.projectId,
+        unitId: run.unitId,
+        title,
+        sourceIds,
+        createdAt: now,
+      })
+      return (await ctx.db.get(conceptId))!
+    }
+    const unitItems = await ctx.db
+      .query("learningItems")
+      .withIndex("by_unit", (q) => q.eq("unitId", run.unitId))
+      .collect()
+    for (const recap of (recaps ?? []).slice(0, 12)) {
+      const concept = await conceptFor(recap.concept)
+      if (unitItems.some((item) => item.type === "explain" && item.conceptId === concept._id))
+        continue
+      await ctx.db.insert("learningItems", {
+        projectId: run.projectId,
+        conceptId: concept._id,
+        unitId: run.unitId,
+        origin: "bank",
+        sourceIds,
+        type: "explain",
+        title: recap.title.slice(0, 160),
+        body: recap.body.slice(0, 1_500),
+        order: now,
+        createdAt: now,
+      })
+    }
+    for (const [index, question] of questions.entries()) {
+      const concept = await conceptFor(question.concept)
+      const title = concept.title
       await ctx.db.insert("learningItems", {
         projectId: run.projectId,
         conceptId: concept._id,
@@ -459,5 +500,162 @@ export const drill = query({
         quiz: quizShape(item),
       }
     })
+  },
+})
+
+/** Most recently shown items avoided when the feed starts a new round. */
+const FEED_ROUND_GAP = 8
+
+/**
+ * Serves the home feed: questions and short recaps from units the learner has
+ * started, missed and weak material first, never ending. Each page excludes
+ * items already shown in this feed session; once everything has been shown,
+ * a new round begins that still skips the most recent few.
+ *
+ * Cards match the shared feed contract, so question cards carry no answer key;
+ * answers are scored by `learning.recordAnswerEvent`.
+ */
+export const feed = query({
+  args: {
+    projectId: v.optional(v.id("projects")),
+    /** Item IDs already shown in this feed session, newest last. */
+    seen: v.array(v.string()),
+    limit: v.number(),
+  },
+  handler: async (ctx, { projectId, seen, limit }) => {
+    const pageSize = Math.max(1, Math.min(30, Math.round(limit)))
+    const allUnits = projectId
+      ? await ctx.db
+          .query("units")
+          .withIndex("by_project_order", (q) => q.eq("projectId", projectId))
+          .collect()
+      : await ctx.db.query("units").collect()
+    const projectTitles = new Map<string, string>()
+    const reviewCache = new Map<string, Awaited<ReturnType<typeof reviewsByConcept>>>()
+    const questions: Array<{ item: Doc<"learningItems">; candidate: DrillCandidate }> = []
+    const recaps = new Map<string, Doc<"learningItems">>()
+    const strengthByConcept = new Map<string, ConceptStrength>()
+    const studiedProjects = new Set<string>()
+    for (const unit of allUnits) {
+      const items = (
+        await ctx.db
+          .query("learningItems")
+          .withIndex("by_unit", (q) => q.eq("unitId", unit._id))
+          .collect()
+      ).filter((item) => !item.archivedAt)
+      if (!items.length) continue
+      const teach = await ctx.db
+        .query("workspaceChats")
+        .withIndex("by_unit_updatedAt", (q) => q.eq("unitId", unit._id))
+        .order("desc")
+        .first()
+      const projectKey = String(unit.projectId)
+      if (!reviewCache.has(projectKey))
+        reviewCache.set(projectKey, await reviewsByConcept(ctx, unit.projectId))
+      const reviews = reviewCache.get(projectKey)!
+      const unitQuestions: typeof questions = []
+      let answered = false
+      for (const item of items) {
+        const strength = conceptStrength(historyOf(reviews.get(String(item.conceptId))))
+        strengthByConcept.set(String(item.conceptId), strength)
+        if (item.type === "explain") {
+          recaps.set(String(item.conceptId), item)
+          continue
+        }
+        if (!isQuestion(item)) continue
+        const last = await latestAnswer(ctx, item._id)
+        if (last) answered = true
+        const review = reviews.get(String(item.conceptId))
+        unitQuestions.push({
+          item,
+          candidate: {
+            itemId: String(item._id),
+            conceptId: String(item.conceptId),
+            createdAt: item.createdAt,
+            ...(last?.outcome ? { lastOutcome: last.outcome, lastAnsweredAt: last.occurredAt } : {}),
+            strength,
+            ...(review && review.attemptCount > 0 ? { conceptDueAt: review.dueAt } : {}),
+          },
+        })
+      }
+      // Only material from units the learner has started belongs in the feed.
+      if (!teach?.teachOutline && !answered) {
+        for (const item of items) if (item.type === "explain") recaps.delete(String(item.conceptId))
+        continue
+      }
+      questions.push(...unitQuestions)
+      studiedProjects.add(projectKey)
+      if (!projectTitles.has(projectKey)) {
+        const project = await ctx.db.get(unit.projectId)
+        if (project) projectTitles.set(projectKey, project.title)
+      }
+    }
+    const unitTitles = new Map(allUnits.map((unit) => [String(unit._id), unit.title]))
+
+    const seenSet = new Set(seen)
+    let pool = questions.filter((entry) => !seenSet.has(entry.candidate.itemId))
+    let roundSeen = seenSet
+    if (!pool.length && questions.length) {
+      // Everything has been shown: start a new round, skipping the most recent few.
+      roundSeen = new Set(seen.slice(-FEED_ROUND_GAP))
+      pool = questions.filter((entry) => !roundSeen.has(entry.candidate.itemId))
+      if (!pool.length) pool = questions
+    }
+    const order = selectDrillQuestions(
+      pool.map((entry) => entry.candidate),
+      Date.now(),
+      pageSize
+    )
+    const byId = new Map(questions.map((entry) => [entry.candidate.itemId, entry.item]))
+
+    /** Shapes a learning item as a feed card. */
+    const card = (item: Doc<"learningItems">) => {
+      const base = {
+        id: String(item._id),
+        projectId: String(item.projectId),
+        conceptId: String(item.conceptId),
+        title: item.title,
+        sourceLabel: unitTitles.get(String(item.unitId)) ?? "",
+        sourceIds: item.sourceIds.map(String),
+      }
+      if (item.type === "explain")
+        return { ...base, type: "explain" as const, body: item.body }
+      return {
+        ...base,
+        type: item.type as "single-choice" | "multiple-answer" | "true-false",
+        question: item.question ?? "",
+        ...(item.type === "true-false" ? {} : { options: item.options ?? [] }),
+      }
+    }
+
+    const cards = []
+    const placedRecaps = new Set<string>()
+    let questionsSinceRecap = 2
+    for (const id of order) {
+      const item = byId.get(id)!
+      const conceptId = String(item.conceptId)
+      const recap = recaps.get(conceptId)
+      const strength = strengthByConcept.get(conceptId)
+      // A recap comes before a question on a concept that is not sticking yet.
+      if (
+        recap &&
+        strength !== "strong" &&
+        questionsSinceRecap >= 2 &&
+        !placedRecaps.has(conceptId) &&
+        !roundSeen.has(String(recap._id))
+      ) {
+        cards.push(card(recap))
+        placedRecaps.add(conceptId)
+        questionsSinceRecap = 0
+      }
+      cards.push(card(item))
+      questionsSinceRecap += 1
+    }
+    return {
+      cards,
+      projects: [...studiedProjects].map((id) => ({ id, title: projectTitles.get(id) ?? "" })),
+      topics: [] as Array<{ id: string; projectId: string; title: string }>,
+      hasMaterial: questions.length > 0,
+    }
   },
 })
