@@ -62,7 +62,7 @@ export type QuizBlock = {
   prompts?: string[]
   /** Cloze: accepted answers per blank. Code output: one entry of accepted outputs. */
   acceptedAnswers?: string[][]
-  /** Markdown explanation shown after answering. */
+  /** Markdown explanation shown after answering; empty when the model gave none. */
   explanation: string
 }
 
@@ -449,11 +449,9 @@ function parseQuiz(source: string): QuizBlock {
     )
   const concept = requiredText(data.concept, "concept", limits.conceptChars)
   const question = requiredText(data.question, "question", limits.questionChars)
-  const explanation = requiredText(
-    data.explanation,
-    "explanation",
-    limits.explanationChars
-  )
+  // A missing explanation should not cost the learner the whole question.
+  const explanation =
+    optionalText(data.explanation, "explanation", limits.explanationChars) ?? ""
   const type = data.type
   if (
     type === "cloze" ||
@@ -1055,7 +1053,10 @@ Use after a key idea, roughly one per section. Ask about the idea, not trivia. O
 - type "multiple-answer": 2–6 distinct options, answer is an array of 0-based indices with at least 2 correct and at least 1 incorrect.
 - type "true-false": omit options, answer is true or false.
 - question max 1000 chars, explanation max 2000 chars (Markdown allowed). Do not reveal the answer outside the block.
-Other types, for recall that choices would give away:
+Other types, for recall that choices would give away. They take the same id, concept, question, and explanation fields:
+\`\`\`quiz
+{"id":"q2","concept":"Heaps","type":"cloze","question":"A binary heap with n nodes has height {{1}}.","answer":[["O(log n)","log n"]],"explanation":"Each level doubles the nodes, so the height grows logarithmically."}
+\`\`\`
 - "cloze": mark 1–6 blanks in the question as {{1}}, {{2}}…; answer is one list of accepted answers per blank, e.g. "answer":[["O(log n)","log n"],["root"]]. Accept common spellings; matching ignores case and spacing.
 - "ordering": options are 3–8 steps or items listed in the correct order (they are shuffled for the learner); no answer field.
 - "matching": "pairs":[["term","its match"],…] with 3–6 pairs, optional "extras":["unused match"] (max 2); no options or answer.
