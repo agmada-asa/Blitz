@@ -4,6 +4,7 @@ import { AppearanceSettings } from "@/components/settings/appearance-settings"
 import { KokoroVoiceSettings } from "@/components/settings/kokoro-voice-settings"
 import { ModelSettingsForm } from "@/components/settings/model-settings-form"
 import { ProviderConnections } from "@/components/settings/provider-connections"
+import { StudyGoalSettings } from "@/components/settings/study-goal-settings"
 
 /** Renders the settings route and groups appearance choices above AI settings. */
 export default function SettingsPage() {
@@ -18,6 +19,21 @@ export default function SettingsPage() {
         </p>
       </div>
       <div className="space-y-10">
+        <section aria-labelledby="study-heading" className="space-y-4">
+          <div>
+            <h2
+              id="study-heading"
+              className="font-heading text-xl font-medium tracking-tight"
+            >
+              Daily goal
+            </h2>
+            <p className="mt-1 text-sm leading-5 text-muted-foreground">
+              Reaching your goal keeps your streak going. Correct answers earn
+              10 XP, wrong answers 4, and each taught section 25.
+            </p>
+          </div>
+          <StudyGoalSettings />
+        </section>
         <section aria-labelledby="appearance-heading" className="space-y-4">
           <div>
             <h2
