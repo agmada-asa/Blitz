@@ -1,4 +1,4 @@
-/** Extracts browser-selected and fetched source files into text for the preparation queue. */
+/** Extracts browser-selected and fetched source files into text before upload. */
 
 /** Source formats supported by upload and paste ingestion. */
 export type SourceKind = "pdf" | "markdown" | "text" | "paste"
