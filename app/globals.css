@@ -406,3 +406,7 @@
 @media (hover: none) {
   .markdown-copy-button, .markdown-table-copy { opacity: 1; }
 }
+/* Interactive blocks draw their own numbering and spacing, so Markdown list rules must not apply. */
+.chat-markdown .interactive-steps { list-style: none; padding-left: 0; }
+.chat-markdown .interactive-steps > li + li { margin-top: 1rem; }
+.chat-markdown .interactive-steps > li > * + * { margin-top: 0; }
