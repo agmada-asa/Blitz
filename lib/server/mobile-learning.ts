@@ -113,6 +113,7 @@ export async function libraryModules(): Promise<MobileLibraryResponse> {
     convex.query(api.projects.listProjects, {}),
     convex.query(api.units.libraryProgress, {}),
   ])
+  const created = new Map(projects.map((project) => [String(project._id), project.createdAt ?? 0]))
   const modules = projects.map((project) => {
     const entry = progress[project._id]
     return {
@@ -124,11 +125,12 @@ export async function libraryModules(): Promise<MobileLibraryResponse> {
       lastStudiedAt: entry?.lastStudiedAt ?? 0,
       unitProgress: entry?.unitProgress ?? [],
       hasUnsortedSources: entry?.hasUnsortedSources ?? false,
-      createdAt: project.createdAt ?? 0,
     }
   })
-  modules.sort((a, b) => b.lastStudiedAt - a.lastStudiedAt || b.createdAt - a.createdAt)
-  return { modules: modules.map(({ createdAt: _createdAt, ...module }) => module) }
+  modules.sort(
+    (a, b) => b.lastStudiedAt - a.lastStudiedAt || (created.get(b.id) ?? 0) - (created.get(a.id) ?? 0)
+  )
+  return { modules }
 }
 
 /**
