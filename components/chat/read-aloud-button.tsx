@@ -5,12 +5,11 @@ import { PauseIcon, PlayIcon } from "@hugeicons/core-free-icons"
 import { HugeiconsIcon } from "@hugeicons/react"
 import { useQuery } from "convex/react"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import type { Tokens } from "marked"
 
 import { Button } from "@/components/ui/button"
 import { LoadingIcon } from "@/components/ui/icon"
 import { api } from "@/convex/_generated/api"
-import { markdownText, parseMarkdown } from "@/lib/markdown"
+import { spokenMarkdownText } from "@/lib/spoken-markdown"
 import { splitSpeechText } from "@/lib/speech-text"
 import {
   playSpeechSections,
@@ -23,32 +22,6 @@ type PlaybackState = "idle" | "loading" | "playing" | "error"
 /** Keeps read aloud to one active reply or learning item across controls. */
 let activeReadAloudStop: { id: symbol; stop: () => void } | undefined
 
-/** Removes Markdown structure while keeping the visible prose and link labels. */
-function plainReplyText(markdown: string): string {
-  /** Collects human-readable text from nested Marked tokens, skipping code and media. */
-  function collect(tokens: ReturnType<typeof parseMarkdown>): string[] {
-    return tokens.flatMap((token) => {
-      if (
-        token.type === "code" ||
-        token.type === "image" ||
-        token.type === "space"
-      )
-        return []
-      if ("tokens" in token && token.tokens)
-        return collect(token.tokens as ReturnType<typeof parseMarkdown>)
-      if (token.type === "list")
-        return token.items.flatMap((item: Tokens.ListItem) =>
-          collect(item.tokens as ReturnType<typeof parseMarkdown>)
-        )
-      if ("text" in token && typeof token.text === "string")
-        return [markdownText(token.text)]
-      return []
-    })
-  }
-
-  return collect(parseMarkdown(markdown)).join(" ").replace(/\s+/g, " ").trim()
-}
-
 /** Reads one item; prepare opts only active content into quiet preparation while visible. */
 export function ReadAloudButton({
   text,
@@ -59,7 +32,10 @@ export function ReadAloudButton({
 }) {
   const savedSettings = useQuery(api.audioSettings.get)
   const voiceId = savedSettings?.voiceIds?.[0] ?? "af_heart"
-  const chunks = useMemo(() => splitSpeechText(plainReplyText(text)), [text])
+  const chunks = useMemo(
+    () => splitSpeechText(spokenMarkdownText(text)),
+    [text]
+  )
   const [state, setState] = useState<PlaybackState>("idle")
   const [error, setError] = useState("")
   const buttonRef = useRef<HTMLButtonElement>(null)
