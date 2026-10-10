@@ -2,7 +2,7 @@
 
 ![Blitz](app/icon.svg)
 
-Blitz turns source material into a scrolling learning feed for Android and the web. Local Mac workers prepare explanations, questions, and replies through the provider selected in Blitz settings.
+Blitz turns course material into live, source-grounded lessons and study practice for the web, with a frozen Android app. Lessons and replies run through the provider selected in Blitz settings on this Mac.
 
 ## Run locally
 
@@ -13,7 +13,7 @@ npm ci
 npm run dev:lan
 ```
 
-The launcher starts Next.js, local Convex, content generation, and the other background workers, then prints the LAN address and a QR code. Open that address on a phone connected to the same Wi-Fi. A crashed or unresponsive service restarts automatically with backoff instead of stopping Blitz; restarts are printed as `[blitz] <service> stopped … Restarting`. Without Wi-Fi, Blitz still runs on this Mac. Pressing `Ctrl+C` or closing its terminal stops every process group; a service that does not exit within three seconds is killed so it cannot retain a development port. Set `BLITZ_PORT` to change the web port from `3007`.
+The launcher starts Next.js, local Convex, and the source recovery and Deep Research workers, then prints the LAN address and a QR code. Open that address on a phone connected to the same Wi-Fi. A crashed or unresponsive service restarts automatically with backoff instead of stopping Blitz; restarts are printed as `[blitz] <service> stopped … Restarting`. Without Wi-Fi, Blitz still runs on this Mac. Pressing `Ctrl+C` or closing its terminal stops every process group; a service that does not exit within three seconds is killed so it cannot retain a development port. Set `BLITZ_PORT` to change the web port from `3007`.
 
 For separate terminals:
 
@@ -21,9 +21,6 @@ For separate terminals:
 npx convex dev
 npm run dev
 npm run worker:ingestion
-npm run worker
-npm run worker:content
-npm run worker:chat
 npm run worker:research
 ```
 
@@ -69,7 +66,7 @@ The ACP client negotiates `session/load` and `session/resume`. If neither is sup
 
 ## Learn
 
-Create a project in Library and add files, pasted notes, or a public link. Content generation runs in the background and can resume from saved lesson drafts. The home feed mixes projects; Filter narrows it to a project or topic.
+Create a project in Library and add files, pasted notes, or a public link. Each upload is filed into a unit, usually a week or a lecture, and is ready to teach as soon as its text is extracted. Opening a unit starts a live Teach session; see [Teach](docs/teach.md). The home feed mixes projects; Filter narrows it to a project or topic.
 
 Open a project or topic for a focused feed, Study with immediate feedback, or a Test with results at the end. Topics can be renamed or excluded from the mixed feed.
 
@@ -79,11 +76,11 @@ Questions use single choice, multiple answers, or true/false. Answers receive se
 
 Imports accept text PDFs, Markdown, plain text, and PowerPoint `.pptx` files. Public links can return those formats or HTML. Source URLs and page/slide markers are retained. Scanned PDFs need OCR elsewhere, and each extracted source is currently limited to 120,000 characters.
 
-Use `Find sources` within a project to ask Blitz for a proposed learning scope and references discovered through web search. Review the links before selecting which to import. Imported sources join the same preparation queue. Proposed note outlines are previews only.
+Use `Find sources` within a project to ask Blitz for a proposed learning scope and references discovered through web search. Review the links before selecting which to import. Imported sources appear as unsorted sources; use `Group into a unit` on the module page to teach them. Proposed note outlines are previews only.
 
 ## Android
 
-The React Native app lives in `mobile/` with its own dependencies and checks. It connects to the same printed LAN address. Prepared cards are cached, and offline answers wait for server feedback after sync. New source generation and chat replies need the Mac worker online.
+The React Native app lives in `mobile/` with its own dependencies and checks. It connects to the same printed LAN address. Prepared cards are cached, and offline answers wait for server feedback after sync. The app is frozen during the overhaul: card chat questions, pasted notes, and links added from Android are saved but no longer answered or prepared.
 
 See [Android setup](docs/mobile.md) for development and the bundled debug APK build. Browser imports remain available through the native Library action.
 
@@ -98,6 +95,6 @@ npm run lint
 npm run build
 ```
 
-Run native checks from `mobile/`. The [product brief](PRODUCT_BRIEF.md) records the intended experience; the [working protocol](WORKING_PROTOCOL.md) records the overnight review and delivery boundaries. Implementation details are in [source preparation](docs/source-preparation.md), [learning API](docs/learning-api.md), and [card chat](docs/card-chat.md).
+Run native checks from `mobile/`. The [product brief](PRODUCT_BRIEF.md) records the intended experience; the [working protocol](WORKING_PROTOCOL.md) records the overnight review and delivery boundaries. Implementation details are in [Teach](docs/teach.md), [source ingestion](docs/source-ingestion.md), [learning API](docs/learning-api.md), and [Codex text turns and legacy card chat](docs/card-chat.md).
 
 This version is a personal local app without account authentication. It is not configured for public hosting. Android offline storage and the local agent are separate from any future cloud sync service. Creating proposed notes, richer diagrams, and moving topics are still outside this version. Android now includes native project browsing, creation, rename, and deletion. Written activities and source imports still use the browser. The product brief records the wider direction, not a completed feature checklist.

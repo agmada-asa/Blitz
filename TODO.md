@@ -24,7 +24,7 @@ names the PR that delivers it once one exists.
 - [x] Interactive block protocol and renderers (quiz, steps, viz, followups)
 - [x] Quick replies and inline questions in a session
 - [x] Lesson quizzes saved as learning items and study events
-- [ ] Remove batch generation, old Learn, concept map UI, legacy card chat
+- [x] Remove batch generation, old Learn, concept map UI, legacy card chat
 - [ ] Single prompts module
 - [ ] Whole-textbook sources: batched chunk writes, chapter-sized units
 - [ ] Research imports into units with passages

@@ -1,24 +1,21 @@
-# Card chat
+# Codex text turns and legacy card chat
 
-`lib/server/card-chat.ts` runs one learner-authored question against a
-selected Blitz card and its relevant source context through the local Codex
-app-server. It requires an explicit absolute `workspaceDirectory`, starts or
-resumes the supplied persistent thread, starts one text turn, streams typed
-`text-delta`, `activity`, `completed`, and `error` events, and returns the
-server-issued `threadId` and `turnId` only after `turn/completed` reports
-`status: "completed"`.
+The web app asks about cards in workspace chat (`docs/workspace-chat.md`). This
+page covers the shared Codex text-turn runner that grew out of card chat, and
+the legacy card conversation routes kept for the frozen Android app.
 
-Server jobs that already own a bounded prompt can call the same lifecycle via
+## Codex text turns
+
+`lib/server/card-chat.ts` runs one bounded text turn through the local Codex
+app-server:
 `runCodexTextTurn({ workspaceDirectory, prompt, model?, effort?, ephemeral?, threadId?, signal?, timeoutMs? })`.
-`runCardChat` is the card-specific wrapper that builds the attachment first.
-Both helpers accept optional `model` and `effort` overrides; omitted values
-preserve the local Codex configuration.
-
-The prompt treats card and source content as untrusted study data. The caller
-must provide a non-empty question; the service never invents a generic
-explanation. Source context is capped at 12,000 characters and visibly marked
-when truncated. Card fields and the question are bounded before any transport
-is started.
+It requires an explicit absolute `workspaceDirectory`, starts or resumes the
+supplied persistent thread, starts one text turn, streams typed `text-delta`,
+`activity`, `completed`, and `error` events, and returns the server-issued
+`threadId` and `turnId` only after `turn/completed` reports
+`status: "completed"`. Optional `model` and `effort` overrides fall back to the
+local Codex configuration. Its event, result, and `CardChatError` types are
+shared by every provider adapter, so they keep their original names.
 
 Streamed assistant text and raced notifications are capped at 250,000
 characters. A completed turn with no assistant text is reported as an error so
@@ -38,7 +35,7 @@ in-memory transport and never start a live model turn.
 
 A separate local smoke check completed a real ephemeral Luna turn through the
 installed app-server and returned the requested text. Generation uses ephemeral
-threads; card conversations may keep their server-issued thread ID for resume.
+threads; conversations may keep their server-issued thread ID for resume.
 
 The event shapes are based on the installed `codex-cli 0.153.0` v2 schema:
 [Codex App Server](https://learn.chatgpt.com/docs/app-server).
@@ -47,23 +44,17 @@ The event shapes are based on the installed `codex-cli 0.153.0` v2 schema:
 
 `POST /api/learning/chat` accepts only `projectId`, `itemId`, `clientMessageId`, and the learner's `question`. It creates or resumes one conversation per project and learning item, and treats a repeated client message id as an idempotent retry. The `202` response includes `conversationId`, `messageId`, `status`, `alreadyQueued`, and the full safe message record. `GET /api/learning/chat?projectId=...&itemId=...` returns message status, questions, replies, errors, and the saved conversation status. It never returns source text.
 
-The local `scripts/chat-worker.ts` process claims queued messages with a bounded lease. It loads the selected learning item and its prepared source chunk, reconstructs that chunk from the preparation snapshot, then calls `runCardChat` with the saved Codex thread when available. A successful turn stores the thread id, turn id, and non-empty reply atomically. A failed turn keeps its question and history; retry is an explicit `convex.conversations.retry` mutation.
+No worker answers these questions any more: the card chat worker was removed with batch generation, so new questions stay queued. The routes remain so the frozen Android app keeps compiling and can read saved history. Retry is an explicit `convex.conversations.retry` mutation.
 
 For HTTP clients, `POST /api/learning/chat/retry` takes `projectId`, `itemId`, and the failed `messageId`; it deliberately requeues that existing record and never creates a duplicate question.
 
-The worker uses `BLITZ_CODEX_WORKSPACE` or `~/.local/share/blitz/codex-workspace`, an explicitly created directory outside the repository. `BLITZ_CODEX_MODEL` defaults to `gpt-6-luna`; sandbox is read-only and approval requests remain declined until an approval UI is wired. The queue allows later questions to wait behind an active turn and recovers expired leases, so the web request can succeed while the Mac worker is offline.
-
-The saved Replies model and reasoning level from `/settings` take precedence for new card-reply turns. See `docs/ai-model-settings.md` for fallback behavior.
-
-The launcher can use `defaultChatWorkspaceDirectory`, `ensureChatWorkspaceDirectory`, `runChatWorkerStep`, and `runChatWorker` from `lib/server/chat-worker.ts`. Activity events stay inside the worker; the HTTP stream exposes persisted conversation snapshots.
-
-Start the local chat process with `npm run worker:chat` beside `npm run worker` and the development servers. Both workers load `.env.local` and prefer `BLITZ_CONVEX_URL` for a loopback connection.
+Provider turns use `BLITZ_CODEX_WORKSPACE` or `~/.local/share/blitz/codex-workspace`, an explicitly created directory outside the repository. `defaultChatWorkspaceDirectory` and `ensureChatWorkspaceDirectory` in `lib/server/research-worker.ts` resolve and create it for the research worker.
 
 ## Streaming and Markdown
 
-Both apps use `GET /api/learning/chat?projectId=...&itemId=...&stream=1` to receive newline-delimited JSON snapshots from a live Convex subscription. The plain GET remains available for older clients. Blank-line heartbeats arrive every ten seconds. Connections rotate after one minute; clients reconnect and receive current history without resubmitting questions. Closing chat cancels its subscription, not the worker. A silent connection times out after thirty seconds and retries with bounded backoff.
+The Android app uses `GET /api/learning/chat?projectId=...&itemId=...&stream=1` to receive newline-delimited JSON snapshots from a live Convex subscription. The plain GET remains available for older clients. Blank-line heartbeats arrive every ten seconds. Connections rotate after one minute; clients reconnect and receive current history without resubmitting questions. Closing chat cancels its subscription. A silent connection times out after thirty seconds and retries with bounded backoff.
 
-`lib/server/chat-progress.ts` coalesces assistant fragments at 250 ms intervals, keeps at most one persistence request in flight, and drains writes before completion or failure. `conversations.progress` requires the active, unexpired lease and bounds replies to 250,000 characters. Failed answers retain partial text alongside the error. Explicit retries and reclaimed leases clear that text before a fresh attempt. Completion replaces fragments with the authoritative final answer.
+`lib/server/chat-progress.ts` coalesces assistant fragments at 250 ms intervals, keeps at most one persistence request in flight, and drains writes before completion or failure. Workspace chat uses it to save streamed replies.
 
 Web and Android share the Marked parser and link validation in `lib/markdown.ts`. React renderers support headings, emphasis, nested lists, task lists, quotes, links, code, and GFM tables, including unfinished streaming fences. Raw HTML is displayed as text. Images display their alt text without remote fetching. Only explicit HTTP, HTTPS, and mailto links can open. Tables and code scroll horizontally inside the reply. New text follows the reader only while they remain near the bottom.
 
