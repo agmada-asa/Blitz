@@ -130,6 +130,37 @@ function quizShape(item: Doc<"learningItems">) {
 }
 
 /**
+ * Shapes a learning item as a card in the shared feed contract
+ * (`lib/learning/client-contracts.ts`). Question cards carry no answer key;
+ * `learning.recordAnswerEvent` scores them and reveals the key.
+ * @param item A question or explain item.
+ * @param unitTitle Shown as the card's source label.
+ * @param key Unique key within one session, when the same item can repeat.
+ */
+function feedCard(item: Doc<"learningItems">, unitTitle: string, key?: string) {
+  const base = {
+    id: String(item._id),
+    ...(key ? { key } : {}),
+    projectId: String(item.projectId),
+    conceptId: String(item.conceptId),
+    title: item.title,
+    sourceLabel: unitTitle,
+    sourceIds: item.sourceIds.map(String),
+  }
+  if (item.type === "explain") return { ...base, type: "explain" as const, body: item.body }
+  return {
+    ...base,
+    type: item.type,
+    question: item.question ?? "",
+    ...(item.type === "true-false" || item.type === "cloze" || item.type === "code-output"
+      ? {}
+      : { options: item.options ?? [] }),
+    // Matching cards need their left-hand items; the answer key stays on the server.
+    ...(item.matchPrompts ? { prompts: item.matchPrompts } : {}),
+  }
+}
+
+/**
  * Supplies the server route with what a question-bank prompt needs: the
  * unit's material, the sections taught so far, weak concepts, and existing
  * questions to avoid repeating. Server-only.
@@ -553,70 +584,102 @@ export const overview = query({
   },
 })
 
+/** Arguments shared by the drill queries. */
+const drillArgs = {
+  projectId: v.id("projects"),
+  unitId: v.optional(v.id("units")),
+  limit: v.optional(v.number()),
+  /** Client clock, so concepts that fell due recently count as due. */
+  now: v.number(),
+}
+
 /**
- * Builds an adaptive drill: questions answered wrongly first, then concepts
- * due for review, then unanswered questions on weak concepts, then the rest.
+ * Picks a drill's questions in order: questions answered wrongly first, then
+ * concepts due for review, then unanswered questions on weak concepts, then
+ * the rest (`selectDrillQuestions`).
+ * @returns Each question's item, its unit title, and its last outcome.
+ */
+async function drillQuestions(
+  ctx: QueryCtx,
+  { projectId, unitId, limit, now }: { projectId: Id<"projects">; unitId?: Id<"units">; limit?: number; now: number }
+) {
+  const units = await ctx.db
+    .query("units")
+    .withIndex("by_project_order", (q) => q.eq("projectId", projectId))
+    .collect()
+  const unitTitles = new Map(units.map((unit) => [String(unit._id), unit.title]))
+  const scope = unitId ? units.filter((unit) => unit._id === unitId) : units
+  const items: Doc<"learningItems">[] = []
+  for (const unit of scope)
+    items.push(
+      ...(
+        await ctx.db
+          .query("learningItems")
+          .withIndex("by_unit", (q) => q.eq("unitId", unit._id))
+          .collect()
+      ).filter(isPracticeQuestion)
+    )
+  const reviews = await reviewsByConcept(ctx, projectId)
+  const candidates: DrillCandidate[] = []
+  for (const item of items) {
+    const review = reviews.get(String(item.conceptId))
+    candidates.push({
+      itemId: String(item._id),
+      conceptId: String(item.conceptId),
+      createdAt: item.createdAt,
+      ...(item.lastOutcome
+        ? { lastOutcome: item.lastOutcome, lastAnsweredAt: item.lastAnsweredAt }
+        : {}),
+      strength: conceptStrength(historyOf(review)),
+      ...(review && review.attemptCount > 0 ? { conceptDueAt: review.dueAt } : {}),
+    })
+  }
+  const order = selectDrillQuestions(
+    candidates,
+    now,
+    Math.max(1, Math.min(MAX_DRILL_QUESTIONS, Math.round(limit ?? 10)))
+  )
+  const byId = new Map(items.map((item) => [String(item._id), item]))
+  return order.map((id) => {
+    const item = byId.get(id)!
+    return {
+      item,
+      unitTitle: unitTitles.get(String(item.unitId)) ?? "",
+      lastOutcome: candidates.find((entry) => entry.itemId === id)!.lastOutcome ?? null,
+    }
+  })
+}
+
+/**
+ * Builds an adaptive drill (see `drillQuestions`) for the web drill screen.
  * Questions include their answer key so the quiz renderer can mark options;
  * every answer is still scored and recorded by the server.
  */
 export const drill = query({
-  args: {
-    projectId: v.id("projects"),
-    unitId: v.optional(v.id("units")),
-    limit: v.optional(v.number()),
-    /** Client clock, so concepts that fell due recently count as due. */
-    now: v.number(),
-  },
-  handler: async (ctx, { projectId, unitId, limit, now }) => {
-    const units = await ctx.db
-      .query("units")
-      .withIndex("by_project_order", (q) => q.eq("projectId", projectId))
-      .collect()
-    const unitTitles = new Map(units.map((unit) => [String(unit._id), unit.title]))
-    const scope = unitId ? units.filter((unit) => unit._id === unitId) : units
-    const items: Doc<"learningItems">[] = []
-    for (const unit of scope)
-      items.push(
-        ...(
-          await ctx.db
-            .query("learningItems")
-            .withIndex("by_unit", (q) => q.eq("unitId", unit._id))
-            .collect()
-        ).filter(isPracticeQuestion)
-      )
-    const reviews = await reviewsByConcept(ctx, projectId)
-    const candidates: DrillCandidate[] = []
-    for (const item of items) {
-      const review = reviews.get(String(item.conceptId))
-      candidates.push({
-        itemId: String(item._id),
-        conceptId: String(item.conceptId),
-        createdAt: item.createdAt,
-        ...(item.lastOutcome
-          ? { lastOutcome: item.lastOutcome, lastAnsweredAt: item.lastAnsweredAt }
-          : {}),
-        strength: conceptStrength(historyOf(review)),
-        ...(review && review.attemptCount > 0 ? { conceptDueAt: review.dueAt } : {}),
-      })
-    }
-    const order = selectDrillQuestions(
-      candidates,
-      now,
-      Math.max(1, Math.min(MAX_DRILL_QUESTIONS, Math.round(limit ?? 10)))
-    )
-    const byId = new Map(items.map((item) => [String(item._id), item]))
-    return order.map((id) => {
-      const item = byId.get(id)!
-      const candidate = candidates.find((entry) => entry.itemId === id)!
-      return {
-        itemId: item._id,
-        unitId: item.unitId!,
-        unitTitle: unitTitles.get(String(item.unitId)) ?? "",
-        lastOutcome: candidate.lastOutcome ?? null,
-        quiz: quizShape(item),
-      }
-    })
-  },
+  args: drillArgs,
+  handler: async (ctx, args) =>
+    (await drillQuestions(ctx, args)).map(({ item, unitTitle, lastOutcome }) => ({
+      itemId: item._id,
+      unitId: item.unitId!,
+      unitTitle,
+      lastOutcome,
+      quiz: quizShape(item),
+    })),
+})
+
+/**
+ * Builds the same adaptive drill as `drill`, as feed-contract question cards
+ * without answer keys, for clients such as the Android app that reveal the
+ * key only from the server's answer feedback.
+ */
+export const drillCards = query({
+  args: drillArgs,
+  handler: async (ctx, args) =>
+    (await drillQuestions(ctx, args)).map(({ item, unitTitle, lastOutcome }) => ({
+      card: feedCard(item, unitTitle),
+      unitId: String(item.unitId),
+      lastOutcome,
+    })),
 })
 
 /** Most recently shown items avoided when the feed starts a new round. */
@@ -717,33 +780,9 @@ export const feed = query({
     )
     const byId = new Map(questions.map((entry) => [entry.candidate.itemId, entry.item]))
 
-    /**
-     * Shapes a learning item as a feed card. `key` is unique within the feed
-     * session, so a card repeated in a later round is still a new card.
-     */
-    const card = (item: Doc<"learningItems">) => {
-      const base = {
-        id: String(item._id),
-        key: `${String(item._id)}:${seen.length + cards.length}`,
-        projectId: String(item.projectId),
-        conceptId: String(item.conceptId),
-        title: item.title,
-        sourceLabel: unitTitles.get(String(item.unitId)) ?? "",
-        sourceIds: item.sourceIds.map(String),
-      }
-      if (item.type === "explain")
-        return { ...base, type: "explain" as const, body: item.body }
-      return {
-        ...base,
-        type: item.type,
-        question: item.question ?? "",
-        ...(item.type === "true-false" || item.type === "cloze" || item.type === "code-output"
-          ? {}
-          : { options: item.options ?? [] }),
-        // Matching cards need their left-hand items; the answer key stays on the server.
-        ...(item.matchPrompts ? { prompts: item.matchPrompts } : {}),
-      }
-    }
+    /** A feed card whose key is unique within the feed session, so repeats render anew. */
+    const card = (item: Doc<"learningItems">) =>
+      feedCard(item, unitTitles.get(String(item.unitId)) ?? "", `${String(item._id)}:${seen.length + cards.length}`)
 
     const cards = []
     const placedRecaps = new Set<string>()
