@@ -116,8 +116,9 @@ test("rejects invalid quiz fields", () => {
   invalid("quiz", quiz({ concept: "   " }))
   invalid("quiz", quiz({ concept: "c".repeat(121) }))
   invalid("quiz", quiz({ question: "q".repeat(1001) }))
-  invalid("quiz", quiz({ explanation: "" }))
   invalid("quiz", quiz({ explanation: "e".repeat(2001) }))
+  // A missing explanation keeps the question; it simply shows none after answering.
+  assert.equal((valid("quiz", quiz({ explanation: undefined })) as QuizBlock).explanation, "")
   invalid("quiz", quiz({ type: "essay" }))
   invalid("quiz", quiz({ options: ["only one"], answer: 0 }))
   invalid("quiz", quiz({ options: ["1", "2", "3", "4", "5", "6", "7"] }))

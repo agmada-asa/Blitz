@@ -448,7 +448,7 @@ export function QuizBlockView({
           ) : null}
         </p>
 
-        {attempt.status === "answered" ? (
+        {attempt.status === "answered" && block.explanation ? (
           <div className="text-sm">{renderMarkdown(block.explanation)}</div>
         ) : null}
 
