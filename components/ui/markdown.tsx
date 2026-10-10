@@ -1,6 +1,6 @@
 "use client"
 
-/** Renders shared web Markdown with safe links, highlighted code, formulas, and diagrams. */
+/** Renders shared web Markdown with safe links, highlighted code, formulas, diagrams, and interactive blocks. */
 import { memo, type ReactNode, useMemo, useState } from "react"
 import type { Token, Tokens } from "marked"
 import { Copy01Icon, QuoteUpIcon, Tick02Icon } from "@hugeicons/core-free-icons"
@@ -33,7 +33,19 @@ import {
   parseMarkdown,
 } from "@/lib/markdown"
 import { resolveCitation, type ChatCitation } from "@/lib/citations"
+import {
+  isClosedCodeFence,
+  isInteractiveBlockLanguage,
+  parseInteractiveBlock,
+  type InteractiveBlockLanguage,
+} from "@/lib/interactive-blocks"
 import { Button } from "@/components/ui/button"
+import {
+  InteractiveBlockPlaceholder,
+  InteractiveBlockView,
+  useInteractiveBlocks,
+  type MarkdownRenderer,
+} from "@/components/ui/interactive-blocks"
 import { MarkdownMath } from "@/components/ui/markdown-math"
 import { MarkdownMermaid } from "@/components/ui/markdown-mermaid"
 import {
@@ -57,6 +69,22 @@ type CitationOptions = {
   citations?: readonly ChatCitation[]
   onCitation?: (citation: ChatCitation) => void
   annotations?: readonly ChatAnnotation[]
+}
+
+/** Options accepted by `Markdown`. */
+type MarkdownOptions = CitationOptions & {
+  /**
+   * True while the text is still streaming, so unfinished interactive blocks show a placeholder
+   * instead of raw code. Defaults to `streaming` from `InteractiveBlocksProvider`, then false.
+   */
+  streaming?: boolean
+}
+
+/** Resolved options threaded through block rendering. */
+type RenderOptions = CitationOptions & {
+  streaming: boolean
+  /** False inside interactive blocks, so nested interactive fences render as plain code. */
+  interactive: boolean
 }
 
 /** Describes a nested syntax token emitted by the highlighter. */
@@ -494,8 +522,64 @@ function inline(tokens: Token[], options: CitationOptions): ReactNode {
   })
 }
 
+/**
+ * Creates the Markdown renderer used inside interactive blocks. It keeps citation handling but disables
+ * interactive blocks, so nested fences render as code and rendering cannot recurse.
+ * @param options Options of the Markdown containing the interactive block.
+ * @returns A renderer for block Markdown, or a single paragraph's inline content when `inline` is set;
+ * inline text that is not a single paragraph is shown as plain text.
+ */
+function nestedMarkdownRenderer(options: RenderOptions): MarkdownRenderer {
+  const nested: RenderOptions = { ...options, interactive: false }
+  return function renderNestedMarkdown(
+    text,
+    { inline: inlineOnly = false } = {}
+  ) {
+    const tokens = parseMarkdown(text, { math: true })
+    if (!inlineOnly)
+      return <div className="chat-markdown">{blocks(tokens, nested)}</div>
+    const content = tokens.filter((token) => token.type !== "space")
+    return content.length === 1 && content[0].type === "paragraph"
+      ? inline(content[0].tokens ?? [], nested)
+      : markdownText(text)
+  }
+}
+
+/**
+ * Renders an interactive fence, or a placeholder while it is still streaming.
+ * @param token Fenced code token whose language is interactive.
+ * @param language Interactive block language from the fence.
+ * @param key React key for the rendered element.
+ * @param options Current render options.
+ * @returns The interactive view for a complete valid block, a placeholder while streaming, or undefined
+ * when the finished block is invalid so the caller shows the source as code.
+ */
+function interactiveBlock(
+  token: Tokens.Code,
+  language: InteractiveBlockLanguage,
+  key: number,
+  options: RenderOptions
+): ReactNode | undefined {
+  const parsed = parseInteractiveBlock(token.lang ?? "", token.text)
+  // While streaming, an unclosed fence may still be growing even if it already parses.
+  const complete = !options.streaming || isClosedCodeFence(token.raw)
+  if (parsed.ok && complete)
+    return (
+      <InteractiveBlockView
+        key={key}
+        block={parsed.block}
+        streaming={options.streaming}
+        renderMarkdown={nestedMarkdownRenderer(options)}
+        source={<CodeBlock code={token.text} language="html" />}
+      />
+    )
+  if (options.streaming)
+    return <InteractiveBlockPlaceholder key={key} language={language} />
+  return undefined
+}
+
 /** Renders block structure, keeping wide code and tables inside horizontally scrollable regions. */
-function blocks(tokens: Token[], options: CitationOptions): ReactNode {
+function blocks(tokens: Token[], options: RenderOptions): ReactNode {
   return tokens.map((token, key) => {
     switch (token.type) {
       case "math":
@@ -520,6 +604,15 @@ function blocks(tokens: Token[], options: CitationOptions): ReactNode {
         )
       case "code": {
         const language = token.lang?.split(/[\s,]/)[0]?.toLowerCase() ?? ""
+        if (options.interactive && isInteractiveBlockLanguage(language)) {
+          const rendered = interactiveBlock(
+            token as Tokens.Code,
+            language,
+            key,
+            options
+          )
+          if (rendered !== undefined) return rendered
+        }
         if (["math", "latex", "tex", "katex"].includes(language))
           return <MarkdownMath key={key} text={token.text} display />
         if (language === "mermaid")
@@ -629,11 +722,17 @@ function blocks(tokens: Token[], options: CitationOptions): ReactNode {
 /** Displays selectable Markdown and safely reparses unfinished streaming syntax. */
 export const Markdown = memo(function Markdown({
   text,
+  streaming,
   ...options
-}: { text: string } & CitationOptions) {
+}: { text: string } & MarkdownOptions) {
+  const interactive = useInteractiveBlocks()
   return (
     <div className="chat-markdown">
-      {blocks(parseMarkdown(text, { math: true }), options)}
+      {blocks(parseMarkdown(text, { math: true }), {
+        ...options,
+        streaming: streaming ?? interactive.streaming ?? false,
+        interactive: true,
+      })}
     </div>
   )
 })
