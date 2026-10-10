@@ -5,13 +5,18 @@ names the PR that delivers it once one exists.
 
 ## Phase 0: it just runs
 
-- [ ] Reproduce and diagnose why `dev:lan` stops persisting
-- [ ] Consolidate workers into one supervised process with backoff restarts
-- [ ] Service health indicator with recovery guidance
-- [ ] Benchmark script over the school materials fixture
+- [x] Diagnose why `dev:lan` stops persisting: any child exit stopped the
+      whole stack, the browser Convex URL was pinned to the startup Wi-Fi
+      address, and `convex dev` survives its database dying
+- [x] One shared supervisor with backoff restarts for every service and a
+      liveness watchdog for Next and Convex
+- [x] `Reconnecting to Blitz…` notice while the live connection is down
+- Moved to Phase 1: the benchmark (uploads still queue the old batch
+  generation) and worker consolidation (most workers are being removed)
 
 ## Phase 1: Teach
 
+- [ ] Benchmark script over the school materials fixture
 - [ ] Module and unit data model; drop old generated lesson data
 - [ ] Automatic unit grouping for uploads
 - [ ] `.txt` and `.vtt` transcripts with timestamp anchors
@@ -22,6 +27,8 @@ names the PR that delivers it once one exists.
 - [ ] Quick replies and inline questions in a session
 - [ ] Background concept and evidence extraction
 - [ ] Remove batch generation, old Learn, concept map UI, legacy card chat
+- [ ] Consolidate the remaining workers into one supervised process
+- [ ] Share one server Convex client helper across API routes
 
 ## Phase 2: practice and exam mode
 
@@ -36,6 +43,12 @@ names the PR that delivers it once one exists.
 - [ ] Weakness-weighted infinite feed of studied material
 - [ ] Streaks, XP, daily prompt
 - [ ] Progress visuals and session summaries
+
+## Known issues
+
+- Four model-settings tests fail on `main` as well
+  (`ai-model-settings`, `codex-models`, `provider-capabilities`). Fix during
+  the prompts and provider cleanup.
 
 ## Phase 4: chat
 
