@@ -108,10 +108,14 @@ export const today = query({
       break
     }
 
+    // Only concepts from units count; older generated lessons are not part of Teach.
     const reviews = await ctx.db.query("conceptReviews").collect()
-    const dueConcepts = reviews.filter(
-      (review) => review.attemptCount > 0 && review.dueAt <= now
-    ).length
+    let dueConcepts = 0
+    for (const review of reviews) {
+      if (review.attemptCount <= 0 || review.dueAt > now) continue
+      const concept = await ctx.db.get(review.conceptId)
+      if (concept?.unitId) dueConcepts += 1
+    }
 
     return {
       today: todayKey,
@@ -146,4 +150,10 @@ export const setDailyGoal = mutation({
         updatedAt: Date.now(),
       })
   },
+})
+
+/** Returns the saved daily goal for Settings. */
+export const dailyGoalSetting = query({
+  args: {},
+  handler: async (ctx) => ({ xp: await dailyGoal(ctx) }),
 })

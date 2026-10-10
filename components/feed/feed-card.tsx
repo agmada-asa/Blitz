@@ -12,7 +12,17 @@ import type {
 } from "@/lib/learning/client-contracts"
 import { Button } from "@/components/ui/button"
 import { CancelIcon, CheckIcon } from "@/components/ui/icon"
+import { plainMarkdownRenderer } from "@/components/ui/markdown"
 import { cn } from "@/lib/utils"
+
+/** Headline sizes: short prompts read as a headline, long exam questions as body text. */
+function headlineClass(text: string): string {
+  if (text.length > 180 || text.includes("```"))
+    return "text-xl leading-snug font-medium tracking-tight sm:text-2xl"
+  if (text.length > 90)
+    return "text-[clamp(1.5rem,5vw,2rem)] leading-tight font-medium tracking-[-0.03em]"
+  return "text-[clamp(2rem,7vw,3.75rem)] leading-[0.99] font-medium tracking-[-0.045em] sm:text-[clamp(2rem,5vw,2.5rem)]"
+}
 
 /** Props required to render one card in the home feed. */
 type FeedCardProps = {
@@ -126,14 +136,31 @@ export function FeedCardView({ card, onAsk, onSkip, onAnswer }: FeedCardProps) {
   return (
     <article className="feed-card flex h-svh snap-start items-center px-4 pt-24 pb-10 sm:px-8 sm:pt-20 sm:pb-8">
       <div className="feed-card-content mx-auto flex max-h-full min-h-0 w-full max-w-[680px] [scrollbar-width:none] flex-col overflow-y-auto [&::-webkit-scrollbar]:hidden">
-        <h2 className="max-w-[620px] text-[clamp(2rem,7vw,3.75rem)] leading-[0.99] font-medium tracking-[-0.045em] text-foreground sm:text-[clamp(2rem,5vw,2.5rem)]">
-          {card.type === "explain" ? card.title : card.question}
-        </h2>
+        {card.type === "explain" ? (
+          <p className="mb-3 text-xs font-medium text-brand">Recap</p>
+        ) : null}
+        {/* Questions may hold code blocks, so long ones render as Markdown blocks. */}
+        {card.type !== "explain" && card.question.includes("```") ? (
+          <div className={cn("max-w-[620px] text-foreground", headlineClass(card.question))}>
+            {plainMarkdownRenderer(card.question)}
+          </div>
+        ) : (
+          <h2
+            className={cn(
+              "max-w-[620px] text-foreground",
+              headlineClass(card.type === "explain" ? card.title : card.question)
+            )}
+          >
+            {plainMarkdownRenderer(card.type === "explain" ? card.title : card.question, {
+              inline: true,
+            })}
+          </h2>
+        )}
 
         {card.type === "explain" ? (
-          <p className="mt-7 max-w-[590px] text-base leading-[1.65] text-muted-foreground sm:mt-5 sm:text-lg">
-            {card.body}
-          </p>
+          <div className="mt-6 max-w-[590px] text-base leading-[1.65] text-muted-foreground sm:mt-5 sm:text-lg">
+            {plainMarkdownRenderer(card.body)}
+          </div>
         ) : (
           <>
             {isMultipleAnswer ? (
@@ -201,7 +228,9 @@ export function FeedCardView({ card, onAsk, onSkip, onAnswer }: FeedCardProps) {
                         String.fromCharCode(65 + optionIndex)
                       )}
                     </span>
-                    <span className="flex-1">{option.text}</span>
+                    <span className="min-w-0 flex-1 break-words">
+                      {plainMarkdownRenderer(option.text, { inline: true })}
+                    </span>
                   </button>
                 )
               })}
@@ -236,9 +265,9 @@ export function FeedCardView({ card, onAsk, onSkip, onAnswer }: FeedCardProps) {
               {feedback.isCorrect ? "Correct" : "Not quite"}
             </p>
             {feedback.feedback?.body ? (
-              <p className="text-sm leading-relaxed text-muted-foreground">
-                {feedback.feedback.body}
-              </p>
+              <div className="text-sm leading-relaxed text-muted-foreground">
+                {plainMarkdownRenderer(feedback.feedback.body)}
+              </div>
             ) : null}
           </div>
         ) : null}
