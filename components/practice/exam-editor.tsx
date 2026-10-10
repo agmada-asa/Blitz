@@ -91,6 +91,7 @@ function letter(index: number): string {
   return String.fromCharCode(65 + index)
 }
 
+/** Counter behind `draftKey`; only uniqueness within the page matters. */
 let draftKeyCount = 0
 
 /** Returns a key that identifies a draft row across re-renders, independent of its position. */
