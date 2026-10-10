@@ -3,7 +3,7 @@
 /**
  * The Exam prep section of the Practice screen: the module's past papers and
  * mock exams with their status, size, and best score, actions to take,
- * resume, or review each one, and the two ways to add a paper.
+ * resume, review, edit, or delete each one, and the two ways to add a paper.
  */
 
 import Link from "next/link"
@@ -12,6 +12,7 @@ import type { FunctionReturnType } from "convex/server"
 import { useState } from "react"
 
 import { AddPastPaperDialog, WriteMockExamDialog } from "@/components/practice/exam-dialogs"
+import { ExamPaperActions } from "@/components/practice/exam-paper-actions"
 import { Button } from "@/components/ui/button"
 import { ElapsedTime } from "@/components/ui/elapsed-time"
 import { LoadingIcon } from "@/components/ui/icon"
@@ -162,6 +163,16 @@ function PaperRow({ paper, base }: { paper: PaperSummary; base: string }) {
               )}
             </Button>
           ) : null}
+          <ExamPaperActions
+            paper={{
+              id: paper.id,
+              title: paper.title,
+              status: paper.status,
+              changeLock: paper.changeLock,
+              hasOpenAttempt: Boolean(paper.inProgressAttemptId),
+            }}
+            editHref={`${href}?edit=1`}
+          />
         </div>
       </div>
       {paper.status === "processing" ? (
