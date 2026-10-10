@@ -446,6 +446,8 @@ function parseExamQuestion(
         ? fallbackExplanation(answerSource)
         : undefined
       : data.explanation
+  // Lesson quizzes may omit an explanation, but exam answers always come with one.
+  if (typeof explanation !== "string" || !explanation.trim()) return null
   // Reuse the lesson quiz rules for options and answers. The prompt is
   // validated above with the longer exam limit, so a placeholder stands in.
   const quiz = parseInteractiveBlock(
