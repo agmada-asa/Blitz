@@ -13,6 +13,7 @@ import type {
   MobileLearningCard,
 } from "../lib/contracts"
 import { Text } from "./native-text"
+import { QuestionView, type QuestionResult } from "./question-view"
 
 /** Props required to render and submit one card's answer. */
 export type LearningCardProps = {
@@ -23,7 +24,44 @@ export type LearningCardProps = {
   readonly onSkip: () => void
 }
 
-/** Renders a choice or explanation card with a compact native interaction. */
+/**
+ * Converts the learner's answer from the question view into the value the
+ * shared answer route expects: one option id for single choice, a boolean
+ * for true or false, and a list for every other format.
+ */
+function answerValue(card: MobileLearningCard, answer: string[]): MobileAnswer {
+  if (card.type === "single-choice") return answer[0] ?? ""
+  if (card.type === "true-false") return answer[0] === "true"
+  return answer
+}
+
+/** Turns server feedback into the answer key the question view marks against. */
+export function questionResult(
+  feedback: MobileAnswerFeedback | undefined
+): QuestionResult | undefined {
+  if (!feedback || (feedback.status !== "correct" && feedback.status !== "incorrect")) return undefined
+  const key = feedback.feedback
+  const correctOptionIds =
+    key?.correctOptionIds ??
+    (key?.correctOptionId
+      ? [key.correctOptionId]
+      : key?.correctAnswer !== undefined
+        ? [String(key.correctAnswer)]
+        : undefined)
+  return {
+    correct: feedback.status === "correct",
+    ...(correctOptionIds ? { correctOptionIds } : {}),
+    ...(key?.acceptedAnswers ? { acceptedAnswers: key.acceptedAnswers } : {}),
+    ...(key?.body ? { explanation: key.body } : {}),
+  }
+}
+
+/** Short, plain questions read as a large title; longer ones and code render as Markdown. */
+function isTitleQuestion(question: string): boolean {
+  return question.length <= 160 && !/```|\n|\$|\{\{/.test(question)
+}
+
+/** Renders a question or explanation card in the vertical feed. */
 export function LearningCard({
   card,
   feedback,
@@ -32,103 +70,34 @@ export function LearningCard({
   onSkip,
 }: LearningCardProps) {
   const insets = useSafeAreaInsets()
-  const [selected, setSelected] = useState<string[]>([])
-  const [submitted, setSubmitted] = useState(false)
+  const [sending, setSending] = useState(false)
   const [answerError, setAnswerError] = useState("")
   const [viewportHeight, setViewportHeight] = useState(0)
   const [contentHeight, setContentHeight] = useState(0)
-  const isMultiple = card.type === "multiple-answer"
-  const options =
-    card.type === "true-false"
-      ? [
-          { id: "true", text: "True" },
-          { id: "false", text: "False" },
-        ]
-      : (card.options ?? [])
-
-  /** Returns whether an option is one of the server-confirmed correct answers. */
-  function isCorrectOption(optionId: string): boolean {
-    if (
-      !feedback ||
-      (feedback.status !== "correct" && feedback.status !== "incorrect")
-    )
-      return false
-    if (
-      card.type === "true-false" &&
-      "feedback" in feedback &&
-      feedback.feedback?.correctAnswer !== undefined
-    ) {
-      return feedback.feedback.correctAnswer === (optionId === "true")
-    }
-    return (
-      "feedback" in feedback &&
-      (feedback.feedback?.correctOptionIds?.includes(optionId) === true ||
-        feedback.feedback?.correctOptionId === optionId)
-    )
-  }
 
   useEffect(() => {
-    setSelected([])
-    setSubmitted(false)
+    setSending(false)
     setAnswerError("")
   }, [card.id])
 
-  /** Persists an answer and unlocks retry when local storage rejects it. */
-  async function submitAnswer(answer: MobileAnswer) {
+  /** Sends an answer and unlocks retry when it could not be saved. */
+  async function submitAnswer(answer: string[]) {
+    if (sending || feedback) return
     setAnswerError("")
+    setSending(true)
     try {
-      await onAnswer(answer)
-      setAnswerError("")
+      await onAnswer(answerValue(card, answer))
     } catch (error) {
-      setSubmitted(false)
       setAnswerError(
-        error instanceof Error
-          ? error.message
-          : "Could not save answer. Try again."
+        error instanceof Error ? error.message : "Could not save answer. Try again."
       )
+    } finally {
+      setSending(false)
     }
   }
 
-  /** Selects one option and immediately submits single-answer formats. */
-  function selectOption(optionId: string) {
-    if (
-      submitted ||
-      feedback?.status === "pending" ||
-      feedback?.status === "correct" ||
-      feedback?.status === "incorrect" ||
-      feedback?.status === "invalid"
-    )
-      return
-    if (isMultiple) {
-      setSelected((current) =>
-        current.includes(optionId)
-          ? current.filter((id) => id !== optionId)
-          : [...current, optionId]
-      )
-      setSubmitted(false)
-      return
-    }
-    setSelected([optionId])
-    setSubmitted(true)
-    void submitAnswer(
-      card.type === "true-false" ? optionId === "true" : optionId
-    )
-  }
-
-  /** Submits the complete selected set for a multiple-answer card. */
-  function submitMultiple() {
-    if (
-      !selected.length ||
-      submitted ||
-      feedback?.status === "pending" ||
-      feedback?.status === "correct" ||
-      feedback?.status === "incorrect" ||
-      feedback?.status === "invalid"
-    )
-      return
-    setSubmitted(true)
-    void submitAnswer(selected)
-  }
+  const scored = feedback?.status === "correct" || feedback?.status === "incorrect"
+  const titleQuestion = card.type !== "explain" && isTitleQuestion(card.question)
 
   return (
     <View
@@ -139,6 +108,7 @@ export function LearningCard({
     >
       <ScrollView
         contentContainerStyle={styles.content}
+        keyboardShouldPersistTaps="handled"
         nestedScrollEnabled={contentHeight > viewportHeight + 1}
         onContentSizeChange={(_, height) => setContentHeight(height)}
         onLayout={(event) => setViewportHeight(event.nativeEvent.layout.height)}
@@ -148,82 +118,33 @@ export function LearningCard({
       >
         {card.type === "explain" ? (
           <>
+            <Text style={styles.eyebrow}>Recap</Text>
             <Text style={styles.title}>{card.title}</Text>
             <Text style={styles.body}>{card.body}</Text>
           </>
         ) : (
-          <Text style={styles.title}>{card.question}</Text>
-        )}
-
-        {card.type !== "explain" ? (
           <>
-            {isMultiple ? (
-              <Text style={styles.instruction}>Select all that apply</Text>
-            ) : null}
-            <View style={styles.options} accessibilityLabel="Answer options">
-              {options.map((option, index) => {
-                const isSelected = selected.includes(option.id)
-                const scored =
-                  feedback?.status === "correct" ||
-                  feedback?.status === "incorrect"
-                const isCorrect = scored && isCorrectOption(option.id)
-                const isIncorrect =
-                  isSelected && scored && !isCorrectOption(option.id)
-                return (
-                  <Pressable
-                    key={option.id}
-                    accessibilityRole={isMultiple ? "checkbox" : "radio"}
-                    accessibilityState={{ checked: isSelected }}
-                    onPress={() => selectOption(option.id)}
-                    style={({ pressed }) => [
-                      styles.option,
-                      isSelected && styles.optionSelected,
-                      isCorrect && styles.optionCorrect,
-                      isIncorrect && styles.optionIncorrect,
-                      pressed && styles.optionPressed,
-                    ]}
-                  >
-                    <Text
-                      style={[
-                        styles.optionLetter,
-                        isSelected && styles.optionLetterSelected,
-                        isCorrect && styles.optionLetterCorrect,
-                        isIncorrect && styles.optionLetterIncorrect,
-                      ]}
-                    >
-                      {isMultiple
-                        ? isSelected
-                          ? "✓"
-                          : ""
-                        : String.fromCharCode(65 + index)}
-                    </Text>
-                    <Text style={styles.optionText}>{option.text}</Text>
-                  </Pressable>
-                )
-              })}
+            <Text style={styles.eyebrow}>{card.title}</Text>
+            {titleQuestion ? <Text style={styles.title}>{card.question}</Text> : null}
+            <View style={styles.question}>
+              <QuestionView
+                shape={{
+                  type: card.type,
+                  question: card.question,
+                  options: card.options ?? [],
+                  ...(card.prompts ? { prompts: card.prompts } : {}),
+                }}
+                showQuestion={!titleQuestion}
+                result={questionResult(feedback)}
+                pendingLabel={feedback?.status === "pending" ? "Answer saved · waiting for sync" : undefined}
+                disabled={sending}
+                onSubmit={(answer) => void submitAnswer(answer)}
+              />
             </View>
           </>
-        ) : null}
+        )}
 
-        {isMultiple && !feedback ? (
-          <Pressable
-            accessibilityRole="button"
-            accessibilityState={{
-              disabled: selected.length === 0 || submitted,
-            }}
-            disabled={!selected.length || submitted}
-            onPress={submitMultiple}
-            style={({ pressed }) => [
-              styles.primaryButton,
-              (!selected.length || submitted) && styles.buttonDisabled,
-              pressed && styles.buttonPressed,
-            ]}
-          >
-            <Text style={styles.primaryButtonText}>Check answer</Text>
-          </Pressable>
-        ) : null}
-
-        {feedback ? <Feedback feedback={feedback} /> : null}
+        {feedback?.status === "invalid" ? <Feedback feedback={feedback} /> : null}
         {answerError ? <Text style={styles.error}>{answerError}</Text> : null}
 
         <View style={styles.actions}>
@@ -245,12 +166,7 @@ export function LearningCard({
               pressed && styles.buttonPressed,
             ]}
           >
-            <Text style={styles.skipButtonText}>
-              {feedback?.status === "correct" ||
-              feedback?.status === "incorrect"
-                ? "Next"
-                : "Skip"}
-            </Text>
+            <Text style={styles.skipButtonText}>{scored ? "Next" : "Skip"}</Text>
           </Pressable>
         </View>
 
@@ -309,6 +225,15 @@ const styles = StyleSheet.create({
   },
   scroll: {
     flex: 1,
+  },
+  eyebrow: {
+    color: "#ff8065",
+    fontSize: 13,
+    fontWeight: "600",
+    marginBottom: 10,
+  },
+  question: {
+    marginTop: 18,
   },
   title: {
     color: "#ffffff",

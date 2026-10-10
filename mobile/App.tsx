@@ -1283,7 +1283,7 @@ export default function App() {
             offset: height * index,
             index,
           })}
-          keyExtractor={(card) => card.id}
+          keyExtractor={(card) => card.key ?? card.id}
           onScrollBeginDrag={(event) => {
             pendingSnapTargetRef.current = null
             dragStartOffsetRef.current = event.nativeEvent.contentOffset.y
