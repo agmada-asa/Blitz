@@ -9,6 +9,7 @@ import { FilterHorizontalIcon } from "@hugeicons/core-free-icons"
 import { HugeiconsIcon } from "@hugeicons/react"
 
 import { FeedCardView } from "@/components/feed/feed-card"
+import { TodayCard } from "@/components/feed/today-card"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -36,6 +37,9 @@ import type {
 
 const FEED_LIMIT = 20
 const MAX_EMPTY_PAGE_HOPS = 3
+
+/** Full-height pages shown before the first study card: the Today card. */
+const LEAD_PAGES = 1
 
 /** Sentinel value representing an unfiltered project or topic selection in shadcn pickers. */
 const ALL_FILTER_VALUE = "all"
@@ -125,7 +129,8 @@ export function Feed({ initialFilter }: { initialFilter?: FeedFilter }) {
   )
   const [draftFilter, setDraftFilter] = useState<FeedFilter>(filter)
   const [filterOpen, setFilterOpen] = useState(false)
-  const [activeIndex, setActiveIndex] = useState(0)
+  // The Today card sits before the first study card at index -LEAD_PAGES.
+  const [activeIndex, setActiveIndex] = useState(-LEAD_PAGES)
   const [loading, setLoading] = useState(true)
   const [loadingMore, setLoadingMore] = useState(false)
   const [error, setError] = useState("")
@@ -223,12 +228,12 @@ export function Feed({ initialFilter }: { initialFilter?: FeedFilter }) {
     (index: number) => {
       const container = feedRef.current
       if (!container || !cardCount) return
-      const boundedIndex = Math.max(0, Math.min(index, cardCount - 1))
+      const boundedIndex = Math.max(-LEAD_PAGES, Math.min(index, cardCount - 1))
       const reducedMotion = window.matchMedia(
         "(prefers-reduced-motion: reduce)"
       ).matches
       container.scrollTo({
-        top: boundedIndex * container.clientHeight,
+        top: (boundedIndex + LEAD_PAGES) * container.clientHeight,
         behavior: reducedMotion ? "auto" : "smooth",
       })
       setActiveIndex(boundedIndex)
@@ -242,11 +247,11 @@ export function Feed({ initialFilter }: { initialFilter?: FeedFilter }) {
     if (!container) return
     const feedContainer = container
     const handleScroll = () => {
-      const nextIndex = Math.round(
-        feedContainer.scrollTop / feedContainer.clientHeight
-      )
+      const nextIndex =
+        Math.round(feedContainer.scrollTop / feedContainer.clientHeight) -
+        LEAD_PAGES
       setActiveIndex(
-        Math.max(0, Math.min(nextIndex, Math.max(cardCount - 1, 0)))
+        Math.max(-LEAD_PAGES, Math.min(nextIndex, Math.max(cardCount - 1, 0)))
       )
     }
     feedContainer.addEventListener("scroll", handleScroll, { passive: true })
@@ -422,7 +427,7 @@ export function Feed({ initialFilter }: { initialFilter?: FeedFilter }) {
             "(prefers-reduced-motion: reduce)"
           ).matches
           container.scrollTo({
-            top: previousCount * container.clientHeight,
+            top: (previousCount + LEAD_PAGES) * container.clientHeight,
             behavior: reducedMotion ? "auto" : "smooth",
           })
           setActiveIndex(previousCount)
@@ -436,7 +441,7 @@ export function Feed({ initialFilter }: { initialFilter?: FeedFilter }) {
       "(prefers-reduced-motion: reduce)"
     ).matches
     container.scrollTo({
-      top: cardCount * container.clientHeight,
+      top: (cardCount + LEAD_PAGES) * container.clientHeight,
       behavior: reducedMotion ? "auto" : "smooth",
     })
   }
@@ -611,12 +616,18 @@ export function Feed({ initialFilter }: { initialFilter?: FeedFilter }) {
           }}
         />
       ) : !hasCards ? (
-        <FeedEmptyState
-          hasMore={hasMore}
-          loadingMore={loadingMore}
-          error={loadMoreError}
-          onLoadMore={() => void loadMore()}
-        />
+        // Today still shows the streak and a way to start when nothing is studied yet.
+        <div className="h-full snap-y snap-mandatory overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          <TodayCard />
+          <div className="h-svh snap-start">
+            <FeedEmptyState
+              hasMore={hasMore}
+              loadingMore={loadingMore}
+              error={loadMoreError}
+              onLoadMore={() => void loadMore()}
+            />
+          </div>
+        </div>
       ) : (
         <div
           ref={feedRef}
@@ -624,6 +635,7 @@ export function Feed({ initialFilter }: { initialFilter?: FeedFilter }) {
           aria-label="Learning feed"
           className="h-full snap-y snap-mandatory [scrollbar-width:none] overflow-y-auto overscroll-y-contain scroll-smooth outline-none focus:outline-none focus-visible:outline-none [&::-webkit-scrollbar]:hidden"
         >
+          <TodayCard />
           {data?.cards.map((card, index) => (
             <FeedCardView
               key={card.id}
@@ -709,7 +721,7 @@ function FeedEmptyState({
     <section className="flex h-full items-center justify-center px-5 text-center">
       <div className="max-w-sm">
         <h1 className="text-3xl font-medium tracking-[-0.04em] text-foreground">
-          {hasMore ? "No cards here yet" : "Nothing to study yet"}
+          {hasMore ? "No cards here yet" : "Start a unit to fill your feed"}
         </h1>
         {error ? (
           <p className="mt-3 text-sm leading-relaxed text-destructive" role="alert">
@@ -730,7 +742,7 @@ function FeedEmptyState({
             asChild
             className="mt-6 h-11 rounded-full bg-brand px-5 text-sm font-medium text-brand-foreground hover:bg-brand/85"
           >
-            <Link href="/library">Add something to learn</Link>
+            <Link href="/library">Open your modules</Link>
           </Button>
         )}
       </div>

@@ -217,6 +217,8 @@ export default defineSchema({
      * Teach session, so answering it twice reuses one item.
      */
     teachKey: v.optional(v.string()),
+    /** `teach` for lesson quizzes, `bank` for generated practice questions. */
+    origin: v.optional(v.union(v.literal("teach"), v.literal("bank"))),
     sourceIds: v.array(v.id("sources")),
     type: learningItemType,
     title: v.string(),
@@ -246,7 +248,26 @@ export default defineSchema({
     .index("by_project_order", ["projectId", "order"])
     .index("by_project_concept_order", ["projectId", "conceptId", "order"])
     .index("by_concept_order", ["conceptId", "order"])
-    .index("by_project_teachKey", ["projectId", "teachKey"]),
+    .index("by_project_teachKey", ["projectId", "teachKey"])
+    .index("by_unit", ["unitId"]),
+
+  /** One run that writes practice questions for a unit's question bank. */
+  questionGenerations: defineTable({
+    projectId: v.id("projects"),
+    unitId: v.id("units"),
+    status: v.union(
+      v.literal("running"),
+      v.literal("completed"),
+      v.literal("failed")
+    ),
+    requestedCount: v.number(),
+    createdCount: v.number(),
+    /** Questions dropped by validation. */
+    rejectedCount: v.optional(v.number()),
+    error: v.optional(v.string()),
+    startedAt: v.number(),
+    finishedAt: v.optional(v.number()),
+  }).index("by_unit_startedAt", ["unitId", "startedAt"]),
 
   /** Previous explanation text retained when a new source revises a lesson. */
   lessonPageRevisions: defineTable({
@@ -300,7 +321,31 @@ export default defineSchema({
       "conceptId",
       "occurredAt",
     ])
-    .index("by_item_occurredAt", ["itemId", "occurredAt"]),
+    .index("by_item_occurredAt", ["itemId", "occurredAt"])
+    .index("by_occurredAt", ["occurredAt"]),
+
+  /**
+   * Learning milestones other than answers, used for XP and streaks: a Teach
+   * section reached, or a unit finished.
+   */
+  learningActivity: defineTable({
+    kind: v.union(v.literal("section"), v.literal("unit")),
+    projectId: v.id("projects"),
+    unitId: v.id("units"),
+    /** Section id for `section` milestones, so one section counts once. */
+    sectionId: v.optional(v.string()),
+    occurredAt: v.number(),
+  })
+    .index("by_occurredAt", ["occurredAt"])
+    .index("by_unit_kind", ["unitId", "kind"]),
+
+  /** Personal study preferences for this installation. */
+  studyPreferences: defineTable({
+    scope: v.literal("global"),
+    /** XP that counts as a completed day for the streak. */
+    dailyGoalXp: v.number(),
+    updatedAt: v.number(),
+  }).index("by_scope", ["scope"]),
 
   conceptReviews: defineTable({
     projectId: v.id("projects"),

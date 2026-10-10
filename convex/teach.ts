@@ -97,6 +97,7 @@ export const registerQuiz = mutation({
       conceptId: concept._id,
       ...(chat.unitId ? { unitId: chat.unitId } : {}),
       teachKey,
+      origin: "teach",
       sourceIds,
       type: quiz.type,
       title,

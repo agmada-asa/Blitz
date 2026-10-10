@@ -147,7 +147,36 @@ function convexClient(): ConvexHttpClient {
   }
 }
 
-/** Fetches bounded feed cards, projects, and topics from Convex. */
+/** Item IDs remembered in a feed cursor; enough to avoid repeats within a session. */
+const MAX_FEED_SEEN = 300
+
+/** Encodes the items shown so far as an opaque cursor. */
+function encodeFeedCursor(seen: string[]): string {
+  return Buffer.from(JSON.stringify(seen.slice(-MAX_FEED_SEEN))).toString("base64url")
+}
+
+/** Decodes a feed cursor, rejecting anything that is not a bounded ID list. */
+function decodeFeedCursor(cursor: string | undefined): string[] {
+  if (!cursor) return []
+  try {
+    const value = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8")) as unknown
+    if (
+      Array.isArray(value) &&
+      value.length <= MAX_FEED_SEEN &&
+      value.every((id) => typeof id === "string" && id.length > 0 && id.length <= MAX_ID_LENGTH)
+    )
+      return value
+  } catch {
+    // Fall through to the error below.
+  }
+  throw new LearningApiError("Feed cursor is invalid", 400)
+}
+
+/**
+ * Loads one page of the home feed: questions and recaps from units the
+ * learner has started, weakest material first. The feed never ends; the
+ * cursor carries the items already shown so pages do not repeat them.
+ */
 export async function fetchLearningFeed(input: {
   projectId?: string
   topicId?: string
@@ -161,17 +190,21 @@ export async function fetchLearningFeed(input: {
   const projectId = input.projectId
     ? (boundedId(input.projectId, "Project ID") as Id<"projects">)
     : undefined
-  const topicId = input.topicId
-    ? (boundedId(input.topicId, "Topic ID") as Id<"topics">)
-    : undefined
+  const seen = decodeFeedCursor(input.cursor)
   try {
-    const result = await convexClient().query(api.learning.getLearningFeed, {
+    const result = await convexClient().query(api.practice.feed, {
       projectId,
-      topicId,
+      seen,
       limit,
-      ...(input.cursor ? { cursor: input.cursor } : {}),
     })
-    return result as FeedResponse
+    const shown = [...seen, ...result.cards.map((card) => card.id)]
+    return {
+      cards: result.cards as FeedCard[],
+      projects: result.projects,
+      topics: result.topics,
+      isDone: !result.cards.length,
+      continueCursor: result.cards.length ? encodeFeedCursor(shown) : null,
+    }
   } catch (error) {
     if (error instanceof LearningApiError) throw error
     throw new LearningApiError("Learning service is unavailable", 503)

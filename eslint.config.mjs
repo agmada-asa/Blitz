@@ -20,6 +20,8 @@ const eslintConfig = defineConfig([
     "convex/_generated/**",
     // The native package owns its React Native checks and generated Android files.
     "mobile/**",
+    // Temporary git worktrees created by coding agents are separate checkouts.
+    ".claude/worktrees/**",
   ]),
   // Electron's sandbox preload only supports CommonJS in this host version.
   {

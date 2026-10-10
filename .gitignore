@@ -42,3 +42,6 @@ next-env.d.ts
 # local eval manifests name personal files; eval reports stay local
 /evals/*.local.json
 /.eval/
+
+# Temporary git worktrees created by coding agents
+.claude/worktrees/

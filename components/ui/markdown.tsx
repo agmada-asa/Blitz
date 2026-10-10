@@ -546,6 +546,16 @@ function nestedMarkdownRenderer(options: RenderOptions): MarkdownRenderer {
 }
 
 /**
+ * Renderer for standalone interactive blocks outside a Markdown message, such
+ * as a practice quiz. Supports code, maths, and tables; nested interactive
+ * fences render as code.
+ */
+export const plainMarkdownRenderer: MarkdownRenderer = nestedMarkdownRenderer({
+  streaming: false,
+  interactive: false,
+})
+
+/**
  * Renders an interactive fence, or a placeholder while it is still streaming.
  * @param token Fenced code token whose language is interactive.
  * @param language Interactive block language from the fence.
