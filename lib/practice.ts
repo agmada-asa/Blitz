@@ -70,7 +70,7 @@ export function buildQuestionBankPrompt(input: BankPromptInput): string {
     '- type "multiple-answer": 4–6 options, answer is an array of 0-based indices with at least 2 correct and at least 1 incorrect.',
     '- type "true-false": no options, answer is true or false.',
     '- type "cloze": mark 1–3 blanks in the question as {{1}}, {{2}}, …; no options; answer is one list of accepted answers per blank, e.g. "answer":[["O(log n)","log n"],["root"]]. Each blank must have one clear answer; list its common equivalent spellings. Matching ignores case, spaces, and a trailing full stop.',
-    '- type "ordering": options are 3–6 items written in the correct order (Blitz shuffles them); no answer field. The question says what order to use, such as "first to last".',
+    '- type "ordering": options are 3–6 items written in the correct order, first to last; no answer field. Never shuffle them yourself: Blitz shuffles them for the learner, and your order is the answer key. The question says what order to use, such as "first to last".',
     '- type "matching": no options or answer; "pairs":[["item","its match"], …] with 3–5 pairs, and optionally "extras":["plausible unused match"] (at most 2).',
     '- type "code-output": the question contains a short fenced code block (at most 15 lines, no input, no randomness, no timing); no options; answer is the exact printed output, or a list of accepted outputs. Line breaks matter; repeated spaces do not.',
     "- id: unique within this reply (b1, b2, …). concept: the broad idea the question tests, at most 60 characters, such as a section title. Use 4 to 8 distinct concept names for the whole batch so each concept has several questions; never invent a separate concept for each question.",
