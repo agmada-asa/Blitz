@@ -28,7 +28,8 @@ export function StudyGoalSettings() {
     <div className="space-y-3">
       <RadioGroup
         aria-label="Daily goal"
-        value={current === undefined ? undefined : String(current)}
+        // Always controlled: no option is selected until the saved goal loads.
+        value={current === undefined ? "" : String(current)}
         onValueChange={(value) => {
           setError("")
           save({ xp: Number(value) }).catch(() => setError("The goal could not be saved. Try again."))
