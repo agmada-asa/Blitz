@@ -58,37 +58,74 @@ Git. Run `npm run prebuild:android` when you need to inspect or regenerate it.
 When no server URL is configured, the app presents a connection field. Set
 `EXPO_PUBLIC_BLITZ_URL` before starting Metro or enter the LAN address in the
 app; no private machine address is embedded in the bundle. The feed uses
-vertical full-screen paging, explanation cards, single-choice,
-multiple-answer, and true/false questions, project/topic filters, and an
-`Ask in chat` sheet backed by the server's persisted chat queue. Source imports
+vertical full-screen paging, recap cards, every question format, project
+filters, and an `Ask in chat` sheet backed by the server's persisted chat
+queue. Source imports
 can be uploaded from the Android document picker or added as pasted notes and
-public links. The native `Library` control opens searchable projects, including
-those with no prepared cards. Select a project to open its learning overview,
-study tools, sources, generated files, research summary, and project actions.
-The project API uses the same configured local server as the feed.
+public links. The native `Library` control opens searchable modules with their progress.
+Select one to open its learning path and practice (see below).
 
-## Native screen parity
+## Teach, Practice, and Home on the phone
 
-Native routes are kept in the Expo app so the device does not need to switch to
-the browser for the primary learning workflow:
+The phone runs the same learning loop as the desktop, on the contracts in
+`lib/learning/mobile-contracts.ts` (served by `app/api/mobile/*` through
+`lib/server/mobile-learning.ts`):
 
-- `Home` renders the prepared feed, filters, answer feedback, offline queue,
-  and card chat.
-- `Library` renders project search and management, then opens the project
-  learning overview with study tools, sources, generated files, and research.
-- `Chat`, `Activity`, and `Settings` use the same server contracts as the web
-  screens. Chat history is loaded from the server and retained locally for
-  offline continuity.
-- Project study, practice, test, and write activities use the shared session
-  and writing contracts, so scoring and saved answers remain server-owned.
-- Source preview keeps the web overview's metadata, extracted text, citations,
-  status, retry, and original-file actions. Research keeps the web approval
-  boundary: suggested sources are never imported until the learner selects
-  them explicitly.
+- **Home** opens on the Today page (`components/today-page.tsx`, from
+  `GET /api/mobile/home?tz=`): the streak, today's XP against the goal, the
+  last seven days, and a Continue card for the unit being learned with its
+  section bar. Swiping up gives the feed (`GET /api/learning/feed`), which
+  renders every question format: single choice, multiple answer, true or
+  false, cloze, ordering, matching, and code output
+  (`components/question-view.tsx`). Formats the app does not know are skipped
+  rather than failing the feed.
+- **Library** lists modules with one bar segment per unit and "N of M units
+  taught · Next: …", most recently studied first (`GET /api/mobile/modules`).
+  Opening a module shows its page (`components/module-screen.tsx`,
+  `GET /api/mobile/modules/[projectId]`): the unit to continue, the learning
+  path drawn as a path with each unit's section bar, a drill card with the
+  concept mastery bar, concepts that are not sticking with Relearn, and the
+  exam papers (sat on the computer). Sources, files, and research are one tap
+  away in the older project workspace.
+- **Teach** (`components/teach-screen.tsx`) opens a unit's session
+  (`POST /api/mobile/teach` creates it on first visit) and starts teaching
+  straight away. Turns are sent to the shared `/api/chat` route; while the
+  tutor writes, the screen re-reads the saved reply from
+  `GET /api/mobile/teach?unitId=` every 1.2 seconds, as the desktop reads it
+  from the database. Replies are split into Markdown and interactive blocks
+  (`lib/teach-content.ts`): quizzes are answered natively and recorded through
+  `/api/teach/answer`, worked examples reveal step by step, follow-ups send a
+  question, and visualisations point to the computer. Formulas are shown as
+  readable Unicode (`lib/math-text.ts`), citations as labels. The header has
+  the section bar, XP this sitting, and Finish, which opens the session
+  summary. A Relearn request from Practice is sent once when the session is
+  ready.
+- **Drills** (`components/drill-screen.tsx`, `GET /api/mobile/drill`) ask ten
+  questions, missed and weak material first, as feed cards without answer
+  keys; `/api/learning/answer` scores each one and reveals the key. A miss
+  offers Relearn. The drill ends with the session summary
+  (`GET /api/mobile/summary`).
 
-The native API routes under `app/api/mobile/` return screen-ready, bounded
-payloads. They reuse the existing Convex mutations and source-processing
-workers rather than creating a second data model.
+## Offline
+
+Everything the learner has opened is kept on the device
+(`lib/offline-cache.ts`, scoped to the server URL): the Today page, the
+library, module pages, drill decks, and the last 30 lessons. Without a
+connection these are shown with an offline notice. Lesson quizzes answered
+offline are graded from the lesson's own quiz block and queued; the queue is
+recorded the next time a lesson opens online. Drill answers use the feed's
+event queue, so they sync with the feed. New teaching needs the computer,
+because the tutor runs there.
+
+## Older native screens
+
+Chat, Activity, and Settings use the same server contracts as the web
+screens. The project workspace (sources, generated files, research) and its
+older study, test, and writing tools remain available from a module's
+**Sources and files**. Source preview keeps the web overview's metadata,
+extracted text, status, retry, and original-file actions. Research keeps the
+web approval boundary: suggested sources are never imported until the
+learner selects them explicitly.
 
 ## Build a debug APK without a device
 
