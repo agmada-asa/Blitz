@@ -140,31 +140,42 @@ function parseOption(value: unknown): { id: string; text: string } {
   }
 }
 
-/** Validates a feed card while retaining no server-owned answer fields. */
-function parseCard(value: unknown): MobileLearningCard {
+/** Card formats this app can render; a newer server may send others. */
+const SUPPORTED_CARD_TYPES: ReadonlySet<string> = new Set<MobileLearningCard["type"]>([
+  "explain",
+  "single-choice",
+  "multiple-answer",
+  "true-false",
+  "cloze",
+  "ordering",
+  "matching",
+  "code-output",
+])
+
+/**
+ * Validates a feed card while retaining no server-owned answer fields.
+ * Returns null for a format this app cannot render, so one new card type
+ * from a newer server does not empty the whole feed.
+ */
+function parseCard(value: unknown): MobileLearningCard | null {
   if (!isRecord(value))
     throw new MobileApiError("Server returned an invalid card")
   const type = requiredString(value.type, "card type")
-  if (
-    type !== "explain" &&
-    type !== "single-choice" &&
-    type !== "multiple-answer" &&
-    type !== "true-false"
-  ) {
-    throw new MobileApiError("Server returned an unsupported card type")
-  }
+  if (!SUPPORTED_CARD_TYPES.has(type)) return null
   const card: Record<string, unknown> = {
     id: requiredString(value.id, "card id"),
     projectId: requiredString(value.projectId, "project id"),
     conceptId: requiredString(value.conceptId, "concept id"),
     title: requiredString(value.title, "card title"),
-    sourceLabel: requiredString(value.sourceLabel, "source label"),
+    sourceLabel: typeof value.sourceLabel === "string" ? value.sourceLabel : "",
     sourceIds: Array.isArray(value.sourceIds)
       ? value.sourceIds.map((id) => requiredString(id, "source id"))
       : [],
     type,
   }
   if (typeof value.topicId === "string") card.topicId = value.topicId
+  // Repeated cards in a later feed round share an id but carry a new key.
+  if (typeof value.key === "string") card.key = value.key
   if (type === "explain") {
     card.body = requiredString(value.body, "card body")
   } else {
@@ -174,6 +185,8 @@ function parseCard(value: unknown): MobileLearningCard {
         throw new MobileApiError("Server returned invalid options")
       card.options = value.options.map(parseOption)
     }
+    if (Array.isArray(value.prompts))
+      card.prompts = value.prompts.map((prompt) => requiredString(prompt, "matching item"))
   }
   return card as MobileLearningCard
 }
@@ -200,7 +213,9 @@ function parseFeed(value: unknown): MobileFeedPayload {
     throw new MobileApiError("Server returned incomplete feed filters")
   }
   return {
-    cards: value.cards.map(parseCard),
+    cards: value.cards
+      .map(parseCard)
+      .filter((card): card is MobileLearningCard => card !== null),
     projects: value.projects.map((choice) => parseChoice(choice, "project")),
     topics: value.topics.map((choice) => {
       const parsed = parseChoice(choice, "topic")

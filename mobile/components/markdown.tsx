@@ -9,7 +9,8 @@ import {
   View,
 } from "react-native"
 import type { Token, Tokens } from "marked"
-import { markdownHref, markdownText, parseMarkdown } from "../../lib/markdown"
+import { markdownHref, markdownText, parseMarkdown, type MathToken } from "../../lib/markdown"
+import { mathToText } from "../../lib/math-text"
 import { Text } from "./native-text"
 
 /** Opens only validated web/email links and reports unavailable handlers. */
@@ -51,7 +52,21 @@ function inline(tokens: Token[]): ReactNode {
         )
       case "br":
         return "\n"
+      case "math":
+        // Formulas cannot be typeset natively; show them as readable Unicode.
+        return (
+          <Text key={key} style={styles.math}>
+            {mathToText((token as unknown as MathToken).text)}
+          </Text>
+        )
       case "link": {
+        // Source citations open in the desktop reader; here they read as a quiet label.
+        if (token.href.startsWith("citation:"))
+          return (
+            <Text key={key} style={styles.citation}>
+              {children}
+            </Text>
+          )
         const href = markdownHref(token.href)
         return href ? (
           <Text
@@ -121,6 +136,12 @@ function blocks(tokens: Token[]): ReactNode {
         )
       case "hr":
         return <View key={key} style={styles.rule} />
+      case "math":
+        return (
+          <Text key={key} selectable style={[styles.text, styles.math, styles.mathBlock]}>
+            {mathToText((token as unknown as MathToken).text)}
+          </Text>
+        )
       case "list":
         return (
           <View key={key} style={styles.blocks}>
@@ -178,7 +199,7 @@ function blocks(tokens: Token[]): ReactNode {
 
 /** Reuses parsed output for unchanged replies; incomplete Markdown remains readable during streaming. */
 export const Markdown = memo(function Markdown({ text }: { text: string }) {
-  return <View style={styles.blocks}>{blocks(parseMarkdown(text))}</View>
+  return <View style={styles.blocks}>{blocks(parseMarkdown(text, { math: true }))}</View>
 })
 
 const styles = StyleSheet.create({
@@ -195,6 +216,9 @@ const styles = StyleSheet.create({
   codeBlock: { backgroundColor: "#101010", borderRadius: 8 },
   codeContent: { padding: 12, backgroundColor: "transparent" },
   link: { color: "#ff8065", textDecorationLine: "underline" },
+  math: { color: "#f0f0f0", fontStyle: "italic" },
+  citation: { color: "#ff8065", fontSize: 12 },
+  mathBlock: { textAlign: "center", paddingVertical: 4 },
   quote: {
     borderLeftWidth: 2,
     borderLeftColor: "#ff8065",
