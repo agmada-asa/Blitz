@@ -21,6 +21,7 @@ import {
   File01Icon,
   FileUploadIcon,
   Folder01Icon,
+  HeadphonesIcon as HeadphonesGlyph,
   HelpCircleIcon,
   Layers01Icon,
   Link02Icon,
@@ -86,6 +87,8 @@ export const FileUploadIconComponent = makeIcon(FileUploadIcon)
 export const FolderIcon = makeIcon(Folder01Icon)
 /** Recall prompt glyph. */
 export const HelpIcon = makeIcon(HelpCircleIcon)
+/** Headphones glyph for listening and podcasts. */
+export const HeadphonesIcon = makeIcon(HeadphonesGlyph)
 /** Source collection glyph. */
 export const LayersIcon = makeIcon(Layers01Icon)
 /** Connection card glyph. */

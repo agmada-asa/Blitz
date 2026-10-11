@@ -13,6 +13,14 @@ import { useState } from "react"
 
 import { AddMaterial } from "@/components/learn/add-material"
 import { ProjectActions } from "@/components/projects/project-actions"
+import {
+  PathConnector,
+  PathMarker,
+  SegmentedBar,
+  pathSegments,
+  pathStateLabel,
+  type PathState,
+} from "@/components/progress/progress-path"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -28,12 +36,19 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { ArrowLeftIcon, ArrowRightIcon, PlusIcon } from "@/components/ui/icon"
+import {
+  ArrowLeftIcon,
+  ArrowRightIcon,
+  FileIcon,
+  HeadphonesIcon,
+  PlusIcon,
+  ZapIcon,
+} from "@/components/ui/icon"
 import { Input } from "@/components/ui/input"
-import { Progress } from "@/components/ui/progress"
 import { Skeleton } from "@/components/ui/skeleton"
 import { api } from "@/convex/_generated/api"
 import type { Doc, Id } from "@/convex/_generated/dataModel"
+import { cn } from "@/lib/utils"
 
 /** One unit as listed on the module page. */
 type UnitRow = FunctionReturnType<typeof api.units.listForProject>["units"][number]
@@ -75,13 +90,26 @@ function unitStatus(unit: UnitRow): string {
   return `${sources} · Section ${teach.sectionIndex + 1} of ${teach.sectionCount}`
 }
 
-/** Returns a unit's Teach progress as a percentage. */
-function unitProgress(unit: UnitRow): number {
+/**
+ * Returns one bar segment per section of a unit's outline: taught sections are
+ * full, the current one half, and the rest empty, as in the Teach header.
+ */
+function unitSegments(unit: UnitRow) {
   const teach = unit.teach
-  if (!teach || !teach.sectionCount) return 0
-  if (teach.completed) return 100
-  // Count sections actually taught, so jumping ahead does not inflate progress.
-  return Math.round((teach.taughtSectionIds.length / teach.sectionCount) * 100)
+  if (!teach?.sectionIds.length) return []
+  const taught = new Set(teach.taughtSectionIds)
+  return pathSegments(
+    teach.sectionIds.map((id, index) => ({
+      key: id,
+      state: teach.completed
+        ? "done"
+        : index === teach.sectionIndex
+          ? "current"
+          : taught.has(id)
+            ? "done"
+            : "ahead",
+    }))
+  )
 }
 
 /**
@@ -158,12 +186,19 @@ function ModuleOverview({ project }: { project: Doc<"projects"> }) {
         <>
           {next ? (
             <section className="mt-8 flex flex-col gap-4 rounded-2xl border border-brand/25 bg-brand/[0.05] p-5 sm:flex-row sm:items-center sm:justify-between sm:p-6">
-              <div className="min-w-0">
-                <h2 className="font-heading text-xl font-semibold break-words">{next.title}</h2>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  {next.teach?.currentSectionTitle ??
-                    (next.teach?.sectionCount ? unitStatus(next) : `${next.sources.length} source${next.sources.length === 1 ? "" : "s"} ready to teach`)}
+              <div className="min-w-0 flex-1">
+                <p className="text-xs font-medium text-brand">
+                  {next.teach?.sectionCount ? "Continue where you left off" : "Up next"}
                 </p>
+                <h2 className="mt-1 font-heading text-xl font-semibold break-words">{next.title}</h2>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  {next.teach?.currentSectionTitle
+                    ? `Section ${next.teach.sectionIndex + 1} of ${next.teach.sectionCount} · ${next.teach.currentSectionTitle}`
+                    : next.teach?.sectionCount
+                      ? unitStatus(next)
+                      : `${next.sources.length} source${next.sources.length === 1 ? "" : "s"} ready to teach`}
+                </p>
+                <SegmentedBar segments={unitSegments(next)} className="mt-3 max-w-md" />
               </div>
               <Button
                 asChild
@@ -214,12 +249,13 @@ function ModuleOverview({ project }: { project: Doc<"projects"> }) {
                   <PlusIcon aria-hidden="true" /> Add material
                 </Button>
               </div>
-              <ol className="mt-4 space-y-2">
+              <ol className="mt-4 space-y-1">
                 {units.map((unit, index) => (
                   <UnitListItem
                     key={unit.id}
                     unit={unit}
                     number={index + 1}
+                    state={unit.teach?.completed ? "done" : unit.id === next?.id ? "current" : "ahead"}
                     href={teachHref(unit)}
                     isFirst={index === 0}
                     isLast={index === units.length - 1}
@@ -270,15 +306,38 @@ function ModuleOverview({ project }: { project: Doc<"projects"> }) {
             </section>
           ) : null}
 
-          <nav aria-label="Module areas" className="mt-10 flex flex-wrap gap-2">
+          <nav aria-label="Module areas" className="mt-10 grid gap-2 sm:grid-cols-3">
             {[
-              { href: `${base}/practice`, label: "Practice" },
-              { href: `${base}/sources`, label: "Sources" },
-              { href: `${base}/listen`, label: "Listen" },
+              {
+                href: `${base}/practice`,
+                label: "Practice",
+                detail: "Drills and mock exams",
+                icon: ZapIcon,
+              },
+              {
+                href: `${base}/sources`,
+                label: "Sources",
+                detail: `${units.reduce((sum, unit) => sum + unit.sources.length, 0) + data.unsortedSources.length + data.referenceSources.length} files and links`,
+                icon: FileIcon,
+              },
+              {
+                href: `${base}/listen`,
+                label: "Listen",
+                detail: "Podcasts made from your units",
+                icon: HeadphonesIcon,
+              },
             ].map((item) => (
-              <Button key={item.href} asChild variant="outline" className="min-h-11 rounded-full px-5">
-                <Link href={item.href}>{item.label}</Link>
-              </Button>
+              <Link
+                key={item.href}
+                href={item.href}
+                className="flex min-h-16 items-center gap-3 rounded-xl border border-border bg-card px-4 py-3 transition-colors hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+              >
+                <item.icon aria-hidden="true" className="size-5 shrink-0 text-brand" />
+                <span className="min-w-0">
+                  <span className="block text-sm font-medium">{item.label}</span>
+                  <span className="block truncate text-xs text-muted-foreground">{item.detail}</span>
+                </span>
+              </Link>
             ))}
           </nav>
         </>
@@ -303,6 +362,8 @@ function ModuleOverview({ project }: { project: Doc<"projects"> }) {
 type UnitListItemProps = {
   unit: UnitRow
   number: number
+  /** Where the unit stands on the path: taught, up next, or ahead. */
+  state: PathState
   href: string
   isFirst: boolean
   isLast: boolean
@@ -310,14 +371,14 @@ type UnitListItemProps = {
 }
 
 /** Renders one unit with its progress and an actions menu. */
-function UnitListItem({ unit, number, href, isFirst, isLast, onAddMaterial }: UnitListItemProps) {
+function UnitListItem({ unit, number, state, href, isFirst, isLast, onAddMaterial }: UnitListItemProps) {
   const rename = useMutation(api.units.rename)
   const move = useMutation(api.units.move)
   const remove = useMutation(api.units.remove)
   const [renaming, setRenaming] = useState(false)
   const [title, setTitle] = useState(unit.title)
   const [error, setError] = useState("")
-  const progress = unitProgress(unit)
+  const segments = unitSegments(unit)
 
   /** Saves a new title from the rename dialog. */
   async function saveTitle() {
@@ -330,28 +391,31 @@ function UnitListItem({ unit, number, href, isFirst, isLast, onAddMaterial }: Un
   }
 
   return (
-    <li className="group relative flex items-center gap-3 rounded-xl border border-border bg-card px-4 py-3 transition-colors hover:bg-muted/50">
-      <span
-        aria-hidden="true"
-        className="flex size-8 shrink-0 items-center justify-center rounded-full bg-muted text-sm font-medium tabular-nums"
-      >
-        {number}
-      </span>
-      <div className="min-w-0 flex-1">
+    <li
+      className={cn(
+        "group relative flex items-start gap-3 rounded-xl px-3 py-3 transition-colors hover:bg-muted/60",
+        state === "current" && "bg-brand/[0.06]"
+      )}
+    >
+      {/* The path joins each unit's marker to the next; taught stretches are filled. */}
+      {!isLast ? (
+        <PathConnector done={state === "done"} className="top-[48px] -bottom-[16px] left-[27.5px] z-10" />
+      ) : null}
+      <PathMarker state={state} number={number} size="md" />
+      <div className="min-w-0 flex-1 pt-0.5">
         <Link
           href={href}
-          className="block font-medium break-words after:absolute after:inset-0 after:rounded-xl focus-visible:outline-none focus-visible:after:ring-2 focus-visible:after:ring-ring"
+          aria-current={state === "current" ? "step" : undefined}
+          className={cn(
+            "block font-medium break-words after:absolute after:inset-0 after:rounded-xl focus-visible:outline-none focus-visible:after:ring-2 focus-visible:after:ring-ring",
+            state === "ahead" && "text-foreground/85"
+          )}
         >
           {unit.title}
+          <span className="sr-only"> ({pathStateLabel(state)})</span>
         </Link>
         <p className="mt-0.5 text-xs text-muted-foreground">{unitStatus(unit)}</p>
-        {progress > 0 ? (
-          <Progress
-            value={progress}
-            aria-label={`${unit.title}: ${progress}% taught`}
-            className="mt-2 h-1 [&_[data-slot=progress-indicator]]:bg-brand"
-          />
-        ) : null}
+        <SegmentedBar size="sm" segments={segments} className="mt-2 max-w-sm" />
       </div>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>

@@ -67,7 +67,7 @@ names the PR that delivers it once one exists.
 ## Phase 5: polish and redesign
 
 - [x] Redesign starting from the Teach screen: progress bar, path outline, session XP, Finish for now
-- [ ] Carry the redesign to Practice, the Library, and Home
+- [x] Carry the redesign to Practice, the Library, and Home
 - [x] Podcasts can cover one unit or the whole module
 - [x] Notifications for practice questions, exam papers, and marking; retired lesson pipeline rows removed
 

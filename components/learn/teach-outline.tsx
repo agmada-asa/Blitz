@@ -7,7 +7,14 @@
  * the segmented bar sits in the header on every screen.
  */
 
-import { CheckIcon } from "@/components/ui/icon"
+import {
+  PathConnector,
+  PathMarker,
+  SegmentedBar,
+  pathSegments,
+  pathStateLabel,
+  type PathState,
+} from "@/components/progress/progress-path"
 import type { TeachOutline } from "@/lib/teach"
 import { cn } from "@/lib/utils"
 
@@ -26,15 +33,12 @@ export type TeachOutlineProps = {
   onJumpToSection: (index: number) => void
 }
 
-/** Where a section stands for the learner. */
-type SectionState = "done" | "current" | "ahead"
-
 /** Returns a section's state from the learner's position and taught sections. */
 function sectionState(
   index: number,
   sectionIndex: number,
   taught: boolean
-): SectionState {
+): PathState {
   if (index === sectionIndex) return "current"
   return taught ? "done" : "ahead"
 }
@@ -53,32 +57,15 @@ export function TeachProgressBar({
   className?: string
 }) {
   return (
-    <div aria-hidden="true" className={cn("flex w-full gap-1", className)}>
-      {outline.sections.map((section, index) => {
-        const state = sectionState(
-          index,
-          sectionIndex,
-          taughtSectionIds.has(section.id)
-        )
-        return (
-          <span
-            key={section.id}
-            className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted"
-          >
-            <span
-              className={cn(
-                "block h-full rounded-full bg-brand transition-[width] duration-500 motion-reduce:transition-none",
-                state === "done"
-                  ? "w-full"
-                  : state === "current"
-                    ? "w-1/2"
-                    : "w-0"
-              )}
-            />
-          </span>
-        )
-      })}
-    </div>
+    <SegmentedBar
+      className={className}
+      segments={pathSegments(
+        outline.sections.map((section, index) => ({
+          key: section.id,
+          state: sectionState(index, sectionIndex, taughtSectionIds.has(section.id)),
+        }))
+      )}
+    />
   )
 }
 
@@ -112,12 +99,9 @@ export function TeachOutlineList({
           <li key={section.id} className="relative">
             {/* The path joins each section's marker to the next; taught stretches are filled. */}
             {!last ? (
-              <span
-                aria-hidden="true"
-                className={cn(
-                  "absolute top-[34px] -bottom-[14px] left-[21.5px] w-px",
-                  state === "done" ? "bg-brand" : "bg-border"
-                )}
+              <PathConnector
+                done={state === "done"}
+                className="top-[34px] -bottom-[14px] left-[21.5px]"
               />
             ) : null}
             <button
@@ -133,32 +117,10 @@ export function TeachOutlineList({
                 state === "ahead" && "text-muted-foreground"
               )}
             >
-              <span
-                aria-hidden="true"
-                className={cn(
-                  "relative mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full border bg-background text-[11px] font-medium",
-                  state === "done" &&
-                    "border-brand bg-brand text-brand-foreground",
-                  state === "current" &&
-                    "border-2 border-brand text-brand ring-4 ring-brand/15",
-                  state === "ahead" && "border-border"
-                )}
-              >
-                {state === "done" ? (
-                  <CheckIcon className="size-3" />
-                ) : (
-                  index + 1
-                )}
-              </span>
+              <PathMarker state={state} number={index + 1} className="mt-0.5" />
               <span className="min-w-0 flex-1 break-words">
                 {section.title}
-                <span className="sr-only">
-                  {state === "done"
-                    ? " (done)"
-                    : state === "current"
-                      ? " (current)"
-                      : " (not started)"}
-                </span>
+                <span className="sr-only"> ({pathStateLabel(state)})</span>
               </span>
             </button>
           </li>

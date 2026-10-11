@@ -10,6 +10,7 @@ import Link from "next/link"
 import { useQuery } from "convex/react"
 import { useState } from "react"
 
+import { SegmentedBar, pathSegments } from "@/components/progress/progress-path"
 import { Button } from "@/components/ui/button"
 import { ArrowRightIcon, ZapIcon } from "@/components/ui/icon"
 import { Progress } from "@/components/ui/progress"
@@ -32,6 +33,7 @@ export function TodayCard() {
   const [tzOffsetMinutes] = useState(() => new Date().getTimezoneOffset())
   const now = useMinuteClock()
   const summary = useQuery(api.progress.today, { tzOffsetMinutes, now })
+  const resumeTaught = new Set(summary?.resume?.taughtSectionIds ?? [])
 
   return (
     <section
@@ -81,20 +83,38 @@ export function TodayCard() {
 
             <div className="mt-8 flex flex-col gap-3">
               {summary.resume ? (
-                <Button
-                  asChild
-                  className="h-auto min-h-12 w-full justify-between rounded-2xl bg-brand px-5 py-3 text-left text-brand-foreground hover:bg-brand/85 sm:w-auto sm:min-w-[24rem]"
+                <Link
+                  href={`/projects/${encodeURIComponent(summary.resume.projectId)}/learn/${encodeURIComponent(summary.resume.unitId)}`}
+                  className="group flex items-center gap-4 rounded-2xl border border-brand/25 bg-brand/[0.05] px-5 py-4 transition-colors hover:bg-brand/10 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
                 >
-                  <Link
-                    href={`/projects/${encodeURIComponent(summary.resume.projectId)}/learn/${encodeURIComponent(summary.resume.unitId)}`}
-                  >
-                    <span className="min-w-0">
-                      <span className="block truncate font-medium">Continue {summary.resume.unitTitle}</span>
-                      <span className="block truncate text-xs opacity-80">{summary.resume.detail}</span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-xs font-medium text-brand">
+                      Continue {summary.resume.projectTitle}
                     </span>
-                    <ArrowRightIcon aria-hidden="true" className="shrink-0" />
-                  </Link>
-                </Button>
+                    <span className="mt-0.5 block truncate font-medium">{summary.resume.unitTitle}</span>
+                    <span className="block truncate text-xs text-muted-foreground">{summary.resume.detail}</span>
+                    <SegmentedBar
+                      className="mt-3"
+                      segments={pathSegments(
+                        summary.resume.sectionIds.map((id, index) => ({
+                          key: id,
+                          state:
+                            index === summary.resume!.sectionIndex
+                              ? "current"
+                              : resumeTaught.has(id)
+                                ? "done"
+                                : "ahead",
+                        }))
+                      )}
+                    />
+                  </span>
+                  <span
+                    aria-hidden="true"
+                    className="flex size-10 shrink-0 items-center justify-center rounded-full bg-brand text-brand-foreground transition-transform group-hover:translate-x-0.5 motion-reduce:transition-none"
+                  >
+                    <ArrowRightIcon className="size-5" />
+                  </span>
+                </Link>
               ) : (
                 <Button
                   asChild
@@ -113,6 +133,36 @@ export function TodayCard() {
         )}
       </div>
     </section>
+  )
+}
+
+/**
+ * Today's XP against the daily goal as a small chip, shown over the feed so
+ * the goal stays in view while scrolling, like the session XP chip in Teach.
+ * Renders nothing while loading.
+ */
+export function TodayXpChip() {
+  const [tzOffsetMinutes] = useState(() => new Date().getTimezoneOffset())
+  const now = useMinuteClock()
+  const summary = useQuery(api.progress.today, { tzOffsetMinutes, now })
+  if (!summary) return null
+  const met = summary.todayXp >= summary.goal
+  return (
+    <p
+      className={cn(
+        "flex h-10 items-center gap-1.5 rounded-full border px-3.5 text-sm tabular-nums backdrop-blur-md",
+        met
+          ? "border-brand/30 bg-brand/10 text-brand"
+          : "border-border/80 bg-background/80 text-muted-foreground"
+      )}
+    >
+      <ZapIcon aria-hidden="true" className="size-4" />
+      <span>
+        {summary.todayXp}
+        <span className="sr-only sm:not-sr-only"> / {summary.goal}</span> XP
+      </span>
+      <span className="sr-only">{met ? "today, daily goal met" : `today of a ${summary.goal} XP goal`}</span>
+    </p>
   )
 }
 

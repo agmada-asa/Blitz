@@ -6,6 +6,7 @@ import Link from "next/link"
 import { useEffect, useState } from "react"
 import { AddIcon } from "@/components/ui/icon"
 import { ProjectActions } from "@/components/projects/project-actions"
+import { SegmentedBar } from "@/components/progress/progress-path"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -38,6 +39,8 @@ type ModuleProgress = {
   lastStudiedAt: number
   /** True when a module without units has sources waiting to be grouped. */
   hasUnsortedSources: boolean
+  /** Share of each unit taught (0 to 1), in path order. */
+  unitProgress: number[]
 }
 
 /** Props required to render the project library and create a project. */
@@ -218,19 +221,13 @@ export function ProjectGrid({ projects, progress, onCreate }: ProjectGridProps) 
                     {project.title}
                   </h2>
                   <div className="space-y-1.5">
-                    {progress?.[project._id]?.unitCount ? (
-                      <div
-                        aria-hidden="true"
-                        className="h-1 overflow-hidden rounded-full bg-muted"
-                      >
-                        <div
-                          className="h-full rounded-full bg-brand"
-                          style={{
-                            width: `${(progress[project._id].taughtCount / progress[project._id].unitCount) * 100}%`,
-                          }}
-                        />
-                      </div>
-                    ) : null}
+                    {/* One segment per unit, filled as far as it has been taught. */}
+                    <SegmentedBar
+                      size="sm"
+                      segments={(progress?.[project._id]?.unitProgress ?? []).map(
+                        (fill, index) => ({ key: String(index), fill })
+                      )}
+                    />
                     {progress ? (
                       // One line, so a two-line title still fits the fixed card height.
                       <p className="line-clamp-1 text-xs text-muted-foreground">

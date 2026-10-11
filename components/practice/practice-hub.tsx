@@ -13,9 +13,10 @@ import type { FunctionReturnType } from "convex/server"
 import { useState } from "react"
 
 import { ExamPrep } from "@/components/practice/exam-prep"
+import { SegmentedBar, type BarSegment } from "@/components/progress/progress-path"
 import { Button } from "@/components/ui/button"
 import { ElapsedTime } from "@/components/ui/elapsed-time"
-import { ArrowLeftIcon, ArrowRightIcon, LoadingIcon } from "@/components/ui/icon"
+import { ArrowDownIcon, ArrowLeftIcon, ArrowRightIcon, LoadingIcon } from "@/components/ui/icon"
 import { Skeleton } from "@/components/ui/skeleton"
 import { api } from "@/convex/_generated/api"
 import { useMinuteClock } from "@/hooks/use-minute-clock"
@@ -29,12 +30,50 @@ import { cn } from "@/lib/utils"
 /** Practice summary for one unit. */
 type UnitPractice = FunctionReturnType<typeof api.practice.overview>["units"][number]
 
-/** Words and colours for each concept strength. */
+/**
+ * Words and colours for each concept strength. Strength is one hue fading
+ * out (strong, learning, needs work), so it reads the same in every accent
+ * theme, where the brand colour can sit close to the destructive red.
+ */
 export const strengthStyle: Record<ConceptStrength, { label: string; dot: string }> = {
-  weak: { label: "Needs work", dot: "bg-destructive" },
-  learning: { label: "Learning", dot: "bg-brand/50" },
+  weak: { label: "Needs work", dot: "bg-brand/30" },
+  learning: { label: "Learning", dot: "bg-brand/60" },
   strong: { label: "Strong", dot: "bg-brand" },
   new: { label: "Not practised", dot: "bg-muted-foreground/40" },
+}
+
+/** Strengths from strongest to newest, the order concept bars are drawn in. */
+const STRENGTH_ORDER: ConceptStrength[] = ["strong", "learning", "weak", "new"]
+
+/** How much of a concept's bar segment is filled for each strength. */
+const STRENGTH_FILL: Record<ConceptStrength, number> = { strong: 1, learning: 0.6, weak: 0.25, new: 0 }
+
+/**
+ * Draws concepts as bar segments grouped by strength, strongest first. Each
+ * segment is filled as far as the concept is mastered (strong full, learning
+ * most of the way, needs work a sliver, not practised empty) in its
+ * strength's colour, so the bar reads as overall mastery.
+ * @param concepts Concepts with an id and strength.
+ */
+function conceptSegments(concepts: Array<{ id: string; strength: ConceptStrength }>): BarSegment[] {
+  return [...concepts]
+    .sort((a, b) => STRENGTH_ORDER.indexOf(a.strength) - STRENGTH_ORDER.indexOf(b.strength))
+    .map((concept) => ({
+      key: concept.id,
+      fill: STRENGTH_FILL[concept.strength],
+      tone: strengthStyle[concept.strength].dot,
+    }))
+}
+
+/** Counts concepts per strength as "3 strong · 2 learning", skipping empty groups. */
+function strengthCounts(concepts: Array<{ strength: ConceptStrength }>): string {
+  return STRENGTH_ORDER.map((strength) => {
+    const count = concepts.filter((concept) => concept.strength === strength).length
+    const label = strength === "weak" && count > 1 ? "need work" : strengthStyle[strength].label.toLowerCase()
+    return count ? `${count} ${label}` : ""
+  })
+    .filter(Boolean)
+    .join(" · ")
 }
 
 /**
@@ -73,6 +112,7 @@ export function PracticeHub({ projectId }: { projectId: string }) {
     )
 
   const totalQuestions = data?.units.reduce((sum, unit) => sum + unit.questionCount, 0) ?? 0
+  const allConcepts = data?.units.flatMap((unit) => unit.concepts) ?? []
   const drillSummary = data
     ? [
         data.missedCount ? `${data.missedCount} to retry` : "",
@@ -93,6 +133,14 @@ export function PracticeHub({ projectId }: { projectId: string }) {
         </Link>
       </Button>
       <h1 className="font-heading text-3xl font-semibold tracking-tight sm:text-4xl">Practice</h1>
+      {allConcepts.length ? (
+        <div className="mt-4">
+          <p className="text-sm text-muted-foreground">
+            {allConcepts.length} concept{allConcepts.length === 1 ? "" : "s"}: {strengthCounts(allConcepts)}
+          </p>
+          <SegmentedBar segments={conceptSegments(allConcepts)} className="mt-2" />
+        </div>
+      ) : null}
 
       {data === undefined ? (
         <div className="mt-8 space-y-4" aria-label="Loading practice">
@@ -282,18 +330,25 @@ function UnitBank({ unit, base }: { unit: UnitPractice; base: string }) {
         </p>
       ) : null}
       {unit.concepts.length ? (
-        <ul aria-label={`${unit.title} concepts`} className="mt-4 flex flex-wrap gap-1.5">
-          {unit.concepts.map((concept) => (
-            <li
-              key={concept.id}
-              className="flex items-center gap-1.5 rounded-full border border-border px-2.5 py-1 text-xs"
-            >
-              <span aria-hidden="true" className={cn("size-2 rounded-full", strengthStyle[concept.strength].dot)} />
-              <span className="max-w-[16rem] truncate">{concept.title}</span>
-              <span className="sr-only">: {strengthStyle[concept.strength].label}</span>
-            </li>
-          ))}
-        </ul>
+        <details className="group/concepts mt-4">
+          <summary className="flex cursor-pointer list-none flex-col gap-2 rounded-lg focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none [&::-webkit-details-marker]:hidden">
+            <SegmentedBar size="sm" segments={conceptSegments(unit.concepts)} />
+            <span className="flex items-center gap-1 text-xs text-muted-foreground">
+              {strengthCounts(unit.concepts)}
+              <ArrowDownIcon aria-hidden="true" className="size-3.5 transition-transform group-open/concepts:rotate-180 motion-reduce:transition-none" />
+              <span className="sr-only">Show concepts</span>
+            </span>
+          </summary>
+          <ul aria-label={`${unit.title} concepts`} className="mt-3 grid gap-x-4 gap-y-1.5 sm:grid-cols-2">
+            {unit.concepts.map((concept) => (
+              <li key={concept.id} className="flex min-w-0 items-center gap-2 text-sm">
+                <span aria-hidden="true" className={cn("size-2 shrink-0 rounded-full", strengthStyle[concept.strength].dot)} />
+                <span className="truncate">{concept.title}</span>
+                <span className="sr-only">: {strengthStyle[concept.strength].label}</span>
+              </li>
+            ))}
+          </ul>
+        </details>
       ) : null}
     </li>
   )
