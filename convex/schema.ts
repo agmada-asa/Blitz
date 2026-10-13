@@ -823,7 +823,12 @@ export default defineSchema({
       v.literal("failed")
     ),
     activeMessageId: v.optional(v.id("workspaceChatMessages")),
+    /** Recovery copy shown in chat after the last turn failed. */
     lastError: v.optional(v.string()),
+    /** Stable category of the last failure, such as `turn-failed` or `transport`. */
+    lastErrorReason: v.optional(v.string()),
+    /** Underlying error message for diagnosis; never shown in chat. */
+    lastErrorDetail: v.optional(v.string()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })

@@ -4,7 +4,10 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 import { CardChatError } from "../lib/server/card-chat.ts"
 import { SavedModelSettingsError } from "../lib/server/ai-model-settings.ts"
-import { workspaceChatFailure } from "../lib/server/workspace-chat-failure.ts"
+import {
+  workspaceChatFailure,
+  workspaceChatFailureDetail,
+} from "../lib/server/workspace-chat-failure.ts"
 
 for (const failure of [
   {
@@ -62,4 +65,26 @@ test("timeout, cancellation and invalid settings retain their recovery instructi
   assert.equal(workspaceChatFailure(invalid, true).message, invalid.message)
   const input = new CardChatError("invalid-input", "Choose a supported model")
   assert.equal(workspaceChatFailure(input, false).message, input.message)
+})
+
+/** Keeps the provider's own reason, which the recovery copy deliberately hides. */
+test("describes the underlying cause of a failed turn", () => {
+  assert.equal(
+    workspaceChatFailureDetail(
+      new CardChatError("turn-failed", "Blitz turn failed", {
+        message: "Selected model is at capacity.",
+        codexErrorInfo: "serverOverloaded",
+      })
+    ),
+    "Blitz turn failed: Selected model is at capacity."
+  )
+  assert.equal(
+    workspaceChatFailureDetail(new Error("Project artifact is too large")),
+    "Project artifact is too large"
+  )
+  assert.equal(workspaceChatFailureDetail("plain string"), undefined)
+  assert.equal(
+    workspaceChatFailureDetail(new Error("x".repeat(900)))?.length,
+    500
+  )
 })

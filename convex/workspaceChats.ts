@@ -84,6 +84,12 @@ function boundedText(value: string, label: string, maximum: number): string {
   return text
 }
 
+/** Accepts failure categories like `turn-failed` without free text. */
+const FAILURE_REASON_PATTERN = /^[a-z][a-z0-9-]{0,63}$/
+
+/** Bounds the stored diagnostic so a verbose provider error stays small. */
+const MAX_FAILURE_DETAIL_LENGTH = 500
+
 /** Derives a compact stable title from the first user message. */
 function titleForMessage(message: string): string {
   const firstLine = message.split(/\r?\n/, 1)[0]!.trim().replace(/\s+/g, " ")
@@ -408,6 +414,8 @@ export const get = query({
       agentInstructions: chat.agentInstructions ?? "",
       workingProjectId: chat.workingProjectId,
       lastError: chat.lastError ?? null,
+      lastErrorReason: chat.lastErrorReason ?? null,
+      lastErrorDetail: chat.lastErrorDetail ?? null,
       messages: messages.map((message) => ({
         id: message._id,
         clientMessageId: message.clientMessageId ?? null,
@@ -481,6 +489,8 @@ async function recoverStaleTurn(
     status: "failed",
     activeMessageId: undefined,
     lastError: "The previous reply was interrupted.",
+    lastErrorReason: "interrupted",
+    lastErrorDetail: undefined,
     updatedAt: now,
   })
 }
@@ -652,6 +662,8 @@ export const startTurn = mutation({
             ? {}
             : { providerEffort: selectedEffort }),
           lastError: undefined,
+          lastErrorReason: undefined,
+          lastErrorDetail: undefined,
           updatedAt: now,
         })
         return {
@@ -709,6 +721,8 @@ export const startTurn = mutation({
           ? {}
           : { providerEffort: selectedEffort }),
         lastError: undefined,
+        lastErrorReason: undefined,
+        lastErrorDetail: undefined,
         updatedAt: now,
       })
       return {
@@ -859,6 +873,8 @@ export const startTurn = mutation({
         ? {}
         : { providerEffort: selectedEffort }),
       lastError: undefined,
+      lastErrorReason: undefined,
+      lastErrorDetail: undefined,
       updatedAt: now,
     })
     return {
@@ -1269,6 +1285,8 @@ export const complete = mutation({
       isUnread: true,
       activeMessageId: undefined,
       lastError: undefined,
+      lastErrorReason: undefined,
+      lastErrorDetail: undefined,
       updatedAt: now,
     })
   },
@@ -1280,9 +1298,21 @@ export const fail = mutation({
     chatId: v.id("workspaceChats"),
     messageId: v.id("workspaceChatMessages"),
     error: v.string(),
+    /** Stable failure category, such as `turn-failed` or `transport`. */
+    reason: v.optional(v.string()),
+    /** Underlying error message, kept for diagnosis and never shown in chat. */
+    detail: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const error = boundedText(args.error, "Chat error", 500)
+    // Diagnostics are truncated or normalized instead of rejected so an
+    // unusual error can never stop the failure itself from being recorded.
+    const reason =
+      args.reason && FAILURE_REASON_PATTERN.test(args.reason)
+        ? args.reason
+        : "unknown"
+    const detail =
+      args.detail?.trim().slice(0, MAX_FAILURE_DETAIL_LENGTH) || undefined
     const chat = await ctx.db.get(args.chatId)
     const message = await ctx.db.get(args.messageId)
     if (!chat || !message || chat.activeMessageId !== message._id) return
@@ -1293,6 +1323,8 @@ export const fail = mutation({
       isUnread: true,
       activeMessageId: undefined,
       lastError: error,
+      lastErrorReason: reason,
+      lastErrorDetail: detail,
       updatedAt: now,
     })
   },
