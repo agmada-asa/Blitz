@@ -174,8 +174,12 @@ async function sourceFiles(directory: string): Promise<string[]> {
 }
 
 /**
- * Keeps the contract complete: any Codex method string used in the app must
- * be declared, so `npm run check:runtimes` checks it against new releases.
+ * Keeps the contract in step with the code: any Codex method string used in
+ * the app must be declared, so `npm run check:runtimes` checks it against new
+ * releases, and every declared method must still be used, so a method Blitz
+ * has stopped calling cannot fail that check. The namespaces cover the Codex
+ * protocol's method families; `initialize` and `initialized` have none and
+ * are exempt from the second check.
  */
 test("declares every Codex method the codebase uses", async () => {
   const root = join(import.meta.dirname, "..")
@@ -185,19 +189,32 @@ test("declares every Codex method the codebase uses", async () => {
     ...CODEX_PROTOCOL_CONTRACT.serverNotifications,
     ...CODEX_PROTOCOL_CONTRACT.serverRequests,
   ])
+  // The contract module lists every method itself, so it is not usage.
+  const contract = join(root, "lib", "server", "providers", "runtime-compat.ts")
   const files = (
     await Promise.all(
-      ["lib", "app", "components"].map((dir) => sourceFiles(join(root, dir)))
+      ["lib", "app", "components", "convex", "scripts"].map((dir) =>
+        sourceFiles(join(root, dir))
+      )
     )
-  ).flat()
+  )
+    .flat()
+    .filter((file) => file !== contract)
+  const used = new Set<string>()
   const undeclared = new Set<string>()
   for (const file of files) {
     const source = await readFile(file, "utf8")
     for (const match of source.matchAll(
-      /["'`]((?:item|turn|thread|model|mcpServer)\/[A-Za-z/]+)["'`]/g
-    ))
+      /["'`]((?:item|turn|thread|threadSection|model|modelProvider|mcpServer|mcpServerStatus|account|config|command|review|skills|plugin|fuzzyFileSearch|feedback)\/[A-Za-z/]+)["'`]/g
+    )) {
+      used.add(match[1]!)
       if (!declared.has(match[1]!))
         undeclared.add(`${match[1]} in ${file.slice(root.length + 1)}`)
+    }
   }
   assert.deepEqual([...undeclared], [])
+  assert.deepEqual(
+    [...declared].filter((method) => method.includes("/") && !used.has(method)),
+    []
+  )
 })
