@@ -40,6 +40,10 @@ test("applies provider version gates", () => {
     providerVersionGuidance("opencode"),
     "Update OpenCode to version 1.18.21 or newer within v1 for native permissions."
   )
+  assert.equal(
+    providerVersionGuidance("claude-code"),
+    "Update Claude Code to version 2.1.248 or newer for restricted turns."
+  )
   assert.equal(providerVersionGuidance("codex"), undefined)
 })
 

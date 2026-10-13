@@ -12,7 +12,10 @@
 import { readFile } from "node:fs/promises"
 import { join } from "node:path"
 
-import type { AiProviderId } from "../../ai-model-settings.ts"
+import {
+  AI_PROVIDER_OPTIONS,
+  type AiProviderId,
+} from "../../ai-model-settings.ts"
 
 /** Oldest supported release of one provider CLI. */
 export type ProviderVersionRequirement = {
@@ -105,7 +108,9 @@ export function providerVersionGuidance(
 ): string | undefined {
   const requirement = PROVIDER_VERSION_REQUIREMENTS[providerId]
   if (!requirement) return undefined
-  const name = providerId === "opencode" ? "OpenCode" : "Claude Code"
+  const name =
+    AI_PROVIDER_OPTIONS.find((option) => option.id === providerId)?.label ??
+    providerId
   const major = requirement.minimum.split(".")[0]
   return `Update ${name} to version ${requirement.minimum} or newer${
     requirement.sameMajor ? ` within v${major}` : ""
