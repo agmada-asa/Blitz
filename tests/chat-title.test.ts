@@ -168,7 +168,6 @@ test("generateChatTitle gracefully returns fallback title on aborted signal", as
   assert.equal(title, "Fallback Title")
 })
 
-
 /** Chooses only models the live catalog serves, using the catalog's reasoning levels. */
 test("selects the cheapest model from a live catalog", () => {
   const ranked = resolveCheapestAiModelSelection("codex", {
