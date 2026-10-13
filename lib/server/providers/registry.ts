@@ -17,6 +17,10 @@ import type {
 import { AcpProviderError, inspectAcpAuthentication } from "./acp.ts"
 import { discoverAntigravityExecutable } from "./antigravity-runtime.ts"
 import { getCodexModelCatalog } from "./codex-models.ts"
+import {
+  checkProviderVersion,
+  providerVersionGuidance,
+} from "./runtime-compat.ts"
 
 const DEFAULT_INSTANCE_ID = "local"
 const PROBE_TIMEOUT_MS = 5_000
@@ -111,26 +115,9 @@ async function probeCommand(
         finish({ available: false, reason: "probe-failed" })
         return
       }
-      const version = versionOutput.match(/\b(\d+)\.(\d+)\.(\d+)\b/)
       if (
-        providerId === "claude-code" &&
-        (!version ||
-          !(
-            Number(version[1]) > 2 ||
-            (Number(version[1]) === 2 &&
-              (Number(version[2]) > 1 ||
-                (Number(version[2]) === 1 && Number(version[3]) >= 248)))
-          ))
-      ) {
-        finish({ available: false, reason: "unsupported" })
-        return
-      }
-      if (
-        providerId === "opencode" &&
-        (!version ||
-          Number(version[1]) !== 1 ||
-          Number(version[2]) < 18 ||
-          (Number(version[2]) === 18 && Number(version[3]) < 21))
+        providerId &&
+        !checkProviderVersion(providerId, versionOutput).supported
       ) {
         finish({ available: false, reason: "unsupported" })
         return
@@ -289,9 +276,8 @@ export async function checkProviderAvailability(
         reason: result.reason,
         message:
           result.reason === "unsupported"
-            ? providerId === "opencode"
-              ? "Install OpenCode 1.18.21 or newer within v1 for native permissions."
-              : "Update Claude Code to version 2.1.248 or newer for restricted turns."
+            ? (providerVersionGuidance(providerId) ??
+              "Update this provider to a supported version.")
             : "Install this provider before connecting it to Blitz.",
       }
     const authentication = await providerAuthentication(providerId, options)

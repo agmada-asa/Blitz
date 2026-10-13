@@ -43,3 +43,42 @@ export function workspaceChatFailure(
     message: `Blitz could not finish that reply. ${recovery}`,
   }
 }
+
+/** Longest diagnostic stored with a failed chat. */
+const MAX_FAILURE_DETAIL_LENGTH = 500
+
+/**
+ * Describes the underlying cause of a failed turn for diagnosis.
+ *
+ * Joins the error's message with its cause's message, because provider
+ * failures are wrapped: a failed Codex turn reads "Blitz turn failed" while
+ * the cause carries the runtime's reason, such as model capacity.
+ *
+ * @param error - Value thrown by the turn.
+ * @returns A bounded single-line description, or undefined when the value
+ *   carries no message.
+ */
+export function workspaceChatFailureDetail(error: unknown): string | undefined {
+  const messages: string[] = []
+  let current: unknown = error
+  // Two levels cover Blitz's wrapper and the provider's own error.
+  for (let depth = 0; depth < 2 && current; depth += 1) {
+    const message =
+      current instanceof Error
+        ? current.message
+        : typeof current === "object" &&
+            current !== null &&
+            "message" in current &&
+            typeof current.message === "string"
+          ? current.message
+          : undefined
+    if (message?.trim() && !messages.includes(message.trim()))
+      messages.push(message.trim())
+    current =
+      typeof current === "object" && current !== null && "cause" in current
+        ? current.cause
+        : undefined
+  }
+  const detail = messages.join(": ").replace(/\s+/g, " ")
+  return detail ? detail.slice(0, MAX_FAILURE_DETAIL_LENGTH) : undefined
+}

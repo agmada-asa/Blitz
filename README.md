@@ -93,7 +93,10 @@ npm test
 npm run typecheck
 npm run lint
 npm run build
+npm run check:runtimes
 ```
+
+`npm run check:runtimes` reports when an installed provider CLI no longer matches what Blitz relies on. See [AI model settings](docs/ai-model-settings.md).
 
 Run native checks from `mobile/`. The [product brief](PRODUCT_BRIEF.md) records the intended experience; the [working protocol](WORKING_PROTOCOL.md) records the overnight review and delivery boundaries. Implementation details are in [Teach](docs/teach.md), [source ingestion](docs/source-ingestion.md), [learning API](docs/learning-api.md), and [Codex text turns and legacy card chat](docs/card-chat.md).
 

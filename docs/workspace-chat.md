@@ -77,6 +77,16 @@ runs in the shared Blitz chat workspace with a read-only sandbox. Workspace
 turns have a ten-minute deadline so source lookups are not cut off by the
 shorter card-chat limit.
 
+When a turn fails, the chat shows recovery copy from `lastError`. The same
+record keeps `lastErrorReason`, a stable category such as `turn-failed`,
+`transport`, or `interrupted`, and `lastErrorDetail`, the underlying error
+including the provider's own message. Neither is shown in chat; read them with
+`npx convex run workspaceChats:get '{"chatId":"..."}'` to diagnose a failure
+without the server log. Starting a new turn clears all three. When a project
+chat finishes, Blitz refreshes the project's artifact list, skipping the
+`Sources`, `.blitz`, `attachments`, and generated `Audio` folders. A failure
+there is logged and never discards the finished reply.
+
 Every attachment is wrapped in an explicit untrusted-context boundary before
 it reaches Codex. The server caps project count, source count, request bytes,
 attachment text, and total project text. Public URLs still pass through the

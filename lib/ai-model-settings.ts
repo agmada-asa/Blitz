@@ -181,8 +181,20 @@ export type CodexModelGroup = {
   readonly options: readonly CodexModelOption[]
 }
 
-/** Model choices exposed by Blitz's local Codex setup. */
+/**
+ * Fallback Codex model choices, used when no live catalog from
+ * `/api/providers` or cached copy of one is available. Keep this list
+ * identical to the runtime's `model/list` response, which
+ * `npm run check:runtimes` verifies: a saved model missing here renders as
+ * "(saved model)", and chat titles pick their model from this list when the
+ * live catalog cannot be read. Last matched to Codex CLI 0.162.1.
+ */
 export const CODEX_MODEL_OPTIONS = [
+  {
+    id: "gpt-6.1-sol",
+    label: "GPT-6.1 Sol",
+    reasoningEfforts: ["low", "medium", "high", "xhigh", "max", "ultra"],
+  },
   {
     id: "gpt-6-astra",
     label: "GPT-6 Astra",
@@ -196,7 +208,7 @@ export const CODEX_MODEL_OPTIONS = [
   {
     id: "gpt-6-luna",
     label: "GPT-6 Luna",
-    reasoningEfforts: ["low", "medium", "high", "max"],
+    reasoningEfforts: ["low", "medium", "high", "xhigh", "max"],
   },
   {
     id: "gpt-5.6-sol",
@@ -212,21 +224,6 @@ export const CODEX_MODEL_OPTIONS = [
     id: "gpt-5.6-luna",
     label: "GPT-5.6 Luna",
     reasoningEfforts: ["low", "medium", "high", "xhigh", "max"],
-  },
-  {
-    id: "gpt-5.5",
-    label: "GPT-5.5",
-    reasoningEfforts: ["low", "medium", "high", "xhigh"],
-  },
-  {
-    id: "gpt-5.4-mini",
-    label: "GPT-5.4 Mini",
-    reasoningEfforts: ["low", "medium", "high", "xhigh"],
-  },
-  {
-    id: "gpt-5.3-codex-spark",
-    label: "GPT-5.3 Codex Spark",
-    reasoningEfforts: ["low", "medium", "high", "xhigh"],
   },
 ] as const satisfies readonly CodexModelOption[]
 
@@ -787,11 +784,8 @@ export function validateAiTaskProviders(settings: AiModelSettings): void {
  * Used when selecting the most cost-effective model for lightweight tasks such as chat title generation.
  */
 export const AI_MODEL_COST_RANKS: Readonly<Record<string, number>> = {
-  // Codex / OpenAI models: Spark is the ultra-lightweight tier, Mini is next, then full models
-  "gpt-5.3-codex-spark": 1,
-  "gpt-5.4-mini": 2,
+  // Codex / OpenAI models: Luna is the lightweight tier, then Terra, then Sol and Astra
   "gpt-6-luna": 3,
-  "gpt-5.5": 4,
   "gpt-5.6-luna": 5,
   "gpt-5.6-terra": 6,
   "gpt-5.6-sol": 7,
@@ -809,11 +803,14 @@ export const AI_MODEL_COST_RANKS: Readonly<Record<string, number>> = {
 /**
  * Resolves the cheapest model and lowest reasoning effort for a given provider.
  *
- * Checks configured models, finds the one with the lowest cost tier, and selects
- * "default" (no reasoning) if supported, or "low" if reasoning is required.
+ * Chooses from the provider's live catalog when one is supplied, so the
+ * result is always a model the installed runtime serves, and from Blitz's
+ * fallback list otherwise. Models are ordered by {@link AI_MODEL_COST_RANKS};
+ * when no candidate has a rank, the catalog's default model is used.
  *
  * @param providerId - The provider to pick the cheapest model for.
- * @param options - Optional environment variable overrides for model and reasoning effort.
+ * @param options - Optional environment overrides for model and reasoning
+ *   effort, and the provider's live model catalog.
  * @returns The provider, resolved cheapest model name, and lowest reasoning effort.
  */
 export function resolveCheapestAiModelSelection(
@@ -821,6 +818,9 @@ export function resolveCheapestAiModelSelection(
   options: {
     modelEnvironmentFallback?: string
     effortEnvironmentFallback?: string
+    catalog?: readonly (AiProviderModelCatalogOption & {
+      readonly isDefault?: boolean
+    })[]
   } = {}
 ): {
   providerId: AiProviderId
@@ -828,23 +828,30 @@ export function resolveCheapestAiModelSelection(
   effort: AiReasoningEffort
 } {
   const modelFallback = options.modelEnvironmentFallback?.trim()
+  const catalog = options.catalog?.length ? options.catalog : undefined
   let model: string
   if (modelFallback) {
     model = modelFallback
-  } else if (providerId === "codex") {
-    // Pick the lowest ranked Codex model from known options
-    const sorted = [...CODEX_MODEL_OPTIONS].sort(
-      (a, b) =>
-        (AI_MODEL_COST_RANKS[a.id] ?? 99) - (AI_MODEL_COST_RANKS[b.id] ?? 99)
-    )
-    model = sorted[0]?.id ?? "gpt-5.3-codex-spark"
   } else {
-    const optionsForProvider = AI_PROVIDER_MODEL_OPTIONS[providerId]
-    const sorted = [...optionsForProvider].sort(
-      (a, b) =>
-        (AI_MODEL_COST_RANKS[a.id] ?? 99) - (AI_MODEL_COST_RANKS[b.id] ?? 99)
-    )
-    model = sorted[0]?.id ?? getDefaultAiModelOption(providerId).id
+    const candidates: readonly (AiProviderModelCatalogOption & {
+      readonly isDefault?: boolean
+    })[] =
+      catalog ??
+      (providerId === "codex"
+        ? CODEX_MODEL_OPTIONS
+        : AI_PROVIDER_MODEL_OPTIONS[providerId])
+    const cheapest = candidates
+      .filter((option) => AI_MODEL_COST_RANKS[option.id] !== undefined)
+      .sort(
+        (a, b) => AI_MODEL_COST_RANKS[a.id]! - AI_MODEL_COST_RANKS[b.id]!
+      )[0]
+    model =
+      cheapest?.id ??
+      candidates.find((option) => option.isDefault)?.id ??
+      candidates[0]?.id ??
+      (providerId === "codex"
+        ? DEFAULT_AI_MODELS.replyModel
+        : getDefaultAiModelOption(providerId).id)
   }
 
   const effortFallback = options.effortEnvironmentFallback?.trim()
@@ -852,10 +859,12 @@ export function resolveCheapestAiModelSelection(
   if (effortFallback) {
     effort = effortFallback as AiReasoningEffort
   } else {
-    const supportedEfforts = getSupportedAiReasoningEffortsForProvider(
-      providerId,
-      model
-    )
+    const catalogOption = catalog?.find((option) => option.id === model)
+    const supportedEfforts =
+      catalogOption?.reasoningEfforts ??
+      (catalogOption?.reasoningEffort
+        ? [catalogOption.reasoningEffort]
+        : getSupportedAiReasoningEffortsForProvider(providerId, model))
     // Lowest / no reasoning: prefer "default" (no reasoning), then "low", then first available
     if (supportedEfforts.includes("default")) {
       effort = "default"

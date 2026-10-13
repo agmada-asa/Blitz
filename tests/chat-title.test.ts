@@ -15,10 +15,10 @@ import {
 } from "../lib/server/chat-title.ts"
 
 test("selects the cheapest model with lowest reasoning for each provider", () => {
-  // Codex: Spark is the cheapest model with "low" reasoning effort
+  // Codex: GPT-6 Luna is the cheapest model with "low" reasoning effort
   const codexSelection = resolveCheapestAiModelSelection("codex")
   assert.equal(codexSelection.providerId, "codex")
-  assert.equal(codexSelection.model, "gpt-5.3-codex-spark")
+  assert.equal(codexSelection.model, "gpt-6-luna")
   assert.equal(codexSelection.effort, "low")
 
   // Claude Code: Haiku is the cheapest model with "default" (no) reasoning effort
@@ -52,12 +52,12 @@ test("respects environment variable overrides for model and reasoning effort", (
 
 test("verifies model cost rankings establish expected relative ordering", () => {
   assert.ok(
-    (AI_MODEL_COST_RANKS["gpt-5.3-codex-spark"] ?? 99) <
-      (AI_MODEL_COST_RANKS["gpt-5.4-mini"] ?? 99)
+    (AI_MODEL_COST_RANKS["gpt-6-luna"] ?? 99) <
+      (AI_MODEL_COST_RANKS["gpt-5.6-luna"] ?? 99)
   )
   assert.ok(
-    (AI_MODEL_COST_RANKS["gpt-5.4-mini"] ?? 99) <
-      (AI_MODEL_COST_RANKS["gpt-5.6-luna"] ?? 99)
+    (AI_MODEL_COST_RANKS["gpt-5.6-luna"] ?? 99) <
+      (AI_MODEL_COST_RANKS["gpt-5.6-sol"] ?? 99)
   )
   assert.ok(
     (AI_MODEL_COST_RANKS["haiku"] ?? 99) <
@@ -168,3 +168,24 @@ test("generateChatTitle gracefully returns fallback title on aborted signal", as
   assert.equal(title, "Fallback Title")
 })
 
+/** Chooses only models the live catalog serves, using the catalog's reasoning levels. */
+test("selects the cheapest model from a live catalog", () => {
+  const ranked = resolveCheapestAiModelSelection("codex", {
+    catalog: [
+      { id: "gpt-6.1-sol", reasoningEfforts: ["low", "high"], isDefault: true },
+      { id: "gpt-5.6-luna", reasoningEfforts: ["medium", "high"] },
+    ],
+  })
+  assert.equal(ranked.model, "gpt-5.6-luna")
+  assert.equal(ranked.effort, "medium")
+
+  // A catalog of models Blitz has not ranked falls back to the runtime default.
+  const unranked = resolveCheapestAiModelSelection("codex", {
+    catalog: [
+      { id: "gpt-7-nova", reasoningEfforts: ["low"] },
+      { id: "gpt-7-luna", reasoningEfforts: ["low"], isDefault: true },
+    ],
+  })
+  assert.equal(unranked.model, "gpt-7-luna")
+  assert.equal(unranked.effort, "low")
+})

@@ -29,7 +29,10 @@ import {
 import { CardChatError } from "@/lib/server/card-chat"
 import { createChatProgress } from "@/lib/server/chat-progress"
 import { loadSavedAiModelSettings } from "@/lib/server/ai-model-settings"
-import { workspaceChatFailure } from "@/lib/server/workspace-chat-failure"
+import {
+  workspaceChatFailure,
+  workspaceChatFailureDetail,
+} from "@/lib/server/workspace-chat-failure"
 import { runProviderTextTurn } from "@/lib/server/providers/run-text-turn"
 import { getCodexModelCatalog } from "@/lib/server/providers/codex-models"
 import { providerCommand } from "@/lib/server/providers/registry"
@@ -196,6 +199,8 @@ const failWorkspaceTurn = makeFunctionReference<
     chatId: Id<"workspaceChats">
     messageId: Id<"workspaceChatMessages">
     error: string
+    reason?: string
+    detail?: string
   },
   null
 >("workspaceChats:fail")
@@ -1020,11 +1025,19 @@ export async function POST(request: Request): Promise<Response> {
           )
         }
         if (workingProjectId) {
-          const artifacts = await scanProjectArtifacts(workspaceDirectory)
-          await client.mutation(api.projectAgents.syncArtifacts, {
-            projectId: workingProjectId,
-            artifacts,
-          })
+          // The reply already exists at this point. Artifact listing is
+          // bookkeeping, so an unreadable project folder must not discard it.
+          try {
+            const artifacts = await scanProjectArtifacts(workspaceDirectory)
+            await client.mutation(api.projectAgents.syncArtifacts, {
+              projectId: workingProjectId,
+              artifacts,
+            })
+          } catch (error) {
+            console.warn("Workspace chat could not sync project artifacts", {
+              message: error instanceof Error ? error.message : "Unknown error",
+            })
+          }
         }
         await progress.finish()
         if (providerEventsTimer) clearTimeout(providerEventsTimer)
@@ -1097,9 +1110,10 @@ export async function POST(request: Request): Promise<Response> {
         await providerEventsPending
         if (providerEvents.length) await flushProviderEvents?.()
         const failure = workspaceChatFailure(error, Boolean(activeTurn))
+        const detail = workspaceChatFailureDetail(error)
         console.error("Workspace chat turn failed", {
           reason: failure.reason,
-          message: error instanceof Error ? error.message : "Unknown error",
+          message: detail ?? "Unknown error",
         })
         if (activeTurn)
           await convexClient()
@@ -1107,6 +1121,10 @@ export async function POST(request: Request): Promise<Response> {
               chatId: activeTurn.chatId,
               messageId: activeTurn.assistantMessageId,
               error: failure.message,
+              // Saved beside the recovery copy so a failed chat can be
+              // diagnosed from its record, not only from server logs.
+              reason: failure.reason,
+              ...(detail ? { detail } : {}),
             })
             .catch(() => undefined)
         send({

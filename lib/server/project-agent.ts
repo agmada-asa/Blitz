@@ -25,6 +25,12 @@ import {
 export const PROJECT_SOURCES_DIRECTORY = "Sources"
 /** Directory reserved for application state and metadata. */
 export const PROJECT_STATE_DIRECTORY = ".blitz"
+/**
+ * Directory where Blitz writes generated podcast audio. Its recordings are
+ * app-owned output, not agent artifacts, and routinely exceed the artifact
+ * size bound, so artifact scans skip it.
+ */
+export const PROJECT_AUDIO_DIRECTORY = "Audio"
 /** Maximum artifact size included in one scan. */
 export const MAX_AGENT_ARTIFACT_BYTES = 25 * 1024 * 1024
 
@@ -314,6 +320,7 @@ async function walk(
       !prefix &&
       (entry.name.toLowerCase() === PROJECT_SOURCES_DIRECTORY.toLowerCase() ||
         entry.name.toLowerCase() === PROJECT_STATE_DIRECTORY ||
+        entry.name.toLowerCase() === PROJECT_AUDIO_DIRECTORY.toLowerCase() ||
         entry.name.toLowerCase() === "attachments")
     )
       continue

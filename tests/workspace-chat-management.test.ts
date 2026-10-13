@@ -1,4 +1,4 @@
-/** Verifies workspace chat archiving, cascading deletion, and active/archived queries. */
+/** Verifies workspace chat archiving, cascading deletion, failure records, and active/archived queries. */
 
 import assert from "node:assert/strict"
 import test from "node:test"
@@ -144,6 +144,7 @@ async function loadHandlers() {
       setArchived: { _handler: Handler }
       remove: { _handler: Handler }
       setGeneratedTitle: { _handler: Handler }
+      fail: { _handler: Handler }
     }
     return {
       list: loaded.list._handler,
@@ -152,6 +153,7 @@ async function loadHandlers() {
       setArchived: loaded.setArchived._handler,
       remove: loaded.remove._handler,
       setGeneratedTitle: loaded.setGeneratedTitle._handler,
+      fail: loaded.fail._handler,
     }
   } finally {
     hooks.deregister()
@@ -382,3 +384,64 @@ test("get returns transcript messages and attachments with clientMessageId", asy
   assert.equal(result.attachments[0]?.label, "notes.pdf")
 })
 
+
+/** Seeds a chat whose assistant reply is still running, as `fail` expects. */
+function seedRunningChat(db: MemoryDb): { chatId: string; messageId: string } {
+  const chatId = db.seed("workspaceChats", {
+    title: "Running chat",
+    status: "running",
+    updatedAt: 100,
+  })
+  const messageId = db.seed("workspaceChatMessages", {
+    chatId,
+    role: "assistant",
+    content: "",
+    status: "running",
+    createdAt: 100,
+  })
+  db.rows.find((row) => row._id === chatId)!.activeMessageId = messageId
+  return { chatId, messageId }
+}
+
+test("fail records a normalized reason and bounded detail beside the recovery copy", async () => {
+  const { fail, get } = await loadHandlers()
+  const db = new MemoryDb()
+  const first = seedRunningChat(db)
+
+  // Free text in the category becomes "unknown"; long detail is truncated.
+  await fail(
+    { db },
+    {
+      ...first,
+      error: "Blitz could not finish that reply. Try again.",
+      reason: "Not a category!",
+      detail: `  ${"x".repeat(900)}  `,
+    }
+  )
+  const failed = (await get({ db }, { chatId: first.chatId })) as {
+    status: string
+    lastError: string | null
+    lastErrorReason: string | null
+    lastErrorDetail: string | null
+  }
+  assert.equal(failed.status, "failed")
+  assert.equal(
+    failed.lastError,
+    "Blitz could not finish that reply. Try again."
+  )
+  assert.equal(failed.lastErrorReason, "unknown")
+  assert.equal(failed.lastErrorDetail, "x".repeat(500))
+
+  // A later failure without detail must not keep the previous detail.
+  await db.patch(first.chatId, {
+    status: "running",
+    activeMessageId: first.messageId,
+  })
+  await fail(
+    { db },
+    { ...first, error: "That reply took too long.", reason: "timeout" }
+  )
+  const again = (await get({ db }, { chatId: first.chatId })) as typeof failed
+  assert.equal(again.lastErrorReason, "timeout")
+  assert.equal(again.lastErrorDetail, null)
+})
