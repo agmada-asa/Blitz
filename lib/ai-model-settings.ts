@@ -181,8 +181,19 @@ export type CodexModelGroup = {
   readonly options: readonly CodexModelOption[]
 }
 
-/** Model choices exposed by Blitz's local Codex setup. */
+/**
+ * Fallback Codex model choices shown until the installed runtime reports its
+ * own catalog through `/api/providers`. Keep this list identical to the
+ * runtime's `model/list` response: a saved model missing here renders as
+ * "(saved model)" while the picker loads, and lightweight tasks pick their
+ * model from this list. Last matched to Codex CLI 0.162.1.
+ */
 export const CODEX_MODEL_OPTIONS = [
+  {
+    id: "gpt-6.1-sol",
+    label: "GPT-6.1 Sol",
+    reasoningEfforts: ["low", "medium", "high", "xhigh", "max", "ultra"],
+  },
   {
     id: "gpt-6-astra",
     label: "GPT-6 Astra",
@@ -196,7 +207,7 @@ export const CODEX_MODEL_OPTIONS = [
   {
     id: "gpt-6-luna",
     label: "GPT-6 Luna",
-    reasoningEfforts: ["low", "medium", "high", "max"],
+    reasoningEfforts: ["low", "medium", "high", "xhigh", "max"],
   },
   {
     id: "gpt-5.6-sol",
@@ -212,21 +223,6 @@ export const CODEX_MODEL_OPTIONS = [
     id: "gpt-5.6-luna",
     label: "GPT-5.6 Luna",
     reasoningEfforts: ["low", "medium", "high", "xhigh", "max"],
-  },
-  {
-    id: "gpt-5.5",
-    label: "GPT-5.5",
-    reasoningEfforts: ["low", "medium", "high", "xhigh"],
-  },
-  {
-    id: "gpt-5.4-mini",
-    label: "GPT-5.4 Mini",
-    reasoningEfforts: ["low", "medium", "high", "xhigh"],
-  },
-  {
-    id: "gpt-5.3-codex-spark",
-    label: "GPT-5.3 Codex Spark",
-    reasoningEfforts: ["low", "medium", "high", "xhigh"],
   },
 ] as const satisfies readonly CodexModelOption[]
 
@@ -787,11 +783,8 @@ export function validateAiTaskProviders(settings: AiModelSettings): void {
  * Used when selecting the most cost-effective model for lightweight tasks such as chat title generation.
  */
 export const AI_MODEL_COST_RANKS: Readonly<Record<string, number>> = {
-  // Codex / OpenAI models: Spark is the ultra-lightweight tier, Mini is next, then full models
-  "gpt-5.3-codex-spark": 1,
-  "gpt-5.4-mini": 2,
+  // Codex / OpenAI models: Luna is the lightweight tier, then Terra, then Sol and Astra
   "gpt-6-luna": 3,
-  "gpt-5.5": 4,
   "gpt-5.6-luna": 5,
   "gpt-5.6-terra": 6,
   "gpt-5.6-sol": 7,
@@ -837,7 +830,7 @@ export function resolveCheapestAiModelSelection(
       (a, b) =>
         (AI_MODEL_COST_RANKS[a.id] ?? 99) - (AI_MODEL_COST_RANKS[b.id] ?? 99)
     )
-    model = sorted[0]?.id ?? "gpt-5.3-codex-spark"
+    model = sorted[0]?.id ?? DEFAULT_AI_MODELS.replyModel
   } else {
     const optionsForProvider = AI_PROVIDER_MODEL_OPTIONS[providerId]
     const sorted = [...optionsForProvider].sort(

@@ -193,11 +193,12 @@ test("returns compatible reasoning levels for each picker model", () => {
     "xhigh",
     "max",
   ])
-  assert.deepEqual(getSupportedAiReasoningEfforts("gpt-5.5"), [
+  assert.deepEqual(getSupportedAiReasoningEfforts("gpt-6-luna"), [
     "low",
     "medium",
     "high",
     "xhigh",
+    "max",
   ])
 })
 
@@ -221,7 +222,13 @@ test("groups models by major and minor generation with dividers", () => {
 
   assert.deepEqual(
     groups.map((group) => group.generation),
-    ["GPT-6", "GPT-5.6", "GPT-5.5", "GPT-5.4", "GPT-5.3"]
+    ["GPT-6.1", "GPT-6", "GPT-5.6"]
+  )
+
+  const gpt61Group = groups.find((g) => g.generation === "GPT-6.1")
+  assert.deepEqual(
+    gpt61Group?.options.map((opt) => opt.id),
+    ["gpt-6.1-sol"]
   )
 
   const gpt6Group = groups.find((g) => g.generation === "GPT-6")
@@ -234,24 +241,6 @@ test("groups models by major and minor generation with dividers", () => {
   assert.deepEqual(
     gpt56Group?.options.map((opt) => opt.id),
     ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"]
-  )
-
-  const gpt55Group = groups.find((g) => g.generation === "GPT-5.5")
-  assert.deepEqual(
-    gpt55Group?.options.map((opt) => opt.id),
-    ["gpt-5.5"]
-  )
-
-  const gpt54Group = groups.find((g) => g.generation === "GPT-5.4")
-  assert.deepEqual(
-    gpt54Group?.options.map((opt) => opt.id),
-    ["gpt-5.4-mini"]
-  )
-
-  const gpt53Group = groups.find((g) => g.generation === "GPT-5.3")
-  assert.deepEqual(
-    gpt53Group?.options.map((opt) => opt.id),
-    ["gpt-5.3-codex-spark"]
   )
 
   // Unrecognized labels fall into an "OTHER" group.

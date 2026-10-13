@@ -15,10 +15,10 @@ import {
 } from "../lib/server/chat-title.ts"
 
 test("selects the cheapest model with lowest reasoning for each provider", () => {
-  // Codex: Spark is the cheapest model with "low" reasoning effort
+  // Codex: GPT-6 Luna is the cheapest model with "low" reasoning effort
   const codexSelection = resolveCheapestAiModelSelection("codex")
   assert.equal(codexSelection.providerId, "codex")
-  assert.equal(codexSelection.model, "gpt-5.3-codex-spark")
+  assert.equal(codexSelection.model, "gpt-6-luna")
   assert.equal(codexSelection.effort, "low")
 
   // Claude Code: Haiku is the cheapest model with "default" (no) reasoning effort
@@ -52,12 +52,12 @@ test("respects environment variable overrides for model and reasoning effort", (
 
 test("verifies model cost rankings establish expected relative ordering", () => {
   assert.ok(
-    (AI_MODEL_COST_RANKS["gpt-5.3-codex-spark"] ?? 99) <
-      (AI_MODEL_COST_RANKS["gpt-5.4-mini"] ?? 99)
+    (AI_MODEL_COST_RANKS["gpt-6-luna"] ?? 99) <
+      (AI_MODEL_COST_RANKS["gpt-5.6-luna"] ?? 99)
   )
   assert.ok(
-    (AI_MODEL_COST_RANKS["gpt-5.4-mini"] ?? 99) <
-      (AI_MODEL_COST_RANKS["gpt-5.6-luna"] ?? 99)
+    (AI_MODEL_COST_RANKS["gpt-5.6-luna"] ?? 99) <
+      (AI_MODEL_COST_RANKS["gpt-5.6-sol"] ?? 99)
   )
   assert.ok(
     (AI_MODEL_COST_RANKS["haiku"] ?? 99) <
