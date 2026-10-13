@@ -1,0 +1,51 @@
+# Checks Blitz's provider layer against the latest published provider CLIs.
+#
+# Codex, Claude Code, and OpenCode release independently of Blitz. This
+# workflow installs their newest versions each week and runs
+# `npm run check:runtimes -- --ci`, which fails when a CLI drops below
+# Blitz's version gate or the Codex app-server protocol no longer provides a
+# method or value Blitz uses (see lib/server/providers/runtime-compat.ts).
+# GitHub emails the workflow owner when a scheduled run fails.
+#
+# The runner is not signed in to any provider, so the live model catalog
+# comparison is skipped here. Run `npm run check:runtimes` locally to
+# compare the signed-in Codex catalog with Blitz's fallback model list.
+
+name: Provider runtimes
+
+on:
+  schedule:
+    # Mondays at 06:00 UTC.
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "lib/server/providers/**"
+      - "lib/server/codex-app-server.ts"
+      - "lib/server/card-chat.ts"
+      - "lib/ai-model-settings.ts"
+      - "scripts/check-provider-runtimes.ts"
+      - ".github/workflows/provider-runtimes.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+
+      # The check imports only Node built-ins, so the app's dependencies are
+      # not installed. The CLIs are installed at their latest versions on
+      # purpose: the point is to find drift before a local update does.
+      - name: Install the latest provider CLIs
+        run: npm install --global @openai/codex@latest @anthropic-ai/claude-code@latest opencode-ai@latest
+
+      - name: Check provider runtimes
+        run: npm run check:runtimes -- --ci
