@@ -24,6 +24,7 @@ on:
       - "lib/server/codex-app-server.ts"
       - "lib/server/card-chat.ts"
       - "lib/ai-model-settings.ts"
+      - "lib/provider-capabilities.ts"
       - "scripts/check-provider-runtimes.ts"
       - ".github/workflows/provider-runtimes.yml"
 
@@ -44,8 +45,13 @@ jobs:
       # The check imports only Node built-ins, so the app's dependencies are
       # not installed. The CLIs are installed at their latest versions on
       # purpose: the point is to find drift before a local update does.
+      # Claude Code and OpenCode run a postinstall script, and npm warns that
+      # it will only run install scripts for packages listed in allow-scripts.
       - name: Install the latest provider CLIs
-        run: npm install --global @openai/codex@latest @anthropic-ai/claude-code@latest opencode-ai@latest
+        run: >-
+          npm install --global
+          --allow-scripts=@anthropic-ai/claude-code,opencode-ai
+          @openai/codex@latest @anthropic-ai/claude-code@latest opencode-ai@latest
 
       - name: Check provider runtimes
         run: npm run check:runtimes -- --ci
