@@ -22,6 +22,7 @@ import {
   StarFilledIcon,
   StarOutlineIcon,
 } from "@/components/ai/provider-icons"
+import { useCachedProviderModels } from "@/components/ai/use-cached-provider-models"
 import { useFavoriteModels } from "@/components/ai/use-favorite-models"
 import {
   DropdownMenu,
@@ -49,6 +50,7 @@ import {
   type AiReasoningEffort,
   type AiTask,
 } from "@/lib/ai-model-settings"
+import { saveProviderModels } from "@/lib/client/provider-model-cache"
 import type { ProviderAvailability } from "@/lib/server/providers/types"
 import { cn } from "@/lib/utils"
 
@@ -134,6 +136,7 @@ export function ModelReasoningPicker({
   const [probe, setProbe] = useState(0)
 
   const { favorites, isFavorite, toggleFavorite } = useFavoriteModels()
+  const cachedModels = useCachedProviderModels()
 
   /** Synchronizes rail selection and refreshes provider availability when opening the popover. */
   const handleOpenChange = (open: boolean): void => {
@@ -157,6 +160,7 @@ export function ModelReasoningPicker({
       .then((providers) => {
         setAvailability(providers)
         setAvailabilityError(false)
+        saveProviderModels(providers)
       })
       .catch(() => {
         if (!controller.signal.aborted) setAvailabilityError(true)
@@ -168,14 +172,18 @@ export function ModelReasoningPicker({
     ? getAiProviderOptionsForTask(task)
     : AI_PROVIDER_OPTIONS
 
-  /** Converts the latest provider probe into the shared picker option shape. */
+  /**
+   * Converts the latest provider probe into the shared picker option shape.
+   * Until the first probe returns, the last cached live catalog stands in so
+   * the picker does not fall back to Blitz's built-in list.
+   */
   const runtimeModelOptions = useCallback(
     (
       providerId: AiProviderId
     ): readonly AiProviderModelOption[] | undefined => {
-      const models = availability.find(
-        (item) => item.providerId === providerId
-      )?.models
+      const models = availability.length
+        ? availability.find((item) => item.providerId === providerId)?.models
+        : cachedModels[providerId]
       return models?.map((option) => ({
         id: option.id,
         label: option.label,
@@ -187,7 +195,7 @@ export function ModelReasoningPicker({
           : {}),
       }))
     },
-    [availability]
+    [availability, cachedModels]
   )
 
   const modelOptions = useMemo(
