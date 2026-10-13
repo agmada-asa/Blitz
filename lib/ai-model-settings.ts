@@ -182,11 +182,12 @@ export type CodexModelGroup = {
 }
 
 /**
- * Fallback Codex model choices shown until the installed runtime reports its
- * own catalog through `/api/providers`. Keep this list identical to the
- * runtime's `model/list` response: a saved model missing here renders as
- * "(saved model)" while the picker loads, and lightweight tasks pick their
- * model from this list. Last matched to Codex CLI 0.162.1.
+ * Fallback Codex model choices, used when no live catalog from
+ * `/api/providers` or cached copy of one is available. Keep this list
+ * identical to the runtime's `model/list` response, which
+ * `npm run check:runtimes` verifies: a saved model missing here renders as
+ * "(saved model)", and chat titles pick their model from this list when the
+ * live catalog cannot be read. Last matched to Codex CLI 0.162.1.
  */
 export const CODEX_MODEL_OPTIONS = [
   {
