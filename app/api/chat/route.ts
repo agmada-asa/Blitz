@@ -1020,11 +1020,19 @@ export async function POST(request: Request): Promise<Response> {
           )
         }
         if (workingProjectId) {
-          const artifacts = await scanProjectArtifacts(workspaceDirectory)
-          await client.mutation(api.projectAgents.syncArtifacts, {
-            projectId: workingProjectId,
-            artifacts,
-          })
+          // The reply already exists at this point. Artifact listing is
+          // bookkeeping, so an unreadable project folder must not discard it.
+          try {
+            const artifacts = await scanProjectArtifacts(workspaceDirectory)
+            await client.mutation(api.projectAgents.syncArtifacts, {
+              projectId: workingProjectId,
+              artifacts,
+            })
+          } catch (error) {
+            console.warn("Workspace chat could not sync project artifacts", {
+              message: error instanceof Error ? error.message : "Unknown error",
+            })
+          }
         }
         await progress.finish()
         if (providerEventsTimer) clearTimeout(providerEventsTimer)

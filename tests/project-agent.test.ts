@@ -1,10 +1,11 @@
 /** Verifies project-agent path isolation, protected directories, and artifact scans. */
 import assert from "node:assert/strict"
-import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises"
+import { mkdtemp, mkdir, rm, symlink, truncate, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
 import {
+  MAX_AGENT_ARTIFACT_BYTES,
   prepareProjectAgentWorkspace,
   resolveWritableArtifactPath,
   scanProjectArtifacts,
@@ -37,6 +38,29 @@ test("agent workspace scans writable coursework and excludes Sources and .blitz"
   assert.deepEqual(
     artifacts.map((artifact) => artifact.relativeKey),
     ["essay.md"]
+  )
+})
+
+test("agent workspace scans skip generated audio larger than the artifact bound", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "blitz-agent-"))
+  const previous = process.env.BLITZ_DATA_DIR
+  t.after(async () => {
+    if (previous === undefined) delete process.env.BLITZ_DATA_DIR
+    else process.env.BLITZ_DATA_DIR = previous
+    await rm(root, { recursive: true, force: true })
+  })
+  process.env.BLITZ_DATA_DIR = root
+  const workspace = await prepareProjectAgentWorkspace("project-audio")
+  const recording = join(workspace.projectDirectory, "Audio", "episode-one")
+  await mkdir(recording, { recursive: true })
+  // A sparse file reports the oversized length without writing 26 MB to disk.
+  await writeFile(join(recording, "episode.wav"), "")
+  await truncate(join(recording, "episode.wav"), MAX_AGENT_ARTIFACT_BYTES + 1)
+  await writeFile(join(workspace.projectDirectory, "notes.md"), "notes")
+  const artifacts = await scanProjectArtifacts(workspace.projectDirectory)
+  assert.deepEqual(
+    artifacts.map((artifact) => artifact.relativeKey),
+    ["notes.md"]
   )
 })
 
