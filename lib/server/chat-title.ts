@@ -3,7 +3,8 @@
  *
  * Owns the prompt assembly, output sanitization, and execution lifecycle for
  * generating compact chat titles through the cheapest available provider model
- * with lowest or no reasoning effort.
+ * with lowest or no reasoning effort. For Codex, "available" means the live
+ * model catalog, so a model the runtime has retired is never chosen.
  */
 
 import { mkdtemp, rm } from "node:fs/promises"
@@ -14,6 +15,8 @@ import {
   resolveCheapestAiModelSelection,
   type AiProviderId,
 } from "../ai-model-settings.ts"
+import { getCodexModelCatalog } from "./providers/codex-models.ts"
+import { providerCommand } from "./providers/registry.ts"
 import { runProviderTextTurn } from "./providers/run-text-turn.ts"
 
 /** Maximum character length allowed for a persisted chat title. */
@@ -21,6 +24,9 @@ export const MAX_CHAT_TITLE_LENGTH = 64
 
 /** Wall-clock timeout for lightweight title generation before falling back. */
 const TITLE_GENERATION_TIMEOUT_MS = 15_000
+
+/** Deadline for reading the Codex model catalog before choosing a title model. */
+const TITLE_CATALOG_TIMEOUT_MS = 5_000
 
 /**
  * Builds the text prompt sent to the cheapest model to generate a succinct chat title.
@@ -102,8 +108,10 @@ export interface GenerateChatTitleOptions {
 /**
  * Generates a succinct chat title using the cheapest model available with lowest/no reasoning.
  *
- * Runs an isolated, ephemeral turn without tool access or web search. If generation times out,
- * errors, or produces invalid output, it safely catches the error and returns the fallback title.
+ * Runs an isolated, ephemeral turn without tool access or web search. For Codex, the model is
+ * chosen from the live catalog; if that cannot be read, Blitz's fallback list is used. If
+ * generation times out, errors, or produces invalid output, it safely catches the error and
+ * returns the fallback title.
  *
  * @param options - Parameters for the title generation turn.
  * @returns The succinct generated title, or the fallback title on failure.
@@ -111,30 +119,44 @@ export interface GenerateChatTitleOptions {
 export async function generateChatTitle(
   options: GenerateChatTitleOptions
 ): Promise<string> {
+  // The catalog is read from the shared temp directory rather than this
+  // turn's own directory so consecutive titles reuse its short-lived cache.
+  const catalog =
+    options.providerId === "codex"
+      ? await getCodexModelCatalog({
+          workspaceDirectory: tmpdir(),
+          executable: providerCommand("codex").executable,
+          requestTimeoutMs: TITLE_CATALOG_TIMEOUT_MS,
+        }).catch(() => undefined)
+      : undefined
   const selection = resolveCheapestAiModelSelection(options.providerId, {
     modelEnvironmentFallback: process.env.BLITZ_TITLE_MODEL,
     effortEnvironmentFallback: process.env.BLITZ_TITLE_EFFORT,
+    ...(catalog ? { catalog } : {}),
   })
 
   // Create an isolated temporary workspace directory for this ephemeral turn.
   const directory = await mkdtemp(join(tmpdir(), "blitz-title-"))
   try {
-    const result = await runProviderTextTurn({
-      providerId: selection.providerId,
-      ...(options.providerInstanceId
-        ? { providerInstanceId: options.providerInstanceId }
-        : {}),
-      model: selection.model,
-      effort: selection.effort,
-      workspaceDirectory: directory,
-      prompt: buildChatTitlePrompt(options.message, options.contextLabels),
-      ephemeral: true,
-      webSearchMode: "disabled",
-      sandbox: "read-only",
-      approvalPolicy: "never",
-      signal: options.signal,
-      timeoutMs: TITLE_GENERATION_TIMEOUT_MS,
-    })
+    const result = await runProviderTextTurn(
+      {
+        providerId: selection.providerId,
+        ...(options.providerInstanceId
+          ? { providerInstanceId: options.providerInstanceId }
+          : {}),
+        model: selection.model,
+        effort: selection.effort,
+        workspaceDirectory: directory,
+        prompt: buildChatTitlePrompt(options.message, options.contextLabels),
+        ephemeral: true,
+        webSearchMode: "disabled",
+        sandbox: "read-only",
+        approvalPolicy: "never",
+        signal: options.signal,
+        timeoutMs: TITLE_GENERATION_TIMEOUT_MS,
+      },
+      catalog ? { codexModelCatalog: catalog } : {}
+    )
     return parseChatTitleOutput(result.text, options.fallbackTitle)
   } catch {
     // If the provider fails, times out, or is interrupted, gracefully preserve the fallback title.

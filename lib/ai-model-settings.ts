@@ -802,11 +802,14 @@ export const AI_MODEL_COST_RANKS: Readonly<Record<string, number>> = {
 /**
  * Resolves the cheapest model and lowest reasoning effort for a given provider.
  *
- * Checks configured models, finds the one with the lowest cost tier, and selects
- * "default" (no reasoning) if supported, or "low" if reasoning is required.
+ * Chooses from the provider's live catalog when one is supplied, so the
+ * result is always a model the installed runtime serves, and from Blitz's
+ * fallback list otherwise. Models are ordered by {@link AI_MODEL_COST_RANKS};
+ * when no candidate has a rank, the catalog's default model is used.
  *
  * @param providerId - The provider to pick the cheapest model for.
- * @param options - Optional environment variable overrides for model and reasoning effort.
+ * @param options - Optional environment overrides for model and reasoning
+ *   effort, and the provider's live model catalog.
  * @returns The provider, resolved cheapest model name, and lowest reasoning effort.
  */
 export function resolveCheapestAiModelSelection(
@@ -814,6 +817,9 @@ export function resolveCheapestAiModelSelection(
   options: {
     modelEnvironmentFallback?: string
     effortEnvironmentFallback?: string
+    catalog?: readonly (AiProviderModelCatalogOption & {
+      readonly isDefault?: boolean
+    })[]
   } = {}
 ): {
   providerId: AiProviderId
@@ -821,23 +827,30 @@ export function resolveCheapestAiModelSelection(
   effort: AiReasoningEffort
 } {
   const modelFallback = options.modelEnvironmentFallback?.trim()
+  const catalog = options.catalog?.length ? options.catalog : undefined
   let model: string
   if (modelFallback) {
     model = modelFallback
-  } else if (providerId === "codex") {
-    // Pick the lowest ranked Codex model from known options
-    const sorted = [...CODEX_MODEL_OPTIONS].sort(
-      (a, b) =>
-        (AI_MODEL_COST_RANKS[a.id] ?? 99) - (AI_MODEL_COST_RANKS[b.id] ?? 99)
-    )
-    model = sorted[0]?.id ?? DEFAULT_AI_MODELS.replyModel
   } else {
-    const optionsForProvider = AI_PROVIDER_MODEL_OPTIONS[providerId]
-    const sorted = [...optionsForProvider].sort(
-      (a, b) =>
-        (AI_MODEL_COST_RANKS[a.id] ?? 99) - (AI_MODEL_COST_RANKS[b.id] ?? 99)
-    )
-    model = sorted[0]?.id ?? getDefaultAiModelOption(providerId).id
+    const candidates: readonly (AiProviderModelCatalogOption & {
+      readonly isDefault?: boolean
+    })[] =
+      catalog ??
+      (providerId === "codex"
+        ? CODEX_MODEL_OPTIONS
+        : AI_PROVIDER_MODEL_OPTIONS[providerId])
+    const cheapest = candidates
+      .filter((option) => AI_MODEL_COST_RANKS[option.id] !== undefined)
+      .sort(
+        (a, b) => AI_MODEL_COST_RANKS[a.id]! - AI_MODEL_COST_RANKS[b.id]!
+      )[0]
+    model =
+      cheapest?.id ??
+      candidates.find((option) => option.isDefault)?.id ??
+      candidates[0]?.id ??
+      (providerId === "codex"
+        ? DEFAULT_AI_MODELS.replyModel
+        : getDefaultAiModelOption(providerId).id)
   }
 
   const effortFallback = options.effortEnvironmentFallback?.trim()
@@ -845,10 +858,12 @@ export function resolveCheapestAiModelSelection(
   if (effortFallback) {
     effort = effortFallback as AiReasoningEffort
   } else {
-    const supportedEfforts = getSupportedAiReasoningEffortsForProvider(
-      providerId,
-      model
-    )
+    const catalogOption = catalog?.find((option) => option.id === model)
+    const supportedEfforts =
+      catalogOption?.reasoningEfforts ??
+      (catalogOption?.reasoningEffort
+        ? [catalogOption.reasoningEffort]
+        : getSupportedAiReasoningEffortsForProvider(providerId, model))
     // Lowest / no reasoning: prefer "default" (no reasoning), then "low", then first available
     if (supportedEfforts.includes("default")) {
       effort = "default"

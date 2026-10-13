@@ -168,3 +168,25 @@ test("generateChatTitle gracefully returns fallback title on aborted signal", as
   assert.equal(title, "Fallback Title")
 })
 
+
+/** Chooses only models the live catalog serves, using the catalog's reasoning levels. */
+test("selects the cheapest model from a live catalog", () => {
+  const ranked = resolveCheapestAiModelSelection("codex", {
+    catalog: [
+      { id: "gpt-6.1-sol", reasoningEfforts: ["low", "high"], isDefault: true },
+      { id: "gpt-5.6-luna", reasoningEfforts: ["medium", "high"] },
+    ],
+  })
+  assert.equal(ranked.model, "gpt-5.6-luna")
+  assert.equal(ranked.effort, "medium")
+
+  // A catalog of models Blitz has not ranked falls back to the runtime default.
+  const unranked = resolveCheapestAiModelSelection("codex", {
+    catalog: [
+      { id: "gpt-7-nova", reasoningEfforts: ["low"] },
+      { id: "gpt-7-luna", reasoningEfforts: ["low"], isDefault: true },
+    ],
+  })
+  assert.equal(unranked.model, "gpt-7-luna")
+  assert.equal(unranked.effort, "low")
+})
