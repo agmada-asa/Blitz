@@ -38,12 +38,12 @@ const units = [
 
 test("past paper prompt carries the paper, solutions, units, and rules", () => {
   const prompt = buildPastPaperPrompt({
-    moduleTitle: "COMP26120",
+    moduleTitle: "Algorithms",
     paper: { filename: "2024.pdf", text: "Q1. What is the running time of merge sort?" },
     solutions: { filename: "2024-solutions.pdf", text: "Q1: Theta(n log n)" },
     units,
   })
-  assert.match(prompt, /MODULE: COMP26120/)
+  assert.match(prompt, /MODULE: Algorithms/)
   assert.match(prompt, /PAPER BEGIN \(2024\.pdf\)[\s\S]*running time of merge sort[\s\S]*PAPER END/)
   assert.match(prompt, /SOLUTIONS BEGIN \(2024-solutions\.pdf\)[\s\S]*Theta\(n log n\)[\s\S]*SOLUTIONS END/)
   assert.match(prompt, /U2: Week 2: Sorting \(concepts: Merge sort\)/)
@@ -52,7 +52,7 @@ test("past paper prompt carries the paper, solutions, units, and rules", () => {
   assert.match(prompt, /durationMinutes/)
 
   const withoutSolutions = buildPastPaperPrompt({
-    moduleTitle: "COMP26120",
+    moduleTitle: "Algorithms",
     paper: { filename: "2024.pdf", text: "Q1." },
     units: [],
   })
@@ -85,7 +85,7 @@ test("mock prompt carries material, weak concepts, examples, and the length", ()
     },
   ]
   const prompt = buildMockExamPrompt({
-    moduleTitle: "COMP26120",
+    moduleTitle: "Algorithms",
     minutes: 60,
     units,
     sources: [{ filename: "week2.pdf", unitTitle: "Week 2: Sorting", text: "Merge sort splits the array." }],
@@ -149,7 +149,7 @@ test("mock blueprint follows past papers or a typical paper", () => {
 test("parses a past paper, reusing quiz validation and dropping invalid questions", () => {
   const parsed = parseExamPaper(
     reply({
-      title: "  COMP26120 January 2024 ",
+      title: "  Algorithms January 2024 ",
       durationMinutes: 120,
       totalMarks: 100,
       questions: [
@@ -211,7 +211,7 @@ test("parses a past paper, reusing quiz validation and dropping invalid question
     }),
     { kind: "past", unitKeys: ["U1", "U2"], hasSolutions: true }
   )
-  assert.equal(parsed.title, "COMP26120 January 2024")
+  assert.equal(parsed.title, "Algorithms January 2024")
   assert.equal(parsed.durationMinutes, 120)
   assert.equal(parsed.statedTotalMarks, 100)
   assert.equal(parsed.rejected, 5)
@@ -290,7 +290,7 @@ test("mock papers need explanations, ignore stated details, and are bounded", ()
 
 test("grading prompt carries each answer, its scheme, and the injection guard", () => {
   const prompt = buildExamGradingPrompt({
-    moduleTitle: "COMP26120",
+    moduleTitle: "Algorithms",
     paperTitle: "Mock",
     items: [
       {

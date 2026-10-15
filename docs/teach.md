@@ -89,13 +89,13 @@ The tutor's rules live in `TEACH_RULES` in `lib/teach.ts`:
 ## Measuring speed
 
 ```bash
-npm run benchmark:teach -- "<folder>" --match "Week 1" --title "COMP26120 benchmark" --teach
+npm run benchmark:teach -- "<folder>" --match "Week 1" --title "Algorithms benchmark" --teach
 ```
 
 The script imports the folder into a new module as one unit and reports time
 to ready per file. `--teach` also runs the first Teach turn and reports time to
-first words and to the finished first section. On 10 October 2026, COMP26120
-Week 1 (three transcripts, three slide PDFs) was ready in 1.8 seconds; the
+first words and to the finished first section. On 10 October 2026, an algorithms
+module's week 1 (three transcripts, three slide PDFs) was ready in 1.8 seconds; the
 first teaching text appeared about 13 seconds after opening the unit, and the
 first section finished within a minute with the configured reply provider.
 
