@@ -73,7 +73,7 @@ export function ProjectOverview({ projectId }: { projectId: string }) {
       <main className="mx-auto max-w-4xl px-4 py-12 sm:px-8">
         <h1 className="text-2xl font-semibold">Project not found</h1>
         <Button asChild variant="outline" className="mt-5">
-          <Link href="/library">Back to library</Link>
+          <Link href="/">Back to library</Link>
         </Button>
       </main>
     )
@@ -158,7 +158,7 @@ function ModuleOverview({ project }: { project: Doc<"projects"> }) {
   return (
     <main className="mx-auto w-full max-w-4xl px-4 py-8 text-foreground sm:px-8 sm:py-10">
       <Button asChild variant="ghost" size="sm" className="mb-3 -ml-2 min-h-9">
-        <Link href="/library">
+        <Link href="/">
           <ArrowLeftIcon aria-hidden="true" /> Projects
         </Link>
       </Button>

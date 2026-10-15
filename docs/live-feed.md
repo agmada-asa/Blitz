@@ -1,9 +1,10 @@
 > **Superseded in part.** The feed's content now comes from `practice.feed`;
 > see [practice.md](practice.md). The UI behavior below still applies.
 
-# Live home feed
+# Review feed
 
-The root route (`/`) renders the server-backed learning feed. It requests up to
+The `/review` route renders the server-backed learning feed. It is reached from
+the Today panel above the Library, which is the start page (`/`). It requests up to
 20 due or new cards from `GET /api/learning/feed`, which also returns project
 and topic options for the filter dialog.
 
@@ -13,9 +14,7 @@ Single-choice and true/false cards submit on selection. Multiple-answer cards
 submit when the learner chooses `Check answers`.
 
 `Skip` records a passive event through `POST /api/learning/event` and advances
-the feed without recording an incorrect answer. The home feed has no persistent
-navigation; `Library` is the overlay route to `/library`, which owns the
-project-grid flow.
+the feed without recording an incorrect answer. The feed fills the screen; the shared app navigation returns to the Library.
 
 `Ask in chat` opens a new workspace chat with the selected card locked as
 context. The first question is sent to `POST /api/chat` without an existing

@@ -2,7 +2,7 @@
 
 /**
  * Offers to save a chat quiz to one of the module's units, so it joins that
- * unit's question bank for drills and the home feed. Shown under quizzes in
+ * unit's question bank for drills and the Review feed. Shown under quizzes in
  * chat replies when the chat belongs to a module; once saved, it links to
  * Practice instead.
  */

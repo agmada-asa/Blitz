@@ -277,7 +277,7 @@ function SourcesNotFoundState() {
           Project not found
         </h1>
         <Button asChild variant="outline" className="mt-5">
-          <Link href="/library">Back to projects</Link>
+          <Link href="/">Back to projects</Link>
         </Button>
       </div>
     </main>

@@ -176,7 +176,7 @@ function decodeFeedCursor(cursor: string | undefined): string[] {
 }
 
 /**
- * Loads one page of the home feed: questions and recaps from units the
+ * Loads one page of the Review feed: questions and recaps from units the
  * learner has started, weakest material first. The feed never ends; the
  * cursor carries the items already shown so pages do not repeat them.
  */

@@ -106,7 +106,7 @@ export function TeachSession({
           variant="outline"
           className="mt-5 min-h-11 rounded-full"
         >
-          <Link href="/library">Back to projects</Link>
+          <Link href="/">Back to projects</Link>
         </Button>
       </main>
     )

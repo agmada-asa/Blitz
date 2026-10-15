@@ -623,7 +623,7 @@ export const drill = query({
 const FEED_ROUND_GAP = 8
 
 /**
- * Serves the home feed: questions and short recaps from units the learner has
+ * Serves the Review feed: questions and short recaps from units the learner has
  * started, missed and weak material first, never ending. Each page excludes
  * items already shown in this feed session; once everything has been shown,
  * a new round begins that still skips the most recent few.

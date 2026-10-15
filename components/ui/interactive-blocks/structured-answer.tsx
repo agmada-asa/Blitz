@@ -6,7 +6,7 @@
  * per item), cloze (one field per numbered blank), and code output (a
  * monospace box for the program's output).
  *
- * Shared by inline quizzes (`QuizBlockView`) and home feed cards, which only
+ * Shared by inline quizzes (`QuizBlockView`) and Review feed cards, which only
  * learn the answer key from the server after answering. The value is always a
  * list of strings: option ids in order, the matched option id per item, the
  * text of each blank, or the typed output.

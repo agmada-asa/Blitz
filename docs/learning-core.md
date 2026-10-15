@@ -1,6 +1,6 @@
 # Learning core
 
-`lib/learning` contains the shared rules used by a home feed and focused study
+`lib/learning` contains the shared rules used by a Review feed and focused study
 activities. It accepts plain TypeScript data, so browser and React Native code
 can share it without importing Convex, React, or an AI client.
 

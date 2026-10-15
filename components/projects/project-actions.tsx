@@ -59,7 +59,7 @@ export function ProjectActions({
       if (action === "rename") await rename({ projectId, title: title.trim() })
       else await remove({ projectId })
       setAction(null)
-      if (action === "delete" && returnToLibrary) router.replace("/library")
+      if (action === "delete" && returnToLibrary) router.replace("/")
     } catch (cause) {
       setError(
         cause instanceof ConvexError && typeof cause.data === "string"

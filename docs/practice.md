@@ -2,7 +2,7 @@
 
 Practice turns what was taught into exam readiness. Every question is an
 ordinary learning item, so answers from Teach quizzes, drills, timed tests, and
-the home feed all update the same per-concept review history.
+the Review feed all update the same per-concept review history.
 
 ## Question banks
 
@@ -73,7 +73,7 @@ answers update concept review, so drills and the feed learn from exams, but
 `practice.drill`, `practice.feed`, and the unit question counts leave them out
 so a paper's answers are never shown before it is taken.
 
-## Home feed
+## Review feed
 
 `GET /api/learning/feed` now serves `practice.feed`: questions and recaps from
 units the learner has started (a Teach outline exists or a question was
@@ -93,13 +93,14 @@ met the daily goal (an unfinished today never breaks it), and returns the last
 seven days, the Teach session to continue, and the number of unit concepts due
 for review. The daily goal (default 50 XP) is set under Settings.
 
-The Today card (`components/feed/today-card.tsx`) is the first page of the home
-feed.
+The Today panel (`components/progress/today-panel.tsx`) sits above the Library
+on the start page (`/`). It links to the Teach session to continue and to the
+Review feed (`/review`), and stays hidden until the learner has studied.
 
 ## Daily reminder
 
 The desktop app checks every ten minutes (`electron/reminders.mjs`). At or
 after the reminder hour (default 19:00, set or turned off in Settings), if
 today's goal is not met and no reminder has been shown today, it shows a
-native notification. Clicking it opens the unit in progress, or Home. Browser
+native notification. Clicking it opens the unit in progress, or the Library. Browser
 and `dev:lan` sessions do not send reminders.
