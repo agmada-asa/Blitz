@@ -2,9 +2,46 @@
 
 ![Blitz](app/icon.svg)
 
-Blitz turns course material into live, source-grounded lessons and study practice for the web, with a frozen Android app. Lessons and replies run through the provider selected in Blitz settings on this Mac.
+Blitz teaches you your own course material. Drop in a week's lecture slides, transcripts, and notes, and it teaches them back in short sessions, quizzes you, and keeps returning to what hasn't stuck. In exam season, import past papers and sit mock exams marked against the mark scheme.
 
-## Run locally
+It runs on your Mac and uses the AI coding agent you already pay for (Codex, Claude Code, OpenCode, or Google Antigravity) instead of an API key. Your material and progress stay in a local database.
+
+## Quick start
+
+You need Node.js 22.13 or newer and one supported agent installed and signed in. Codex is the default. Blitz is developed and tested on macOS; other platforms are untested.
+
+```bash
+git clone https://github.com/agmada-asa/Blitz.git
+cd Blitz
+npm ci
+npm run dev:lan
+```
+
+Open the printed address, create a project, add a week's material, and open its first unit to start a Teach session. The address also works on a phone on the same Wi-Fi.
+
+## What it does
+
+- **Teach**: each upload is filed into a unit (a week or a lecture). Opening a unit starts a live lesson with an outline, citations back to your sources, and quick checks along the way. See [Teach](docs/teach.md).
+- **Practice**: a question bank per unit, drills weighted towards weak concepts, and a single action to relearn a concept you keep missing.
+- **Exam mode**: import past papers, sit mock exams, and get written answers marked. See [exam mode](docs/exam-mode.md).
+- **Chat**: ask about your material with the attached sources as evidence, or ask about any question card.
+- **Today and Review**: the Library shows your streak, today's XP, the lesson to continue, and a link to Review, a scroll of questions on what's due.
+
+## Learn
+
+Create a project in Library and add files, pasted notes, or a public link. Each upload is filed into a unit, usually a week or a lecture, and is ready to teach as soon as its text is extracted. Opening a unit starts a live Teach session; see [Teach](docs/teach.md). The Library is the start page. Its Today panel links to the lesson in progress and to Review, a feed that mixes projects; Filter narrows it to a project or topic.
+
+Open a project or topic for a focused feed, Study with immediate feedback, or a Test with results at the end. Topics can be renamed or excluded from the mixed feed.
+
+Choose `Study` then `Written answers` for a separate writing activity. Save a draft or compare your response with the prepared reference. Written activities resume where you left off and do not award an automatic score.
+
+Questions use single choice, multiple answers, or true/false. Answers receive server-scored feedback. Reading and skipping never count as knowing a concept. `Ask in chat` attaches a card and its source section to your own question, and follow-ups reuse the conversation. Web and Android replies stream as they arrive, with Markdown formatting and saved history after reconnecting.
+
+Imports accept text PDFs, Markdown, plain text, and PowerPoint `.pptx` files. Public links can return those formats or HTML. Source URLs and page/slide markers are retained. Scanned PDFs need OCR elsewhere, and each extracted source is currently limited to 120,000 characters.
+
+Use `Find sources` within a project to ask Blitz for a proposed learning scope and references discovered through web search. Review the links before selecting which to import. Imported sources appear as unsorted sources; use `Group into a unit` on the module page to teach them. Proposed note outlines are previews only.
+
+## Run locally in detail
 
 Use Node.js 22.13 or newer, with at least one supported local provider installed and signed in. Codex is the default provider. Claude Code 2.1.248 or newer can run replies and card generation with tools disabled. OpenCode v1.18.21 or newer within v1 supports native tool permissions. Google Antigravity ACP supports interactive workspace chat. Development has been verified with Node.js 24 on macOS.
 
@@ -64,20 +101,6 @@ Claude passes supported reasoning selections with `--effort`. Haiku and OpenCode
 
 The ACP client negotiates `session/load` and `session/resume`. If neither is supported, it fails before accepting a turn so workspace chat can rebuild its saved history in a new session. Historical load notifications are excluded from the new answer. Both adapters bound stdout and assistant output, decode split UTF-8 safely, and terminate on transport failures or deadlines.
 
-## Learn
-
-Create a project in Library and add files, pasted notes, or a public link. Each upload is filed into a unit, usually a week or a lecture, and is ready to teach as soon as its text is extracted. Opening a unit starts a live Teach session; see [Teach](docs/teach.md). The home feed mixes projects; Filter narrows it to a project or topic.
-
-Open a project or topic for a focused feed, Study with immediate feedback, or a Test with results at the end. Topics can be renamed or excluded from the mixed feed.
-
-Choose `Study` then `Written answers` for a separate writing activity. Save a draft or compare your response with the prepared reference. Written activities resume where you left off and do not award an automatic score.
-
-Questions use single choice, multiple answers, or true/false. Answers receive server-scored feedback. Reading and skipping never count as knowing a concept. `Ask in chat` attaches a card and its source section to your own question, and follow-ups reuse the conversation. Web and Android replies stream as they arrive, with Markdown formatting and saved history after reconnecting.
-
-Imports accept text PDFs, Markdown, plain text, and PowerPoint `.pptx` files. Public links can return those formats or HTML. Source URLs and page/slide markers are retained. Scanned PDFs need OCR elsewhere, and each extracted source is currently limited to 120,000 characters.
-
-Use `Find sources` within a project to ask Blitz for a proposed learning scope and references discovered through web search. Review the links before selecting which to import. Imported sources appear as unsorted sources; use `Group into a unit` on the module page to teach them. Proposed note outlines are previews only.
-
 ## Android
 
 The React Native app lives in `mobile/` with its own dependencies and checks. It connects to the same printed LAN address. Prepared cards are cached, and offline answers wait for server feedback after sync. The app is frozen during the overhaul: card chat questions, pasted notes, and links added from Android are saved but no longer answered or prepared.
@@ -98,6 +121,21 @@ npm run check:runtimes
 
 `npm run check:runtimes` reports when an installed provider CLI no longer matches what Blitz relies on. See [AI model settings](docs/ai-model-settings.md).
 
-Run native checks from `mobile/`. The [product brief](PRODUCT_BRIEF.md) records the intended experience; the [working protocol](WORKING_PROTOCOL.md) records the overnight review and delivery boundaries. Implementation details are in [Teach](docs/teach.md), [source ingestion](docs/source-ingestion.md), [learning API](docs/learning-api.md), and [Codex text turns and legacy card chat](docs/card-chat.md).
+Run native checks from `mobile/`. The [overhaul plan](docs/overhaul-plan.md) records the current direction, and [`docs/history`](docs/history/README.md) keeps the early planning notes. Implementation details are in [Teach](docs/teach.md), [source ingestion](docs/source-ingestion.md), [learning API](docs/learning-api.md), and [Codex text turns and legacy card chat](docs/card-chat.md).
 
-This version is a personal local app without account authentication. It is not configured for public hosting. Android offline storage and the local agent are separate from any future cloud sync service. Creating proposed notes, richer diagrams, and moving topics are still outside this version. Android now includes native project browsing, creation, rename, and deletion. Written activities and source imports still use the browser. The product brief records the wider direction, not a completed feature checklist.
+## Known limits
+
+This version is a personal local app without account authentication. It is not configured for public hosting. Android offline storage and the local agent are separate from any future cloud sync service. Creating proposed notes, richer diagrams, and moving topics are still outside this version. Android now includes native project browsing, creation, rename, and deletion. Written activities and source imports still use the browser.
+
+- The agents, local database, and speech run on the computer hosting Blitz; a phone is only a client of it.
+- Six local processes (Next.js, Convex, and workers) run under one supervisor. Consolidating the workers is planned.
+- The Android app is frozen during the overhaul.
+- Citations land on a page, slide, timestamp, or heading when the source has one; other passages only get a section label.
+
+## Credits
+
+Read aloud and podcasts use [Kokoro](https://huggingface.co/hexgrad/Kokoro-82M) (Apache 2.0), downloaded on first use. The voice previews in `public/audio/voices/` were generated with it.
+
+## License
+
+[MIT](LICENSE)
