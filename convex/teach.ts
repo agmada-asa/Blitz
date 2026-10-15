@@ -2,7 +2,7 @@
  * Turns quizzes asked inside Teach sessions into durable study evidence.
  *
  * A quiz the tutor writes becomes an ordinary learning item under a concept,
- * so its answers feed review scheduling, Practice, and the home feed exactly
+ * so its answers feed review scheduling, Practice, and the Review feed exactly
  * like any other question. The server route parses the quiz from the saved
  * assistant message; these functions only accept quizzes tied to a real
  * Teach reply.

@@ -106,7 +106,7 @@ export function PracticeHub({ projectId }: { projectId: string }) {
       <main className="mx-auto max-w-4xl px-4 py-12 sm:px-8">
         <h1 className="font-heading text-2xl font-semibold">Project not found</h1>
         <Button asChild variant="outline" className="mt-5 min-h-11 rounded-full">
-          <Link href="/library">Back to projects</Link>
+          <Link href="/">Back to projects</Link>
         </Button>
       </main>
     )

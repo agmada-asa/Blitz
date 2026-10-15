@@ -65,7 +65,7 @@ export type FeedProject = { id: string; title: string }
 /** Topic filter option returned alongside feed cards. */
 export type FeedTopic = { id: string; projectId: string; title: string }
 
-/** One page of the home feed: questions and concept recaps, shared by browser and native clients. */
+/** One page of the Review feed: questions and concept recaps, shared by browser and native clients. */
 export type FeedResponse = {
   cards: FeedCard[]
   projects: FeedProject[]

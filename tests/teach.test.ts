@@ -87,8 +87,8 @@ test("suggests unit titles from week labels, shared words, or a single file", ()
     "Week 1"
   )
   assert.equal(
-    suggestUnitTitle(["COMP22111 Learning Video 6 RISC-V Design.pdf"], 3),
-    "COMP22111 Learning Video 6 RISC V Design"
+    suggestUnitTitle(["CS201 Learning Video 6 RISC-V Design.pdf"], 3),
+    "CS201 Learning Video 6 RISC V Design"
   )
   assert.equal(
     suggestUnitTitle(["Lecture 4 slides.pdf", "lecture-4-transcript.vtt"], 2),
@@ -110,7 +110,7 @@ test("keeps a week label when the tutor names the topic", () => {
 
 test("first-turn prompts carry the protocol, material, and learner message", () => {
   const prompt = buildTeachPrompt({
-    moduleTitle: "COMP26120",
+    moduleTitle: "Algorithms",
     unitTitle: "Week 1",
     sources: [
       { filename: "overview.txt", text: "Triangular numbers.", relativeKey: "Sources/overview.txt" },

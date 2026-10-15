@@ -81,7 +81,7 @@ export const rename = mutation({
   },
 })
 
-/** Includes or excludes one project topic from the unfiltered home feed. */
+/** Includes or excludes one project topic from the unfiltered Review feed. */
 export const setFeedInclusion = mutation({
   args: {
     projectId: v.id("projects"),

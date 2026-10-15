@@ -46,7 +46,7 @@ export default function ProjectListenPage({
       <main className="mx-auto max-w-5xl space-y-4 px-4 py-8 pb-32 sm:px-8">
         <h1 className="font-heading text-2xl font-medium">Project not found</h1>
         <Button asChild variant="outline">
-          <Link href="/library">Back to library</Link>
+          <Link href="/">Back to library</Link>
         </Button>
       </main>
     )

@@ -2,7 +2,7 @@
 
 This plan records the October 2026 requirements interview and the rebuild that
 follows from it. It supersedes the feed, generation, and platform-priority
-decisions in `PRODUCT_BRIEF.md` where they conflict. Progress is tracked in
+decisions in [`PRODUCT_BRIEF.md`](history/PRODUCT_BRIEF.md) where they conflict. Progress is tracked in
 `TODO.md`.
 
 ## What Blitz is for
@@ -66,16 +66,16 @@ in front of it.
 
 ## Benchmark material
 
-Real course material in `~/Downloads/04 Research and Education/02 School
-Materials` is the acceptance fixture. It is never committed.
+A local folder of real university course material is the acceptance fixture.
+It is never committed.
 
-- **COMP26120 Week 1**: three transcripts and three slide PDFs on integer
+- **Algorithms, week 1**: three transcripts and three slide PDFs on integer
   multiplication and complexity. Maths heavy. Primary benchmark.
-- **COMP23111**: paired lecture transcripts and slides for databases. Tests
+- **Databases**: paired lecture transcripts and slides for databases. Tests
   unit grouping across many files.
-- **COMP22111**: RISC-V notes and slides for ten learning videos. Tests code and
+- **Processor architecture**: RISC-V notes and slides for ten learning videos. Tests code and
   hardware diagrams.
-- **COMP24011**: lecture PDFs plus the full AIMA textbook. Tests a very large
+- **Artificial intelligence**: lecture PDFs plus a full AI textbook. Tests a very large
   source that must not block anything.
 
 Acceptance targets, measured on every relevant PR:

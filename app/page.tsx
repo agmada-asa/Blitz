@@ -1,20 +1,32 @@
-/** Renders the live mixed learning feed at the root route. */
+"use client"
 
-import { Feed } from "@/components/feed/feed"
+/**
+ * The start page: today's progress and ways to continue, above the project
+ * library. Connects the library to its Convex query and create mutation.
+ */
 
-/** Renders the live mixed learning feed. */
-export default async function Page({
-  searchParams,
-}: {
-  searchParams: Promise<{ projectId?: string; topicId?: string }>
-}) {
-  const filters = await searchParams
+import { useMutation, useQuery } from "convex/react"
+
+import { ProjectGrid } from "@/components/projects/project-grid"
+import { TodayPanel } from "@/components/progress/today-panel"
+import { api } from "@/convex/_generated/api"
+
+/** Renders the Today panel and the live project library. */
+export default function Page() {
+  const projects = useQuery(api.projects.listProjects)
+  const progress = useQuery(api.units.libraryProgress, {})
+  const createProject = useMutation(api.projects.createProject)
+
   return (
-    <Feed
-      initialFilter={{
-        projectId: filters.projectId ?? "",
-        topicId: filters.topicId ?? "",
-      }}
-    />
+    <main className="mx-auto w-full max-w-6xl px-5 py-10 pb-28 sm:px-8 sm:py-16">
+      <TodayPanel />
+      <ProjectGrid
+        projects={projects}
+        progress={progress}
+        onCreate={async (title) => {
+          await createProject({ title })
+        }}
+      />
+    </main>
   )
 }

@@ -35,7 +35,7 @@ function headlineClass(text: string): string {
   return "text-[clamp(2rem,7vw,3.75rem)] leading-[0.99] font-medium tracking-[-0.045em] sm:text-[clamp(2rem,5vw,2.5rem)]"
 }
 
-/** Props required to render one card in the home feed. */
+/** Props required to render one card in the Review feed. */
 type FeedCardProps = {
   card: FeedCard
   onAsk: (card: FeedCard) => void

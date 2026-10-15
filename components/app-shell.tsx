@@ -7,7 +7,6 @@ import { usePathname } from "next/navigation"
 import {
   Chat01Icon,
   Folder01Icon,
-  Home01Icon,
   Notification02Icon,
   Settings02Icon,
   SidebarLeftIcon,
@@ -36,25 +35,21 @@ export function AppShell({ children }: AppShellProps) {
   const { unreadCount } = useNotifications()
   const isPreviewRoute =
     pathname === "/preview" || pathname.startsWith("/preview/")
-  const isHomeRoute = pathname === "/"
+  const isReviewRoute = pathname === "/review"
   const isChatRoute = pathname === "/chat"
   // Teach is a focused screen with its own back link and dock.
   const isTeachRoute = /^\/projects\/[^/]+\/learn\/[^/]+$/.test(pathname)
-  const isFullHeightMobileRoute = isHomeRoute || isChatRoute || isTeachRoute
+  const isFullHeightMobileRoute = isReviewRoute || isChatRoute || isTeachRoute
   const [collapsed, setCollapsed] = useState(true)
   const links: NavLink[] = [
     {
+      // The Library is the start page; Review is reached from its Today panel.
       href: "/",
-      label: "Home",
-      icon: Home01Icon,
-      active: isHomeRoute,
-    },
-    {
-      href: "/library",
       label: "Library",
       icon: Folder01Icon,
       active:
-        pathname === "/library" ||
+        pathname === "/" ||
+        isReviewRoute ||
         pathname.startsWith("/projects/"),
     },
     {
@@ -143,7 +138,7 @@ export function AppShell({ children }: AppShellProps) {
       <nav
         aria-label="Primary navigation"
         className={cn(
-          "fixed inset-x-0 bottom-0 z-40 grid h-[calc(68px+env(safe-area-inset-bottom))] grid-cols-5 border-t border-border/70 bg-background/95 px-1 pb-[env(safe-area-inset-bottom)] backdrop-blur-xl md:hidden",
+          "fixed inset-x-0 bottom-0 z-40 grid h-[calc(68px+env(safe-area-inset-bottom))] grid-cols-4 border-t border-border/70 bg-background/95 px-1 pb-[env(safe-area-inset-bottom)] backdrop-blur-xl md:hidden",
           isTeachRoute && "hidden"
         )}
       >

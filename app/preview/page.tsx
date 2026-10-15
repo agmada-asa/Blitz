@@ -4,5 +4,5 @@ import { redirect } from "next/navigation"
 
 /** Sends existing preview links to the real source-backed learning feed. */
 export default function PreviewPage() {
-  redirect("/")
+  redirect("/review")
 }

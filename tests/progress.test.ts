@@ -1,4 +1,4 @@
-/** Verifies local day keys, XP streaks, and the recap parsing that feeds the home feed. */
+/** Verifies local day keys, XP streaks, and the recap parsing that feeds the Review feed. */
 
 import assert from "node:assert/strict"
 import test from "node:test"

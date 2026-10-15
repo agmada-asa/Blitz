@@ -74,7 +74,7 @@ test("respects the limit and handles empty input", () => {
 
 test("the bank prompt carries material, weak concepts, and questions to avoid", () => {
   const prompt = buildQuestionBankPrompt({
-    moduleTitle: "COMP26120",
+    moduleTitle: "Algorithms",
     unitTitle: "Week 1",
     sources: [{ filename: "slides.pdf", text: "Karatsuba uses three multiplications." }],
     taughtSections: ["Divide and conquer"],

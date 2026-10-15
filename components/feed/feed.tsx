@@ -1,6 +1,9 @@
 "use client"
 
-/** Owns the real home feed, its server-backed answer flow, and compact filters. */
+/**
+ * Owns the Review feed: a weakness-weighted scroll of questions and recaps on
+ * studied material, its server-backed answer flow, and compact filters.
+ */
 
 import Link from "next/link"
 import { useRouter } from "next/navigation"
@@ -9,7 +12,7 @@ import { FilterHorizontalIcon } from "@hugeicons/core-free-icons"
 import { HugeiconsIcon } from "@hugeicons/react"
 
 import { FeedCardView } from "@/components/feed/feed-card"
-import { TodayCard, TodayXpChip } from "@/components/feed/today-card"
+import { TodayXpChip } from "@/components/progress/today-panel"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -37,9 +40,6 @@ import type {
 
 const FEED_LIMIT = 20
 const MAX_EMPTY_PAGE_HOPS = 3
-
-/** Full-height pages shown before the first study card: the Today card. */
-const LEAD_PAGES = 1
 
 /** Sentinel value representing an unfiltered project or topic selection in shadcn pickers. */
 const ALL_FILTER_VALUE = "all"
@@ -116,7 +116,7 @@ async function requestFeedPage(
   return (await response.json()) as FeedResponse
 }
 
-/** Renders the full-screen real learning feed at the home route. */
+/** Renders the full-screen Review feed at `/review`. */
 export function Feed({ initialFilter }: { initialFilter?: FeedFilter }) {
   const router = useRouter()
   const answerRequests = useRef(new Map<string, AnswerRequest>())
@@ -132,8 +132,7 @@ export function Feed({ initialFilter }: { initialFilter?: FeedFilter }) {
   )
   const [draftFilter, setDraftFilter] = useState<FeedFilter>(filter)
   const [filterOpen, setFilterOpen] = useState(false)
-  // The Today card sits before the first study card at index -LEAD_PAGES.
-  const [activeIndex, setActiveIndex] = useState(-LEAD_PAGES)
+  const [activeIndex, setActiveIndex] = useState(0)
   const [loading, setLoading] = useState(true)
   const [loadingMore, setLoadingMore] = useState(false)
   const [error, setError] = useState("")
@@ -196,7 +195,7 @@ export function Feed({ initialFilter }: { initialFilter?: FeedFilter }) {
       }
       if (requestGeneration.current !== generation || !nextData) return
       setData(nextData)
-      setActiveIndex(-LEAD_PAGES)
+      setActiveIndex(0)
       feedRef.current?.scrollTo({ top: 0, behavior: "auto" })
     }
 
@@ -231,12 +230,12 @@ export function Feed({ initialFilter }: { initialFilter?: FeedFilter }) {
     (index: number) => {
       const container = feedRef.current
       if (!container || !cardCount) return
-      const boundedIndex = Math.max(-LEAD_PAGES, Math.min(index, cardCount - 1))
+      const boundedIndex = Math.max(0, Math.min(index, cardCount - 1))
       const reducedMotion = window.matchMedia(
         "(prefers-reduced-motion: reduce)"
       ).matches
       container.scrollTo({
-        top: (boundedIndex + LEAD_PAGES) * container.clientHeight,
+        top: boundedIndex * container.clientHeight,
         behavior: reducedMotion ? "auto" : "smooth",
       })
       setActiveIndex(boundedIndex)
@@ -251,10 +250,9 @@ export function Feed({ initialFilter }: { initialFilter?: FeedFilter }) {
     const feedContainer = container
     const handleScroll = () => {
       const nextIndex =
-        Math.round(feedContainer.scrollTop / feedContainer.clientHeight) -
-        LEAD_PAGES
+        Math.round(feedContainer.scrollTop / feedContainer.clientHeight)
       setActiveIndex(
-        Math.max(-LEAD_PAGES, Math.min(nextIndex, Math.max(cardCount - 1, 0)))
+        Math.max(0, Math.min(nextIndex, Math.max(cardCount - 1, 0)))
       )
     }
     feedContainer.addEventListener("scroll", handleScroll, { passive: true })
@@ -430,7 +428,7 @@ export function Feed({ initialFilter }: { initialFilter?: FeedFilter }) {
             "(prefers-reduced-motion: reduce)"
           ).matches
           container.scrollTo({
-            top: (previousCount + LEAD_PAGES) * container.clientHeight,
+            top: previousCount * container.clientHeight,
             behavior: reducedMotion ? "auto" : "smooth",
           })
           setActiveIndex(previousCount)
@@ -444,7 +442,7 @@ export function Feed({ initialFilter }: { initialFilter?: FeedFilter }) {
       "(prefers-reduced-motion: reduce)"
     ).matches
     container.scrollTo({
-      top: (cardCount + LEAD_PAGES) * container.clientHeight,
+      top: cardCount * container.clientHeight,
       behavior: reducedMotion ? "auto" : "smooth",
     })
   }
@@ -620,18 +618,12 @@ export function Feed({ initialFilter }: { initialFilter?: FeedFilter }) {
           }}
         />
       ) : !hasCards ? (
-        // Today still shows the streak and a way to start when nothing is studied yet.
-        <div className="h-full snap-y snap-mandatory overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-          <TodayCard />
-          <div className="h-svh snap-start">
-            <FeedEmptyState
-              hasMore={hasMore}
-              loadingMore={loadingMore}
-              error={loadMoreError}
-              onLoadMore={() => void loadMore()}
-            />
-          </div>
-        </div>
+        <FeedEmptyState
+          hasMore={hasMore}
+          loadingMore={loadingMore}
+          error={loadMoreError}
+          onLoadMore={() => void loadMore()}
+        />
       ) : (
         <div
           ref={feedRef}
@@ -639,7 +631,6 @@ export function Feed({ initialFilter }: { initialFilter?: FeedFilter }) {
           aria-label="Learning feed"
           className="h-full snap-y snap-mandatory [scrollbar-width:none] overflow-y-auto overscroll-y-contain scroll-smooth outline-none focus:outline-none focus-visible:outline-none [&::-webkit-scrollbar]:hidden"
         >
-          <TodayCard />
           {data?.cards.map((card, index) => (
             <FeedCardView
               key={card.key ?? card.id}
@@ -746,7 +737,7 @@ function FeedEmptyState({
             asChild
             className="mt-6 h-11 rounded-full bg-brand px-5 text-sm font-medium text-brand-foreground hover:bg-brand/85"
           >
-            <Link href="/library">Open your modules</Link>
+            <Link href="/">Open your modules</Link>
           </Button>
         )}
       </div>
