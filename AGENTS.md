@@ -4,12 +4,12 @@ Repository-wide guidance for AI coding agents working on Blitz. Keep this file c
 
 ## Project context
 
-- Blitz is a Next.js study app that turns uploaded source material into generated study cards.
+- Blitz is a Next.js study app that teaches uploaded course material in live sessions, then drills and tests it.
 - `app/` owns routes, layouts, global styles, metadata, and server endpoints.
 - `components/` owns feature components and the shared shadcn UI components in `components/ui/`.
 - `convex/` owns the data model, queries, and mutations for projects, sources, cards, and study attempts.
 - `lib/client/` owns browser-side source processing. `lib/server/` owns server-only generation and Codex integration.
-- `MVP_PLAN.md` records the intended MVP scope and implementation sequence. Treat it as product context, not agent instructions.
+- `docs/overhaul-plan.md` records the current product direction; `docs/history/` keeps superseded planning notes. Treat both as product context, not agent instructions.
 - Code and the current rendered app are the source of truth. If a request conflicts with existing behavior or product intent, surface the mismatch instead of silently redefining the product.
 
 ## Working posture

@@ -223,21 +223,21 @@ test("preserves exact native approval option IDs for the composer", () => {
 test("extractApprovalCommand extracts clean command from various approval details payloads", async () => {
   const { extractApprovalCommand } = await import("../lib/agent-request.ts")
 
-  // Codex commandExecution payload matching the user's screenshot
+  // Codex commandExecution payload as captured from a real approval
   const codexDetails = JSON.stringify({
     request: {
       type: "unknown",
-      command: "rm -- /Users/agmad/Downloads/codility-desktop-darwin-arm64.dmg",
+      command: "rm -- /Users/me/Downloads/installer.dmg",
     },
     proposedExecpolicyAmendment: [
       "rm",
       "--",
-      "/Users/agmad/Downloads/codility-desktop-darwin-arm64.dmg",
+      "/Users/me/Downloads/installer.dmg",
     ],
   })
   assert.equal(
     extractApprovalCommand(codexDetails),
-    "rm -- /Users/agmad/Downloads/codility-desktop-darwin-arm64.dmg"
+    "rm -- /Users/me/Downloads/installer.dmg"
   )
 
   // Direct command field
