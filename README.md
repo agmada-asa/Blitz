@@ -101,6 +101,10 @@ Claude passes supported reasoning selections with `--effort`. Haiku and OpenCode
 
 The ACP client negotiates `session/load` and `session/resume`. If neither is supported, it fails before accepting a turn so workspace chat can rebuild its saved history in a new session. Historical load notifications are excluded from the new answer. Both adapters bound stdout and assistant output, decode split UTF-8 safely, and terminate on transport failures or deadlines.
 
+## Use from other agents
+
+`node mcp/server.mjs` is an MCP server that lets other agents see what's due, read the Library and add material to a unit while Blitz is running. See [the MCP server](mcp/README.md).
+
 ## Android
 
 The React Native app lives in `mobile/` with its own dependencies and checks. It connects to the same printed LAN address. Prepared cards are cached, and offline answers wait for server feedback after sync. The app is frozen during the overhaul: card chat questions, pasted notes, and links added from Android are saved but no longer answered or prepared.
