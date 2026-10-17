@@ -11,6 +11,10 @@ import {
   type WorkspaceChatCardContext,
   WORKSPACE_CHAT_CONTINUATION_PROMPT,
 } from "../lib/server/workspace-chat.ts"
+import {
+  CHAT_INTERACTIVE_BLOCKS_GUIDANCE,
+  INTERACTIVE_BLOCKS_PROMPT,
+} from "../lib/interactive-blocks.ts"
 import type { Id } from "../convex/_generated/dataModel.d.ts"
 
 test("parseWorkspaceChatRequest accepts mixed attachment context", () => {
@@ -261,4 +265,26 @@ test("new workspace chats do not require an owning project", () => {
 
   assert.equal(result.message, "Start without a project")
   assert.equal(result.projectId, undefined)
+})
+
+test("chat prompts offer the same interactive blocks as Teach", () => {
+  const request = parseWorkspaceChatRequest({
+    message: "Teach me how pipelining works",
+    chatId: "chat-1",
+    clientMessageId: "message-1",
+    projectIds: [],
+    attachments: [
+      { kind: "file", label: "notes.txt", text: "Pipeline notes" },
+    ],
+  })
+  const prompt = buildWorkspaceChatPrompt(request, [])
+
+  assert.ok(prompt.includes(CHAT_INTERACTIVE_BLOCKS_GUIDANCE))
+  assert.ok(prompt.includes(INTERACTIVE_BLOCKS_PROMPT))
+  for (const block of ["quiz", "steps", "viz", "followups", "mermaid"])
+    assert.match(CHAT_INTERACTIVE_BLOCKS_GUIDANCE, new RegExp(block))
+  // The reminder sits after the attached sources, next to the message.
+  const reminder = prompt.indexOf("answer with the interactive blocks")
+  assert.ok(reminder > prompt.indexOf("ATTACHED CONTEXT END"))
+  assert.ok(reminder < prompt.indexOf("USER MESSAGE BEGIN"))
 })

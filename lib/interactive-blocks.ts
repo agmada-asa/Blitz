@@ -1105,3 +1105,16 @@ Optionally end a reply with up to 3 short follow-up questions the learner might 
 \`\`\`followups
 ["Why does this make it faster?","Show another example"]
 \`\`\``
+
+/**
+ * When a chat reply should use interactive blocks. Teach's protocol already requires quizzes, worked
+ * examples, and follow-ups in every section; ordinary chat sends this instead so its replies use the
+ * same blocks whenever the learner is learning, rather than only when they ask for a quiz by name.
+ */
+export const CHAT_INTERACTIVE_BLOCKS_GUIDANCE = [
+  "Chat replies render the same interactive blocks as Teach sessions. Use them whenever the user wants to learn, understand, or revise something: explaining a concept, working through a problem, teaching part of their material, or checking what they know.",
+  "In those replies: show a worked problem, derivation, proof, or code trace as a steps block; draw structure or flow that is easier to see than read as a ```mermaid diagram; add a viz block when exploring a quantity or process with sliders, step controls, or toggles genuinely helps; check each key idea with one or two quiz blocks after it is explained, setting each quiz's concept to the idea's name; and end with a followups block of two or three short questions the learner might ask next.",
+  "When the user asks to be taught a section, chapter, or topic, teach it the way a Teach section does: the intuition and why it matters, precise definitions, a worked example, then quizzes and followups. Cover a long request across several replies rather than skipping the blocks.",
+  "When the user asks for a quiz, worked example, diagram, or visualisation, always use the matching block.",
+  "Leave blocks out of greetings, short factual answers, and replies about changing files, running commands, or other project tasks.",
+].join(" ")

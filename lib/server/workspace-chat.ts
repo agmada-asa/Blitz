@@ -1,7 +1,10 @@
 /** Validates workspace chat requests and turns their attachments into a bounded Blitz prompt. */
 
 import type { Id } from "../../convex/_generated/dataModel.js"
-import { INTERACTIVE_BLOCKS_PROMPT } from "../interactive-blocks.ts"
+import {
+  CHAT_INTERACTIVE_BLOCKS_GUIDANCE,
+  INTERACTIVE_BLOCKS_PROMPT,
+} from "../interactive-blocks.ts"
 import { TUTOR_REPLY_GUIDANCE } from "../teaching-voice.ts"
 
 /** Maximum user message size accepted by workspace chat. */
@@ -474,7 +477,7 @@ export function mergeWorkspaceChatReplay(
   }
 }
 
-/** Builds a prompt that treats every attachment as untrusted reference material and answers concept questions in the shared tutor voice. */
+/** Builds a prompt that treats every attachment as untrusted reference material and answers concept questions in the shared tutor voice, with the same interactive blocks as Teach. */
 export function buildWorkspaceChatPrompt(
   request: WorkspaceChatRequest,
   projects: WorkspaceChatProjectContext[],
@@ -551,7 +554,7 @@ export function buildWorkspaceChatPrompt(
     "Keep external findings distinct from attached material. Use bracketed citation labels only for supplied passages, and link or name external sources rather than attributing them to project sources. Never invent a citation.",
     "When answering user notes or annotations, you may quote or hyperlink to them using markdown links formatted as [Annotation N](annotation:N) (for example [Annotation 1](annotation:1)), which will open the user's note for inspection.",
     "Use available tools when they materially help answer or complete the request. Do not edit files or run commands unless the user asks for a project change, and never use tools just to explore.",
-    "When you explain a concept, interactive blocks often help: a worked example as steps, a quiz when the learner asks to be tested or would benefit from checking one key idea, a visualisation only when interaction genuinely aids understanding, and followups at the end of a teaching reply. Do not add blocks to quick factual answers, code changes, or project tasks.",
+    CHAT_INTERACTIVE_BLOCKS_GUIDANCE,
     INTERACTIVE_BLOCKS_PROMPT,
     ...(history.length
       ? [
@@ -566,6 +569,9 @@ export function buildWorkspaceChatPrompt(
       ? context.join("\n\n")
       : "No new context was attached to this turn.",
     "ATTACHED CONTEXT END",
+    // Attached sources can run to tens of thousands of characters, so restate
+    // the block rule next to the message it applies to.
+    "If the message below is about learning, understanding, or revising something, answer with the interactive blocks described above.",
     "USER MESSAGE BEGIN",
     request.message.trim() ||
       (request.annotations?.length
