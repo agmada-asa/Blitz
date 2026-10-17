@@ -22,6 +22,8 @@ const eslintConfig = defineConfig([
     "mobile/**",
     // Temporary git worktrees created by coding agents are separate checkouts.
     ".claude/worktrees/**",
+    // Ocean builds the mini app here; the sources are in ocean-app/src.
+    "ocean-app/dist/**",
   ]),
   // Electron's sandbox preload only supports CommonJS in this host version.
   {

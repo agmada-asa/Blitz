@@ -1,0 +1,17 @@
+/*
+ * Styles for the Blitz mini app inside Ocean: the web app's own Tailwind setup and tokens
+ * (app/globals.css), so Blitz's components look the same here, plus the mini app's sources.
+ * The page fills the WebView or iframe and scrolls inside its screens, never as a whole.
+ */
+
+@import "../../app/globals.css";
+@source "./";
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  -webkit-tap-highlight-color: transparent;
+}

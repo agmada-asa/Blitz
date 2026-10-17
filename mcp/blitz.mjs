@@ -104,13 +104,13 @@ export async function connect() {
 }
 
 /** Reads a JSON `error` from a failed response, with a fallback. */
-async function responseError(response, fallback) {
+export async function responseError(response, fallback) {
   const body = await response.json().catch(() => null)
   return typeof body?.error === "string" ? body.error : fallback
 }
 
 /** Every module (project) in the Library, newest first. */
-async function modules(blitz) {
+export async function modules(blitz) {
   const response = await fetch(`${blitz.app}/api/projects`)
   if (!response.ok)
     throw new BlitzError(
@@ -148,7 +148,7 @@ export async function findModule(blitz, name) {
 }
 
 /** Share of a unit taught, from its Teach summary, as a whole percentage. */
-function taught(teach) {
+export function taught(teach) {
   if (!teach?.sectionCount) return 0
   if (teach.completed) return 100
   return Math.round(
