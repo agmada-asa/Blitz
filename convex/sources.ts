@@ -620,7 +620,7 @@ function withoutSource<T>(
  * that drew only on this source are archived, so answers and XP stay in the
  * learner's history; ones that also used other sources just lose this one.
  * Search chunks are purged in background batches because a book can have
- * thousands; retrieval already skips chunks whose source is gone.
+ * thousands; retrieval checks each chunk's source, so none are cited meanwhile.
  * @returns The stored original's key when no other source uses it, so the
  * caller can delete the file from the project folder.
  * @throws For exam paper uploads, which are deleted with their paper.
@@ -637,6 +637,7 @@ export const remove = mutation({
     // Preparation and ingestion state. Deleting jobs makes any worker still
     // holding a lease fail its next write instead of recreating data.
     const deletions: { _id: Id<TableWithSourceRows> }[] = []
+    const preparationChunkIds = new Set<string>()
     deletions.push(
       ...(await ctx.db
         .query("ingestionJobs")
@@ -650,13 +651,14 @@ export const remove = mutation({
       )
       .collect()
     deletions.push(...preparationJobs)
-    for (const job of preparationJobs)
-      deletions.push(
-        ...(await ctx.db
-          .query("preparationChunks")
-          .withIndex("by_job_ordinal", (q) => q.eq("jobId", job._id))
-          .collect())
-      )
+    for (const job of preparationJobs) {
+      const chunks = await ctx.db
+        .query("preparationChunks")
+        .withIndex("by_job_ordinal", (q) => q.eq("jobId", job._id))
+        .collect()
+      for (const chunk of chunks) preparationChunkIds.add(chunk._id)
+      deletions.push(...chunks)
+    }
     const contentJobs = await ctx.db
       .query("contentGenerationJobs")
       .withIndex("by_project_source", (q) =>
@@ -693,9 +695,15 @@ export const remove = mutation({
     for (const item of items) {
       const ids = withoutSource(item.sourceIds, sourceId, (id) => id)
       const references = withoutSource(item.sourceReferences, sourceId, (ref) => ref.sourceId)
-      if (!ids.changed && !references.changed) continue
+      // Older cards point at a preparation chunk of their source; that chunk is deleted above.
+      const chunkGone = Boolean(item.sourceChunkId && preparationChunkIds.has(item.sourceChunkId))
+      if (!ids.changed && !references.changed && !chunkGone) continue
       const patch: Partial<Doc<"learningItems">> = { sourceIds: ids.list }
       if (item.sourceReferences) patch.sourceReferences = references.list
+      if (chunkGone) {
+        patch.sourceChunkId = undefined
+        patch.sourceChunkOrdinal = undefined
+      }
       if (!ids.list.length && item.origin !== "exam" && !item.archivedAt) patch.archivedAt = now
       await ctx.db.patch(item._id, patch)
     }

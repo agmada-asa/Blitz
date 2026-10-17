@@ -277,9 +277,14 @@ type SourceRowProps = {
 /** Which management dialog a row has open. */
 type RowDialog = "rename" | "move" | "delete" | null
 
-/** Returns the move dialog's select value for a file's current place. */
-function placementValue(source: ProjectFileSource): string {
-  if (source.placement?.kind === "unit") return String(source.placement.unitId)
+/**
+ * Returns the move dialog's select value for a file's current place. A file
+ * whose unit was just removed counts as not in a unit, as it is listed.
+ */
+function placementValue(source: ProjectFileSource, units: ProjectFileUnit[]): string {
+  const placement = source.placement
+  if (placement?.kind === "unit" && units.some((unit) => String(unit.id) === String(placement.unitId)))
+    return String(placement.unitId)
   if (source.placement?.kind === "reference") return REFERENCE
   return UNSORTED
 }
@@ -298,7 +303,7 @@ function SourceRow({
   const markReference = useMutation(api.sources.markReference)
   const [dialog, setDialog] = useState<RowDialog>(null)
   const [filename, setFilename] = useState(source.filename)
-  const [destination, setDestination] = useState(placementValue(source))
+  const [destination, setDestination] = useState(placementValue(source, units))
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState("")
   const [retrying, setRetrying] = useState(false)
@@ -314,7 +319,7 @@ function SourceRow({
   /** Opens one management dialog with fresh form state. */
   function open(next: Exclude<RowDialog, null>) {
     setFilename(source.filename)
-    setDestination(placementValue(source))
+    setDestination(placementValue(source, units))
     setError("")
     setDialog(next)
   }
@@ -536,7 +541,7 @@ function SourceRow({
                 </Button>
                 <Button
                   type="button"
-                  disabled={busy || destination === placementValue(source)}
+                  disabled={busy || destination === placementValue(source, units)}
                   onClick={() => void saveMove()}
                 >
                   {busy ? "Moving…" : "Move file"}

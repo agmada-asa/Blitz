@@ -15,7 +15,7 @@ export const runtime = "nodejs"
  * Deletes the source named in the JSON body (`projectId`, `sourceId`).
  * The file is removed only after the records are gone, so a failed delete
  * never leaves a source pointing at a missing original. A file that cannot be
- * removed is reported but does not undo the delete.
+ * removed is reported as `fileRemoved: false` but does not undo the delete.
  */
 export async function POST(request: Request): Promise<Response> {
   let body: { projectId?: unknown; sourceId?: unknown }
