@@ -101,6 +101,13 @@ import { api } from "@/convex/_generated/api"
 import type { Id } from "@/convex/_generated/dataModel"
 import { extractSourceResponse } from "@/lib/client/extract-source"
 import {
+  getCachedQuizAnswers,
+  getServerQuizAnswers,
+  saveQuizAnswer,
+  subscribeToQuizAnswers,
+} from "@/lib/client/chat-quiz-answers"
+import { gradeQuizAnswer, type QuizBlock } from "@/lib/interactive-blocks"
+import {
   type AgentRequest,
   type AgentRequestSubmission,
 } from "@/lib/agent-request"
@@ -548,6 +555,12 @@ export function ChatWorkspace({
     getPlatformIsMac,
     getServerPlatformIsMac
   )
+  // Chat quizzes are graded here and cached in this browser so a reload keeps them answered.
+  const quizAnswers = useSyncExternalStore(
+    subscribeToQuizAnswers,
+    getCachedQuizAnswers,
+    getServerQuizAnswers
+  )
   const branchChat = useMutation(api.workspaceChats.branch)
   const createProject = useMutation(api.projects.createProject)
   const renameChat = useMutation(api.workspaceChats.rename)
@@ -769,6 +782,20 @@ export function ChatWorkspace({
       createdAt: a.createdAt,
     })),
   ]
+
+  /**
+   * Grades a chat quiz answer locally and caches it for the reply, so the
+   * quiz reloads in its answered state.
+   * @returns Whether the answer was correct.
+   */
+  const answerQuiz = useCallback(
+    async (messageId: string, block: QuizBlock, selectedOptionIds: string[]) => {
+      const correct = gradeQuizAnswer(block, selectedOptionIds)
+      saveQuizAnswer(messageId, block.id, { selectedOptionIds, correct })
+      return { correct }
+    },
+    []
+  )
 
   /**
    * Saves quizzes from one reply to a unit's question bank through the
@@ -2391,6 +2418,9 @@ export function ChatWorkspace({
                               value={{
                                 streaming: message.status === "running",
                                 quizSaving: quizSavingFor(message),
+                                answeredQuizzes: quizAnswers[message.id],
+                                onQuizAnswer: (block, selected) =>
+                                  answerQuiz(message.id, block, selected),
                                 // Suggested follow-ups send a new message from the latest reply only.
                                 ...(latest && !isRunning
                                   ? {
