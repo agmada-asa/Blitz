@@ -6,6 +6,9 @@
  * this Mac and holds no state of its own. Standard output carries newline-
  * delimited JSON-RPC messages only.
  *
+ * When Ocean runs it as a plug-in (`BLITZ_OCEAN=1`, set in ocean.plugin.json)
+ * it also serves Ocean's Today widget and the mini app's tools (`ocean.mjs`).
+ *
  *   node mcp/server.mjs
  */
 
@@ -19,8 +22,18 @@ import {
   readModule,
   today,
 } from "./blitz.mjs"
+import {
+  APP_TOOL_NAMES,
+  APP_TOOLS,
+  callAppTool,
+  readResource,
+  RESOURCE_DEFINITIONS,
+} from "./ocean.mjs"
 
 const PROTOCOL = "2025-06-18"
+
+/** Whether Ocean started the server as its plug-in, so its widget and mini app tools are on offer. */
+const OCEAN = process.env.BLITZ_OCEAN === "1"
 
 /** Read by the agent when it connects: what Blitz is and how its tools fit together. */
 const INSTRUCTIONS =
@@ -106,6 +119,7 @@ const TOOLS = [
 
 /** Runs one tool against a fresh connection to Blitz and returns its text. */
 async function callTool(name, args) {
+  if (OCEAN && APP_TOOL_NAMES.has(name)) return callAppTool(name, args)
   const blitz = await connect()
   switch (name) {
     case "today":
@@ -142,13 +156,33 @@ async function handle(message) {
             typeof params?.protocolVersion === "string"
               ? params.protocolVersion
               : PROTOCOL,
-          capabilities: { tools: {} },
+          capabilities: OCEAN ? { tools: {}, resources: {} } : { tools: {} },
           serverInfo: { name: "blitz", version: "0.1.0" },
           instructions: INSTRUCTIONS,
         },
       })
     case "tools/list":
-      return write({ id, result: { tools: TOOLS } })
+      return write({
+        id,
+        result: { tools: OCEAN ? [...TOOLS, ...APP_TOOLS] : TOOLS },
+      })
+    case "resources/list":
+      return write({
+        id,
+        result: { resources: OCEAN ? RESOURCE_DEFINITIONS : [] },
+      })
+    case "resources/read":
+      try {
+        return write({ id, result: await readResource(params?.uri) })
+      } catch (error) {
+        return write({
+          id,
+          error: {
+            code: -32002,
+            message: error instanceof Error ? error.message : String(error),
+          },
+        })
+      }
     case "tools/call":
       try {
         const result = await callTool(params?.name, params?.arguments ?? {})
