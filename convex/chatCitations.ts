@@ -1,6 +1,6 @@
 /** Resolves chat-owned source context and saves immutable, navigable passages before generation. */
 import { mutation, query } from "./_generated/server"
-import type { Id } from "./_generated/dataModel"
+import type { Doc, Id } from "./_generated/dataModel"
 import { v } from "convex/values"
 import {
   sourcePassages,
@@ -168,13 +168,29 @@ export const prepare = mutation({
         })
       }
     }
+    // Read and split each source once: every read counts towards the function's
+    // 16 MB limit, and 60 chunks of one long PDF would otherwise exceed it.
+    const sources = new Map<
+      Id<"sources">,
+      { source: Doc<"sources">; passages: ReturnType<typeof sourcePassages> } | null
+    >()
     for (const chunkId of new Set(args.chunkIds)) {
       const chunk = await ctx.db.get(chunkId)
       if (!chunk || !projects.has(chunk.projectId)) continue
-      const source = await ctx.db.get(chunk.sourceId)
-      if (!source || source.projectId !== chunk.projectId) continue
+      if (!sources.has(chunk.sourceId)) {
+        const source = await ctx.db.get(chunk.sourceId)
+        sources.set(
+          chunk.sourceId,
+          source
+            ? { source, passages: sourcePassages(source.extractedText) }
+            : null
+        )
+      }
+      const entry = sources.get(chunk.sourceId)
+      if (!entry || entry.source.projectId !== chunk.projectId) continue
+      const { source, passages } = entry
       // Split from the full source so a chunk starting mid-page retains its page marker.
-      for (const passage of sourcePassages(source.extractedText)) {
+      for (const passage of passages) {
         if (
           passage.endOffset <= chunk.startOffset ||
           passage.startOffset >= chunk.endOffset
