@@ -268,7 +268,10 @@ export const move = mutation({
   },
 })
 
-/** Assigns a source to a unit, or back to unsorted when `unitId` is omitted. */
+/**
+ * Assigns a source to a unit, or back to unsorted when `unitId` is omitted.
+ * A reference book moved this way stops being a reference book.
+ */
 export const moveSource = mutation({
   args: { sourceId: v.id("sources"), unitId: v.optional(v.id("units")) },
   handler: async (ctx, args) => {
@@ -279,7 +282,7 @@ export const moveSource = mutation({
       if (unit.projectId !== source.projectId)
         throw new Error("Unit belongs to another project")
     }
-    await ctx.db.patch(source._id, { unitId: args.unitId })
+    await ctx.db.patch(source._id, { unitId: args.unitId, role: undefined })
   },
 })
 

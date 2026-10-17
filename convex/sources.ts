@@ -1,8 +1,9 @@
 /** Persists extracted sources and tracks their generation lifecycle. */
 
 import { paginationOptsValidator } from "convex/server"
-import { mutation, query, type QueryCtx } from "./_generated/server"
-import type { Id } from "./_generated/dataModel"
+import { internal } from "./_generated/api"
+import { internalMutation, mutation, query, type QueryCtx } from "./_generated/server"
+import type { Doc, Id } from "./_generated/dataModel"
 import { v } from "convex/values"
 import { sourceImportFingerprint } from "../lib/source-fingerprint"
 import { resolveQueuedAiSelection } from "./ai_provider_settings"
@@ -527,3 +528,227 @@ export const updateSource = mutation({
 
 /** Backward-compatible name used by older generated clients. */
 export const updateSourceGenerationResult = updateSource
+
+/** Longest file name accepted when the learner renames a source. */
+const MAX_SOURCE_FILENAME = 200
+
+/** Search chunks and outline entries deleted per transaction when a source is removed. */
+const SOURCE_PURGE_BATCH = 1_000
+
+/**
+ * Where a source sits in its module: a unit, the module-wide reference books,
+ * an exam paper's upload, or no unit yet.
+ */
+export type SourcePlacement =
+  | { kind: "unit"; unitId: Id<"units"> }
+  | { kind: "reference" }
+  | { kind: "exam" }
+  | { kind: "unsorted" }
+
+/** Returns the IDs of sources uploaded as exam papers or their solutions. */
+async function examSourceIds(
+  ctx: Pick<QueryCtx, "db">,
+  projectId: Id<"projects">
+): Promise<Set<string>> {
+  const papers = await ctx.db
+    .query("examPapers")
+    .withIndex("by_project_createdAt", (q) => q.eq("projectId", projectId))
+    .collect()
+  const ids = new Set<string>()
+  // Deleted past papers count too, matching the Learn screen.
+  for (const paper of papers)
+    for (const id of [paper.sourceId, paper.solutionsSourceId]) if (id) ids.add(id)
+  return ids
+}
+
+/**
+ * Lists every source in a module for the Sources manager, without extracted
+ * text, each with its placement so the page can group files by unit.
+ */
+export const listForManager = query({
+  args: { projectId: v.id("projects") },
+  handler: async (ctx, { projectId }) => {
+    const sources = await ctx.db
+      .query("sources")
+      .withIndex("by_project", (q) => q.eq("projectId", projectId))
+      .collect()
+    const examIds = await examSourceIds(ctx, projectId)
+    return sources
+      .sort((a, b) => a.createdAt - b.createdAt)
+      .map((source) => {
+        // The manager needs status and metadata, not the extracted text.
+        const rest = Object.fromEntries(
+          Object.entries(source).filter(([key]) => key !== "extractedText")
+        ) as Omit<typeof source, "extractedText">
+        const placement: SourcePlacement =
+          source.role === "reference"
+            ? { kind: "reference" }
+            : source.unitId
+              ? { kind: "unit", unitId: source.unitId }
+              : examIds.has(source._id)
+                ? { kind: "exam" }
+                : { kind: "unsorted" }
+        return { ...rest, placement }
+      })
+  },
+})
+
+/** Renames a source as it appears across Blitz; the stored original is not renamed. */
+export const rename = mutation({
+  args: { sourceId: v.id("sources"), filename: v.string() },
+  handler: async (ctx, args) => {
+    const source = await ctx.db.get(args.sourceId)
+    if (!source) throw new Error("Source not found")
+    const filename = args.filename.replace(/\s+/g, " ").trim()
+    if (!filename) throw new Error("File name is required")
+    await ctx.db.patch(source._id, { filename: filename.slice(0, MAX_SOURCE_FILENAME) })
+  },
+})
+
+/** Removes one deleted source ID from a list, reporting whether it was present. */
+function withoutSource<T>(
+  list: T[] | undefined,
+  sourceId: Id<"sources">,
+  idOf: (entry: T) => Id<"sources">
+): { list: T[]; changed: boolean } {
+  const kept = (list ?? []).filter((entry) => idOf(entry) !== sourceId)
+  return { list: kept, changed: kept.length !== (list?.length ?? 0) }
+}
+
+/**
+ * Deletes a source and everything prepared from it. Questions and lessons
+ * that drew only on this source are archived, so answers and XP stay in the
+ * learner's history; ones that also used other sources just lose this one.
+ * Search chunks are purged in background batches because a book can have
+ * thousands; retrieval already skips chunks whose source is gone.
+ * @returns The stored original's key when no other source uses it, so the
+ * caller can delete the file from the project folder.
+ * @throws For exam paper uploads, which are deleted with their paper.
+ */
+export const remove = mutation({
+  args: { projectId: v.id("projects"), sourceId: v.id("sources") },
+  handler: async (ctx, { projectId, sourceId }) => {
+    const source = await ctx.db.get(sourceId)
+    if (!source || source.projectId !== projectId) throw new Error("Source not found")
+    if ((await examSourceIds(ctx, projectId)).has(sourceId))
+      throw new Error("Delete this file by deleting its exam paper in Practice")
+    const now = Date.now()
+
+    // Preparation and ingestion state. Deleting jobs makes any worker still
+    // holding a lease fail its next write instead of recreating data.
+    const deletions: { _id: Id<TableWithSourceRows> }[] = []
+    deletions.push(
+      ...(await ctx.db
+        .query("ingestionJobs")
+        .withIndex("by_source", (q) => q.eq("sourceId", sourceId))
+        .collect())
+    )
+    const preparationJobs = await ctx.db
+      .query("preparationJobs")
+      .withIndex("by_project_source", (q) =>
+        q.eq("projectId", projectId).eq("sourceId", sourceId)
+      )
+      .collect()
+    deletions.push(...preparationJobs)
+    for (const job of preparationJobs)
+      deletions.push(
+        ...(await ctx.db
+          .query("preparationChunks")
+          .withIndex("by_job_ordinal", (q) => q.eq("jobId", job._id))
+          .collect())
+      )
+    const contentJobs = await ctx.db
+      .query("contentGenerationJobs")
+      .withIndex("by_project_source", (q) =>
+        q.eq("projectId", projectId).eq("sourceId", sourceId)
+      )
+      .collect()
+    deletions.push(...contentJobs)
+    for (const job of contentJobs)
+      deletions.push(
+        ...(await ctx.db
+          .query("contentPageCommits")
+          .withIndex("by_job_page", (q) => q.eq("jobId", job._id))
+          .collect())
+      )
+    deletions.push(
+      ...(await ctx.db
+        .query("cards")
+        .withIndex("by_source_order", (q) => q.eq("sourceId", sourceId))
+        .collect()),
+      ...(await ctx.db
+        .query("conceptRelationships")
+        .withIndex("by_project_source", (q) =>
+          q.eq("projectId", projectId).eq("sourceId", sourceId)
+        )
+        .collect())
+    )
+    for (const row of deletions) await ctx.db.delete(row._id)
+
+    // Study material keeps its history but stops citing the deleted source.
+    const items = await ctx.db
+      .query("learningItems")
+      .withIndex("by_project", (q) => q.eq("projectId", projectId))
+      .collect()
+    for (const item of items) {
+      const ids = withoutSource(item.sourceIds, sourceId, (id) => id)
+      const references = withoutSource(item.sourceReferences, sourceId, (ref) => ref.sourceId)
+      if (!ids.changed && !references.changed) continue
+      const patch: Partial<Doc<"learningItems">> = { sourceIds: ids.list }
+      if (item.sourceReferences) patch.sourceReferences = references.list
+      if (!ids.list.length && item.origin !== "exam" && !item.archivedAt) patch.archivedAt = now
+      await ctx.db.patch(item._id, patch)
+    }
+    const concepts = await ctx.db
+      .query("concepts")
+      .withIndex("by_project", (q) => q.eq("projectId", projectId))
+      .collect()
+    for (const concept of concepts) {
+      const ids = withoutSource(concept.sourceIds, sourceId, (id) => id)
+      if (ids.changed) await ctx.db.patch(concept._id, { sourceIds: ids.list })
+    }
+
+    await ctx.db.delete(sourceId)
+    await ctx.scheduler.runAfter(0, internal.sources.purgeSearchData, { projectId, sourceId })
+
+    if (!source.relativeKey) return { relativeKey: null }
+    const sharing = (
+      await ctx.db
+        .query("sources")
+        .withIndex("by_project", (q) => q.eq("projectId", projectId))
+        .collect()
+    ).some((other) => other.relativeKey === source.relativeKey)
+    return { relativeKey: sharing ? null : source.relativeKey }
+  },
+})
+
+/** Tables cleared by `remove` in its own transaction. */
+type TableWithSourceRows =
+  | "ingestionJobs"
+  | "preparationJobs"
+  | "preparationChunks"
+  | "contentGenerationJobs"
+  | "contentPageCommits"
+  | "cards"
+  | "conceptRelationships"
+
+/**
+ * Deletes a removed source's search chunks and outline in bounded batches,
+ * rescheduling itself until none are left.
+ */
+export const purgeSearchData = internalMutation({
+  args: { projectId: v.id("projects"), sourceId: v.id("sources") },
+  handler: async (ctx, args) => {
+    const chunks = await ctx.db
+      .query("sourceChunks")
+      .withIndex("by_source_ordinal", (q) => q.eq("sourceId", args.sourceId))
+      .take(SOURCE_PURGE_BATCH)
+    const outlines = await ctx.db
+      .query("sourceOutlines")
+      .withIndex("by_source_ordinal", (q) => q.eq("sourceId", args.sourceId))
+      .take(SOURCE_PURGE_BATCH)
+    for (const row of [...chunks, ...outlines]) await ctx.db.delete(row._id)
+    if (chunks.length === SOURCE_PURGE_BATCH || outlines.length === SOURCE_PURGE_BATCH)
+      await ctx.scheduler.runAfter(0, internal.sources.purgeSearchData, args)
+  },
+})
