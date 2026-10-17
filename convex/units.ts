@@ -284,18 +284,59 @@ export const moveSource = mutation({
 })
 
 /**
- * Deletes an empty unit and its Teach sessions' link to it. Units that still
- * have sources must have them moved first, so no source silently disappears.
+ * Deletes a unit and archives its Teach sessions. No source is ever deleted:
+ * without `moveSourcesTo`, a unit that still has sources is refused; with it,
+ * the sources, practice questions, and concepts move to that unit, or out of
+ * every unit when it is `null`. Learning history (answers, XP) is kept.
+ * @throws When the unit has sources and no destination is given, or the
+ * destination is the unit itself or belongs to another module.
  */
 export const remove = mutation({
-  args: { unitId: v.id("units") },
-  handler: async (ctx, { unitId }) => {
-    await requireUnit(ctx, unitId)
-    const source = await ctx.db
+  args: {
+    unitId: v.id("units"),
+    /** Unit that takes over this unit's material, or `null` to leave it unsorted. */
+    moveSourcesTo: v.optional(v.union(v.id("units"), v.null())),
+  },
+  handler: async (ctx, { unitId, moveSourcesTo }) => {
+    const unit = await requireUnit(ctx, unitId)
+    const sources = await ctx.db
       .query("sources")
       .withIndex("by_unit", (q) => q.eq("unitId", unitId))
-      .first()
-    if (source) throw new Error("Move or delete this unit's sources first")
+      .collect()
+    if (sources.length && moveSourcesTo === undefined)
+      throw new Error("Move or delete this unit's sources first")
+    if (moveSourcesTo) {
+      if (moveSourcesTo === unitId) throw new Error("Choose a different unit for this material")
+      const target = await requireUnit(ctx, moveSourcesTo)
+      if (target.projectId !== unit.projectId) throw new Error("Unit belongs to another project")
+    }
+    // Unset rather than null: these fields are optional ids.
+    const destination = moveSourcesTo ?? undefined
+    const now = Date.now()
+
+    for (const source of sources) await ctx.db.patch(source._id, { unitId: destination })
+    // Questions and concepts follow the material so drills and weak-concept
+    // links never point at a unit that no longer exists.
+    const items = await ctx.db
+      .query("learningItems")
+      .withIndex("by_unit", (q) => q.eq("unitId", unitId))
+      .collect()
+    for (const item of items) await ctx.db.patch(item._id, { unitId: destination })
+    const concepts = await ctx.db
+      .query("concepts")
+      .withIndex("by_project", (q) => q.eq("projectId", unit.projectId))
+      .collect()
+    for (const concept of concepts)
+      if (concept.unitId === unitId) await ctx.db.patch(concept._id, { unitId: destination })
+    if (destination) await ctx.db.patch(destination, { updatedAt: now })
+
+    // Deleting question runs makes an in-flight run's save fail instead of
+    // writing questions for a unit that is gone.
+    const runs = await ctx.db
+      .query("questionGenerations")
+      .withIndex("by_unit_startedAt", (q) => q.eq("unitId", unitId))
+      .collect()
+    for (const run of runs) await ctx.db.delete(run._id)
     const chats = await ctx.db
       .query("workspaceChats")
       .withIndex("by_unit_updatedAt", (q) => q.eq("unitId", unitId))

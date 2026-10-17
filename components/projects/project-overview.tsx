@@ -25,6 +25,7 @@ import { Button } from "@/components/ui/button"
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -45,6 +46,13 @@ import {
   ZapIcon,
 } from "@/components/ui/icon"
 import { Input } from "@/components/ui/input"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
 import { api } from "@/convex/_generated/api"
 import type { Doc, Id } from "@/convex/_generated/dataModel"
@@ -259,6 +267,9 @@ function ModuleOverview({ project }: { project: Doc<"projects"> }) {
                     href={teachHref(unit)}
                     isFirst={index === 0}
                     isLast={index === units.length - 1}
+                    otherUnits={units
+                      .filter((other) => other.id !== unit.id)
+                      .map((other) => ({ id: other.id, title: other.title }))}
                     onAddMaterial={() => setAdding({ unitId: unit.id })}
                   />
                 ))}
@@ -367,18 +378,37 @@ type UnitListItemProps = {
   href: string
   isFirst: boolean
   isLast: boolean
+  /** The module's other units, offered as a home for this unit's material when it is removed. */
+  otherUnits: { id: Id<"units">; title: string }[]
   onAddMaterial: () => void
 }
 
+/** Select value for leaving a removed unit's material outside every unit. */
+const NO_UNIT = "none"
+
 /** Renders one unit with its progress and an actions menu. */
-function UnitListItem({ unit, number, state, href, isFirst, isLast, onAddMaterial }: UnitListItemProps) {
+function UnitListItem({
+  unit,
+  number,
+  state,
+  href,
+  isFirst,
+  isLast,
+  otherUnits,
+  onAddMaterial,
+}: UnitListItemProps) {
   const rename = useMutation(api.units.rename)
   const move = useMutation(api.units.move)
   const remove = useMutation(api.units.remove)
   const [renaming, setRenaming] = useState(false)
   const [title, setTitle] = useState(unit.title)
   const [error, setError] = useState("")
+  const [removing, setRemoving] = useState(false)
+  const [destination, setDestination] = useState(NO_UNIT)
+  const [removeError, setRemoveError] = useState("")
+  const [busy, setBusy] = useState(false)
   const segments = unitSegments(unit)
+  const fileCount = unit.sources.length
 
   /** Saves a new title from the rename dialog. */
   async function saveTitle() {
@@ -387,6 +417,36 @@ function UnitListItem({ unit, number, state, href, isFirst, isLast, onAddMateria
       setRenaming(false)
     } catch {
       setError("The title could not be saved. Try again.")
+    }
+  }
+
+  /**
+   * Removes the unit. An empty unit goes at once; a unit with material opens a
+   * dialog first, so the learner chooses where that material goes.
+   */
+  function startRemove() {
+    if (!fileCount) {
+      void remove({ unitId: unit.id })
+      return
+    }
+    setDestination(NO_UNIT)
+    setRemoveError("")
+    setRemoving(true)
+  }
+
+  /** Removes the unit and moves its material to the chosen unit, or out of every unit. */
+  async function confirmRemove() {
+    setBusy(true)
+    try {
+      await remove({
+        unitId: unit.id,
+        moveSourcesTo: destination === NO_UNIT ? null : (destination as Id<"units">),
+      })
+      setRemoving(false)
+    } catch {
+      setRemoveError("The unit could not be removed. Try again.")
+    } finally {
+      setBusy(false)
     }
   }
 
@@ -451,17 +511,13 @@ function UnitListItem({ unit, number, state, href, isFirst, isLast, onAddMateria
           >
             Move later
           </DropdownMenuItem>
-          {!unit.sources.length ? (
-            <>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem
-                className="text-destructive data-[highlighted]:text-destructive"
-                onSelect={() => void remove({ unitId: unit.id })}
-              >
-                Delete empty unit
-              </DropdownMenuItem>
-            </>
-          ) : null}
+          <DropdownMenuSeparator />
+          <DropdownMenuItem
+            className="text-destructive data-[highlighted]:text-destructive"
+            onSelect={startRemove}
+          >
+            {fileCount ? "Remove unit…" : "Remove unit"}
+          </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
 
@@ -502,6 +558,60 @@ function UnitListItem({ unit, number, state, href, isFirst, isLast, onAddMateria
               </Button>
             </DialogFooter>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={removing} onOpenChange={(open) => !busy && setRemoving(open)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Remove {unit.title}?</DialogTitle>
+            <DialogDescription>
+              Its Teach session and lesson progress are removed. Its {fileCount}{" "}
+              {fileCount === 1 ? "file stays" : "files stay"} in the module, and your
+              answers and XP still count.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <label htmlFor={`unit-destination-${unit.id}`} className="text-sm font-medium">
+              Move its material to
+            </label>
+            <Select value={destination} onValueChange={setDestination}>
+              <SelectTrigger id={`unit-destination-${unit.id}`} className="min-h-11 w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={NO_UNIT}>Not in a unit</SelectItem>
+                {otherUnits.map((other) => (
+                  <SelectItem key={other.id} value={other.id}>
+                    {other.title}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          {removeError ? (
+            <p role="alert" className="text-sm text-destructive">
+              {removeError}
+            </p>
+          ) : null}
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={busy}
+              onClick={() => setRemoving(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              disabled={busy}
+              onClick={() => void confirmRemove()}
+            >
+              {busy ? "Removing…" : "Remove unit"}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </li>
