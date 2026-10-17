@@ -15,7 +15,7 @@ const MAX_RESULTS = MAX_RETRIEVAL_RESULTS
 const MAX_NEIGHBORS = 5
 const MAX_CONTEXT_CHARS = MAX_RETRIEVAL_CONTEXT_CHARS
 const MAX_CHUNK_TEXT = 12_000
-/** Per-query filename lookup cache for legacy chunks without denormalized names. */
+/** Per-query cache of each source's live filename, or null when the source is gone. */
 type SourceNameCache = Map<string, string | null>
 const STOP_WORDS = new Set([
   "about",
@@ -210,17 +210,18 @@ async function resultForChunk(
   chunk: Doc<"sourceChunks">,
   sourceNameCache: SourceNameCache = new Map()
 ): Promise<RetrievalResult | null> {
-  let sourceFilename = chunk.sourceFilename
-  if (sourceFilename === undefined) {
-    const sourceKey = String(chunk.sourceId)
-    if (sourceNameCache.has(sourceKey)) {
-      sourceFilename = sourceNameCache.get(sourceKey) ?? undefined
-    } else {
-      const source = await ctx.db.get(chunk.sourceId)
-      const validSource = source?.projectId === chunk.projectId ? source : null
-      sourceFilename = validSource?.filename
-      sourceNameCache.set(sourceKey, sourceFilename ?? null)
-    }
+  // Always read the live source: a deleted source's chunks are purged in the
+  // background and must not be cited meanwhile, and a renamed source should
+  // be cited by its new name rather than the one stored on the chunk.
+  const sourceKey = String(chunk.sourceId)
+  let sourceFilename: string | undefined
+  if (sourceNameCache.has(sourceKey)) {
+    sourceFilename = sourceNameCache.get(sourceKey) ?? undefined
+  } else {
+    const source = await ctx.db.get(chunk.sourceId)
+    const validSource = source?.projectId === chunk.projectId ? source : null
+    sourceFilename = validSource?.filename
+    sourceNameCache.set(sourceKey, sourceFilename ?? null)
   }
   if (!sourceFilename) return null
   return {
