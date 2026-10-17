@@ -1,10 +1,10 @@
 "use client"
 
-/** Connects project-scoped source data and existing source actions to a full page workspace. */
+/** Connects a module's sources, their management actions, and source research in one page. */
 
 import Link from "next/link"
 import { useEffect, useState } from "react"
-import { usePaginatedQuery, useQuery } from "convex/react"
+import { useQuery } from "convex/react"
 import { AddMaterial } from "@/components/learn/add-material"
 import { ProjectFiles } from "@/components/projects/project-files"
 import { ResearchPanel } from "@/components/projects/research-panel"
@@ -31,15 +31,10 @@ export function ProjectSourcesWorkspace({
   const project = useQuery(api.projects.getProject, {
     projectId: convexProjectId,
   })
-  const {
-    results: sources,
-    status: sourceStatus,
-    loadMore,
-  } = usePaginatedQuery(
-    api.sources.listSources,
-    { projectId: convexProjectId },
-    { initialNumItems: 20 }
-  )
+  const managedSources = useQuery(api.sources.listForManager, {
+    projectId: convexProjectId,
+  })
+  const sources = managedSources ?? []
   const unitData = useQuery(api.units.listForProject, {
     projectId: convexProjectId,
   })
@@ -172,7 +167,7 @@ export function ProjectSourcesWorkspace({
 
       <div className="grid min-w-0 items-start gap-6 lg:grid-cols-2">
         <section className="min-w-0" aria-label="Project sources">
-          {sourceStatus === "LoadingFirstPage" ? (
+          {managedSources === undefined ? (
             <p className="py-5 text-sm text-muted-foreground" role="status">
               Loading sources…
             </p>
@@ -180,6 +175,10 @@ export function ProjectSourcesWorkspace({
             <ProjectFiles
               projectId={convexProjectId}
               sources={sources}
+              units={(unitData?.units ?? []).map((unit) => ({
+                id: unit.id,
+                title: unit.title,
+              }))}
               ingestion={ingestion?.map((job) => ({
                 sourceId: String(job.sourceId),
                 status: job.status,
@@ -211,18 +210,6 @@ export function ProjectSourcesWorkspace({
               }}
             />
           )}
-          {sourceStatus === "CanLoadMore" || sourceStatus === "LoadingMore" ? (
-            <Button
-              variant="outline"
-              className="mt-4"
-              disabled={sourceStatus === "LoadingMore"}
-              onClick={() => loadMore(20)}
-            >
-              {sourceStatus === "LoadingMore"
-                ? "Loading sources…"
-                : "Load more"}
-            </Button>
-          ) : null}
         </section>
 
         <aside className="min-w-0 lg:sticky lg:top-6 lg:self-start">
