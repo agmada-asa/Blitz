@@ -61,7 +61,7 @@ npm run worker:ingestion
 npm run worker:research
 ```
 
-The workers load `.env.local`. `BLITZ_CONVEX_URL` points server code and workers at Convex. Browsers rewrite a local `NEXT_PUBLIC_CONVEX_URL` to the hostname that served the page, so one value works on the Mac and on the LAN. No cloud deployment or API key is required for this local setup.
+The workers load `.env.local`. `BLITZ_CONVEX_URL` points server code and workers at Convex. Browsers rewrite a local `NEXT_PUBLIC_CONVEX_URL` to the hostname that served the page, so one value works on the Mac, on the LAN, and through Tailscale IPs or full `.ts.net` DNS names. With Tailscale connected on both devices, open `http://<Mac's full Tailscale DNS name>:3007`. Both the web port and the local Convex port must be reachable over the tailnet. Next.js discovers this Mac's exact Tailscale names and IPs using `tailscale status --json` so development scripts can load through those addresses. If the CLI is unavailable, set `BLITZ_TAILNET_HOST` to the full DNS hostname before starting Next.js. Restart Next.js after changing the Mac's tailnet identity. No cloud deployment or API key is required for this local setup.
 
 ## Provider controls
 

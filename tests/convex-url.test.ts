@@ -36,6 +36,19 @@ test("supports Tailscale and mDNS hostnames", () => {
   )
 })
 
+test("uses the Tailscale DNS hostname instead of the phone's loopback", () => {
+  const tailnetHost = "study-mac.tail123abc.ts.net"
+  assert.equal(
+    resolveBrowserConvexUrl("http://127.0.0.1:3212", tailnetHost),
+    `http://${tailnetHost}:3212`
+  )
+  assert.equal(
+    resolveBrowserConvexUrl("https://happy-otter-123.convex.cloud", tailnetHost),
+    "https://happy-otter-123.convex.cloud"
+  )
+  assert.equal(isLocalHostname("study-mac.tail123abc.ts.net.example.com"), false)
+})
+
 test("leaves hosted deployments and server rendering unchanged", () => {
   assert.equal(
     resolveBrowserConvexUrl("https://happy-otter-123.convex.cloud", "localhost"),

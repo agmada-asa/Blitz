@@ -12,11 +12,16 @@
 const loopbackHosts = new Set(["localhost", "127.0.0.1", "::1", "[::1]"])
 
 /**
- * Returns whether a hostname is loopback or a private IPv4 LAN address.
+ * Returns whether a hostname names loopback, a private LAN, or a Tailscale peer.
  * @param hostname Hostname from a parsed URL, without a port.
  */
 export function isLocalHostname(hostname: string): boolean {
-  if (loopbackHosts.has(hostname) || hostname.endsWith(".local")) return true
+  if (
+    loopbackHosts.has(hostname) ||
+    hostname.endsWith(".local") ||
+    hostname.endsWith(".ts.net")
+  )
+    return true
   const octets = hostname.split(".").map(Number)
   if (
     octets.length !== 4 ||
