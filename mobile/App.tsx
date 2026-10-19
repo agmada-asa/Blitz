@@ -35,6 +35,10 @@ import {
   type MobileNavigationKey,
 } from "./components/bottom-navigation"
 import { ChatScreen } from "./components/chat-screen"
+import { DrillScreen } from "./components/drill-screen"
+import { ModuleScreen } from "./components/module-screen"
+import { TeachScreen } from "./components/teach-screen"
+import { TodayPage } from "./components/today-page"
 import { ProjectLibrary } from "./components/project-library"
 import { ProjectWorkspaceScreen as ProjectWorkspace } from "./components/project-workspace-screen"
 import { ResearchScreen } from "./components/research-screen"
@@ -100,7 +104,26 @@ type FeedStatus = "loading" | "ready" | "offline" | "error"
 
 /** Describes a native route while preserving the web app's primary destinations. */
 type MobileScreen =
-  MobileNavigationKey | "project" | "study" | "write" | "research" | "source"
+  | MobileNavigationKey
+  | "module"
+  | "teach"
+  | "drill"
+  | "project"
+  | "study"
+  | "write"
+  | "research"
+  | "source"
+
+/** The first page of Home, shown before the feed's cards. */
+const TODAY_PAGE = { kind: "today" as const, id: "today" }
+
+/** One page of the Home feed: the Today page or a learning card. */
+type FeedPage = typeof TODAY_PAGE | MobileLearningCard
+
+/** Narrows a feed page to the Today page. */
+function isTodayPage(page: FeedPage): page is typeof TODAY_PAGE {
+  return "kind" in page && page.kind === "today"
+}
 
 /** Returns a readable error while avoiding leaking response content. */
 function errorMessage(error: unknown): string {
@@ -155,6 +178,10 @@ export default function App() {
   const [workspaceLoading, setWorkspaceLoading] = useState(false)
   const [workspaceError, setWorkspaceError] = useState("")
   const [workspaceRefreshToken, setWorkspaceRefreshToken] = useState(0)
+  const [moduleRoute, setModuleRoute] = useState<{ projectId: string }>()
+  const [teachRoute, setTeachRoute] = useState<{ unitId: string; ask?: string; key: number }>()
+  const [drillRoute, setDrillRoute] = useState<{ projectId: string; unitId?: string; key: number }>()
+  const [todayToken, setTodayToken] = useState(0)
   const [studyRoute, setStudyRoute] = useState<{
     projectId: string
     mode: MobileStudySessionMode
@@ -177,7 +204,7 @@ export default function App() {
   const insets = useSafeAreaInsets()
   const topInset =
     Platform.OS === "android" ? (StatusBar.currentHeight ?? 0) : 0
-  const listRef = useRef<FlatList<MobileLearningCard>>(null)
+  const listRef = useRef<FlatList<FeedPage>>(null)
   const dragStartOffsetRef = useRef(0)
   const dragStartXRef = useRef(0)
   const dragEndXRef = useRef(0)
@@ -222,6 +249,11 @@ export default function App() {
   )
   const projects = payload?.projects ?? []
   const topics = payload?.topics ?? []
+  // Home opens on the Today page; cards follow it.
+  const feedPages = useMemo<FeedPage[]>(
+    () => (serverUrl ? [TODAY_PAGE, ...visibleCards] : visibleCards),
+    [serverUrl, visibleCards]
+  )
 
   /** Loads a local cache before network work so offline prepared material remains usable. */
   const loadCache = useCallback(
@@ -678,6 +710,44 @@ export default function App() {
   }
 
   /** Opens the native project workspace and clears stale detail data. */
+  /** Opens a module's learning path and practice. */
+  function openModule(id: string) {
+    if (!serverUrl) {
+      setNotice("Connect to Blitz to open projects")
+      return
+    }
+    setModuleRoute({ projectId: id })
+    setLibraryOpen(false)
+    setFilterOpen(false)
+    setChatCard(null)
+    setScreen("module")
+  }
+
+  /** Opens a unit's Teach session, optionally sending a Relearn request. */
+  function openTeach(unitId: string, ask?: string) {
+    if (!serverUrl) {
+      setNotice("Connect to Blitz to learn")
+      return
+    }
+    setTeachRoute({ unitId, ...(ask ? { ask } : {}), key: Date.now() })
+    setLibraryOpen(false)
+    setScreen("teach")
+  }
+
+  /** Opens a drill for a module, or one unit of it. */
+  function openDrill(projectId: string, unitId?: string) {
+    if (!serverUrl) return
+    setDrillRoute({ projectId, ...(unitId ? { unitId } : {}), key: Date.now() })
+    setScreen("drill")
+  }
+
+  /** Returns from Teach or a drill to the module it came from, or Home. */
+  function closeLearning() {
+    setTodayToken((current) => current + 1)
+    setScreen(moduleRoute ? "module" : "home")
+  }
+
+  /** Opens a module's sources, files, and research (the project workspace). */
   function openProjectWorkspace(id: string) {
     if (!serverUrl) {
       setNotice("Connect to Blitz to open projects")
@@ -827,6 +897,8 @@ export default function App() {
       setLibraryOpen(false)
       setFilterOpen(false)
       setChatCard(null)
+      setModuleRoute(undefined)
+      setTodayToken((current) => current + 1)
       setScreen("home")
       return
     }
@@ -952,7 +1024,7 @@ export default function App() {
       cardFeedback?.status === "correct" || cardFeedback?.status === "incorrect"
     if (!alreadyScored) void recordPassive(card, "skip")
     const nextIndex = activeIndex + 1
-    if (nextIndex < visibleCards.length) {
+    if (nextIndex < feedPages.length) {
       listRef.current?.scrollToIndex({ index: nextIndex, animated: true })
       setActiveIndex(nextIndex)
     } else {
@@ -965,12 +1037,12 @@ export default function App() {
     ({
       viewableItems,
     }: {
-      viewableItems: Array<{ item: MobileLearningCard; index: number | null }>
+      viewableItems: Array<{ item: FeedPage; index: number | null }>
     }) => {
       const visible = viewableItems[0]
       if (!visible || visible.index === null) return
       setActiveIndex(visible.index)
-      passiveHandlerRef.current(visible.item, "exposure")
+      if (!isTodayPage(visible.item)) passiveHandlerRef.current(visible.item, "exposure")
     }
   ).current
 
@@ -1089,7 +1161,41 @@ export default function App() {
   if (screen !== "home") {
     const activeWorkspaceProjectId = workspaceProjectId
     const nativeContent =
-      screen === "chat" ? (
+      screen === "module" && moduleRoute && serverUrl ? (
+        <ModuleScreen
+          key={moduleRoute.projectId}
+          serverUrl={serverUrl}
+          projectId={moduleRoute.projectId}
+          onBack={() => {
+            setModuleRoute(undefined)
+            setScreen("home")
+            openLibrary()
+          }}
+          onOpenUnit={openTeach}
+          onStartDrill={(unitId) => openDrill(moduleRoute.projectId, unitId)}
+          onOpenSources={() => openProjectWorkspace(moduleRoute.projectId)}
+          onOpenChat={(project) => openWorkspaceChat(project)}
+        />
+      ) : screen === "teach" && teachRoute && serverUrl ? (
+        <TeachScreen
+          key={`${teachRoute.unitId}:${teachRoute.key}`}
+          serverUrl={serverUrl}
+          unitId={teachRoute.unitId}
+          {...(teachRoute.ask ? { initialAsk: teachRoute.ask } : {})}
+          onBack={closeLearning}
+          onPractice={(projectId, unitId) => openDrill(projectId, unitId)}
+          onOpenUnit={(unitId) => openTeach(unitId)}
+        />
+      ) : screen === "drill" && drillRoute && serverUrl ? (
+        <DrillScreen
+          key={drillRoute.key}
+          serverUrl={serverUrl}
+          projectId={drillRoute.projectId}
+          {...(drillRoute.unitId ? { unitId: drillRoute.unitId } : {})}
+          onBack={closeLearning}
+          onRelearn={(unitId, ask) => openTeach(unitId, ask)}
+        />
+      ) : screen === "chat" ? (
         <ChatScreen
           serverUrl={serverUrl}
           initialChatId={chatInitialId}
@@ -1143,8 +1249,12 @@ export default function App() {
             error={workspaceError}
             actions={{
               onBack: () => {
-                setScreen("home")
                 setWorkspaceProjectId(undefined)
+                if (moduleRoute) {
+                  setScreen("module")
+                  return
+                }
+                setScreen("home")
                 setLibraryOpen(true)
               },
               onStartStudy: () =>
@@ -1206,13 +1316,15 @@ export default function App() {
       ) : null
 
     const activeKey: MobileNavigationKey =
-      screen === "project" ? "library" : (screen as MobileNavigationKey)
+      screen === "project" || screen === "module" ? "library" : (screen as MobileNavigationKey)
     return (
       <View style={styles.root}>
         <StatusBar barStyle="light-content" />
         {nativeContent}
         {screen !== "study" &&
         screen !== "write" &&
+        screen !== "teach" &&
+        screen !== "drill" &&
         screen !== "research" &&
         screen !== "source" ? (
           <BottomNavigation activeKey={activeKey} onSelect={handleNavigation} />
@@ -1265,7 +1377,7 @@ export default function App() {
       </View>
       {!serverUrl && status !== "offline" ? (
         renderConnection()
-      ) : !visibleCards.length ? (
+      ) : !feedPages.length || (!visibleCards.length && status !== "ready") ? (
         renderEmptyState()
       ) : (
         <Animated.FlatList
@@ -1275,7 +1387,7 @@ export default function App() {
             { useNativeDriver: true }
           )}
           scrollEventThrottle={16}
-          data={visibleCards}
+          data={feedPages}
           decelerationRate="fast"
           disableIntervalMomentum
           getItemLayout={(_, index) => ({
@@ -1283,7 +1395,7 @@ export default function App() {
             offset: height * index,
             index,
           })}
-          keyExtractor={(card) => card.id}
+          keyExtractor={(page) => (isTodayPage(page) ? page.id : (page.key ?? page.id))}
           onScrollBeginDrag={(event) => {
             pendingSnapTargetRef.current = null
             dragStartOffsetRef.current = event.nativeEvent.contentOffset.y
@@ -1322,7 +1434,7 @@ export default function App() {
             const direction = feedSwipeDirection(deltaY, velocityY)
             const nextIndex = clampFeedIndex(
               dragStartIndexRef.current + direction,
-              visibleCards.length
+              feedPages.length
             )
             if (!recognized) return
             if (nextIndex !== dragStartIndexRef.current) {
@@ -1395,13 +1507,26 @@ export default function App() {
                 ],
               }}
             >
-              <LearningCard
-                card={item}
-                feedback={feedback[item.id]}
-                onAnswer={(answer) => recordAnswer(item, answer)}
-                onAsk={() => void openChat(item)}
-                onSkip={() => skipCard(item)}
-              />
+              {isTodayPage(item) ? (
+                <TodayPage
+                  serverUrl={serverUrl ?? ""}
+                  refreshToken={todayToken}
+                  hasCards={visibleCards.length > 0}
+                  onContinue={(projectId, unitId) => {
+                    setModuleRoute({ projectId })
+                    openTeach(unitId)
+                  }}
+                  onOpenLibrary={() => openLibrary()}
+                />
+              ) : (
+                <LearningCard
+                  card={item}
+                  feedback={feedback[item.id]}
+                  onAnswer={(answer) => recordAnswer(item, answer)}
+                  onAsk={() => void openChat(item)}
+                  onSkip={() => skipCard(item)}
+                />
+              )}
             </Animated.View>
           )}
           ListFooterComponent={
@@ -1432,7 +1557,7 @@ export default function App() {
             setLibraryInitialMode(undefined)
             void refresh(serverUrl, false)
           }}
-          onOpenProject={openProjectWorkspace}
+          onOpenProject={openModule}
           onOpenFeed={openProjectFeed}
           onChange={projectChanged}
         />

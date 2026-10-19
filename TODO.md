@@ -73,4 +73,8 @@ names the PR that delivers it once one exists.
 
 ## Phase 6: mobile and sync
 
-- [ ] Hosted Convex option, offline cache, React Native on new contracts
+- [x] React Native app on the new contracts: Today, Library, module path,
+      Teach with the live tutor, drills, every question format, session summaries
+- [x] Offline cache of opened lessons, modules, and drills; offline lesson quiz
+      answers queued and recorded on reconnect
+- [ ] Hosted Convex option
