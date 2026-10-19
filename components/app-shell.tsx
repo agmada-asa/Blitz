@@ -15,6 +15,7 @@ import {
 import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react"
 import { useState, type ReactNode } from "react"
 
+import { BlitzLogo } from "@/components/blitz-logo"
 import { useNotifications } from "@/components/notifications/notification-provider"
 import { cn } from "@/lib/utils"
 
@@ -91,12 +92,15 @@ export function AppShell({ children }: AppShellProps) {
           title="Blitz home"
           className={cn(
             "mb-6 flex h-12 shrink-0 items-center rounded-xl text-foreground transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none",
-            collapsed ? "justify-center" : "px-3"
+            collapsed ? "justify-center" : "gap-3 px-3"
           )}
         >
-          <span className="font-sans text-xl font-semibold tracking-tight">
-            Blitz
-          </span>
+          <BlitzLogo size={28} className="shrink-0" />
+          {!collapsed ? (
+            <span className="font-sans text-xl font-semibold tracking-tight">
+              Blitz
+            </span>
+          ) : null}
         </Link>
         <button
           type="button"
