@@ -69,3 +69,13 @@ test("legacy migration claims once and never remaps after a server change", () =
   assert.equal(legacyMigrationAction("orphaned", true, "http://b"), "skip")
   assert.equal(legacyMigrationAction("http://a", true, "http://a"), "claim")
 })
+
+test("pages keep a card repeated in a later round under its new key", () => {
+  const first = feed([{ ...card("a", "p1"), key: "a:0" }, card("b", "p1")])
+  const next = feed([{ ...card("a", "p1"), key: "a:0" }, { ...card("a", "p1"), key: "a:5" }, card("b", "p1")])
+  const merged = appendFeedPage(first, next)
+  assert.deepEqual(
+    merged.cards.map((entry) => ("key" in entry ? entry.key : entry.id)),
+    ["a:0", "b", "a:5"]
+  )
+})

@@ -21,10 +21,12 @@ export function appendFeedPage(
   next: MobileFeedPayload
 ): MobileFeedPayload {
   const cards = [...current.cards]
-  const knownIds = new Set(cards.map((card) => card.id))
+  // A card repeated in a later round keeps its id but has a new key.
+  const knownKeys = new Set(cards.map((card) => card.key ?? card.id))
   for (const card of next.cards) {
-    if (!knownIds.has(card.id)) {
-      knownIds.add(card.id)
+    const key = card.key ?? card.id
+    if (!knownKeys.has(key)) {
+      knownKeys.add(key)
       cards.push(card)
     }
   }

@@ -4,7 +4,7 @@
     "strict": true,
     "noEmit": true,
     "moduleResolution": "bundler",
-    "allowImportingTsExtensions": false
+    "allowImportingTsExtensions": true
   },
   "include": ["App.tsx", "../lib/learning/core.ts"]
 }
