@@ -16,9 +16,14 @@ lives in the **Exam prep** section of the Practice screen and at
    an `examPapers` row (`kind: "past"`, `status: "processing"`) and returns at
    once; the questions are extracted after the response with `after()`.
 2. **Write a mock exam.** The learner picks units (all units with readable
-   material by default) and 30, 60, or 90 minutes. `POST /api/practice/exam/mock`
-   records a `kind: "mock"` paper and writes it after the response. Only one
-   mock is written per module at a time.
+   material by default), 30, 60, or 90 minutes, and may enter optional
+   instructions such as "5 multiple-choice questions and 1 essay". The API
+   trims surrounding whitespace, accepts at most 1,000 characters, and stores
+   the instructions on the paper before writing it after the response.
+   Explicit counts and types override the default blueprint and
+   past-paper examples; unspecified details keep following the usual style.
+   A retry reads the saved instructions. Only one mock is written per module
+   at a time.
 3. **Background run.** `runPaperPreparation` in `lib/server/exam.ts` loads
    `exam.paperContext`, makes one provider turn (the task selection used for
    practice questions, in an empty read-only temporary directory with no web
@@ -106,7 +111,8 @@ instead of the action.
 ## Data
 
 - `examPapers`: module, kind, title, status and error, the paper and solutions
-  source IDs (past) or unit IDs (mock), time allowed, stated and summed total
+  source IDs (past) or unit IDs (mock), optional mock `generationGuidance`
+  (trimmed, at most 1,000 characters), time allowed, stated and summed total
   marks, and the questions. `runStartedAt` identifies the current run and acts
   as a ten-minute lease; a run that saves late after a retry is ignored.
   `deletedAt` marks a deleted past paper (see above).
@@ -143,13 +149,14 @@ All prompts and parsers live in `lib/exam.ts` and are covered by
   matched to a unit and reuse an existing concept. Multi-part questions are
   split into standalone parts.
 - **Mock papers** (`buildMockExamPrompt`): the selected units' extracted text
-  shares a 200,000 character budget, weak concepts in those units
-  (`conceptStrength`) get more questions, and up to two ready past papers (25
-  questions each, prompts shortened) are included as style examples.
-  `mockBlueprint` sets the number of choice and written questions and their
-  typical marks: from the past papers' questions per minute and marks per
-  question when there are any, otherwise about one one-mark choice question
-  per 2.5 minutes and one eight-mark written question per 30 minutes.
+  shares a 200,000 character budget, and up to two ready past papers (25
+  questions each, prompts shortened) are included as style examples. Weak
+  concepts (`conceptStrength`) guide which content gets tested. Without
+  instructions, `mockBlueprint` sets the question mix and typical marks from
+  past papers, or uses about one one-mark choice question per 2.5 minutes and
+  one eight-mark written question per 30 minutes. Explicit requested counts
+  and types take priority, up to the 60-question limit; requested essays are
+  written questions. Marks and depth adjust to fit the chosen time.
 - **Validation** (`parseExamPaper`): choice questions reuse the lesson quiz
   rules (`parseInteractiveBlock`), with the prompt checked separately against
   the longer exam limit. Every string and list is bounded (`EXAM_LIMITS`),

@@ -24,6 +24,8 @@ import {
   scoreAttempt,
   scoreChoiceAnswer,
   type ScorableQuestion,
+  MAX_MOCK_GUIDANCE_CHARS,
+  validateMockExamGuidance,
 } from "../lib/exam-scoring.ts"
 
 /** Wraps a JSON value the way a model reply often does. */
@@ -111,6 +113,50 @@ test("mock prompt carries material, weak concepts, examples, and the length", ()
   assert.match(fresh, /no past papers yet/)
   assert.doesNotMatch(fresh, /EXAMPLE PAPERS BEGIN/)
   assert.match(fresh, /No readable material/)
+  assert.match(fresh, /Write about 12 choice questions/)
+})
+
+test("mock prompt follows explicit counts and types over its default blueprint", () => {
+  const prompt = buildMockExamPrompt({
+    moduleTitle: "Algorithms",
+    minutes: 60,
+    units,
+    sources: [],
+    weakConcepts: ["Merge sort"],
+    examples: [
+      {
+        title: "Past paper",
+        durationMinutes: 60,
+        questions: [
+          { number: "1", type: "single-choice", marks: 1, prompt: "Old MCQ" },
+          { number: "2", type: "written", marks: 10, prompt: "Old essay" },
+        ],
+      },
+    ],
+    generationGuidance: "5 MCQs and 1 essay",
+  })
+
+  assert.match(prompt, /5 MCQs and 1 essay/)
+  assert.match(prompt, /Explicit question counts and types override the default blueprint and example papers/)
+  assert.match(prompt, /Obey requested counts exactly, up to the 60-question paper limit/)
+  assert.match(prompt, /Treat an essay as a long-form written question/)
+  assert.match(prompt, /Do not add questions beyond an explicitly requested count/)
+  assert.match(prompt, /about 1 choice questions/)
+})
+
+test("mock guidance is trimmed, optional when blank, and rejected over its limit", () => {
+  assert.equal(validateMockExamGuidance(undefined), undefined)
+  assert.equal(validateMockExamGuidance("  \n  "), undefined)
+  assert.equal(validateMockExamGuidance("  5 MCQs and 1 essay  "), "5 MCQs and 1 essay")
+  assert.equal(
+    validateMockExamGuidance("x".repeat(MAX_MOCK_GUIDANCE_CHARS))?.length,
+    MAX_MOCK_GUIDANCE_CHARS
+  )
+  assert.throws(
+    () => validateMockExamGuidance("x".repeat(MAX_MOCK_GUIDANCE_CHARS + 1)),
+    /1,000 characters or fewer/
+  )
+  assert.throws(() => validateMockExamGuidance(5), /must be text/)
 })
 
 test("mock blueprint follows past papers or a typical paper", () => {

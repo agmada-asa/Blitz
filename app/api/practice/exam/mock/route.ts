@@ -11,7 +11,7 @@ import { after } from "next/server"
 
 import { api } from "@/convex/_generated/api"
 import type { Id } from "@/convex/_generated/dataModel"
-import { MOCK_EXAM_MINUTES } from "@/lib/exam-scoring"
+import { MOCK_EXAM_MINUTES, validateMockExamGuidance } from "@/lib/exam-scoring"
 import { serverConvexClient } from "@/lib/server/convex"
 import { requestId, runPaperPreparation } from "@/lib/server/exam"
 import { isTrustedBlitzOrigin } from "@/lib/server/request-origin"
@@ -21,7 +21,7 @@ export const runtime = "nodejs"
 /** Allows the background run up to ten minutes. */
 export const maxDuration = 600
 
-/** Records a mock paper and starts writing it. */
+/** Records a mock paper with optional bounded learner instructions and starts writing it. */
 export async function POST(request: Request): Promise<Response> {
   if (!isTrustedBlitzOrigin(request))
     return Response.json({ error: "Open Blitz to write a mock exam" }, { status: 403 })
@@ -35,6 +35,15 @@ export async function POST(request: Request): Promise<Response> {
     return Response.json({ error: "Choose at least one unit" }, { status: 400 })
   if (!(MOCK_EXAM_MINUTES as readonly unknown[]).includes(body?.minutes))
     return Response.json({ error: "Choose 30, 60, or 90 minutes" }, { status: 400 })
+  let generationGuidance: string | undefined
+  try {
+    generationGuidance = validateMockExamGuidance(body?.generationGuidance)
+  } catch (error) {
+    return Response.json(
+      { error: error instanceof Error ? error.message : "Check the instructions and try again." },
+      { status: 400 }
+    )
+  }
   try {
     const { paperId, runStartedAt } = await serverConvexClient().mutation(
       api.exam.createMockPaper,
@@ -42,6 +51,7 @@ export async function POST(request: Request): Promise<Response> {
         projectId: projectId as Id<"projects">,
         unitIds: unitIds as Id<"units">[],
         minutes: body?.minutes as number,
+        ...(generationGuidance ? { generationGuidance } : {}),
       }
     )
     if (runStartedAt !== null) after(() => runPaperPreparation(paperId, runStartedAt))

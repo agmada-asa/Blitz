@@ -20,6 +20,21 @@ export const MAX_PAPER_QUESTIONS = 60
 /** Mock exam lengths the learner can choose, in minutes. */
 export const MOCK_EXAM_MINUTES = [30, 60, 90] as const
 
+/** Maximum characters stored and sent as optional mock exam instructions. */
+export const MAX_MOCK_GUIDANCE_CHARS = 1_000
+
+/** Trims optional mock instructions and rejects values beyond the persisted character limit. */
+export function validateMockExamGuidance(value: unknown): string | undefined {
+  if (value === undefined) return undefined
+  if (typeof value !== "string") throw new Error("Instructions must be text")
+  const guidance = value.trim()
+  if (guidance.length > MAX_MOCK_GUIDANCE_CHARS)
+    throw new Error(
+      `Instructions must be ${MAX_MOCK_GUIDANCE_CHARS.toLocaleString("en-GB")} characters or fewer`
+    )
+  return guidance || undefined
+}
+
 /** One of the allowed mock exam lengths. */
 export type MockExamMinutes = (typeof MOCK_EXAM_MINUTES)[number]
 

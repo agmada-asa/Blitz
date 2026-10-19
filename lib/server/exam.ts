@@ -153,6 +153,9 @@ export async function runPaperPreparation(
         buildMockExamPrompt({
           moduleTitle: context.moduleTitle,
           minutes: context.minutes ?? 60,
+          ...(context.generationGuidance
+            ? { generationGuidance: context.generationGuidance }
+            : {}),
           units,
           sources: context.sources,
           weakConcepts: context.weakConcepts,

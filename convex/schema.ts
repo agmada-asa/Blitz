@@ -336,6 +336,8 @@ export default defineSchema({
     solutionsSourceId: v.optional(v.id("sources")),
     /** Mock papers: units the paper covers. */
     unitIds: v.optional(v.array(v.id("units"))),
+    /** Mock papers: optional learner guidance for question format, topics, or difficulty, capped at 1,000 characters. */
+    generationGuidance: v.optional(v.string()),
     /** Time allowed in minutes: stated on a past paper, or chosen for a mock. */
     durationMinutes: v.optional(v.number()),
     /** Total marks printed on a past paper, when stated. */
