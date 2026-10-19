@@ -12,17 +12,20 @@ status visible until the persisted request finishes or fails.
 Ready proposals show a concise scope, optional topics, source links and reasons,
 plus planned note outlines. Suggested sources carry the single label `Suggested
 sources · not checked yet`. Nothing is imported while planning. The learner
-selects sources and clicks `Import selected`, which sends `{ projectId,
-requestId, sourceIndexes }` to `/api/research/proposals/apply`.
+selects sources, chooses a unit under `Add to` (`New unit`, or any unit in
+the module), and clicks `Import selected`, which sends `{ projectId,
+requestId, sourceIndexes, unitId? }` to `/api/research/proposals/apply`.
+`New unit` omits `unitId`. Opening Find sources from a unit's menu on the
+module page (`/projects/[projectId]/sources?unit=…`) picks that unit; a
+picked unit that has since been deleted falls back to `New unit`.
 
 After apply, the panel polls `GET /api/research/proposals/imports?projectId=…&requestId=…`
 for each source's queued, importing, imported, or failed state. A failed source
 has its error and an explicit `Retry` action, which retries that source through
-the apply endpoint. Imported and active source rows cannot be selected again.
-Downloaded sources then show preparation progress, Ready, No study content,
-or Needs retry. Each row reads at most 20 preparation jobs in its own bounded
-query; larger imports do not claim complete coverage from a partial read.
-Closing an active import shows `Importing sources in
+the apply endpoint into the unit currently chosen. Imported and active source
+rows cannot be selected again. An imported source says `Added to <unit>` with a
+`Start learning` link to that unit's Teach session; imports from before units
+only say `Imported`. Closing an active import shows `Importing sources in
 background`; this notice is transient while the per-source state remains
 persisted on the project.
 

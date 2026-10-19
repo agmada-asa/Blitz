@@ -1,4 +1,4 @@
-/** Extracts bounded text from downloaded or project-local PDF, HTML, Markdown, text, and PPTX sources. */
+/** Extracts bounded text from downloaded or project-local PDF, HTML, Markdown, text, PPTX, and Word (DOCX) sources. */
 
 import { createReadStream } from "node:fs"
 import { open, readFile } from "node:fs/promises"
@@ -21,6 +21,10 @@ export const MAX_PPTX_XML_BYTES = 20_000_000
 export const MAX_PPTX_SLIDE_BYTES = 1_000_000
 /** Maximum local PPTX bytes read into memory by the ZIP parser. */
 export const MAX_LOCAL_PPTX_BYTES = 20_000_000
+/** Maximum uncompressed size of a Word document's main `word/document.xml` part. */
+export const MAX_DOCX_XML_BYTES = 30_000_000
+/** Maximum local Word document bytes read into memory by the ZIP parser. */
+export const MAX_LOCAL_DOCX_BYTES = 20_000_000
 /**
  * Maximum pages read when a chat attachment is too long for source import.
  * Covers long textbooks while still bounding one upload's extraction work.
@@ -72,7 +76,7 @@ export interface StoredSourceInput {
 /** Returns the URL path's final segment as a safe bounded filename. */
 function filenameForUrl(
   url: string,
-  extension: ".pdf" | ".md" | ".txt" | ".pptx"
+  extension: ".pdf" | ".md" | ".txt" | ".pptx" | ".docx"
 ) {
   let candidate = ""
   try {
@@ -228,7 +232,117 @@ function extractPptxText(bytes: Uint8Array): string {
   return slides.join("\n\n")
 }
 
-/** Extracts readable text from a main/article region or the whole HTML document. */
+/**
+ * Returns the Markdown heading level of a Word paragraph, or 0 for body text.
+ *
+ * Word marks headings with a paragraph style (`Heading1`, `Title`; localized
+ * copies keep the number) or, in documents from other editors, an outline
+ * level, which is zero-based.
+ */
+function docxHeadingLevel(properties: string): number {
+  const style = /<w:pStyle\b[^>]*\bw:val="([^"]*)"/.exec(properties)?.[1] ?? ""
+  if (/^title$/i.test(style)) return 1
+  const styled = /heading\s*([1-9])$/i.exec(style)?.[1]
+  const outline = /<w:outlineLvl\b[^>]*\bw:val="(\d)"/.exec(properties)?.[1]
+  const level = styled
+    ? Number(styled)
+    : outline !== undefined
+      ? Number(outline) + 1
+      : 0
+  return Math.min(level, 6)
+}
+
+/**
+ * Converts one `<w:p>` paragraph to a Markdown line: headings keep their
+ * level, list items become `- ` bullets, and tabs and line breaks survive.
+ */
+function docxParagraphText(paragraph: string): string {
+  const properties = /<w:pPr\b[\s\S]*?<\/w:pPr\s*>/.exec(paragraph)?.[0] ?? ""
+  // Tab stops in the paragraph properties are layout, not text.
+  const runs = paragraph.replace(properties, "")
+  const text = [
+    ...runs.matchAll(
+      /<w:t\b[^>]*>([\s\S]*?)<\/w:t\s*>|<w:(tab|br|cr)\b[^>]*\/>/g
+    ),
+  ]
+    .map((match) =>
+      match[2] === "tab"
+        ? "\t"
+        : match[2]
+          ? "\n"
+          : decodeHtmlEntities(match[1] ?? "")
+    )
+    .join("")
+    .replace(/[ \t]+\n/g, "\n")
+    .trim()
+  if (!text) return ""
+  const level = docxHeadingLevel(properties)
+  if (level) return `${"#".repeat(level)} ${text.replace(/\s+/g, " ")}`
+  return /<w:numPr\b/.test(properties) ? `- ${text}` : text
+}
+
+/**
+ * Extracts a Word document's body as Markdown without browser APIs.
+ *
+ * Only `word/document.xml` is read, with a bounded uncompressed size.
+ * Headings become Markdown headings so citations are labelled by section;
+ * Word has no fixed pages, so no page markers are invented.
+ *
+ * @throws SourceIngestionError when the archive is malformed, too large, or has no text.
+ */
+function extractDocxText(bytes: Uint8Array): string {
+  let archive: Record<string, Uint8Array>
+  try {
+    archive = unzipSync(bytes, {
+      filter: (entry) => {
+        if (entry.name !== "word/document.xml") return false
+        if (
+          !Number.isSafeInteger(entry.originalSize) ||
+          entry.originalSize < 0 ||
+          entry.originalSize > MAX_DOCX_XML_BYTES
+        )
+          throw new SourceIngestionError(
+            "input-too-large",
+            "The Word document contains more text than the import limit",
+            { maxBytes: MAX_DOCX_XML_BYTES }
+          )
+        return true
+      },
+    })
+  } catch (error) {
+    if (error instanceof SourceIngestionError) throw error
+    throw new SourceIngestionError(
+      "invalid-input",
+      "The Word document could not be read. It may be malformed.",
+      { format: "docx" }
+    )
+  }
+  const document = archive["word/document.xml"]
+  if (!document)
+    throw new SourceIngestionError(
+      "invalid-input",
+      "The Word document could not be read. It may be malformed.",
+      { format: "docx" }
+    )
+  const xml = new TextDecoder().decode(document)
+  const paragraphs = [
+    ...xml.matchAll(/<w:p\b[^>]*?(?:\/>|>([\s\S]*?)<\/w:p\s*>)/g),
+  ]
+    .map((match) => docxParagraphText(match[1] ?? ""))
+    .filter(Boolean)
+  if (!paragraphs.length)
+    throw new SourceIngestionError(
+      "invalid-input",
+      "The Word document contains no readable text",
+      { format: "docx" }
+    )
+  return paragraphs.join("\n\n")
+}
+
+/**
+ * Extracts readable text from a main/article region or the whole HTML document.
+ * Headings become Markdown headings, so citations are labelled by section.
+ */
 function extractHtmlText(raw: string): string {
   const region =
     raw.match(/<main\b[^>]*>([\s\S]*?)<\/main\s*>/i)?.[1] ??
@@ -239,6 +353,16 @@ function extractHtmlText(raw: string): string {
       .replace(/<!--[\s\S]*?-->/g, " ")
       .replace(/<script\b[^>]*>[\s\S]*?<\/script\s*>/gi, " ")
       .replace(/<style\b[^>]*>[\s\S]*?<\/style\s*>/gi, " ")
+      .replace(
+        /<h([1-6])\b[^>]*>([\s\S]*?)<\/h\1\s*>/gi,
+        (_match, level: string, inner: string) => {
+          const heading = inner
+            .replace(/<[^>]+>/g, " ")
+            .replace(/\s+/g, " ")
+            .trim()
+          return heading ? `\n${"#".repeat(Number(level))} ${heading}\n` : "\n"
+        }
+      )
       .replace(
         /<\/?(?:p|div|section|article|main|h[1-6]|li|br|tr)\b[^>]*>/gi,
         "\n"
@@ -413,6 +537,14 @@ export async function extractStoredSource(
         { maxBytes: MAX_LOCAL_PPTX_BYTES }
       )
     extractedText = extractPptxText(new Uint8Array(await readFile(input.path)))
+  } else if (format === "docx") {
+    if (input.sizeBytes > MAX_LOCAL_DOCX_BYTES)
+      throw new SourceIngestionError(
+        "input-too-large",
+        "The Word document exceeds the 20 MB extraction limit",
+        { maxBytes: MAX_LOCAL_DOCX_BYTES }
+      )
+    extractedText = extractDocxText(new Uint8Array(await readFile(input.path)))
   } else {
     const raw = await readStoredText(input.path)
     extractedText =
@@ -422,18 +554,9 @@ export async function extractStoredSource(
           ? subtitleToTranscript(raw)
           : raw
   }
-  const extension =
-    format === "pdf"
-      ? ".pdf"
-      : format === "pptx"
-        ? ".pptx"
-        : format === "markdown"
-          ? ".md"
-          : ".txt"
   return {
-    filename: filenameForUrl(url, extension),
-    kind:
-      format === "pdf" ? "pdf" : format === "markdown" ? "markdown" : "text",
+    filename: filenameForUrl(url, extensionForFormat(format)),
+    kind: kindForFormat(format),
     extractedText: boundExtractedText(extractedText, format, MAX_STORED_TEXT_LENGTH),
   }
 }
@@ -470,12 +593,31 @@ export async function extractLongPdfText(path: string): Promise<string> {
   }
 }
 
+/** A readable format recognised by {@link detectFormat}. */
+type SourceFormat = "pdf" | "markdown" | "html" | "text" | "pptx" | "docx"
+
+/** Returns the fallback filename extension for a format when the URL has none. */
+function extensionForFormat(
+  format: SourceFormat
+): ".pdf" | ".md" | ".txt" | ".pptx" | ".docx" {
+  if (format === "pdf") return ".pdf"
+  if (format === "pptx") return ".pptx"
+  if (format === "docx") return ".docx"
+  return format === "markdown" ? ".md" : ".txt"
+}
+
+/** Returns the persisted source kind; Word documents are extracted as Markdown. */
+function kindForFormat(format: SourceFormat): ExtractedDownloadedSource["kind"] {
+  if (format === "pdf") return "pdf"
+  return format === "markdown" || format === "docx" ? "markdown" : "text"
+}
+
 /** Selects a supported format from the response type, URL suffix, or PDF signature. */
 function detectFormat(
   bytes: Uint8Array,
   contentType: string | null,
   url: string
-): "pdf" | "markdown" | "html" | "text" | "pptx" {
+): SourceFormat {
   const mediaType = contentType?.split(";", 1)[0].trim().toLowerCase() ?? ""
   const pathname = (() => {
     try {
@@ -498,6 +640,12 @@ function detectFormat(
     pathname.endsWith(".pptx")
   )
     return "pptx"
+  if (
+    mediaType ===
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
+    pathname.endsWith(".docx")
+  )
+    return "docx"
   if (
     mediaType === "text/html" ||
     mediaType === "application/xhtml+xml" ||
@@ -567,24 +715,16 @@ export async function extractDownloadedSource(
     }
   } else if (format === "pptx") {
     extractedText = extractPptxText(input.bytes)
+  } else if (format === "docx") {
+    extractedText = extractDocxText(input.bytes)
   } else {
     const raw = new TextDecoder().decode(input.bytes)
     extractedText = format === "html" ? extractHtmlText(raw) : raw
   }
 
   return {
-    filename: filenameForUrl(
-      input.url,
-      format === "pdf"
-        ? ".pdf"
-        : format === "markdown"
-          ? ".md"
-          : format === "pptx"
-            ? ".pptx"
-            : ".txt"
-    ),
-    kind:
-      format === "pdf" ? "pdf" : format === "markdown" ? "markdown" : "text",
+    filename: filenameForUrl(input.url, extensionForFormat(format)),
+    kind: kindForFormat(format),
     extractedText: boundExtractedText(extractedText, format),
   }
 }

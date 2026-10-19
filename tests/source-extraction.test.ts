@@ -151,7 +151,8 @@ test("extracts readable main HTML text and markdown", async () => {
   })
 
   assert.equal(html.kind, "text")
-  assert.equal(html.extractedText, "Title\nUseful & clear notes.")
+  // Headings stay Markdown headings so citations name the article section.
+  assert.equal(html.extractedText, "# Title\nUseful & clear notes.")
   assert.equal(markdown.kind, "markdown")
   assert.equal(markdown.extractedText, "# Heading\n\nBody")
 })
@@ -171,6 +172,65 @@ test("extracts text and slide markers from a bounded PPTX", async () => {
   assert.equal(result.filename, "lesson.pptx")
   assert.equal(result.kind, "text")
   assert.equal(result.extractedText, "[Slide 1]\nSlide notes")
+})
+
+/** Builds a minimal Word document whose body is the given paragraph XML. */
+function makeDocx(paragraphs: string): Uint8Array {
+  return zipSync({
+    "word/document.xml": strToU8(
+      `<w:document xmlns:w="urn:test"><w:body>${paragraphs}</w:body></w:document>`
+    ),
+    "word/styles.xml": strToU8("<w:styles />"),
+  })
+}
+
+test("extracts Word headings, lists, and paragraphs as Markdown", async () => {
+  const bytes = makeDocx(
+    [
+      '<w:p><w:pPr><w:pStyle w:val="Title"/></w:pPr><w:r><w:t>Week 3</w:t></w:r></w:p>',
+      '<w:p><w:pPr><w:pStyle w:val="Heading2"/><w:tabs><w:tab w:val="left" w:pos="720"/></w:tabs></w:pPr><w:r><w:t xml:space="preserve">Hash </w:t></w:r><w:r><w:t>tables</w:t></w:r></w:p>',
+      "<w:p><w:r><w:t>Keys &amp; values</w:t><w:tab/><w:t>map</w:t></w:r></w:p>",
+      '<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/></w:numPr></w:pPr><w:r><w:t>Chaining</w:t></w:r></w:p>',
+      "<w:p/>",
+      '<w:p><w:pPr><w:outlineLvl w:val="2"/></w:pPr><w:r><w:t>Resizing</w:t></w:r></w:p>',
+    ].join("")
+  )
+  const downloaded = await extractDownloadedSource({
+    bytes,
+    contentType:
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    url: "https://example.com/week3.docx",
+  })
+  assert.equal(downloaded.filename, "week3.docx")
+  assert.equal(downloaded.kind, "markdown")
+  assert.equal(
+    downloaded.extractedText,
+    "# Week 3\n\n## Hash tables\n\nKeys & values\tmap\n\n- Chaining\n\n### Resizing"
+  )
+
+  const directory = await mkdtemp(join(tmpdir(), "blitz-docx-"))
+  try {
+    const path = join(directory, "notes.docx")
+    await writeFile(path, bytes)
+    const stored = await extractStoredSource({
+      path,
+      filename: "notes.docx",
+      contentType: null,
+      sizeBytes: bytes.byteLength,
+    })
+    assert.equal(stored.extractedText, downloaded.extractedText)
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+
+  await assert.rejects(
+    extractDownloadedSource({
+      bytes: makeDocx("<w:p/>"),
+      contentType: null,
+      url: "https://example.com/empty.docx",
+    }),
+    /Word document contains no readable text/
+  )
 })
 
 test("rejects a PPTX whose slides contain no readable text", async () => {

@@ -1,7 +1,8 @@
 /** Provides snapshot and streaming card-chat contracts for browser and native clients. */
 
 import { chatStream } from "@/lib/server/chat-stream"
-import { ConvexHttpClient } from "convex/browser"
+import type { ConvexHttpClient } from "convex/browser"
+import { serverConvexClient } from "@/lib/server/convex"
 import { api } from "@/convex/_generated/api"
 import type { Id } from "@/convex/_generated/dataModel"
 import { LearningApiError, readLearningJson } from "@/lib/server/learning-api"
@@ -22,16 +23,9 @@ function requiredText(value: unknown, label: string, maximum: number): string {
 
 /** Creates a server-only Convex client from the local deployment URL. */
 function convexClient(): ConvexHttpClient {
-  const endpoint =
-    process.env.BLITZ_CONVEX_URL ??
-    process.env.NEXT_PUBLIC_CONVEX_URL ??
-    process.env.CONVEX_URL
-  if (!endpoint) throw new LearningApiError("Chat service is unavailable", 503)
-  try {
-    return new ConvexHttpClient(endpoint)
-  } catch {
-    throw new LearningApiError("Chat service is unavailable", 503)
-  }
+  return serverConvexClient(
+    () => new LearningApiError("Chat service is unavailable", 503)
+  )
 }
 
 /** Parses the intentionally small POST body used by web and native clients. */

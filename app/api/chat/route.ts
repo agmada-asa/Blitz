@@ -9,7 +9,8 @@ import {
   projectAgentInstructions,
   scanProjectArtifacts,
 } from "@/lib/server/project-agent"
-import { ConvexHttpClient } from "convex/browser"
+import type { ConvexHttpClient } from "convex/browser"
+import { serverConvexClient } from "@/lib/server/convex"
 import { makeFunctionReference } from "convex/server"
 import { constants as fileConstants } from "node:fs"
 import { copyFile, mkdir } from "node:fs/promises"
@@ -207,12 +208,7 @@ const failWorkspaceTurn = makeFunctionReference<
 
 /** Creates a server-side Convex client for resolving attached project context. */
 function convexClient(): ConvexHttpClient {
-  const endpoint =
-    process.env.BLITZ_CONVEX_URL ??
-    process.env.NEXT_PUBLIC_CONVEX_URL ??
-    process.env.CONVEX_URL
-  if (!endpoint) throw new Error("Project context is unavailable")
-  return new ConvexHttpClient(endpoint)
+  return serverConvexClient(() => new Error("Project context is unavailable"))
 }
 
 /** Resolves and creates the dedicated local folder used for general chat turns. */
@@ -988,7 +984,7 @@ export async function POST(request: Request): Promise<Response> {
         const citations = await client.mutation(api.chatCitations.prepare, {
           chatId: turn.chatId,
           messageId: turn.assistantMessageId,
-          question: retrievalQuestion,
+          question: teach?.citationFocus || retrievalQuestion,
           chunkIds: teach
             ? teach.citationChunkIds
             : [

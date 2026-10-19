@@ -1,5 +1,5 @@
 /** Resolves the selected project's native workspace and attached chat instructions. */
-import { ConvexHttpClient } from "convex/browser"
+import { serverConvexClient } from "@/lib/server/convex"
 import { api } from "@/convex/_generated/api"
 import type { Id } from "@/convex/_generated/dataModel"
 import {
@@ -17,15 +17,9 @@ export async function GET(
 ): Promise<Response> {
   try {
     const { projectId } = await context.params
-    const endpoint =
-      process.env.BLITZ_CONVEX_URL ??
-      process.env.NEXT_PUBLIC_CONVEX_URL ??
-      process.env.CONVEX_URL
-    if (!endpoint) throw new Error("Projects are unavailable.")
-    const project = await new ConvexHttpClient(endpoint).query(
-      api.projects.getProject,
-      { projectId: projectId as Id<"projects"> }
-    )
+    const project = await serverConvexClient(
+      () => new Error("Projects are unavailable.")
+    ).query(api.projects.getProject, { projectId: projectId as Id<"projects"> })
     if (!project)
       return Response.json({ error: "Project not found." }, { status: 404 })
     const workspace = await prepareProjectAgentWorkspace(projectId)

@@ -103,7 +103,11 @@ function filenameForSourceUrl(sourceUrl: string): string {
   }
 }
 
-/** Collects visible HTML text while adding line breaks between block elements. */
+/**
+ * Collects visible HTML text while adding line breaks between block elements.
+ * Headings become Markdown headings, so citations of a web article are
+ * labelled by the section they come from.
+ */
 function collectHtmlText(node: Node): string {
   if (node.nodeType === Node.TEXT_NODE) return node.nodeValue ?? ""
   if (node.nodeType !== Node.ELEMENT_NODE) return ""
@@ -114,6 +118,11 @@ function collectHtmlText(node: Node): string {
   const text = Array.from(element.childNodes)
     .map((child) => collectHtmlText(child))
     .join("")
+  const level = /^H([1-6])$/.exec(element.tagName)?.[1]
+  if (level) {
+    const heading = text.replace(/\s+/g, " ").trim()
+    return heading ? `\n${"#".repeat(Number(level))} ${heading}\n` : "\n"
+  }
   return [
     "ADDRESS",
     "ARTICLE",

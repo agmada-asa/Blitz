@@ -271,6 +271,7 @@ function ModuleOverview({ project }: { project: Doc<"projects"> }) {
                       .filter((other) => other.id !== unit.id)
                       .map((other) => ({ id: other.id, title: other.title }))}
                     onAddMaterial={() => setAdding({ unitId: unit.id })}
+                    findSourcesHref={`${base}/sources?unit=${encodeURIComponent(String(unit.id))}`}
                   />
                 ))}
               </ol>
@@ -381,6 +382,8 @@ type UnitListItemProps = {
   /** The module's other units, offered as a home for this unit's material when it is removed. */
   otherUnits: { id: Id<"units">; title: string }[]
   onAddMaterial: () => void
+  /** Sources page with this unit picked for approved research. */
+  findSourcesHref: string
 }
 
 /** Select value for leaving a removed unit's material outside every unit. */
@@ -392,6 +395,7 @@ function UnitListItem({
   number,
   state,
   href,
+  findSourcesHref,
   isFirst,
   isLast,
   otherUnits,
@@ -489,6 +493,9 @@ function UnitListItem({
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end">
           <DropdownMenuItem onSelect={onAddMaterial}>Add material</DropdownMenuItem>
+          <DropdownMenuItem asChild>
+            <Link href={findSourcesHref}>Find sources</Link>
+          </DropdownMenuItem>
           <DropdownMenuItem
             onSelect={() => {
               setTitle(unit.title)

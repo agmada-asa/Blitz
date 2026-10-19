@@ -18,10 +18,9 @@ import { createReadStream } from "node:fs"
 import { basename, join } from "node:path"
 import { Readable } from "node:stream"
 import { fileURLToPath } from "node:url"
-import { ConvexHttpClient } from "convex/browser"
-
 import { api } from "../convex/_generated/api.js"
 import { readChatStream } from "../lib/chat-stream.ts"
+import { serverConvexClient } from "../lib/server/convex.ts"
 import { findQuizBlocks } from "../lib/interactive-blocks.ts"
 import { parseTeachOutline, suggestUnitTitle, TEACH_QUICK_REPLIES } from "../lib/teach.ts"
 
@@ -63,10 +62,8 @@ function seconds(ms: number): string {
 async function main(): Promise<void> {
   const options = parseArgs(process.argv.slice(2))
   loadLocalEnvironment()
-  const convexUrl = process.env.BLITZ_CONVEX_URL ?? process.env.NEXT_PUBLIC_CONVEX_URL
   const serverUrl = process.env.BLITZ_SERVER_URL ?? `http://127.0.0.1:${process.env.BLITZ_PORT ?? "3007"}`
-  if (!convexUrl) throw new Error("Set BLITZ_CONVEX_URL or run Blitz first")
-  const client = new ConvexHttpClient(convexUrl)
+  const client = serverConvexClient(() => new Error("Set BLITZ_CONVEX_URL or run Blitz first"))
 
   const names = (await readdir(options.folder))
     .filter((name) => !name.startsWith(".") && !name.startsWith("~$"))

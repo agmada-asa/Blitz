@@ -1,6 +1,6 @@
 /** Requeues one failed research proposal after an explicit retry action. */
 
-import { ConvexHttpClient } from "convex/browser"
+import { serverConvexClient } from "@/lib/server/convex"
 import { api } from "@/convex/_generated/api"
 import type { Id } from "@/convex/_generated/dataModel"
 import { LearningApiError, readLearningJson } from "@/lib/server/learning-api"
@@ -22,19 +22,12 @@ export async function POST(request: Request): Promise<Response> {
     if (!body || typeof body !== "object")
       throw new LearningApiError("Retry request is invalid", 400)
     const input = body as Record<string, unknown>
-    const endpoint =
-      process.env.BLITZ_CONVEX_URL ??
-      process.env.NEXT_PUBLIC_CONVEX_URL ??
-      process.env.CONVEX_URL
-    if (!endpoint)
-      throw new LearningApiError("Research service is unavailable", 503)
-    const result = await new ConvexHttpClient(endpoint).mutation(
-      api.research.retry,
-      {
-        projectId: requiredId(input.projectId, "Project ID") as Id<"projects">,
-        requestId: requiredId(input.requestId, "Request ID"),
-      }
-    )
+    const result = await serverConvexClient(
+      () => new LearningApiError("Research service is unavailable", 503)
+    ).mutation(api.research.retry, {
+      projectId: requiredId(input.projectId, "Project ID") as Id<"projects">,
+      requestId: requiredId(input.requestId, "Request ID"),
+    })
     return Response.json(result, { status: 202 })
   } catch (error) {
     if (error instanceof LearningApiError)

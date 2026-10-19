@@ -5,11 +5,20 @@ downloads. It accepts the bounded bytes and final URL returned by the public
 HTTP(S) fetcher and returns a persistence-compatible filename, source kind, and
 readable text.
 
-Supported formats are PDF, Markdown, plain text, HTML, and small PPTX files.
+Supported formats are PDF, Markdown, plain text, HTML, and small PPTX and Word
+(DOCX) files. The same extractor serves project uploads (`extractStoredSource`)
+and chat attachments.
 PPTX extraction reads only bounded `ppt/slides/slideN.xml` entries with the
 installed ZIP runtime, caps each slide XML entry at 1 MB and all slide XML at
 20 MB, and returns readable slides with `[Slide N]` markers. Empty slide-only
-decks fail as unreadable. PDF extraction
+decks fail as unreadable. DOCX extraction reads only `word/document.xml`
+(at most 30 MB uncompressed, 20 MB compressed for local files) and returns
+Markdown: `Title` and `Heading N` styles or outline levels become `#`
+headings, numbered or bulleted paragraphs become `- ` items, and tabs and
+line breaks are kept. Word has no fixed pages, so no page markers are
+invented; citations are labelled by heading instead. Text boxes, tables, and
+footnotes are read only as far as their paragraphs appear in the body.
+Word links added through `Add material` are not fetched yet. PDF extraction
 uses the installed `pdfjs-dist` runtime and reads at most 500 pages. Research
 downloads use bounded in-memory bytes. Project-local PDFs use file-backed range
 reads so a large original does not need an equally large server heap allocation.
@@ -26,8 +35,10 @@ limit because its ZIP parser operates in memory. A parsing or text bound leaves
 the original saved for an agent to inspect with its available tools.
 Empty downloads and empty documents return structured ingestion errors with
 actionable messages. HTML extraction selects the first `main` or `article`
-region when present, removes scripts and styles, decodes common entities, and
-normalizes block boundaries. It is a small server fallback rather than a full
+region when present, removes scripts and styles, decodes common entities,
+turns `h1`–`h6` into Markdown headings so citations name the article section,
+and normalizes block boundaries. The browser extractor used by `Add material`
+links keeps headings the same way. It is a small server fallback rather than a full
 HTML parser, so callers should use a vetted parser dependency if exact web page
 fidelity becomes necessary.
 

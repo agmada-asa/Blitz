@@ -4,7 +4,8 @@ import { randomUUID } from "node:crypto"
 import { spawn } from "node:child_process"
 import { promises as fs } from "node:fs"
 import { join } from "node:path"
-import { ConvexHttpClient } from "convex/browser"
+import type { ConvexHttpClient } from "convex/browser"
+import { serverConvexClient } from "./convex"
 import { z } from "zod"
 
 import { api } from "@/convex/_generated/api"
@@ -92,12 +93,9 @@ const AUDIO_ID_PATTERN =
 
 /** Builds a Convex client for the currently running local Blitz deployment. */
 export function localConvexClient(): ConvexHttpClient {
-  const endpoint =
-    process.env.BLITZ_CONVEX_URL ??
-    process.env.NEXT_PUBLIC_CONVEX_URL ??
-    process.env.CONVEX_URL
-  if (!endpoint) throw new Error("The local project service is unavailable")
-  return new ConvexHttpClient(endpoint)
+  return serverConvexClient(
+    () => new Error("The local project service is unavailable")
+  )
 }
 
 /** Returns an item's response shape without leaking its private job details. */

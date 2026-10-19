@@ -27,9 +27,9 @@ names the PR that delivers it once one exists.
 - [x] Remove batch generation, old Learn, concept map UI, legacy card chat
 - [x] Prompt map (`docs/prompts.md`); dead card-generation prompt removed
 - [x] Whole textbooks as module-wide reference books searched by Teach
-- [ ] Research imports into units with passages
-- [ ] Consolidate the remaining workers into one supervised process
-- [ ] Share one server Convex client helper across API routes (new code uses `lib/server/convex.ts`)
+- [x] Research imports into units with passages (picked unit or one new unit per request)
+- [x] Consolidate the remaining workers into one supervised process (`scripts/worker.ts`)
+- [x] Share one server Convex client helper across API routes, server modules, and scripts (`lib/server/convex.ts`)
 
 ## Phase 2: practice and exam mode
 
@@ -62,7 +62,7 @@ names the PR that delivers it once one exists.
 - [x] Agent controls already sit behind Options; access is chosen in the model picker
 - [x] Interactive blocks in chat, follow-up chips, and Quiz me
 - [x] Save chat quizzes into a unit's question bank
-- [ ] Citations for every source type
+- [x] Citations for every source type (`docs/chat-citations.md`), including Word documents and reference books
 
 ## Phase 5: polish and redesign
 

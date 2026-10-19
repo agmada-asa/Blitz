@@ -3,6 +3,7 @@ import { mutation, query } from "./_generated/server"
 import type { Doc, Id } from "./_generated/dataModel"
 import { v } from "convex/values"
 import {
+  chunkPassages,
   sourcePassages,
   passageScore,
   type ChatCitation,
@@ -189,6 +190,24 @@ export const prepare = mutation({
       const entry = sources.get(chunk.sourceId)
       if (!entry || entry.source.projectId !== chunk.projectId) continue
       const { source, passages } = entry
+      const target = {
+        filename: source.filename,
+        projectId: source.projectId,
+        sourceId: source._id,
+      }
+      // Large sources (whole books) keep only an excerpt on the source row.
+      // Chunks past it are split on their own, taking their page from the
+      // markers ingestion recorded, so every part of a book stays citable.
+      if (chunk.endOffset > source.extractedText.length) {
+        for (const passage of chunkPassages(chunk))
+          candidates.push({
+            ...passage,
+            ...target,
+            chunkId: chunk._id,
+            id: `${namespace}_${candidates.length}`,
+          })
+        continue
+      }
       // Split from the full source so a chunk starting mid-page retains its page marker.
       for (const passage of passages) {
         if (
@@ -198,9 +217,7 @@ export const prepare = mutation({
           continue
         candidates.push({
           ...passage,
-          filename: source.filename,
-          projectId: source.projectId,
-          sourceId: source._id,
+          ...target,
           id: `${namespace}_${candidates.length}`,
         })
       }
@@ -275,6 +292,8 @@ export const read = query({
     let fileUrl: string | undefined
     let mimeType: string | undefined
     let originalUrl: string | undefined
+    /** Offset of `text` within the full source when it is one section of a book. */
+    let chunkBase = 0
     if (citation.documentId && citation.projectId) {
       const document = await ctx.db.get(
         citation.documentId as Id<"chatDocuments">
@@ -303,6 +322,16 @@ export const read = query({
         originalUrl = source.originalUrl
         if (source.relativeKey)
           fileUrl = `/api/sources/file?projectId=${encodeURIComponent(source.projectId)}&sourceId=${encodeURIComponent(source._id)}&inline=1`
+        // Passages past the stored excerpt of a book are shown within their section.
+        if (citation.chunkId) {
+          const chunk = await ctx.db.get(
+            citation.chunkId as Id<"sourceChunks">
+          )
+          if (chunk?.sourceId === source._id) {
+            text = chunk.text
+            chunkBase = chunk.startOffset
+          }
+        }
       }
     } else if (citation.attachmentId) {
       const attachment = await ctx.db.get(
@@ -314,9 +343,10 @@ export const read = query({
         originalUrl = attachment.url
       }
     }
+    const savedStart = citation.startOffset - chunkBase
     const start =
-      text.slice(citation.startOffset, citation.endOffset) === citation.text
-        ? citation.startOffset
+      text.slice(savedStart, citation.endOffset - chunkBase) === citation.text
+        ? savedStart
         : text.indexOf(citation.text)
     const matches = start >= 0
     return {

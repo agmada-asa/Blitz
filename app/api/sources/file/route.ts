@@ -1,7 +1,8 @@
 /** Serves one project source original through an ownership checked source ID. */
 
 import { basename } from "node:path"
-import { ConvexHttpClient } from "convex/browser"
+import type { ConvexHttpClient } from "convex/browser"
+import { serverConvexClient } from "@/lib/server/convex"
 
 import { api } from "@/convex/_generated/api"
 import { streamProjectFile } from "@/lib/server/project-files"
@@ -33,14 +34,13 @@ export async function GET(request: Request): Promise<Response> {
       { error: "Project and source are required." },
       { status: 400 }
     )
-  const endpoint =
-    process.env.BLITZ_CONVEX_URL ??
-    process.env.NEXT_PUBLIC_CONVEX_URL ??
-    process.env.CONVEX_URL
-  if (!endpoint)
-    return Response.json({ error: "Sources are unavailable." }, { status: 503 })
+  let convex: ConvexHttpClient
   try {
-    const convex = new ConvexHttpClient(endpoint)
+    convex = serverConvexClient()
+  } catch {
+    return Response.json({ error: "Sources are unavailable." }, { status: 503 })
+  }
+  try {
     const source = await convex.query(api.sources.getOriginalSource, {
       projectId: projectId as never,
       sourceId: sourceId as never,

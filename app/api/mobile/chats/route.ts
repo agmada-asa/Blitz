@@ -1,6 +1,7 @@
 /** Exposes bounded workspace chat history to the native chat screen. */
 
-import { ConvexHttpClient } from "convex/browser"
+import type { ConvexHttpClient } from "convex/browser"
+import { serverConvexClient } from "@/lib/server/convex"
 
 import { api } from "@/convex/_generated/api"
 import type { Id } from "@/convex/_generated/dataModel"
@@ -11,12 +12,9 @@ export const runtime = "nodejs"
 
 /** Creates the configured Convex client or reports a safe service error. */
 function convexClient(): ConvexHttpClient {
-  const endpoint =
-    process.env.BLITZ_CONVEX_URL ??
-    process.env.NEXT_PUBLIC_CONVEX_URL ??
-    process.env.CONVEX_URL
-  if (!endpoint) throw new LearningApiError("Chat is unavailable.", 503)
-  return new ConvexHttpClient(endpoint)
+  return serverConvexClient(
+    () => new LearningApiError("Chat is unavailable.", 503)
+  )
 }
 
 /** Validates a chat identifier before passing it to Convex. */

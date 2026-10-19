@@ -15,6 +15,7 @@ import type {
 } from "pdfjs-dist/types/src/display/api"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { pdfHighlightItems } from "@/lib/citations"
 
 /**
  * Serializes PDF document loading task destruction across instances to avoid
@@ -266,43 +267,40 @@ export function PdfReader({
         const items = content.items.filter(
           (item): item is TextItem => "str" in item
         )
-        const joined = items
-          .map((item) => item.str.replace(/\s+/g, " "))
-          .join(" ")
-        const needle = quote
-          .replace(/^\s*\[Page[^\]]+\]\s*/i, "")
-          .replace(/\s+/g, " ")
-          .trim()
-        const match = needle ? joined.indexOf(needle) : -1
+        // Sentence-level matching runs only on the cited page, where a
+        // running header repeated on every page cannot cause a false match.
+        const highlighted = quote.trim()
+          ? pdfHighlightItems(
+              items.map((item) => item.str),
+              quote,
+              { fragments: number === initialPage }
+            )
+          : new Set<number>()
 
-        if (match >= 0) {
-          let offset = 0
+        if (highlighted.size) {
           context.save()
           context.scale(ratio, ratio)
           context.fillStyle = "rgba(255, 210, 60, 0.30)"
-          for (const item of items) {
-            const length = item.str.replace(/\s+/g, " ").length
-            if (offset < match + needle.length && offset + length > match) {
-              const transform = pdfjs.Util.transform(
-                viewport.transform,
-                item.transform
-              )
-              const height = Math.hypot(transform[2], transform[3])
-              context.fillRect(
-                transform[4],
-                transform[5] - height,
-                item.width * viewport.scale,
-                height * 1.2
-              )
-            }
-            offset += length + 1
-          }
+          items.forEach((item, index) => {
+            if (!highlighted.has(index)) return
+            const transform = pdfjs.Util.transform(
+              viewport.transform,
+              item.transform
+            )
+            const height = Math.hypot(transform[2], transform[3])
+            context.fillRect(
+              transform[4],
+              transform[5] - height,
+              item.width * viewport.scale,
+              height * 1.2
+            )
+          })
           context.restore()
         }
 
         if (number === initialPage) {
           setStatus(
-            needle && match < 0
+            quote.trim() && !highlighted.size
               ? "Read the Passage tab for the exact cited text."
               : ""
           )

@@ -12,6 +12,8 @@ export const citationFields = v.object({
   page: v.optional(v.number()),
   projectId: v.optional(v.string()),
   sourceId: v.optional(v.string()),
+  /** Source section holding a passage past the source row's stored excerpt. */
+  chunkId: v.optional(v.string()),
   documentId: v.optional(v.string()),
   attachmentId: v.optional(v.string()),
 })

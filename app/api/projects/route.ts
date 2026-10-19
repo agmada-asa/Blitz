@@ -1,6 +1,7 @@
 /** Exposes the existing local project's management operations to the native app without sharing Convex configuration. */
 
-import { ConvexHttpClient } from "convex/browser"
+import type { ConvexHttpClient } from "convex/browser"
+import { serverConvexClient } from "@/lib/server/convex"
 import { ConvexError } from "convex/values"
 import { api } from "@/convex/_generated/api"
 import type { Id } from "@/convex/_generated/dataModel"
@@ -11,14 +12,10 @@ import { LearningApiError, readLearningJson } from "@/lib/server/learning-api"
 export const runtime = "nodejs"
 
 /** Connects to the same personal deployment used by the browser; no new access model is introduced. */
-function client() {
-  const url =
-    process.env.BLITZ_CONVEX_URL ??
-    process.env.NEXT_PUBLIC_CONVEX_URL ??
-    process.env.CONVEX_URL
-  if (!url)
-    throw new LearningApiError("Projects are unavailable. Try again.", 503)
-  return new ConvexHttpClient(url)
+function client(): ConvexHttpClient {
+  return serverConvexClient(
+    () => new LearningApiError("Projects are unavailable. Try again.", 503)
+  )
 }
 
 /** Converts expected validation errors into safe responses, withholding internal backend details. */

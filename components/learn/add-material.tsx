@@ -44,7 +44,7 @@ const NEW_UNIT = "new"
 
 /** Accepted file types, matching what the upload route can extract. */
 const ACCEPT =
-  ".pdf,.pptx,.txt,.vtt,.srt,.md,.markdown,.html,.htm,.csv,.json,.py,.ts,.tsx,.js,.jsx,.java,.c,.cpp,.h,.go,.rs,.sql,.sh"
+  ".pdf,.pptx,.docx,.txt,.vtt,.srt,.md,.markdown,.html,.htm,.csv,.json,.py,.ts,.tsx,.js,.jsx,.java,.c,.cpp,.h,.go,.rs,.sql,.sh"
 
 /** One file's progress through the upload. */
 type UploadRow = {

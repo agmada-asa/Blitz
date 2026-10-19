@@ -1,5 +1,5 @@
 /**
- * Starts the local web app, database, and workers for this Mac and the LAN.
+ * Starts the local web app, database, and background worker for this Mac and the LAN.
  *
  * Uses the same supervisor as the desktop app, so a crashed worker or server
  * restarts with backoff instead of taking the whole stack down. Without a

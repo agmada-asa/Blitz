@@ -21,9 +21,10 @@ returns `AnswerResponse` with status and server-owned feedback or correct keys.
 These passive events do not update concept review state.
 
 Request bodies are capped at 32,000 bytes. Invalid JSON or payloads return 400.
-The server adapter checks `BLITZ_CONVEX_URL`, then `CONVEX_URL`, then the
-browser-facing `NEXT_PUBLIC_CONVEX_URL`. Missing Convex configuration or
-backend failures return a generic 503;
+The server adapter gets its client from `serverConvexClient` in
+`lib/server/convex.ts`, shared by every API route and worker. It checks
+`BLITZ_CONVEX_URL`, then `NEXT_PUBLIC_CONVEX_URL`, then `CONVEX_URL`. Missing
+or invalid Convex configuration and backend failures return a generic 503;
 raw Convex errors and source content are never sent over the HTTP boundary.
 The current app is a personal local deployment and this API does not claim to
 provide public SaaS authentication or multi-user isolation.

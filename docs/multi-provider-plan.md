@@ -24,7 +24,7 @@ The code already has useful boundaries, but they are named around one implementa
 - `lib/ai-model-settings.ts`, `convex/settings.ts`, and the settings components own the current flat model and reasoning configuration.
 - `lib/server/codex-app-server.ts` owns the Codex JSON-RPC transport. `lib/server/card-chat.ts` turns it into streaming text, activity, interruption, and approval events.
 - General chat persists `codexThreadId` and `codexTurnId` on `workspaceChats` and `workspaceChatMessages`. Card chat has the same shape on `conversations` and `conversationMessages`.
-- `scripts/research-worker.ts` resolves settings before it calls the provider runner. The preparation and card chat workers that did the same were removed when Teach replaced batch generation.
+- The `research` loop in `scripts/worker.ts` resolves settings before it calls the provider runner. The preparation and card chat workers that did the same were removed when Teach replaced batch generation.
 - `lib/server/codex.ts` is the older one-shot card-generation path. It should either use the same adapter contract or be retired after its callers are confirmed.
 
 ## Reference implementation: T3 Code

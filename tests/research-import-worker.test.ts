@@ -160,6 +160,31 @@ test("research import worker completes a bounded PDF source", async () => {
     preparationJobId: "job-1",
   })
   assert.equal(completed.length, 1)
+  // Passages travel with the source, split the same way uploads are.
+  const payload = completed[0] as {
+    extractedText: string
+    chunks: Array<{
+      text: string
+      startOffset: number
+      endOffset: number
+      references: Array<{ kind?: string; value: string }>
+    }>
+  }
+  assert.equal(payload.chunks.length, 1)
+  assert.equal(
+    payload.extractedText.slice(
+      payload.chunks[0].startOffset,
+      payload.chunks[0].endOffset
+    ),
+    payload.chunks[0].text
+  )
+  assert.deepEqual(
+    payload.chunks[0].references.map((reference) => [
+      reference.kind,
+      reference.value,
+    ]),
+    [["page", "1"]]
+  )
 })
 
 /** Records a safe failure and never exposes an injected fetch error. */

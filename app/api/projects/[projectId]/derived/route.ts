@@ -1,5 +1,6 @@
 /** Reviews and approves agent-derived source text for one local project. */
-import { ConvexHttpClient } from "convex/browser"
+import type { ConvexHttpClient } from "convex/browser"
+import { serverConvexClient } from "@/lib/server/convex"
 import { api } from "@/convex/_generated/api"
 import { promises as fs } from "node:fs"
 import {
@@ -16,9 +17,7 @@ export const runtime = "nodejs"
 
 /** Returns a Convex client when the local project service is configured. */
 function convexClient(): ConvexHttpClient {
-  const endpoint = process.env.BLITZ_CONVEX_URL ?? process.env.NEXT_PUBLIC_CONVEX_URL ?? process.env.CONVEX_URL
-  if (!endpoint) throw new Error("Projects are unavailable")
-  return new ConvexHttpClient(endpoint)
+  return serverConvexClient(() => new Error("Projects are unavailable"))
 }
 
 /** Ensures a request belongs to the local application origin. */

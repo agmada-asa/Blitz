@@ -6,7 +6,8 @@
  * its idempotency key, so a native or browser client can retry safely.
  */
 
-import { ConvexHttpClient } from "convex/browser"
+import type { ConvexHttpClient } from "convex/browser"
+import { serverConvexClient } from "@/lib/server/convex"
 
 import { api } from "@/convex/_generated/api"
 import type { Id } from "@/convex/_generated/dataModel"
@@ -64,17 +65,9 @@ function parseSessionAnswer(value: unknown): SessionAnswer {
 
 /** Creates a server-only Convex client for the configured local deployment. */
 function convexClient(): ConvexHttpClient {
-  const endpoint =
-    process.env.BLITZ_CONVEX_URL ??
-    process.env.NEXT_PUBLIC_CONVEX_URL ??
-    process.env.CONVEX_URL
-  if (!endpoint)
-    throw new LearningApiError("Learning service is unavailable", 503)
-  try {
-    return new ConvexHttpClient(endpoint)
-  } catch {
-    throw new LearningApiError("Learning service is unavailable", 503)
-  }
+  return serverConvexClient(
+    () => new LearningApiError("Learning service is unavailable", 503)
+  )
 }
 
 /** Parses a bounded answer submission and maps its attempt ID to the event key. */

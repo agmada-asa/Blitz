@@ -10,6 +10,11 @@ Markers are recognized only when they are explicit line prefixes: `[Page …]`, 
 
 Normalization rejects empty input, filenames longer than 255 characters, and text above 2,000,000 characters or 8,000,000 UTF-8 bytes. Segmentation reports the source ID and configured chunk limit when the maximum chunk count is exceeded. `SourceIngestionError` exposes a stable error code and safe bounded context without storing source contents.
 
+`chunk-rows.ts` turns chunks into the rows stored in `sourceChunks`. Uploads
+use `persistedChunkRows` after `prepareStoredSource`; approved research imports
+use `prepareTextSource` on each downloaded part, so both get identical passages
+and page, slide, and timestamp references for citations.
+
 Large browser imports use the shared bounded splitter described in
 `docs/source-splitting.md`; source parts retain their complete extracted text
 and visible part attribution instead of truncating at the persistence limit.

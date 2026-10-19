@@ -2,10 +2,12 @@
 
 import { storeOriginalSource } from "@/lib/server/source-files"
 import { randomUUID } from "node:crypto"
-import { ConvexHttpClient } from "convex/browser"
+import type { ConvexHttpClient } from "convex/browser"
+import { serverConvexClient } from "@/lib/server/convex"
 import { api } from "@/convex/_generated/api"
 import { resolveProjectFile } from "@/lib/server/project-files"
 import { SourceIngestionError } from "@/lib/server/source-ingestion/errors"
+import { persistedChunkRows } from "@/lib/server/source-ingestion/chunk-rows"
 import { prepareStoredSource } from "@/lib/server/source-ingestion/prepare"
 
 /** Uses Node.js streams and the local filesystem for durable upload storage. */
@@ -13,12 +15,7 @@ export const runtime = "nodejs"
 
 /** Connects this local route to the configured personal Convex deployment. */
 function convexClient(): ConvexHttpClient {
-  const endpoint =
-    process.env.BLITZ_CONVEX_URL ??
-    process.env.NEXT_PUBLIC_CONVEX_URL ??
-    process.env.CONVEX_URL
-  if (!endpoint) throw new Error("Convex is unavailable")
-  return new ConvexHttpClient(endpoint)
+  return serverConvexClient(() => new Error("Convex is unavailable"))
 }
 
 /**
@@ -39,7 +36,8 @@ function sourceFormat(filename: string): {
   supported: boolean
 } {
   if (/\.pdf$/i.test(filename)) return { kind: "pdf", supported: true }
-  if (/\.(md|markdown)$/i.test(filename))
+  // Word documents are extracted as Markdown, with headings kept for citations.
+  if (/\.(md|markdown|docx)$/i.test(filename))
     return { kind: "markdown", supported: true }
   if (
     /\.(txt|vtt|srt|pptx|html?|csv|json|xml|ya?ml|toml|py|tsx?|jsx?|css|scss|sql|sh|bash|zsh|rs|go|c|cpp|h|java|kt|rb|php)$/i.test(
@@ -188,20 +186,7 @@ export async function POST(request: Request): Promise<Response> {
         },
         String(record.sourceId)
       )
-      const rows = chunks.map((chunk) => ({
-          ordinal: chunk.ordinal,
-          text: chunk.text,
-          textHash: chunk.id.replace(/^chunk_/, ""),
-          startOffset: chunk.startOffset,
-          endOffset: chunk.endOffset,
-          references: chunk.references.map((reference) => ({
-            ...(reference.marker ? { kind: reference.marker.kind } : {}),
-            value: reference.marker?.value ?? "",
-            label: reference.marker?.label ?? reference.filename ?? "Source",
-            startOffset: reference.startOffset,
-            endOffset: reference.endOffset,
-          })),
-        }))
+      const rows = persistedChunkRows(chunks)
       // Large sources are written in batches: the first replaces any earlier
       // sections, the rest append, all under the same ingestion lease.
       for (let start = 0; start === 0 || start < rows.length; start += CHUNK_BATCH) {

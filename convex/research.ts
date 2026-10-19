@@ -1,6 +1,15 @@
-/** Persists approval-first research proposals and leases planning work to the local Mac worker. */
+/**
+ * Persists approval-first research proposals and leases planning work to the
+ * local Mac worker. Approved sources are imported into a unit with their
+ * passages, so Teach can teach and cite them straight away.
+ */
 
-import { mutation, query, type QueryCtx } from "./_generated/server"
+import {
+  mutation,
+  query,
+  type MutationCtx,
+  type QueryCtx,
+} from "./_generated/server"
 import type { Doc, Id } from "./_generated/dataModel"
 import { v } from "convex/values"
 import {
@@ -8,7 +17,9 @@ import {
   researchImportPartMatchesSource,
   validateResearchImportPartSequence,
 } from "../lib/research-import-checkpoint"
+import { researchUnitTitle } from "../lib/research-unit"
 import { resolveQueuedAiSelection } from "./ai_provider_settings"
+import { insertSourceChunks, sourceChunkRow } from "./sourceRetrieval"
 
 /** Maximum request text retained for one proposal. */
 export const MAX_RESEARCH_REQUEST_LENGTH = 2_000
@@ -481,6 +492,7 @@ function importForClient(importRow: Doc<"researchProposalImports">) {
     proposalId: importRow.proposalId,
     sourceIndex: importRow.sourceIndex,
     status: importRow.status,
+    ...(importRow.unitId === undefined ? {} : { unitId: importRow.unitId }),
     ...(importRow.sourceId === undefined
       ? {}
       : { sourceId: importRow.sourceId }),
@@ -519,12 +531,50 @@ async function requireReadyProposal(
   return proposal
 }
 
+/**
+ * Returns the unit an import's sources are filed into, creating one if needed.
+ *
+ * The unit picked when the import was applied wins while it still exists in
+ * the project. Otherwise every import from the proposal shares one unit,
+ * created with the first imported source, `auto` titled from the request so
+ * the tutor can retitle it, and placed at the end of the learning path.
+ */
+async function resolveImportUnit(
+  ctx: Pick<MutationCtx, "db">,
+  row: Doc<"researchProposalImports">,
+  proposal: Doc<"researchProposals">
+): Promise<Id<"units">> {
+  for (const unitId of [row.unitId, proposal.unitId]) {
+    if (!unitId) continue
+    const unit = await ctx.db.get(unitId)
+    if (unit && unit.projectId === row.projectId) return unit._id
+  }
+  const last = await ctx.db
+    .query("units")
+    .withIndex("by_project_order", (q) => q.eq("projectId", row.projectId))
+    .order("desc")
+    .first()
+  const now = Date.now()
+  const unitId = await ctx.db.insert("units", {
+    projectId: row.projectId,
+    title: researchUnitTitle(proposal.request, proposal.topics),
+    titleSource: "auto",
+    order: (last?.order ?? 0) + 1,
+    createdAt: now,
+    updatedAt: now,
+  })
+  await ctx.db.patch(proposal._id, { unitId })
+  return unitId
+}
+
 /** Enqueues selected source indexes from a stored ready proposal idempotently. */
 export const apply = mutation({
   args: {
     projectId: v.id("projects"),
     requestId: v.string(),
     sourceIndexes: v.array(v.number()),
+    /** Existing unit to file the sources into; omitted for a new unit for this research. */
+    unitId: v.optional(v.id("units")),
   },
   handler: async (ctx, args) => {
     const proposal = await requireReadyProposal(
@@ -532,6 +582,11 @@ export const apply = mutation({
       args.projectId,
       boundedText(args.requestId, "Request id", 200)
     )
+    if (args.unitId) {
+      const unit = await ctx.db.get(args.unitId)
+      if (!unit || unit.projectId !== args.projectId)
+        throw new Error("Unit was not found in this project")
+    }
     if (!args.sourceIndexes.length || args.sourceIndexes.length > 20)
       throw new Error("Select between 1 and 20 proposal sources")
     const indexes = Array.from(new Set(args.sourceIndexes))
@@ -559,6 +614,8 @@ export const apply = mutation({
         if (existingImport.status === "failed") {
           await ctx.db.patch(existingImport._id, {
             status: "queued",
+            // A retry goes where the learner now points it.
+            unitId: args.unitId,
             workerId: undefined,
             leaseToken: undefined,
             leaseExpiresAt: undefined,
@@ -580,6 +637,7 @@ export const apply = mutation({
         projectId: args.projectId,
         sourceIndex,
         status: "queued",
+        ...(args.unitId ? { unitId: args.unitId } : {}),
         failureCategory: undefined,
         createdAt: now,
         updatedAt: now,
@@ -684,6 +742,11 @@ export const completeImport = mutation({
     originalUrl: v.string(),
     partNumber: v.optional(v.number()),
     totalParts: v.optional(v.number()),
+    /**
+     * Passages split by the worker, exact slices of `extractedText`. Saved
+     * with the source so Teach and chat can cite it as soon as it lands.
+     */
+    chunks: v.optional(v.array(sourceChunkRow)),
   },
   handler: async (ctx, args) => {
     const row = await ctx.db.get(args.importId)
@@ -763,10 +826,19 @@ export const completeImport = mutation({
         preparationJobId: existingPartJobIds[partNumber - 1],
       }
     }
+    // Chunk offsets must index the stored text exactly, or citations would
+    // highlight the wrong words.
+    for (const chunk of args.chunks ?? [])
+      if (
+        extractedText.slice(chunk.startOffset, chunk.endOffset) !== chunk.text
+      )
+        throw new Error("Research import passages do not match its text")
     const selection = await resolveQueuedAiSelection(ctx, "cardGeneration")
+    const unitId = await resolveImportUnit(ctx, row, proposal)
     const now = Date.now()
     const sourceId = await ctx.db.insert("sources", {
       projectId: row.projectId,
+      unitId,
       filename,
       kind: args.kind,
       extractedText,
@@ -775,6 +847,9 @@ export const completeImport = mutation({
       status: "ready",
       createdAt: now,
     })
+    const source = await ctx.db.get(sourceId)
+    if (source && args.chunks?.length)
+      await insertSourceChunks(ctx, source, args.chunks, { now })
     const preparationJobId = await ctx.db.insert("preparationJobs", {
       projectId: row.projectId,
       sourceId,
@@ -803,6 +878,7 @@ export const completeImport = mutation({
     const completedPartCount = checkpoint.sourceIds.length
     await ctx.db.patch(row._id, {
       status: checkpoint.status,
+      unitId,
       ...(row.sourceId === undefined ? { sourceId } : {}),
       ...(row.preparationJobId === undefined ? { preparationJobId } : {}),
       partCount: totalParts,
@@ -820,7 +896,7 @@ export const completeImport = mutation({
       lastError: undefined,
       updatedAt: now,
     })
-    return { status: "imported" as const, sourceId, preparationJobId }
+    return { status: "imported" as const, sourceId, preparationJobId, unitId }
   },
 })
 

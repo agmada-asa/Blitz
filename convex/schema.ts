@@ -1111,6 +1111,11 @@ export default defineSchema({
     ),
     /** Optional bounded activity timeline for active and completed research. */
     activity: v.optional(v.array(researchActivityEvent)),
+    /**
+     * Unit created for this research's imports when the learner chose a new
+     * unit. Created with the first imported source and reused by later ones.
+     */
+    unitId: v.optional(v.id("units")),
     workerId: v.optional(v.string()),
     leaseToken: v.optional(v.string()),
     leaseExpiresAt: v.optional(v.number()),
@@ -1133,6 +1138,12 @@ export default defineSchema({
       v.literal("imported"),
       v.literal("failed")
     ),
+    /**
+     * Unit the import is filed into. Set to the learner's pick when applied
+     * and to the unit actually used once imported; absent before imports
+     * were filed into units, and on queued rows going to a new unit.
+     */
+    unitId: v.optional(v.id("units")),
     sourceId: v.optional(v.id("sources")),
     preparationJobId: v.optional(v.id("preparationJobs")),
     /** Durable multi-part import checkpoint; absent on legacy single-part rows. */
