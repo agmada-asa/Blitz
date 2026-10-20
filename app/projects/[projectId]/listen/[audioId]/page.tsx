@@ -9,5 +9,11 @@ export default async function ProjectListeningPage({
   params: Promise<{ projectId: string; audioId: string }>
 }) {
   const { projectId, audioId } = await params
-  return <ListeningRoom projectId={projectId} audioId={audioId} />
+  return (
+    <ListeningRoom
+      key={JSON.stringify([projectId, audioId])}
+      projectId={projectId}
+      audioId={audioId}
+    />
+  )
 }

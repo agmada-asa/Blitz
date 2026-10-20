@@ -20,6 +20,11 @@ import type {
   ProjectAudioSegment,
   ProjectAudioTranscript,
 } from "@/lib/project-audio-types"
+import {
+  bindListeningProgress,
+  listeningProgressKey,
+  type ListeningProgressStorage,
+} from "@/lib/client/listening-progress"
 import { cn } from "@/lib/utils"
 
 /** Props identify one completed local recording inside its owning project. */
@@ -127,6 +132,36 @@ export function ListeningRoom({ projectId, audioId }: ListeningRoomProps) {
   }, [loadRecording])
 
   const segments = recording?.transcript.segments ?? []
+
+  useEffect(() => {
+    const audio = audioRef.current
+    if (!recording || !audio) return
+
+    let storage: ListeningProgressStorage | null = null
+    try {
+      storage = window.localStorage
+    } catch {
+      // Playback remains available when the browser blocks local storage.
+    }
+    const progress = bindListeningProgress({
+      audio,
+      storage,
+      key: listeningProgressKey(projectId, audioId),
+      onPosition: setCurrentTime,
+    })
+    /** Saves the playback time when the browser hides the listening room. */
+    const flushWhenHidden = (): void => {
+      if (document.visibilityState === "hidden") progress.flush()
+    }
+    window.addEventListener("pagehide", progress.flush)
+    document.addEventListener("visibilitychange", flushWhenHidden)
+    return () => {
+      window.removeEventListener("pagehide", progress.flush)
+      document.removeEventListener("visibilitychange", flushWhenHidden)
+      progress.dispose()
+    }
+  }, [audioId, projectId, recording])
+
   const activeIndex = segments.length
     ? passageAtTime(segments, currentTime)
     : -1
