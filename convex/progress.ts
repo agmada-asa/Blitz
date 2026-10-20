@@ -260,7 +260,8 @@ const MAX_SESSION_MS = 12 * 60 * 60 * 1000
  */
 export const sessionSummary = query({
   args: {
-    projectId: v.id("projects"),
+    /** Omitted for a Review session, which mixes modules. */
+    projectId: v.optional(v.id("projects")),
     unitId: v.optional(v.id("units")),
     since: v.number(),
     tzOffsetMinutes: v.number(),
@@ -269,7 +270,7 @@ export const sessionSummary = query({
   handler: async (ctx, { projectId, unitId, since, tzOffsetMinutes, now }) => {
     const start = unitId ? since : Math.max(since, now - MAX_SESSION_MS)
     const { offset, xpByDay } = await studyHistory(ctx, tzOffsetMinutes, now)
-    const events = unitId
+    const events = unitId && projectId
       ? (
           await Promise.all(
             (
@@ -303,7 +304,7 @@ export const sessionSummary = query({
     const concepts = new Map<string, { title: string; unitId?: string } | null>()
     const answers = []
     for (const event of events) {
-      if (event.projectId !== projectId || !event.outcome) continue
+      if ((projectId && event.projectId !== projectId) || !event.outcome) continue
       const key = String(event.conceptId)
       if (!concepts.has(key)) {
         const concept = await ctx.db.get(event.conceptId)
@@ -332,12 +333,14 @@ export const sessionSummary = query({
             .query("learningActivity")
             .withIndex("by_occurredAt", (q) => q.gte("occurredAt", start))
             .collect()
-        ).filter((milestone) => milestone.projectId === projectId)
+        ).filter((milestone) => !projectId || milestone.projectId === projectId)
     const totals = summarizeSession(answers, milestones)
-    const reviews = await ctx.db
-      .query("conceptReviews")
-      .withIndex("by_project_dueAt", (q) => q.eq("projectId", projectId))
-      .collect()
+    const reviews = projectId
+      ? await ctx.db
+          .query("conceptReviews")
+          .withIndex("by_project_dueAt", (q) => q.eq("projectId", projectId))
+          .collect()
+      : await ctx.db.query("conceptReviews").collect()
     const reviewByConcept = new Map(reviews.map((review) => [String(review.conceptId), review]))
     const { goal } = await preferences(ctx)
     const todayKey = localDayKey(now, offset)

@@ -33,6 +33,7 @@ import {
   SendIcon as SendGlyph,
   ShieldCheckIcon as ShieldCheckGlyph,
   Sun03Icon,
+  SnowflakeIcon as SnowflakeGlyph,
   ZapIcon as ZapGlyph,
 } from "@hugeicons/core-free-icons"
 import { HugeiconsIcon, type HugeiconsIconProps } from "@hugeicons/react"
@@ -113,5 +114,8 @@ export const SparklesIcon = makeIcon(AiSparklesIcon)
 export const SunIcon = makeIcon(Sun03Icon)
 /** Verification and safety shield glyph. */
 export const ShieldCheckIcon = makeIcon(ShieldCheckGlyph)
+/** Snowflake for streak freezes. */
+export const SnowflakeIcon = makeIcon(SnowflakeGlyph)
+
 /** Blitz brand and energy glyph. */
 export const ZapIcon = makeIcon(ZapGlyph)

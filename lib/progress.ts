@@ -255,3 +255,23 @@ export function summarizeSession(
   )
   return { answered: answers.length, correct, xp, sections, unitsCompleted, concepts, bestRun }
 }
+
+/**
+ * One line on where today's goal and the streak stand, shared by the Today
+ * panel and session summaries so both say the same thing.
+ * @param streak The streak summary for today.
+ * @param xp XP earned today.
+ * @param goal Today's XP goal.
+ */
+export function streakMessage(streak: StreakSummary, xp: number, goal: number): string {
+  if (streak.todayMet)
+    return streak.current > 1
+      ? `Today's goal is met. ${streak.current}-day streak.`
+      : "Today's goal is met."
+  const toGoal = Math.max(0, goal - xp)
+  if (streak.todayStudied)
+    return `Streak kept for today. ${toGoal} XP more meets today's goal.`
+  if (streak.current)
+    return `Answer one question today to keep your ${streak.current}-day streak.`
+  return `Answer one question to start a streak. ${goal} XP meets today's goal.`
+}

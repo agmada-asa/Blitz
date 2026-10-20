@@ -16,11 +16,13 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { api } from "@/convex/_generated/api"
 import type { Id } from "@/convex/_generated/dataModel"
 import { useMinuteClock } from "@/hooks/use-minute-clock"
+import { COMBO_START, streakMessage } from "@/lib/progress"
 import { cn } from "@/lib/utils"
 
 /** Props for a session summary. */
 type SessionSummaryProps = {
-  projectId: string
+  /** Module the session belongs to; omit for Review, which mixes modules. */
+  projectId?: string
   /** Limits the summary to one unit. */
   unitId?: string
   /** When the session started, in milliseconds since the epoch. */
@@ -105,7 +107,7 @@ export function SessionSummary({
 }: SessionSummaryProps) {
   const now = useMinuteClock()
   const summary = useQuery(api.progress.sessionSummary, {
-    projectId: projectId as Id<"projects">,
+    ...(projectId ? { projectId: projectId as Id<"projects"> } : {}),
     ...(unitId ? { unitId: unitId as Id<"units"> } : {}),
     since,
     tzOffsetMinutes: new Date().getTimezoneOffset(),
@@ -155,19 +157,20 @@ export function SessionSummary({
           },
         ]
       : []),
+    ...(summary.bestRun >= COMBO_START
+      ? [{ label: "Best run", value: `${summary.bestRun} in a row` }]
+      : []),
     ...(now - since <= MAX_TIMED_SPAN_MS
       ? [{ label: "Time", value: minutes(Math.max(0, now - since)) }]
       : []),
   ]
   const { today } = summary
-  const remaining = Math.max(0, today.goal - today.xp)
-  const streakText = today.streak.todayMet
-    ? today.streak.current > 1
-      ? `Today's goal is met. ${today.streak.current}-day streak.`
-      : "Today's goal is met."
-    : today.streak.current
-      ? `${remaining} XP more keeps your ${today.streak.current}-day streak.`
-      : `${remaining} XP more meets today's goal.`
+  const streakText = streakMessage(today.streak, today.xp, today.goal)
+  // Concepts one to three right answers from strong are worth one more go.
+  const nearlyStrong = summary.concepts
+    .filter((concept) => concept.toStrong > 0 && concept.toStrong <= 3)
+    .sort((a, b) => a.toStrong - b.toStrong)
+    .slice(0, 2)
 
   return (
     <section aria-labelledby={titleId}>
@@ -249,6 +252,20 @@ export function SessionSummary({
             ))}
           </ul>
         </div>
+      ) : null}
+
+      {nearlyStrong.length ? (
+        <ul className="mt-3 space-y-1 text-sm text-muted-foreground">
+          {nearlyStrong.map((concept) => (
+            <li key={concept.conceptId}>
+              {concept.toStrong === 1
+                ? "One more right answer"
+                : `${concept.toStrong} more right answers in a row`}{" "}
+              and <span className="font-medium text-foreground">{concept.title}</span> is
+              strong.
+            </li>
+          ))}
+        </ul>
       ) : null}
 
       {children}
