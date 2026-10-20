@@ -37,7 +37,13 @@ export type TeachSectionMode = "skip" | "skim" | "teach"
 export type TeachSectionPlan = Array<{ id: string; mode: TeachSectionMode }>
 
 /** One answered pre-check question, as reported to the tutor. */
-export type TeachPrecheckResult = { concept: string; question: string; correct: boolean }
+export type TeachPrecheckResult = {
+  concept: string
+  question: string
+  correct: boolean
+  /** The learner marked the answer as a guess, so a right answer is not proof. */
+  guessed?: boolean
+}
 
 /** Concepts from the module's other units, grouped by how well they are known. */
 export type TeachKnownConcepts = { strong: string[]; shaky: string[] }
@@ -345,7 +351,7 @@ function precheckBlock(precheck: TeachPromptInput["precheck"]): string[] {
     "PRE-CHECK RESULTS (questions not listed were left unanswered):",
     ...precheck.map(
       (result) =>
-        `- ${result.correct ? "RIGHT" : "WRONG"} [${result.concept}] ${result.question.replace(/\s+/g, " ").slice(0, 300)}`
+        `- ${result.correct ? (result.guessed ? "RIGHT BUT GUESSED (treat as not known)" : "RIGHT") : "WRONG"} [${result.concept}] ${result.question.replace(/\s+/g, " ").slice(0, 300)}`
     ),
   ]
 }

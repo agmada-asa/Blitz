@@ -359,7 +359,8 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
     async (
       messageId: string,
       block: QuizBlock,
-      selectedOptionIds: string[]
+      selectedOptionIds: string[],
+      confidence?: "guess"
     ) => {
       if (!activeChatId) return null
       const response = await fetch("/api/teach/answer", {
@@ -371,6 +372,7 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
           quizId: block.id,
           selectedOptionIds,
           clientEventId: createClientMessageId(),
+          ...(confidence ? { confidence } : {}),
         }),
       })
       const payload = (await response.json().catch(() => null)) as {

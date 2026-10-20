@@ -1502,6 +1502,23 @@ export const recordRecallEvent = mutation({
 })
 
 /**
+ * Returns the answer to a single-choice question so the learner can check an
+ * answer recalled from memory. Records nothing; the learner's verdict goes
+ * through `recordRecallEvent`. Other question types return null.
+ */
+export const revealAnswer = query({
+  args: { projectId: v.id("projects"), itemId: v.id("learningItems") },
+  handler: async (ctx, args) => {
+    const item = await ctx.db.get(args.itemId)
+    if (!item || item.projectId !== args.projectId) return null
+    if (item.type !== "single-choice" || !item.correctOptionId) return null
+    const option = item.options?.find((entry) => entry.id === item.correctOptionId)
+    if (!option) return null
+    return { answer: option.text, body: item.body }
+  },
+})
+
+/**
  * Re-runs every concept's review schedule from its answer log. Run once after
  * the switch to FSRS so concepts answered under the old fixed intervals get
  * FSRS due dates: `npx convex run learning:rescheduleReviews`. Safe to repeat;

@@ -181,7 +181,12 @@ export const precheckResults = query({
           .lt("teachKey", `${first._id};`)
       )
       .collect()
-    const results: Array<{ concept: string; question: string; correct: boolean }> = []
+    const results: Array<{
+      concept: string
+      question: string
+      correct: boolean
+      guessed: boolean
+    }> = []
     for (const item of items) {
       const event = await ctx.db
         .query("studyEvents")
@@ -194,6 +199,7 @@ export const precheckResults = query({
         concept: item.title,
         question: item.question ?? "",
         correct: event.outcome === "correct",
+        guessed: event.confidence === "guess",
       })
     }
     return results

@@ -44,7 +44,8 @@ type DrillResult = { correct: boolean }
 async function submitAnswer(
   projectId: string,
   question: DrillQuestion,
-  selectedOptionIds: string[]
+  selectedOptionIds: string[],
+  confidence?: "guess"
 ): Promise<{ correct: boolean }> {
   const [first] = selectedOptionIds
   const answer =
@@ -62,6 +63,7 @@ async function submitAnswer(
       clientEventId: `drill:${createClientMessageId()}`,
       occurredAt: Date.now(),
       answer,
+      ...(confidence ? { confidence } : {}),
     }),
   })
   const payload = (await response.json().catch(() => null)) as {
@@ -118,9 +120,9 @@ export function DrillSession({ projectId, unitId }: { projectId: string; unitId?
   const finished = Boolean(deck && deck.length && index >= deck.length)
 
   const onQuizAnswer = useCallback(
-    async (_block: QuizBlock, selectedOptionIds: string[]) => {
+    async (_block: QuizBlock, selectedOptionIds: string[], confidence?: "guess") => {
       if (!current) return null
-      const result = await submitAnswer(projectId, current, selectedOptionIds)
+      const result = await submitAnswer(projectId, current, selectedOptionIds, confidence)
       setResults((previous) => ({ ...previous, [current.itemId]: result }))
       // Move focus to Next so keyboard learners can continue with Enter.
       window.requestAnimationFrame(() => nextRef.current?.focus())
@@ -128,7 +130,10 @@ export function DrillSession({ projectId, unitId }: { projectId: string; unitId?
     },
     [current, projectId]
   )
-  const interactive = useMemo(() => ({ onQuizAnswer }), [onQuizAnswer])
+  const interactive = useMemo(
+    () => ({ onQuizAnswer, acceptsConfidence: true }),
+    [onQuizAnswer]
+  )
 
   const correctCount = Object.values(results).filter((result) => result.correct).length
   const missed = deck?.filter((question) => results[question.itemId]?.correct === false) ?? []

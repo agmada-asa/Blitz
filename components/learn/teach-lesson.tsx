@@ -52,7 +52,8 @@ type TeachLessonProps = {
   onQuizAnswer: (
     messageId: string,
     block: QuizBlock,
-    selectedOptionIds: string[]
+    selectedOptionIds: string[],
+    confidence?: "guess"
   ) => Promise<{ correct: boolean } | null>
   onFollowUp: (text: string) => void
   /** Disables follow-up chips while a reply is being written. */
@@ -162,8 +163,9 @@ const TutorReply = memo(function TutorReply({
     () => ({
       streaming,
       answeredQuizzes: answered,
-      onQuizAnswer: (block: QuizBlock, selected: string[]) =>
-        onQuizAnswer(message.id, block, selected),
+      acceptsConfidence: true,
+      onQuizAnswer: (block: QuizBlock, selected: string[], confidence?: "guess") =>
+        onQuizAnswer(message.id, block, selected, confidence),
       ...(onFollowUp ? { onFollowUp } : {}),
     }),
     [streaming, answered, onQuizAnswer, onFollowUp, message.id]

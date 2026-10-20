@@ -39,6 +39,7 @@ import {
   vibrateForAnswer,
   type AnswerCue,
 } from "@/components/ui/interactive-blocks/answer-feedback"
+import { GuessToggle } from "@/components/ui/interactive-blocks/guess-toggle"
 import { QuizSaveAction } from "@/components/ui/interactive-blocks/quiz-save"
 import { useQuizShortcuts } from "@/hooks/use-quiz-shortcuts"
 import {
@@ -138,7 +139,7 @@ export function QuizBlockView({
   block: QuizBlock
   renderMarkdown: MarkdownRenderer
 }) {
-  const { onQuizAnswer, answeredQuizzes, quizSaving, streaming } =
+  const { onQuizAnswer, acceptsConfidence, answeredQuizzes, quizSaving, streaming } =
     useInteractiveBlocks()
   const baseId = useId()
   const questionId = `${baseId}-question`
@@ -149,6 +150,7 @@ export function QuizBlockView({
   const focusFirstOption = useRef(false)
   // Undefined until the learner acts, so a recorded answer that loads later still appears.
   const [localAttempt, setLocalAttempt] = useState<QuizAttempt>()
+  const [guessing, setGuessing] = useState(false)
 
   const recorded = answeredQuizzes?.[block.id]
   const validIds = new Set(block.options.map((option) => option.id))
@@ -196,7 +198,9 @@ export function QuizBlockView({
     if (structured && !structuredAnswerReady(block.type, selected)) return
     setLocalAttempt({ status: "pending", selected })
     try {
-      const result = onQuizAnswer ? await onQuizAnswer(block, selected) : null
+      const result = onQuizAnswer
+        ? await onQuizAnswer(block, selected, guessing ? "guess" : undefined)
+        : null
       const correct = result ? result.correct : gradeQuizAnswer(block, selected)
       setLocalAttempt({ status: "answered", selected, correct })
       vibrateForAnswer(correct)
@@ -301,9 +305,14 @@ export function QuizBlockView({
               : renderMarkdown(block.question, { inline: true })}
           </span>
         </legend>
-        <p id={hintId} className="mt-1 text-sm text-muted-foreground">
-          {quizHints[block.type]}
-        </p>
+        <div className="mt-1 flex flex-wrap items-center justify-between gap-2">
+          <p id={hintId} className="text-sm text-muted-foreground">
+            {quizHints[block.type]}
+          </p>
+          {acceptsConfidence && onQuizAnswer && !locked ? (
+            <GuessToggle pressed={guessing} onPressedChange={setGuessing} />
+          ) : null}
+        </div>
 
         {structured ? (
           <div
