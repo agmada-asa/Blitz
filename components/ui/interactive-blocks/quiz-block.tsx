@@ -7,7 +7,8 @@
  * questions use checkboxes and a `Check answer` button. Cloze, ordering, matching, and code-output
  * questions use `StructuredAnswer` and also submit with `Check answer`. Answers are scored by the provider's
  * `onQuizAnswer` handler when present (falling back to local grading when it returns null) and shown
- * with icons and text, the explanation, and `Try again` for incorrect answers. Recorded answers from
+ * with icons and text, the explanation, and `Try again` for incorrect answers. A freshly checked answer
+ * also plays a short pulse or shake and buzzes phones (see `answer-feedback.ts`). Recorded answers from
  * the provider restore the answered state after a reload.
  */
 import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react"
@@ -32,6 +33,11 @@ import {
   useInteractiveBlocks,
   type MarkdownRenderer,
 } from "@/components/ui/interactive-blocks/context"
+import {
+  answerCueClass,
+  vibrateForAnswer,
+  type AnswerCue,
+} from "@/components/ui/interactive-blocks/answer-feedback"
 import { QuizSaveAction } from "@/components/ui/interactive-blocks/quiz-save"
 import {
   StructuredAnswer,
@@ -165,6 +171,13 @@ export function QuizBlockView({
   // Formats that collect an answer first and check it with a button.
   const checked = multiple || structured
   const locked = attempt.status === "pending" || attempt.status === "answered"
+  // The cue plays only for an answer checked in this view, so a recorded answer does not replay on load.
+  const cue: AnswerCue | undefined =
+    localAttempt?.status === "answered"
+      ? localAttempt.correct
+        ? "correct"
+        : "wrong"
+      : undefined
 
   /**
    * Scores a selection with the provider handler, falling back to local grading when it returns null
@@ -179,6 +192,7 @@ export function QuizBlockView({
       const result = onQuizAnswer ? await onQuizAnswer(block, selected) : null
       const correct = result ? result.correct : gradeQuizAnswer(block, selected)
       setLocalAttempt({ status: "answered", selected, correct })
+      vibrateForAnswer(correct)
     } catch {
       setLocalAttempt({ status: "error", selected })
     }
@@ -299,6 +313,7 @@ export function QuizBlockView({
               correct={
                 attempt.status === "answered" ? attempt.correct : undefined
               }
+              cue={cue}
               renderMarkdown={renderMarkdown}
               idBase={baseId}
             />
@@ -327,6 +342,7 @@ export function QuizBlockView({
                     htmlFor={checkboxId}
                     className={cn(
                       optionRowClass(mark, false),
+                      selected && answerCueClass(cue),
                       locked
                         ? "cursor-default"
                         : "cursor-pointer hover:bg-muted"
@@ -369,6 +385,7 @@ export function QuizBlockView({
                   className={cn(
                     "h-auto",
                     optionRowClass(mark, pendingChoice),
+                    selected && answerCueClass(cue),
                     locked && "pointer-events-none"
                   )}
                 >

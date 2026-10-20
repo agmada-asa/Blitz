@@ -14,6 +14,11 @@ import { Button } from "@/components/ui/button"
 import { CancelIcon, CheckIcon } from "@/components/ui/icon"
 import { plainMarkdownRenderer } from "@/components/ui/markdown"
 import {
+  answerCueClass,
+  vibrateForAnswer,
+  type AnswerCue,
+} from "@/components/ui/interactive-blocks/answer-feedback"
+import {
   StructuredAnswer,
   structuredHints,
 } from "@/components/ui/interactive-blocks/structured-answer"
@@ -65,6 +70,12 @@ export function FeedCardView({ card, onAsk, onSkip, onAnswer }: FeedCardProps) {
   const [structuredValue, setStructuredValue] = useState<string[]>(() =>
     shape ? initialStructuredAnswer(shape) : []
   )
+  // Plays once per checked answer; feedback only ever comes from this card's own submission.
+  const cue: AnswerCue | undefined = feedback
+    ? feedback.isCorrect
+      ? "correct"
+      : "wrong"
+    : undefined
   // Cloze blanks show as numbered gaps; every other prompt shows as written.
   const prompt =
     card.type === "explain"
@@ -85,6 +96,7 @@ export function FeedCardView({ card, onAsk, onSkip, onAnswer }: FeedCardProps) {
         setFeedback(null)
       } else {
         setFeedback(result)
+        vibrateForAnswer(result.isCorrect)
       }
     } catch {
       setError("Could not check that answer. Try again.")
@@ -161,7 +173,8 @@ export function FeedCardView({ card, onAsk, onSkip, onAnswer }: FeedCardProps) {
       showFeedback &&
         isSelected &&
         !optionIsCorrect(optionId) &&
-        "border-destructive/60 bg-destructive/10 text-destructive dark:border-red-400/60 dark:bg-red-400/15 dark:text-red-100"
+        "border-destructive/60 bg-destructive/10 text-destructive dark:border-red-400/60 dark:bg-red-400/15 dark:text-red-100",
+      showFeedback && isSelected && answerCueClass(cue)
     )
   }
 
@@ -209,6 +222,7 @@ export function FeedCardView({ card, onAsk, onSkip, onAnswer }: FeedCardProps) {
                 disabled={pending || feedback !== null}
                 answerKey={feedback?.feedback}
                 correct={feedback ? feedback.isCorrect : undefined}
+                cue={cue}
                 renderMarkdown={plainMarkdownRenderer}
                 idBase={idBase}
               />

@@ -332,6 +332,59 @@
   }
 }
 
+/* Answer cues run once when their class is added; see components/ui/interactive-blocks/answer-feedback.ts. */
+@keyframes answer-pulse {
+  0% {
+    transform: scale(1);
+    box-shadow: 0 0 0 0 transparent;
+  }
+  40% {
+    transform: scale(1.03);
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--brand) 30%, transparent);
+  }
+  100% {
+    transform: scale(1);
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+
+@keyframes answer-shake {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  15% {
+    transform: translateX(-6px);
+  }
+  30% {
+    transform: translateX(6px);
+  }
+  45% {
+    transform: translateX(-5px);
+  }
+  60% {
+    transform: translateX(4px);
+  }
+  75% {
+    transform: translateX(-2px);
+  }
+}
+
+.answer-pulse {
+  animation: answer-pulse 300ms ease-out;
+}
+
+.answer-shake {
+  animation: answer-shake 350ms ease-in-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .answer-pulse,
+  .answer-shake {
+    animation: none;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .feed-backdrop::before,
   .feed-backdrop::after {
