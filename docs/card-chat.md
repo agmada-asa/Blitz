@@ -2,7 +2,7 @@
 
 The web app asks about cards in workspace chat (`docs/workspace-chat.md`). This
 page covers the shared Codex text-turn runner that grew out of card chat, and
-the legacy card conversation routes kept for the frozen Android app.
+the saved card conversations that older chat links still open.
 
 ## Codex text turns
 
@@ -40,22 +40,16 @@ threads; conversations may keep their server-issued thread ID for resume.
 The event shapes are based on the installed `codex-cli 0.153.0` v2 schema:
 [Codex App Server](https://learn.chatgpt.com/docs/app-server).
 
-## Persistent card conversations
+## Saved card conversations
 
-`POST /api/learning/chat` accepts only `projectId`, `itemId`, `clientMessageId`, and the learner's `question`. It creates or resumes one conversation per project and learning item, and treats a repeated client message id as an idempotent retry. The `202` response includes `conversationId`, `messageId`, `status`, `alreadyQueued`, and the full safe message record. `GET /api/learning/chat?projectId=...&itemId=...` returns message status, questions, replies, errors, and the saved conversation status. It never returns source text.
-
-No worker answers these questions any more: the card chat worker was removed with batch generation, so new questions stay queued. The notification centre lists only failed and completed card replies, so these questions never show as running work. The routes remain so the frozen Android app keeps compiling and can read saved history. Retry is an explicit `convex.conversations.retry` mutation.
-
-For HTTP clients, `POST /api/learning/chat/retry` takes `projectId`, `itemId`, and the failed `messageId`; it deliberately requeues that existing record and never creates a duplicate question.
+The `/api/learning/chat` routes and their Convex enqueue and retry functions were removed with the Android app. Conversation rows stay in the schema, and `conversations.getAttachment` still resolves the card for older `/chat` links. No worker answers card questions any more, so nothing writes new ones.
 
 Provider turns use `BLITZ_CODEX_WORKSPACE` or `~/.local/share/blitz/codex-workspace`, an explicitly created directory outside the repository. `defaultChatWorkspaceDirectory` and `ensureChatWorkspaceDirectory` in `lib/server/research-worker.ts` resolve and create it for the research worker.
 
 ## Streaming and Markdown
 
-The Android app uses `GET /api/learning/chat?projectId=...&itemId=...&stream=1` to receive newline-delimited JSON snapshots from a live Convex subscription. The plain GET remains available for older clients. Blank-line heartbeats arrive every ten seconds. Connections rotate after one minute; clients reconnect and receive current history without resubmitting questions. Closing chat cancels its subscription. A silent connection times out after thirty seconds and retries with bounded backoff.
-
 `lib/server/chat-progress.ts` coalesces assistant fragments at 250 ms intervals, keeps at most one persistence request in flight, and drains writes before completion or failure. Workspace chat uses it to save streamed replies.
 
-Web and Android share the Marked parser and link validation in `lib/markdown.ts`. React renderers support headings, emphasis, nested lists, task lists, quotes, links, code, and GFM tables, including unfinished streaming fences. Raw HTML is displayed as text. Images display their alt text without remote fetching. Only explicit HTTP, HTTPS, and mailto links can open. Tables and code scroll horizontally inside the reply. New text follows the reader only while they remain near the bottom.
+The web renderer uses the Marked parser and link validation in `lib/markdown.ts`. React renderers support headings, emphasis, nested lists, task lists, quotes, links, code, and GFM tables, including unfinished streaming fences. Raw HTML is displayed as text. Images display their alt text without remote fetching. Only explicit HTTP, HTTPS, and mailto links can open. Tables and code scroll horizontally inside the reply. New text follows the reader only while they remain near the bottom.
 
-Verification includes byte-split Unicode, reconnect and cancellation tests, coalesced writes, unfinished Markdown, safe links, and a live local HTTP stream through progress and terminal mutations. Desktop and 390 px web layouts were visually checked. Android type checks and a bundled APK build pass; native device rendering has not been visually verified for this change.
+Verification includes byte-split Unicode, reconnect and cancellation tests, coalesced writes, unfinished Markdown, safe links, and a live local HTTP stream through progress and terminal mutations. Desktop and 390 px web layouts were visually checked.

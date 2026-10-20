@@ -45,7 +45,7 @@ paths are checked after realpath resolution to block traversal and symlink
 escapes.
 
 For a desktop session that
-also serves browser or Android clients, set `BLITZ_LAN_ADDRESS` to the Mac's
+also serves browser clients, set `BLITZ_LAN_ADDRESS` to the Mac's
 LAN address before `npm run desktop`; the host then binds Next for that LAN
 while the BrowserWindow continues to use loopback. The desktop host is
 intentionally not a packaged installer yet.
@@ -53,8 +53,8 @@ intentionally not a packaged installer yet.
 ## Source files and retrieval
 
 Original uploads use `POST /api/sources/upload` with `x-blitz-project-id`,
-`x-blitz-filename`, and the raw file body. The same endpoint accepts browser,
-Electron, and Android LAN requests. Originals stream to the project folder
+`x-blitz-filename`, and the raw file body. The same endpoint accepts browser and
+Electron requests. Originals stream to the project folder
 without an application byte limit. Local PDF
 extraction uses file-backed range reads, while approved public research downloads
 retain their separate 5 MB network boundary. Persisted extracted text is limited
@@ -98,8 +98,8 @@ as unavailable. No prompt-only restriction or unrestricted fallback is used.
 
 The task and artifact tables, scoped file access, and explicit promotion action
 are available. Automatic creation, move/delete synchronization, and agent recovery
-still need an enforceable execution backend. Physical Android and the complete
-agent/restart/phone workflow have not been verified.
+still need an enforceable execution backend. The complete agent/restart/phone
+workflow has not been verified.
 
 ## Verification
 
