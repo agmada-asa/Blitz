@@ -4,7 +4,8 @@
  * Keyboard answering for quizzes: number keys 1 to 9 (and letters A to I on
  * lettered options) pick an option, and Enter checks the answer or, once the
  * card is answered, moves on. Quizzes in Teach, drills, and the Review feed all
- * use it. Keys are never taken while the learner is typing.
+ * use it. Keys are never taken while the learner is typing, except Enter in a
+ * one-line answer box, which checks the answer.
  *
  * Scoping: every mounted quiz registers its element. Keys go to exactly one
  * quiz, the owner, chosen this way: a quiz that holds focus owns the keys;
@@ -154,6 +155,25 @@ function handleEnter(event: KeyboardEvent, owner: ShortcutScope): void {
 }
 
 /**
+ * Enter in a one-line answer box (a blank, an output answer) checks the answer
+ * once it can be checked, as a form would submit. Other keys stay with typing.
+ * @param event The key event.
+ * @returns True when the event came from such a box, handled or not.
+ */
+function handleFieldEnter(event: KeyboardEvent): boolean {
+  if (event.key !== "Enter" || !(event.target instanceof HTMLInputElement))
+    return false
+  const scope = event.target.closest<HTMLElement>("[data-quiz-scope]")
+  if (!scope) return false
+  const check = scope.querySelector<HTMLButtonElement>("[data-quiz-check]")
+  if (check && !check.disabled) {
+    event.preventDefault()
+    check.click()
+  }
+  return true
+}
+
+/**
  * The single window keydown listener shared by all quizzes. It ignores modified
  * keys, typing, and keys another handler already took, then routes the rest to
  * the owning quiz.
@@ -162,6 +182,7 @@ function handleEnter(event: KeyboardEvent, owner: ShortcutScope): void {
 function handleKeyDown(event: KeyboardEvent): void {
   if (event.defaultPrevented || event.isComposing || event.repeat) return
   if (event.ctrlKey || event.metaKey || event.altKey) return
+  if (handleFieldEnter(event)) return
   if (isTypingTarget(event.target)) return
 
   const owner = findOwner()
