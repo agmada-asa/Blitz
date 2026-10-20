@@ -139,6 +139,7 @@ export function SessionSummary({
       : summary.sections
         ? `${summary.sections} ${summary.sections === 1 ? "section" : "sections"} taught`
         : "No answers yet this session")
+  const spent = (summary.lastActivityAt ?? now) - since
   const stats = [
     { label: "XP earned", value: `+${summary.xp}` },
     ...(summary.sections
@@ -160,8 +161,8 @@ export function SessionSummary({
     ...(summary.bestRun >= COMBO_START
       ? [{ label: "Best run", value: `${summary.bestRun} in a row` }]
       : []),
-    ...(now - since <= MAX_TIMED_SPAN_MS
-      ? [{ label: "Time", value: minutes(Math.max(0, now - since)) }]
+    ...(spent <= MAX_TIMED_SPAN_MS
+      ? [{ label: "Time", value: minutes(Math.max(0, spent)) }]
       : []),
   ]
   const { today } = summary

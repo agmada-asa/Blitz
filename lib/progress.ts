@@ -183,7 +183,17 @@ function nextDayKey(day: string): string {
  * One answer counted in a session summary. With `occurredAt`, runs of right
  * answers earn the combo bonus as they do toward the daily goal.
  */
-export type SessionAnswer = { conceptId: string; correct: boolean; occurredAt?: number }
+export type SessionAnswer = {
+  conceptId: string
+  correct: boolean
+  occurredAt?: number
+  /**
+   * The XP and run the daily total gave this answer, when known. A run can
+   * start before the session, so this keeps the summary's XP equal to what
+   * the answers actually added to today.
+   */
+  scored?: { xp: number; run: number }
+}
 
 /** How one concept went during a session. */
 export type SessionConceptTally = { conceptId: string; answered: number; correct: number }
@@ -216,8 +226,14 @@ export function summarizeSession(
   let correct = 0
   let xp = 0
   let bestRun = 0
+  const known = answers.every((answer) => answer.scored)
   const timed = answers.every((answer) => answer.occurredAt !== undefined)
-  if (timed)
+  if (known)
+    for (const answer of answers) {
+      xp += answer.scored!.xp - (answer.correct ? XP.correctAnswer : XP.incorrectAnswer)
+      bestRun = Math.max(bestRun, answer.scored!.run)
+    }
+  else if (timed)
     for (const scored of scoreAnswers(
       answers.map((answer) => ({ ...answer, occurredAt: answer.occurredAt! }))
     )) {

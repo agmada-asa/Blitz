@@ -87,7 +87,8 @@ export function DrillSession({ projectId, unitId }: { projectId: string; unitId?
   const [round, setRound] = useState(0)
   // When this round's deck arrived; the summary counts answers from then on.
   const [startedAt, setStartedAt] = useState(0)
-  // Right answers in a row this round, for the combo counter.
+  // Right answers in a row, for the combo counter. It starts from the run the
+  // server is scoring, so a run carried in from Review keeps its bonus.
   const [run, setRun] = useState(0)
   const nextRef = useRef<HTMLButtonElement>(null)
   const base = `/projects/${encodeURIComponent(projectId)}`
@@ -95,21 +96,27 @@ export function DrillSession({ projectId, unitId }: { projectId: string; unitId?
   // Fetches a fresh deck at the start of each round.
   useEffect(() => {
     let active = true
-    convex
-      .query(api.practice.drill, {
+    const now = Date.now()
+    Promise.all([
+      convex.query(api.practice.drill, {
         projectId: projectId as Id<"projects">,
         ...(unitId ? { unitId: unitId as Id<"units"> } : {}),
         limit: DRILL_LENGTH,
-        now: Date.now(),
-      })
-      .then((questions) => {
+        now,
+      }),
+      convex.query(api.progress.today, {
+        tzOffsetMinutes: new Date().getTimezoneOffset(),
+        now,
+      }),
+    ])
+      .then(([questions, today]) => {
         if (!active) return
         setLoadError("")
         setDeck(questions)
         setStartedAt(Date.now())
         setIndex(0)
         setResults({})
-        setRun(0)
+        setRun(today.run)
       })
       .catch(() => {
         if (active) setLoadError("Questions could not be loaded. Try again.")

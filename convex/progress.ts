@@ -10,6 +10,7 @@ import { mutation, query, type QueryCtx } from "./_generated/server"
 import { answersToStrong, conceptStrength } from "../lib/drill"
 import { readiness as moduleReadiness } from "../lib/learning/fsrs"
 import {
+  COMBO_GAP_MS,
   computeStreak,
   DAILY_GOAL_RANGE,
   DEFAULT_DAILY_GOAL_XP,
@@ -63,20 +64,25 @@ async function studyHistory(ctx: Pick<QueryCtx, "db">, tzOffsetMinutes: number, 
       q.eq("eventType", "answer").gte("occurredAt", since)
     )
     .collect()
-  for (const scored of scoreAnswers(
+  const scoredAnswers = scoreAnswers(
     answers.map((answer) => ({
+      id: String(answer._id),
       occurredAt: answer.occurredAt,
       correct: answer.outcome === "correct",
     }))
-  ))
-    add(scored.answer.occurredAt, scored.xp)
+  )
+  for (const scored of scoredAnswers) add(scored.answer.occurredAt, scored.xp)
+  // The run still going now, so a reloaded page picks up where it left off.
+  const latest = scoredAnswers[scoredAnswers.length - 1]
+  const run =
+    latest && now - latest.answer.occurredAt <= COMBO_GAP_MS ? latest.run : 0
   const milestones = await ctx.db
     .query("learningActivity")
     .withIndex("by_occurredAt", (q) => q.gte("occurredAt", since))
     .collect()
   for (const milestone of milestones)
     add(milestone.occurredAt, milestone.kind === "unit" ? XP.unit : XP.section)
-  return { offset, xpByDay, answers, milestones }
+  return { offset, xpByDay, answers, milestones, run, scoredAnswers }
 }
 
 /**
@@ -90,7 +96,11 @@ export const today = query({
     now: v.number(),
   },
   handler: async (ctx, { tzOffsetMinutes, now }) => {
-    const { offset, xpByDay, answers, milestones } = await studyHistory(ctx, tzOffsetMinutes, now)
+    const { offset, xpByDay, answers, milestones, run } = await studyHistory(
+      ctx,
+      tzOffsetMinutes,
+      now
+    )
     const todayKey = localDayKey(now, offset)
     let answeredToday = 0
     for (const answer of answers)
@@ -185,6 +195,8 @@ export const today = query({
         minutes: Math.max(1, Math.round((reviewCount * REVIEW_SECONDS_PER_QUESTION) / 60)),
         waiting: dueConcepts - reviewCount,
       },
+      /** Right answers in a row so far; the combo the next right answer extends. */
+      run,
       reminderHour,
     }
   },
@@ -269,7 +281,14 @@ export const sessionSummary = query({
   },
   handler: async (ctx, { projectId, unitId, since, tzOffsetMinutes, now }) => {
     const start = unitId ? since : Math.max(since, now - MAX_SESSION_MS)
-    const { offset, xpByDay } = await studyHistory(ctx, tzOffsetMinutes, now)
+    const { offset, xpByDay, scoredAnswers } = await studyHistory(
+      ctx,
+      tzOffsetMinutes,
+      now
+    )
+    const scoredById = new Map(
+      scoredAnswers.map(({ answer, xp, run }) => [answer.id, { xp, run }])
+    )
     const events = unitId && projectId
       ? (
           await Promise.all(
@@ -319,6 +338,7 @@ export const sessionSummary = query({
         conceptId: key,
         correct: event.outcome === "correct",
         occurredAt: event.occurredAt,
+        scored: scoredById.get(String(event._id)),
       })
     }
     const milestones = unitId
@@ -345,8 +365,14 @@ export const sessionSummary = query({
     const { goal } = await preferences(ctx)
     const todayKey = localDayKey(now, offset)
     const streak = computeStreak(xpByDay, todayKey, goal)
+    // When the session's last answer or milestone happened, so its time
+    // stops there rather than growing while the summary stays open.
+    let lastActivityAt: number | null = null
+    for (const item of [...answers, ...milestones])
+      lastActivityAt = Math.max(lastActivityAt ?? 0, item.occurredAt)
     return {
       ...totals,
+      lastActivityAt,
       concepts: totals.concepts.slice(0, 8).map((tally) => {
         const review = reviewByConcept.get(tally.conceptId)
         const history = {

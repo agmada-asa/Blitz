@@ -154,4 +154,14 @@ test("summarizes a session's answers, milestones, and concepts", () => {
   )
   assert.equal(timed.xp, 62)
   assert.equal(timed.bestRun, 5)
+  // A run carried in from before the session keeps the XP the day gave it.
+  const carried = summarizeSession(
+    [
+      { conceptId: "heaps", correct: true, occurredAt: 0, scored: { xp: 16, run: 5 } },
+      { conceptId: "heaps", correct: false, occurredAt: 1, scored: { xp: 4, run: 0 } },
+    ],
+    []
+  )
+  assert.equal(carried.xp, 20)
+  assert.equal(carried.bestRun, 5)
 })

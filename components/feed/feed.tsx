@@ -165,7 +165,9 @@ export function Feed({ initialFilter }: { initialFilter?: FeedFilter }) {
   if (target === null && today)
     setTarget(today.review.count || QUICK_ROUND_SIZE)
   const [sessionAnswered, setSessionAnswered] = useState(0)
-  const [run, setRun] = useState(0)
+  // The run carries over from answers just before this page opened.
+  const [run, setRun] = useState<number | null>(null)
+  if (run === null && today) setRun(today.run)
   const [xpPop, setXpPop] = useState<{ amount: number; key: number } | null>(null)
   const [summaryOpen, setSummaryOpen] = useState(false)
   const [summaryShown, setSummaryShown] = useState(false)
@@ -173,7 +175,7 @@ export function Feed({ initialFilter }: { initialFilter?: FeedFilter }) {
   /** Counts one scored answer toward the session, the run, and the XP pop. */
   const countAnswer = useCallback(
     (correct: boolean) => {
-      const nextRun = correct ? run + 1 : 0
+      const nextRun = correct ? (run ?? 0) + 1 : 0
       setRun(nextRun)
       setXpPop({
         amount: correct ? XP.correctAnswer + comboBonus(nextRun) : XP.incorrectAnswer,
@@ -574,7 +576,7 @@ export function Feed({ initialFilter }: { initialFilter?: FeedFilter }) {
               <span className="sr-only"> answered this session</span>
             </p>
           ) : null}
-          {run >= COMBO_START ? (
+          {run !== null && run >= COMBO_START ? (
             <p
               key={run}
               className="combo-chip flex h-10 items-center rounded-full border border-brand/30 bg-brand/10 px-3.5 font-medium text-brand backdrop-blur-md"
