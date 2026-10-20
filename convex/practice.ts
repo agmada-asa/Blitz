@@ -712,8 +712,18 @@ export const feed = query({
           .withIndex("by_project_order", (q) => q.eq("projectId", projectId))
           .collect()
       : await ctx.db.query("units").collect()
+    // Archived modules leave the mixed feed; filtering to one still shows it.
+    const archived = projectId
+      ? new Set<string>()
+      : new Set(
+          (await ctx.db.query("projects").collect())
+            .filter((project) => project.archivedAt !== undefined)
+            .map((project) => String(project._id))
+        )
     // Only units the learner has started belong in the feed.
-    const startedUnits = allUnits.filter((unit) => unit.startedAt)
+    const startedUnits = allUnits.filter(
+      (unit) => unit.startedAt && !archived.has(String(unit.projectId))
+    )
     const projectTitles = new Map<string, string>()
     const reviewCache = new Map<string, Awaited<ReturnType<typeof reviewsByConcept>>>()
     const questions: Array<{ item: Doc<"learningItems">; candidate: DrillCandidate }> = []

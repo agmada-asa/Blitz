@@ -3,6 +3,8 @@
 /**
  * Renders one server-backed card and owns its answer selection and feedback state. Number keys,
  * letters, and Enter answer the card or move on once it is answered (see `hooks/use-quiz-shortcuts.ts`).
+ * About half the single-choice questions start as recall: the learner answers in their head, reveals
+ * the answer, and grades themselves, or shows the options instead (see `lib/learning/recall.ts`).
  */
 
 import { useId, useRef, useState } from "react"
@@ -12,9 +14,12 @@ import type {
   FeedCard,
   FeedOption,
   LearningAnswer,
+  RecallReveal,
 } from "@/lib/learning/client-contracts"
+import { startsAsRecall } from "@/lib/learning/recall"
 import { Button } from "@/components/ui/button"
 import { CancelIcon, CheckIcon } from "@/components/ui/icon"
+import { GuessToggle } from "@/components/ui/interactive-blocks/guess-toggle"
 import { plainMarkdownRenderer } from "@/components/ui/markdown"
 import { useQuizShortcuts } from "@/hooks/use-quiz-shortcuts"
 import {
@@ -49,16 +54,43 @@ type FeedCardProps = {
   card: FeedCard
   onAsk: (card: FeedCard) => void
   onSkip: (card: FeedCard) => void
-  onAnswer: (card: FeedCard, answer: LearningAnswer) => Promise<AnswerResponse>
+  onAnswer: (
+    card: FeedCard,
+    answer: LearningAnswer,
+    confidence?: "guess"
+  ) => Promise<AnswerResponse>
+  /** Reveals a question's answer for recall without recording anything. */
+  onReveal: (card: FeedCard) => Promise<RecallReveal>
+  /** Records the learner's own verdict on a recalled answer. */
+  onRecall: (card: FeedCard, knewIt: boolean) => Promise<void>
 }
 
+/** Where a recall-first question stands. */
+type RecallState =
+  | { step: "thinking" }
+  | { step: "revealing" }
+  | { step: "revealed"; reveal: RecallReveal }
+  | { step: "graded"; reveal: RecallReveal; knewIt: boolean }
+
 /** Renders a server-backed explanation or question card. */
-export function FeedCardView({ card, onAsk, onSkip, onAnswer }: FeedCardProps) {
+export function FeedCardView({
+  card,
+  onAsk,
+  onSkip,
+  onAnswer,
+  onReveal,
+  onRecall,
+}: FeedCardProps) {
   const [selected, setSelected] = useState<string | null>(null)
   const [selectedMany, setSelectedMany] = useState<string[]>([])
   const [feedback, setFeedback] = useState<AnswerResponse | null>(null)
   const [pending, setPending] = useState(false)
   const [error, setError] = useState("")
+  const [guessing, setGuessing] = useState(false)
+  // Null once the learner chose the options, or for questions not asked from memory.
+  const [recall, setRecall] = useState<RecallState | null>(() =>
+    card.type !== "explain" && startsAsRecall(card) ? { step: "thinking" } : null
+  )
   const cardRef = useRef<HTMLElement>(null)
   const isMultipleAnswer = card.type === "multiple-answer"
   const idBase = useId()
@@ -83,9 +115,10 @@ export function FeedCardView({ card, onAsk, onSkip, onAnswer }: FeedCardProps) {
     : undefined
   // Enter moves on once answered; explanations have no answer to check.
   useQuizShortcuts(cardRef, {
-    answerable: !pending && !feedback && card.type !== "explain",
+    answerable: !pending && !feedback && !recall && card.type !== "explain",
     lettered: card.type !== "true-false",
-    onAdvance: feedback ? () => onSkip(card) : undefined,
+    onAdvance:
+      feedback || recall?.step === "graded" ? () => onSkip(card) : undefined,
   })
   // Cloze blanks show as numbered gaps; every other prompt shows as written.
   const prompt =
@@ -101,7 +134,7 @@ export function FeedCardView({ card, onAsk, onSkip, onAnswer }: FeedCardProps) {
     setPending(true)
     setError("")
     try {
-      const result = await onAnswer(card, answer)
+      const result = await onAnswer(card, answer, guessing ? "guess" : undefined)
       if (result.status === "invalid") {
         setError("That answer could not be checked. Try again.")
         setFeedback(null)
@@ -112,6 +145,35 @@ export function FeedCardView({ card, onAsk, onSkip, onAnswer }: FeedCardProps) {
     } catch {
       setError("Could not check that answer. Try again.")
       setFeedback(null)
+    } finally {
+      setPending(false)
+    }
+  }
+
+  /** Shows the answer to a question being recalled from memory. */
+  async function reveal() {
+    if (recall?.step !== "thinking") return
+    setRecall({ step: "revealing" })
+    setError("")
+    try {
+      setRecall({ step: "revealed", reveal: await onReveal(card) })
+    } catch {
+      setRecall({ step: "thinking" })
+      setError("Could not show the answer. Try again, or show the options.")
+    }
+  }
+
+  /** Records whether the learner knew the revealed answer. */
+  async function grade(knewIt: boolean) {
+    if (recall?.step !== "revealed" || pending) return
+    setPending(true)
+    setError("")
+    try {
+      await onRecall(card, knewIt)
+      setRecall({ step: "graded", reveal: recall.reveal, knewIt })
+      vibrateForAnswer(knewIt)
+    } catch {
+      setError("Could not save that. Try again.")
     } finally {
       setPending(false)
     }
@@ -226,9 +288,14 @@ export function FeedCardView({ card, onAsk, onSkip, onAnswer }: FeedCardProps) {
           </div>
         ) : shape ? (
           <>
-            <p className="mt-5 text-sm text-muted-foreground">
-              {structuredHints[shape.type as keyof typeof structuredHints]}
-            </p>
+            <div className="mt-5 flex flex-wrap items-center justify-between gap-2">
+              <p className="text-sm text-muted-foreground">
+                {structuredHints[shape.type as keyof typeof structuredHints]}
+              </p>
+              {!feedback ? (
+                <GuessToggle pressed={guessing} onPressedChange={setGuessing} />
+              ) : null}
+            </div>
             <div className="mt-4" aria-busy={pending}>
               <StructuredAnswer
                 shape={shape}
@@ -262,15 +329,95 @@ export function FeedCardView({ card, onAsk, onSkip, onAnswer }: FeedCardProps) {
               </Button>
             ) : null}
           </>
+        ) : recall ? (
+          <div className="mt-6 sm:mt-5" aria-live="polite">
+            {recall.step === "thinking" || recall.step === "revealing" ? (
+              <>
+                <p className="text-sm text-muted-foreground">
+                  Answer it in your head first, then check.
+                </p>
+                <div className="mt-4 flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    onClick={() => void reveal()}
+                    disabled={recall.step === "revealing"}
+                    className="h-11 rounded-full bg-brand px-5 text-sm font-medium text-brand-foreground hover:bg-brand/85"
+                  >
+                    Show answer
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => setRecall(null)}
+                    disabled={recall.step === "revealing"}
+                    className="h-11 rounded-full px-5 text-sm"
+                  >
+                    Show options
+                  </Button>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="rounded-2xl border border-emerald-500/50 bg-emerald-500/10 px-4 py-3 text-base text-foreground sm:px-5">
+                  <p className="text-xs font-medium text-emerald-700 dark:text-emerald-300">
+                    Answer
+                  </p>
+                  <div className="mt-1">
+                    {plainMarkdownRenderer(recall.reveal.answer, { inline: true })}
+                  </div>
+                </div>
+                {recall.reveal.body ? (
+                  <div className="mt-3 text-sm leading-relaxed text-muted-foreground">
+                    {plainMarkdownRenderer(recall.reveal.body)}
+                  </div>
+                ) : null}
+                {recall.step === "revealed" ? (
+                  <div className="mt-5 flex flex-wrap gap-2">
+                    <Button
+                      type="button"
+                      onClick={() => void grade(true)}
+                      disabled={pending}
+                      className="h-11 rounded-full bg-brand px-5 text-sm font-medium text-brand-foreground hover:bg-brand/85"
+                    >
+                      I knew it
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => void grade(false)}
+                      disabled={pending}
+                      className="h-11 rounded-full px-5 text-sm"
+                    >
+                      I didn&apos;t
+                    </Button>
+                  </div>
+                ) : (
+                  <p
+                    className={cn(
+                      "mt-4 text-sm font-medium",
+                      recall.knewIt
+                        ? "text-emerald-600 dark:text-emerald-400"
+                        : "text-muted-foreground"
+                    )}
+                  >
+                    {recall.knewIt ? "Nice recall." : "It will come back sooner."}
+                  </p>
+                )}
+              </>
+            )}
+          </div>
         ) : (
           <>
-            {isMultipleAnswer ? (
-              <p className="mt-5 text-sm text-muted-foreground">
-                Select all that apply
+            <div className="mt-5 flex flex-wrap items-center justify-between gap-2">
+              <p className="text-sm text-muted-foreground">
+                {isMultipleAnswer ? "Select all that apply" : "Choose one"}
               </p>
-            ) : null}
+              {!feedback ? (
+                <GuessToggle pressed={guessing} onPressedChange={setGuessing} />
+              ) : null}
+            </div>
             <div
-              className="mt-6 space-y-2.5 sm:mt-5"
+              className="mt-4 space-y-2.5"
               role={isMultipleAnswer ? "group" : "radiogroup"}
               aria-label={
                 isMultipleAnswer ? "Select all that apply" : "Answer options"
@@ -402,7 +549,7 @@ export function FeedCardView({ card, onAsk, onSkip, onAnswer }: FeedCardProps) {
             onClick={() => onSkip(card)}
             className="h-11 rounded-full px-4 text-sm text-muted-foreground hover:text-foreground"
           >
-            {feedback ? "Next" : "Skip"}
+            {feedback || recall?.step === "graded" ? "Next" : "Skip"}
           </Button>
         </div>
       </div>

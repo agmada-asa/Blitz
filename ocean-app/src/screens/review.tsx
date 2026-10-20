@@ -14,6 +14,7 @@ import type {
   FeedCard,
   FeedResponse,
   LearningAnswer,
+  RecallReveal,
 } from "@/lib/learning/client-contracts"
 import { askOcean, callTool, setContext } from "../bridge"
 import { back, eventId } from "../data"
@@ -114,7 +115,8 @@ export function Review({ module }: { module?: string }) {
   /** Sends an answer for Blitz to score, and counts it once it's recorded. */
   const answer = async (
     card: FeedCard,
-    value: LearningAnswer
+    value: LearningAnswer,
+    confidence?: "guess"
   ): Promise<AnswerResponse> => {
     const result = await callTool<AnswerResponse>("app_answer", {
       module: card.projectId,
@@ -122,6 +124,7 @@ export function Review({ module }: { module?: string }) {
       event: eventId(),
       at: Date.now(),
       answer: value,
+      ...(confidence ? { confidence } : {}),
     })
     if (result.status !== "invalid") {
       answered.current.add(card.key ?? card.id)
@@ -131,6 +134,26 @@ export function Review({ module }: { module?: string }) {
       }))
     }
     return result
+  }
+
+  /** Shows the answer to a question Allen is answering from memory. */
+  const reveal = (card: FeedCard): Promise<RecallReveal> =>
+    callTool<RecallReveal>("app_reveal", { module: card.projectId, item: card.id })
+
+  /** Records whether Allen knew a recalled answer, and counts it. */
+  const recall = async (card: FeedCard, knewIt: boolean): Promise<void> => {
+    await callTool("app_recall", {
+      module: card.projectId,
+      item: card.id,
+      event: eventId(),
+      at: Date.now(),
+      knewIt,
+    })
+    answered.current.add(card.key ?? card.id)
+    setScore((current) => ({
+      answered: current.answered + 1,
+      correct: current.correct + (knewIt ? 1 : 0),
+    }))
   }
 
   /** Moves on; a question left unanswered is recorded as skipped, which doesn't change when it's due. */
@@ -208,6 +231,8 @@ export function Review({ module }: { module?: string }) {
               key={card.key ?? card.id}
               card={card}
               onAnswer={answer}
+              onReveal={reveal}
+              onRecall={recall}
               onSkip={skip}
               onAsk={ask}
             />

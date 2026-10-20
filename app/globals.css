@@ -430,6 +430,52 @@
   animation: summary-burst 800ms ease-out forwards;
 }
 
+/* XP earned by a Review answer floats up from the XP chip; see components/feed/feed.tsx. */
+@keyframes xp-pop {
+  0% {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  20% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-14px);
+  }
+}
+
+.xp-pop {
+  animation: xp-pop 1100ms ease-out forwards;
+}
+
+/* The run counter pops each time the run grows. */
+@keyframes combo-chip-in {
+  0% {
+    transform: scale(0.9);
+  }
+  50% {
+    transform: scale(1.06);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+.combo-chip {
+  animation: combo-chip-in 300ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .xp-pop {
+    animation: none;
+    opacity: 0;
+  }
+  .combo-chip {
+    animation: none;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .answer-pulse,
   .answer-shake,

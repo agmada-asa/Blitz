@@ -3,20 +3,28 @@
 /**
  * Owns the Review feed: a weakness-weighted scroll of questions and recaps on
  * studied material, its server-backed answer flow, and compact filters.
+ *
+ * Each visit is a session with a target: the questions due today, at most
+ * `REVIEW_SESSION_SIZE`, or a short round of ten when nothing is due. The
+ * header counts progress and the current run of right answers; reaching the
+ * target opens the session summary, and Keep going carries on with the feed.
  */
 
 import Link from "next/link"
 import { useRouter } from "next/navigation"
+import { useQuery } from "convex/react"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { FilterHorizontalIcon } from "@hugeicons/core-free-icons"
 import { HugeiconsIcon } from "@hugeicons/react"
 
 import { FeedCardView } from "@/components/feed/feed-card"
+import { SessionSummary } from "@/components/progress/session-summary"
 import { TodayXpChip } from "@/components/progress/today-panel"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -30,16 +38,23 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
+import { api } from "@/convex/_generated/api"
+import { useMinuteClock } from "@/hooks/use-minute-clock"
 import type {
   AnswerRequest,
   AnswerResponse,
   EventRequest,
   FeedCard,
   FeedResponse,
+  RecallReveal,
 } from "@/lib/learning/client-contracts"
+import { COMBO_START, comboBonus, XP } from "@/lib/progress"
 
 const FEED_LIMIT = 20
 const MAX_EMPTY_PAGE_HOPS = 3
+
+/** Questions in a review round when nothing is due. */
+const QUICK_ROUND_SIZE = 10
 
 /** Sentinel value representing an unfiltered project or topic selection in shadcn pickers. */
 const ALL_FILTER_VALUE = "all"
@@ -140,6 +155,40 @@ export function Feed({ initialFilter }: { initialFilter?: FeedFilter }) {
   const [reloadToken, setReloadToken] = useState(0)
   const requestGeneration = useRef(0)
   const feedRequest = useRef<AbortController | null>(null)
+
+  // The session: when it began, its target, and how it is going.
+  const [sessionStartedAt] = useState(() => Date.now())
+  const [tzOffsetMinutes] = useState(() => new Date().getTimezoneOffset())
+  const now = useMinuteClock()
+  const today = useQuery(api.progress.today, { tzOffsetMinutes, now })
+  const [target, setTarget] = useState<number | null>(null)
+  if (target === null && today)
+    setTarget(today.review.count || QUICK_ROUND_SIZE)
+  const [sessionAnswered, setSessionAnswered] = useState(0)
+  const [run, setRun] = useState(0)
+  const [xpPop, setXpPop] = useState<{ amount: number; key: number } | null>(null)
+  const [summaryOpen, setSummaryOpen] = useState(false)
+  const [summaryShown, setSummaryShown] = useState(false)
+
+  /** Counts one scored answer toward the session, the run, and the XP pop. */
+  const countAnswer = useCallback(
+    (correct: boolean) => {
+      const nextRun = correct ? run + 1 : 0
+      setRun(nextRun)
+      setXpPop({
+        amount: correct ? XP.correctAnswer + comboBonus(nextRun) : XP.incorrectAnswer,
+        key: Date.now(),
+      })
+      const next = sessionAnswered + 1
+      setSessionAnswered(next)
+      if (target !== null && next >= target && !summaryShown) {
+        setSummaryShown(true)
+        // Let the answer's feedback show before the summary covers it.
+        window.setTimeout(() => setSummaryOpen(true), 900)
+      }
+    },
+    [run, sessionAnswered, target, summaryShown]
+  )
 
   /** Opens a fresh workspace chat with the selected card queued as context. */
   const openCardChat = useCallback(
@@ -287,15 +336,17 @@ export function Feed({ initialFilter }: { initialFilter?: FeedFilter }) {
   const answerCard = useCallback(
     async (
       card: FeedCard,
-      answer: AnswerRequest["answer"]
+      answer: AnswerRequest["answer"],
+      confidence?: "guess"
     ): Promise<AnswerResponse> => {
-      const key = JSON.stringify([card.id, answer])
+      const key = JSON.stringify([card.id, answer, confidence ?? null])
       const request: AnswerRequest = answerRequests.current.get(key) ?? {
         projectId: card.projectId,
         itemId: card.id,
         clientEventId: createClientEventId(),
         occurredAt: Date.now(),
         answer,
+        ...(confidence ? { confidence } : {}),
       }
       // A lost response retries the same attempt instead of counting it twice.
       answerRequests.current.set(key, request)
@@ -310,10 +361,50 @@ export function Feed({ initialFilter }: { initialFilter?: FeedFilter }) {
         )
       }
       const result = (await response.json()) as AnswerResponse
-      if (result.status !== "invalid") answeredCards.current.add(card.id)
+      if (result.status !== "invalid" && !answeredCards.current.has(card.id)) {
+        answeredCards.current.add(card.id)
+        countAnswer(result.isCorrect)
+      }
       return result
     },
-    []
+    [countAnswer]
+  )
+
+  /** Fetches the answer to a question the learner is recalling from memory. */
+  const revealCard = useCallback(async (card: FeedCard): Promise<RecallReveal> => {
+    const response = await fetch("/api/learning/recall", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ action: "reveal", projectId: card.projectId, itemId: card.id }),
+    })
+    if (!response.ok)
+      throw new Error(await readRouteError(response, "Could not show the answer."))
+    return (await response.json()) as RecallReveal
+  }, [])
+
+  /** Records whether the learner knew a recalled answer. */
+  const recallCard = useCallback(
+    async (card: FeedCard, knewIt: boolean): Promise<void> => {
+      const response = await fetch("/api/learning/recall", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          action: "grade",
+          projectId: card.projectId,
+          itemId: card.id,
+          clientEventId: createClientEventId(),
+          occurredAt: Date.now(),
+          outcome: knewIt ? "correct" : "incorrect",
+        }),
+      })
+      if (!response.ok)
+        throw new Error(await readRouteError(response, "Could not save that."))
+      if (!answeredCards.current.has(card.id)) {
+        answeredCards.current.add(card.id)
+        countAnswer(knewIt)
+      }
+    },
+    [countAnswer]
   )
 
   /** Records a passive skip while leaving the card answer state untouched. */
@@ -476,7 +567,34 @@ export function Feed({ initialFilter }: { initialFilter?: FeedFilter }) {
   return (
     <main className="feed-backdrop relative isolate h-[calc(100svh-68px-env(safe-area-inset-bottom))] overflow-hidden bg-background text-foreground selection:bg-brand selection:text-brand-foreground md:h-svh">
       <div className="pointer-events-none absolute inset-x-0 top-0 z-20 flex items-center justify-end gap-3 px-4 pt-[max(1rem,env(safe-area-inset-top))] sm:px-8 sm:pt-6">
-        <TodayXpChip />
+        <div className="mr-auto flex min-w-0 items-center gap-2 text-sm tabular-nums">
+          {target !== null ? (
+            <p className="flex h-10 items-center rounded-full border border-border/80 bg-background/80 px-3.5 text-muted-foreground backdrop-blur-md">
+              {Math.min(sessionAnswered, target)} of {target}
+              <span className="sr-only"> answered this session</span>
+            </p>
+          ) : null}
+          {run >= COMBO_START ? (
+            <p
+              key={run}
+              className="combo-chip flex h-10 items-center rounded-full border border-brand/30 bg-brand/10 px-3.5 font-medium text-brand backdrop-blur-md"
+            >
+              {run} in a row · +{comboBonus(run)} XP
+            </p>
+          ) : null}
+        </div>
+        <div className="relative">
+          <TodayXpChip />
+          {xpPop ? (
+            <span
+              key={xpPop.key}
+              aria-hidden="true"
+              className="xp-pop absolute top-full right-3 mt-1 text-sm font-semibold text-brand tabular-nums"
+            >
+              +{xpPop.amount}
+            </span>
+          ) : null}
+        </div>
         <Dialog
           open={filterOpen}
           onOpenChange={(open) => {
@@ -638,6 +756,8 @@ export function Feed({ initialFilter }: { initialFilter?: FeedFilter }) {
               onAsk={openCardChat}
               onSkip={(nextCard) => skipCard(nextCard, index)}
               onAnswer={answerCard}
+              onReveal={revealCard}
+              onRecall={recallCard}
             />
           ))}
           {hasMore ? (
@@ -651,6 +771,33 @@ export function Feed({ initialFilter }: { initialFilter?: FeedFilter }) {
           )}
         </div>
       )}
+
+      <Dialog open={summaryOpen} onOpenChange={setSummaryOpen}>
+        <DialogContent className="max-h-[90svh] overflow-y-auto sm:max-w-lg" showCloseButton>
+          <DialogHeader className="sr-only">
+            <DialogTitle>Review session summary</DialogTitle>
+            <DialogDescription>What this review session added up to.</DialogDescription>
+          </DialogHeader>
+          <SessionSummary
+            since={sessionStartedAt}
+            eyebrow="Review done"
+            actions={
+              <>
+                <Button
+                  type="button"
+                  onClick={() => setSummaryOpen(false)}
+                  className="min-h-11 rounded-full bg-brand px-5 text-brand-foreground hover:bg-brand/85"
+                >
+                  Keep going
+                </Button>
+                <Button asChild variant="outline" className="min-h-11 rounded-full px-5">
+                  <Link href="/">Back to Library</Link>
+                </Button>
+              </>
+            }
+          />
+        </DialogContent>
+      </Dialog>
     </main>
   )
 }
