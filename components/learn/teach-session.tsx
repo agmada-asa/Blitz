@@ -240,6 +240,15 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
           plan?.find((entry) => entry.id === section.id)?.mode !== "skip"
       ).length
     : 0
+  // Celebrate only when the recap arrived in this sitting, not on every revisit.
+  const finishedThisSitting =
+    complete &&
+    messages.some(
+      (message) =>
+        message.role === "assistant" &&
+        message.createdAt >= sittingStartedAt &&
+        parseTeachSectionMarker(message.content)?.kind === "done"
+    )
   // The pre-check waits for `Plan my lesson` or `Skip the check`.
   const awaitingPlan =
     lastMessage?.role === "assistant" &&
@@ -676,6 +685,7 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
                     since={messages[0]?.createdAt ?? 0}
                     eyebrow="Unit complete"
                     title={`You finished ${unit.title}`}
+                    celebrate={finishedThisSitting}
                   />
                 </div>
               ) : null}
