@@ -108,8 +108,11 @@ and `app_recall`.
 `lib/progress.ts` defines XP: 10 per correct answer, 4 per wrong answer, 25 per
 Teach section reached, and 50 per finished unit. Runs of right answers less
 than 30 minutes apart earn a combo bonus (`scoreAnswers`): +2 for the third in
-a row, +4 for the fourth, up to +10. Drills and Review show the run as it
-grows, and Review floats the XP each answer earned. Sections and units are
+a row, +4 for the fourth, up to +10. The run is scored across every answer,
+not per screen, so `progress.today` returns the run still going and Drills and
+Review start their run counter from it. Review floats the XP each answer
+earned, and session summaries take each answer's XP from the same scoring, so
+their total matches the day's. Sections and units are
 logged once each in `learningActivity` by `units.recordTeachProgress`, so
 restarting a unit cannot earn them again.
 
