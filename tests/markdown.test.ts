@@ -1,4 +1,4 @@
-/** Exercises Markdown syntax shared by the web and Android renderers. */
+/** Exercises the Markdown syntax that lib/markdown.ts supports. */
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import type { Token, Tokens } from "marked"
