@@ -23,12 +23,15 @@ import {
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
+import { isArchived } from "@/lib/projects"
 
 /** Project summary returned by the library query. */
 type Project = {
   _id: string
   title: string
   createdAt?: number
+  /** Set while archived; archived projects are listed only under the Archived section. */
+  archivedAt?: number
 }
 
 /** Learning progress for one module, keyed by project ID. */
@@ -66,20 +69,33 @@ function progressLine(progress: ModuleProgress | undefined): string {
 export function ProjectGrid({ projects, progress, onCreate }: ProjectGridProps) {
   const [search, setSearch] = useState("")
   const [sort, setSort] = useState<"recent" | "newest" | "name">("recent")
-  const filtered = projects
-    ?.filter((project) =>
-      project.title
-        .toLocaleLowerCase()
-        .includes(search.trim().toLocaleLowerCase())
-    )
-    .toSorted((a, b) =>
-      sort === "name"
-        ? a.title.localeCompare(b.title)
-        : sort === "recent"
-          ? (progress?.[b._id]?.lastStudiedAt ?? 0) - (progress?.[a._id]?.lastStudiedAt ?? 0) ||
-            (b.createdAt ?? 0) - (a.createdAt ?? 0)
-          : (b.createdAt ?? 0) - (a.createdAt ?? 0)
-    )
+  const [archivedExpanded, setArchivedExpanded] = useState(false)
+  const query = search.trim().toLocaleLowerCase()
+  const searching = query.length > 0
+  /** Orders projects by the selected sort; used for both the active grid and the Archived section. */
+  const compare = (a: Project, b: Project) =>
+    sort === "name"
+      ? a.title.localeCompare(b.title)
+      : sort === "recent"
+        ? (progress?.[b._id]?.lastStudiedAt ?? 0) - (progress?.[a._id]?.lastStudiedAt ?? 0) ||
+          (b.createdAt ?? 0) - (a.createdAt ?? 0)
+        : (b.createdAt ?? 0) - (a.createdAt ?? 0)
+  /** Returns whether a project title contains the current search text. */
+  const matches = (project: Project) =>
+    project.title.toLocaleLowerCase().includes(query)
+  const allProjects = projects ?? []
+  const active = allProjects
+    .filter((project) => !isArchived(project) && matches(project))
+    .toSorted(compare)
+  const archived = allProjects.filter(isArchived)
+  const archivedMatches = archived.filter(matches).toSorted(compare)
+  // Search reaches archived projects only here, so the section opens to show matches.
+  const archivedOpen = archivedExpanded || (searching && archivedMatches.length > 0)
+  const emptyActiveTitle = !searching
+    ? "All projects are archived"
+    : archivedMatches.length > 0
+      ? "No active projects match"
+      : "No matching projects"
   const [open, setOpen] = useState(false)
   const [title, setTitle] = useState("")
   const [creating, setCreating] = useState(false)
@@ -188,62 +204,73 @@ export function ProjectGrid({ projects, progress, onCreate }: ProjectGridProps) 
             Create project
           </Button>
         </div>
-      ) : filtered?.length === 0 ? (
-        <div className="py-16 text-center">
-          <h2 className="text-lg font-medium">No matching projects</h2>
-          <Button
-            variant="outline"
-            className="mt-5 h-11"
-            onClick={() => setSearch("")}
-          >
-            Clear search
-          </Button>
-        </div>
       ) : (
         <>
-          <p role="status" className="sr-only">
-            {filtered?.length} {filtered?.length === 1 ? "project" : "projects"}
-          </p>
-          <ul
-            aria-label="Projects"
-            className="grid grid-cols-2 gap-3 md:grid-cols-[repeat(auto-fill,minmax(160px,200px))]"
-          >
-            {filtered?.map((project) => (
-              <li
-                key={project._id}
-                className="relative h-32 min-w-0 rounded-2xl border border-border bg-card transition-colors hover:bg-muted/50"
+          {active.length > 0 ? (
+            <>
+              <p role="status" className="sr-only">
+                {active.length} {active.length === 1 ? "project" : "projects"}
+              </p>
+              <ul
+                aria-label="Projects"
+                className="grid grid-cols-2 gap-3 md:grid-cols-[repeat(auto-fill,minmax(160px,200px))]"
               >
-                <Link
-                  href={`/projects/${project._id}`}
-                  className="absolute inset-0 flex min-w-0 flex-col justify-between rounded-2xl px-3 pb-3 pt-9 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none sm:px-4"
+                {active.map((project) => (
+                  <ProjectCard
+                    key={project._id}
+                    project={project}
+                    moduleProgress={progress}
+                  />
+                ))}
+              </ul>
+            </>
+          ) : (
+            <div className="py-16 text-center">
+              <h2 className="text-lg font-medium">{emptyActiveTitle}</h2>
+              {searching ? (
+                <Button
+                  variant="outline"
+                  className="mt-5 h-11"
+                  onClick={() => setSearch("")}
                 >
-                  <h2 className="line-clamp-2 shrink-0 text-sm font-medium tracking-tight break-words sm:text-base">
-                    {project.title}
-                  </h2>
-                  <div className="space-y-1.5">
-                    {/* One segment per unit, filled as far as it has been taught. */}
-                    <SegmentedBar
-                      size="sm"
-                      segments={(progress?.[project._id]?.unitProgress ?? []).map(
-                        (fill, index) => ({ key: String(index), fill })
-                      )}
-                    />
-                    {progress ? (
-                      // One line, so a two-line title still fits the fixed card height.
-                      <p className="line-clamp-1 text-xs text-muted-foreground">
-                        {progressLine(progress[project._id])}
-                      </p>
-                    ) : (
-                      <Skeleton className="h-4 w-32" />
-                    )}
-                  </div>
-                </Link>
-                <div className="absolute top-1 right-1 z-10">
-                  <ProjectActions project={project} />
-                </div>
-              </li>
-            ))}
-          </ul>
+                  Clear search
+                </Button>
+              ) : null}
+            </div>
+          )}
+          {archived.length > 0 && (
+            <div className="mt-10">
+              <Button
+                variant="ghost"
+                aria-expanded={archivedOpen}
+                aria-controls="archived-projects"
+                onClick={() => setArchivedExpanded((expanded) => !expanded)}
+                className="h-11 rounded-xl text-muted-foreground"
+              >
+                Archived ({archived.length})
+              </Button>
+              <div id="archived-projects" hidden={!archivedOpen} className="mt-3">
+                {archivedMatches.length > 0 ? (
+                  <ul
+                    aria-label="Archived projects"
+                    className="grid grid-cols-2 gap-3 md:grid-cols-[repeat(auto-fill,minmax(160px,200px))]"
+                  >
+                    {archivedMatches.map((project) => (
+                      <ProjectCard
+                        key={project._id}
+                        project={project}
+                        moduleProgress={progress}
+                      />
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="py-6 text-sm text-muted-foreground">
+                    No archived projects match.
+                  </p>
+                )}
+              </div>
+            </div>
+          )}
         </>
       )}
 
@@ -299,6 +326,53 @@ export function ProjectGrid({ projects, progress, onCreate }: ProjectGridProps) 
         </DialogContent>
       </Dialog>
     </section>
+  )
+}
+
+/**
+ * Renders one library card: a link to the project with its unit progress, and
+ * the project menu. Shows a skeleton line in place of the progress text until
+ * the module progress has loaded.
+ */
+function ProjectCard({
+  project,
+  moduleProgress,
+}: {
+  project: Project
+  /** Per-module progress; undefined while the library is loading. */
+  moduleProgress?: Record<string, ModuleProgress>
+}) {
+  return (
+    <li className="relative h-32 min-w-0 rounded-2xl border border-border bg-card transition-colors hover:bg-muted/50">
+      <Link
+        href={`/projects/${project._id}`}
+        className="absolute inset-0 flex min-w-0 flex-col justify-between rounded-2xl px-3 pb-3 pt-9 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none sm:px-4"
+      >
+        <h2 className="line-clamp-2 shrink-0 text-sm font-medium tracking-tight break-words sm:text-base">
+          {project.title}
+        </h2>
+        <div className="space-y-1.5">
+          {/* One segment per unit, filled as far as it has been taught. */}
+          <SegmentedBar
+            size="sm"
+            segments={(moduleProgress?.[project._id]?.unitProgress ?? []).map(
+              (fill, index) => ({ key: String(index), fill })
+            )}
+          />
+          {moduleProgress ? (
+            // One line, so a two-line title still fits the fixed card height.
+            <p className="line-clamp-1 text-xs text-muted-foreground">
+              {progressLine(moduleProgress[project._id])}
+            </p>
+          ) : (
+            <Skeleton className="h-4 w-32" />
+          )}
+        </div>
+      </Link>
+      <div className="absolute top-1 right-1 z-10">
+        <ProjectActions project={project} />
+      </div>
+    </li>
   )
 }
 

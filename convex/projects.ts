@@ -48,6 +48,19 @@ export const renameProject = mutation({
   },
 })
 
+/** Archives or restores a project. Archiving only sets `archivedAt`, so sources, study history and review schedules stay intact. */
+export const setProjectArchived = mutation({
+  args: { projectId: v.id("projects"), archived: v.boolean() },
+  handler: async (ctx, { projectId, archived }) => {
+    if (!(await ctx.db.get(projectId)))
+      throw new ConvexError("This project no longer exists.")
+    // Patching undefined removes the field, which restores the project.
+    await ctx.db.patch(projectId, {
+      archivedAt: archived ? Date.now() : undefined,
+    })
+  },
+})
+
 /** Deletes a project and its dependent records atomically. Failed or oversized deletions leave all data intact. */
 export const deleteProject = mutation({
   args: { projectId: v.id("projects") },

@@ -76,6 +76,8 @@ export default defineSchema({
     /** Five-step length preference copied into each new content generation job. */
     contentDepth: v.optional(v.number()),
     title: v.string(),
+    /** Set while the project is archived; archived projects keep all their data and are hidden from the Library grid. */
+    archivedAt: v.optional(v.number()),
     createdAt: v.number(),
     /** Optional stable key for the project-local desktop workspace. */
     workspaceKey: v.optional(v.string()),
