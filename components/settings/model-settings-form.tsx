@@ -335,13 +335,6 @@ function ModelSettingsEditor({
                       )}
                     </SelectContent>
                   </Select>
-                  {provider.id === "antigravity" ? (
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      Workspace chat only. Native reads and administrator
-                      policies still apply. Writing practice questions is
-                      unavailable.
-                    </p>
-                  ) : null}
                 </div>
               </div>
             ))}

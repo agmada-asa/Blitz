@@ -4,7 +4,7 @@
 
 Blitz teaches you your own course material. Drop in a week's lecture slides, transcripts, and notes, and it teaches them back in short sessions, quizzes you, and keeps returning to what hasn't stuck. In exam season, import past papers and sit mock exams marked against the mark scheme.
 
-It runs on your Mac and uses the AI coding agent you already pay for (Codex, Claude Code, OpenCode, or Google Antigravity) instead of an API key. Your material and progress stay in a local database.
+It runs on your Mac and uses the AI coding agent you already pay for (Codex, Claude Code, or OpenCode) instead of an API key. Your material and progress stay in a local database.
 
 ## Quick start
 
@@ -43,7 +43,7 @@ Use `Find sources` within a project to ask Blitz for a proposed learning scope a
 
 ## Run locally in detail
 
-Use Node.js 22.13 or newer, with at least one supported local provider installed and signed in. Codex is the default provider. Claude Code 2.1.248 or newer can run replies and card generation with tools disabled. OpenCode v1.18.21 or newer within v1 supports native tool permissions. Google Antigravity ACP supports interactive workspace chat. Development has been verified with Node.js 24 on macOS.
+Use Node.js 22.13 or newer, with at least one supported local provider installed and signed in. Codex is the default provider. Claude Code 2.1.248 or newer can run replies and card generation with tools disabled. OpenCode v1.18.21 or newer within v1 supports native tool permissions. Development has been verified with Node.js 24 on macOS.
 
 ```bash
 npm ci
@@ -73,7 +73,6 @@ Provider access is saved separately for each provider. Chat's **Provider policy*
 | Codex           | Read-only sandbox, approvals `never`                    | `on-request`, or `untrusted`                                  | `danger-full-access`, approvals `never`          |
 | Claude Code     | Restricted mode with all tools disabled                 | Explicit tool ask rules and the SDK's stdin approval protocol | `bypassPermissions`                              |
 | OpenCode        | Dedicated agent with `permission["*"] = "deny"`         | Dedicated agent with `permission["*"] = "ask"`                | Dedicated agent with `permission["*"] = "allow"` |
-| Antigravity ACP | Native `default` mode; Blitz denies permission requests | Native `default` mode; Blitz reviews permission requests      | Native `yolo` mode                               |
 
 Claude and ACP requests use the composer request panel. Codex approvals,
 native provider tool asks, Blitz-owned Codex questions and confirmation
@@ -92,11 +91,9 @@ that material cannot resolve a question or a tool would materially improve the
 answer, Codex chat can use live web search when the provider allows it. External
 findings stay separate from attached source citations.
 
-Background card preparation and card replies always use restricted policies regardless of saved full access. Claude removes all tools; OpenCode denies all native tools. Antigravity is unavailable for these background tasks: its ACP default mode allows reads, and there is no advertised tool-off mode. The installed `agy` CLI's `--prompt`/`--print` selects one-shot output, not tool isolation. A local CLI 1.1.22 probe with a custom agent declaring `tools: []` still advertised shell, file, browser, and network tools. The adapter does not treat that as a security boundary.
+Background card preparation and card replies always use restricted policies regardless of saved full access. Claude removes all tools; OpenCode denies all native tools.
 
-For Antigravity, Blitz first checks `BLITZ_ANTIGRAVITY_ACP_COMMAND`, its own managed runtime directory, common ACP client directories, and the macOS file index for a compatible `agy_acp_server.par`. If no shared copy exists, **Install and connect** downloads the current machine-specific package from the [official ACP registry](https://github.com/agentclientprotocol/registry/blob/main/antigravity-acp/agent.json), installs it under Blitz application data, and starts personal Google login. Once installed, Settings exposes every authentication method and model variant advertised by the runtime. Antigravity bundles its reasoning tier into each native model choice, and Blitz reapplies that exact choice with ACP `session/set_config_option` before a turn. The Antigravity desktop app, the `agy` CLI, and Antigravity ACP keep separate authentication state.
-
-Claude passes supported reasoning selections with `--effort`. Haiku and OpenCode expose only the provider default. Antigravity reports model-specific reasoning tiers as distinct native model choices. Legacy unsupported effort selections are normalized to the provider default. Native permission references: [Claude CLI](https://code.claude.com/docs/en/cli-reference), [Claude SDK approvals](https://code.claude.com/docs/en/agent-sdk/user-input), [OpenCode permissions](https://opencode.ai/docs/permissions/), [Antigravity CLI headless behavior](https://antigravity.google/docs/cli/headless/). Antigravity ACP modes were verified against Google's official `agy_acp_server_1.1.1` distribution; its defaults differ from CLI print mode.
+Claude passes supported reasoning selections with `--effort`. Haiku and OpenCode expose only the provider default. Legacy unsupported effort selections are normalized to the provider default. Native permission references: [Claude CLI](https://code.claude.com/docs/en/cli-reference), [Claude SDK approvals](https://code.claude.com/docs/en/agent-sdk/user-input), [OpenCode permissions](https://opencode.ai/docs/permissions/). Saved settings that name the removed Antigravity provider fall back to Codex.
 
 The ACP client negotiates `session/load` and `session/resume`. If neither is supported, it fails before accepting a turn so workspace chat can rebuild its saved history in a new session. Historical load notifications are excluded from the new answer. Both adapters bound stdout and assistant output, decode split UTF-8 safely, and terminate on transport failures or deadlines.
 

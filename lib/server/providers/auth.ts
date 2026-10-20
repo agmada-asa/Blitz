@@ -3,8 +3,6 @@
 import { spawn } from "node:child_process"
 
 import type { AiProviderId } from "../../ai-model-settings.ts"
-import { changeAcpAuthentication } from "./acp.ts"
-import { installAntigravityRuntime } from "./antigravity-runtime.ts"
 import { checkProviderAvailability, providerCommand } from "./registry.ts"
 
 const AUTH_TIMEOUT_MS = 15_000
@@ -85,33 +83,13 @@ export async function changeProviderAuthentication(input: {
   methodId?: string
   account?: string
 }): Promise<void> {
-  if (input.action === "install") {
-    if (input.providerId !== "antigravity")
-      throw new Error("Blitz cannot install this provider automatically.")
-    const executable = await installAntigravityRuntime()
-    await changeAcpAuthentication(
-      { executable, args: [] },
-      input.workspaceDirectory,
-      { type: "connect", methodId: "oauth-personal" }
-    )
-    return
-  }
+  if (input.action === "install")
+    throw new Error("Blitz cannot install this provider automatically.")
   const state = await checkProviderAvailability(input.providerId, {
     workspaceDirectory: input.workspaceDirectory,
   })
   if (!state.available) throw new Error(state.message)
   const command = providerCommand(input.providerId)
-
-  if (input.providerId === "antigravity") {
-    await changeAcpAuthentication(
-      command,
-      input.workspaceDirectory,
-      input.action === "connect"
-        ? { type: "connect", methodId: input.methodId ?? "" }
-        : { type: "disconnect" }
-    )
-    return
-  }
 
   if (input.action === "connect") {
     if (input.providerId === "codex") {

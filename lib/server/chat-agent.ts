@@ -28,11 +28,6 @@ import {
   approvalRecord,
   projectApprovalResponse,
 } from "./project-agent-approval.ts"
-import {
-  extractAntigravityUserInputQuestion,
-  isAntigravityUserInputRequest,
-  makeAntigravityUserInputResponse,
-} from "./providers/acp.ts"
 import type { ProviderApprovalDecision } from "./providers/types.ts"
 import type { AcpRequestHandler } from "./providers/acp.ts"
 
@@ -221,58 +216,12 @@ export function createChatAgentSession(options: {
       const details = JSON.stringify(request.params, null, 2)
       if (!details || details.length > 20_000)
         return { outcome: { outcome: "cancelled" } }
-      const question =
-        request.method === "session/request_permission" &&
-        isAntigravityUserInputRequest(request.params)
-          ? extractAntigravityUserInputQuestion(request.params)
-          : undefined
-      const spec = question
-        ? {
-            method: request.method,
-            kind: "question" as const,
-            title: "Blitz needs your input",
-            details,
-            prompt: "Choose an option so the provider can continue.",
-            input: {
-              questions: [
-                {
-                  ...question,
-                  options: question.options.map((option) => ({ ...option })),
-                },
-              ],
-            },
-          }
-        : genericApprovalRequest(request.method, details)
+      const spec = genericApprovalRequest(request.method, details)
       const result = await review(
         { ...spec, providerRequestId: String(request.requestId) },
         request.signal ? AbortSignal.any([signal, request.signal]) : signal
       )
       if (!result.accepted) return { outcome: { outcome: "cancelled" } }
-      if (question) {
-        try {
-          const parsed = result.response
-            ? (JSON.parse(result.response) as { answers?: Record<string, unknown> })
-            : undefined
-          const answerMap = Object.fromEntries(
-            Object.entries(parsed?.answers ?? {}).map(([id, value]) => {
-              const nested = value as { answers?: unknown }
-              return [
-                id,
-                nested && typeof nested === "object" && "answers" in nested
-                  ? nested.answers
-                  : value,
-              ]
-            })
-          )
-          const response = makeAntigravityUserInputResponse(
-            request.params,
-            answerMap
-          )
-          return response ?? { outcome: { outcome: "cancelled" } }
-        } catch {
-          return { outcome: { outcome: "cancelled" } }
-        }
-      }
       let optionId: string | undefined
       try {
         const parsed = result.response ? JSON.parse(result.response) : undefined

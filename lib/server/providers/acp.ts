@@ -1,4 +1,4 @@
-/** Runs bounded Agent Client Protocol turns for OpenCode and Antigravity. */
+/** Runs bounded Agent Client Protocol turns for OpenCode. */
 
 import { randomUUID } from "node:crypto"
 import { spawn } from "node:child_process"
@@ -104,69 +104,6 @@ function stringField(
 ): string | undefined {
   const field = value?.[key]
   return typeof field === "string" && field.trim() ? field : undefined
-}
-
-/** Returns whether Antigravity encoded this permission request as a question. */
-export function isAntigravityUserInputRequest(params: unknown): boolean {
-  const input = record(params)
-  const toolCall = record(input?.toolCall)
-  const id = stringField(toolCall, "toolCallId")
-  return id?.startsWith("interaction_") === true
-}
-
-/** Extracts a bounded Antigravity single-choice question from ACP permission data. */
-export function extractAntigravityUserInputQuestion(params: unknown): {
-  readonly id: string
-  readonly header: "Question"
-  readonly question: string
-  readonly multiSelect: false
-  readonly allowCustomAnswer: false
-  readonly options: readonly { value: string; label: string; description: string }[]
-} | undefined {
-  const input = record(params)
-  const toolCall = record(input?.toolCall)
-  const id = stringField(toolCall, "toolCallId")
-  const options = Array.isArray(input?.options) ? input.options.map(record) : []
-  if (!id?.startsWith("interaction_") || options.length === 0) return undefined
-  const seen = new Set<string>()
-  const normalized = options.flatMap((option) => {
-    const optionId = stringField(option, "optionId")
-    if (!optionId || seen.has(optionId)) return []
-    seen.add(optionId)
-    const label = stringField(option, "name") ?? optionId
-    return [{ value: optionId, label, description: label }]
-  })
-  if (normalized.length !== options.length) return undefined
-  const question = stringField(toolCall, "title") ?? "Choose an option."
-  return {
-    id,
-    header: "Question",
-    question: question.slice(0, 8_000),
-    multiSelect: false,
-    allowCustomAnswer: false,
-    options: normalized,
-  }
-}
-
-/** Converts one Antigravity question answer map into its native permission result. */
-export function makeAntigravityUserInputResponse(
-  params: unknown,
-  answers: unknown
-): { outcome: { outcome: "selected"; optionId: string } } | undefined {
-  const question = extractAntigravityUserInputQuestion(params)
-  if (!question) return undefined
-  const answerRecord = record(answers)
-  const raw = answerRecord?.[question.id]
-  const answer = Array.isArray(raw)
-    ? raw.length === 1 && typeof raw[0] === "string" ? raw[0] : undefined
-    : typeof raw === "string" ? raw : undefined
-  if (!answer) return undefined
-  const exact = question.options.find((option) => option.value === answer)
-  if (exact) return { outcome: { outcome: "selected", optionId: exact.value } }
-  const labels = question.options.filter((option) => option.label === answer)
-  return labels.length === 1
-    ? { outcome: { outcome: "selected", optionId: labels[0].value } }
-    : undefined
 }
 
 /** Maps a provider model label or ID to Blitz's reasoning vocabulary when it is explicit. */
@@ -518,12 +455,7 @@ class AcpJsonRpcClient {
     sessionId: string,
     model: string | undefined
   ): Promise<void> {
-    if (
-      !model?.trim() ||
-      model === "default" ||
-      model === "antigravity/default"
-    )
-      return
+    if (!model?.trim() || model === "default") return
     const supported = this.modelConfigId
       ? this.configOptions.get(this.modelConfigId)
       : undefined
@@ -1070,18 +1002,6 @@ export async function runAcpTextTurn(
   }
 ): Promise<ProviderTextTurnResult> {
   const provider = request.selection.providerId
-  // Antigravity's native default mode allows workspace reads. It has no tool-off
-  // session mode, so it cannot run isolated background source processing.
-  if (
-    provider === "antigravity" &&
-    (request.ephemeral ||
-      request.sandbox === "read-only" ||
-      request.webSearchMode === "disabled")
-  )
-    throw new AcpProviderError(
-      "invalid-input",
-      "Antigravity has no tool-free ACP mode for background generation. Use it for interactive chat."
-    )
   if (request.sandbox === "workspace-write")
     throw new AcpProviderError(
       "invalid-input",

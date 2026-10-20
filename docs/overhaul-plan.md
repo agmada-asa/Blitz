@@ -44,7 +44,7 @@ in front of it.
   gate, streaming, and warm sessions, not from downgrading the model. The
   learner's chosen model is used for teaching.
 - **Subscriptions only, every provider.** Keep the provider compatibility layer
-  (Codex, Claude Code, OpenCode, Antigravity). No API keys.
+  (Codex, Claude Code, or OpenCode). No API keys.
 - **Interactive blocks.** Lessons and chat can contain inline quizzes, diagrams,
   maths, code, step-through worked examples, and sandboxed visualisations.
   Answers inside a lesson are real study evidence.

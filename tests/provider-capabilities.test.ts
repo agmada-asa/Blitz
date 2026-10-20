@@ -33,16 +33,11 @@ test("model switches narrow reasoning settings and retain conditional ACP image 
     getChatModelCapabilities("opencode", "default").reasoningEffort,
     false
   )
-  assert.equal(
-    getChatModelCapabilities("antigravity", "antigravity/default").images,
-    "negotiated"
-  )
-  assert.equal(CHAT_PROVIDER_CAPABILITIES.antigravity.structuredOutput, false)
 })
 
 /** A tool allowlist is never advertised as filesystem isolation. */
 test("only Codex advertises enforced filesystem sandboxes", () => {
-  for (const provider of ["claude-code", "opencode", "antigravity"] as const) {
+  for (const provider of ["claude-code", "opencode"] as const) {
     assert.deepEqual(CHAT_PROVIDER_CAPABILITIES[provider].sandboxModes, [])
     assert.throws(
       () =>
@@ -111,15 +106,6 @@ test("non-Codex execution distinguishes disabled tools and native approval contr
       /working directory is not a filesystem security boundary/
     )
   }
-  assert.throws(
-    () =>
-      resolveProviderExecution({
-        providerId: "antigravity",
-        workspaceDirectory: "/workspace",
-        ephemeral: true,
-      }),
-    /tool-free/
-  )
 })
 
 /**
@@ -149,10 +135,6 @@ test("saving unsupported reasoning fails rather than silently defaulting", () =>
   assert.doesNotMatch(
     providerAccessChoice("codex", "untrusted").label,
     /approve for me/i
-  )
-  assert.equal(
-    providerAccessChoice("antigravity", "never").label,
-    "Unavailable"
   )
 })
 

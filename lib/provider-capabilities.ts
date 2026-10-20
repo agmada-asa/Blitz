@@ -87,16 +87,6 @@ export const CHAT_PROVIDER_CAPABILITIES: Readonly<
     structuredInput: "unsupported",
     interactiveTypes: ["approval"],
   },
-  antigravity: {
-    ...common,
-    webSearch: false,
-    images: "negotiated",
-    sandboxModes: [],
-    approvalPolicies: AI_PROVIDER_APPROVAL_POLICIES.antigravity,
-    approvalChoices: "provider-options",
-    structuredInput: "supported",
-    interactiveTypes: ["question", "approval"],
-  },
 }
 
 /** Returns current adapter support plus valid reasoning values for a specific model; unknown models use existing conservative defaults. */
@@ -175,18 +165,6 @@ export function providerAccessChoice(
         label: "Allow",
         description:
           "Available tools run without approval. No OS sandbox is configured.",
-      },
-    },
-    antigravity: {
-      "on-request": {
-        label: "Default",
-        description:
-          "Uses the provider's native permission requests. No OS sandbox is configured.",
-      },
-      "full-access": {
-        label: "YOLO",
-        description:
-          "Uses the provider's native YOLO mode. No OS sandbox is configured.",
       },
     },
   }

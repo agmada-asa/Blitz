@@ -14,8 +14,7 @@ import type {
   ProviderCommand,
   ProviderHealthOptions,
 } from "./types.ts"
-import { AcpProviderError, inspectAcpAuthentication } from "./acp.ts"
-import { discoverAntigravityExecutable } from "./antigravity-runtime.ts"
+import { AcpProviderError } from "./acp.ts"
 import { getCodexModelCatalog } from "./codex-models.ts"
 import {
   checkProviderVersion,
@@ -43,11 +42,6 @@ export function providerCommand(providerId: AiProviderId): ProviderCommand {
       return {
         executable: process.env.BLITZ_OPENCODE_COMMAND?.trim() || "opencode",
         args: ["acp", "--pure"],
-      }
-    case "antigravity":
-      return {
-        executable: discoverAntigravityExecutable() || "agy_acp_server.par",
-        args: process.platform === "linux" ? ["--uid="] : [],
       }
   }
 }
@@ -181,11 +175,6 @@ async function providerAuthentication(
   >
 > {
   const command = providerCommand(providerId)
-  if (providerId === "antigravity") {
-    return inspectAcpAuthentication(command, options.workspaceDirectory, {
-      verifySession: true,
-    })
-  }
   if (providerId === "codex") {
     const status = await readCommand(command.executable, ["login", "status"])
     const authenticated = status.code === 0 && /logged in/i.test(status.output)
@@ -263,10 +252,7 @@ export async function checkProviderAvailability(
   const instanceId =
     options.providerInstanceId ?? providerInstanceId(providerId)
   try {
-    const result =
-      providerId === "antigravity"
-        ? ({ available: true } as const)
-        : await probeCommand(providerCommand(providerId), providerId)
+    const result = await probeCommand(providerCommand(providerId), providerId)
     if (!result.available)
       return {
         providerId,
@@ -308,9 +294,7 @@ export async function checkProviderAvailability(
       authenticated: null,
       reason: missingExecutable ? "missing-executable" : "probe-failed",
       message:
-        missingExecutable && providerId === "antigravity"
-          ? "No shared Antigravity ACP server was found."
-          : `${providerId} did not pass its local runtime check.`,
+        `${providerId} did not pass its local runtime check.`,
     }
   }
 }
@@ -335,7 +319,6 @@ export const PROVIDER_DEFINITIONS: readonly ProviderAdapterDefinition[] = [
   definition("codex", "Codex"),
   definition("claude-code", "Claude Code"),
   definition("opencode", "OpenCode"),
-  definition("antigravity", "Antigravity"),
 ]
 
 /** Returns the registered provider definition or throws for an invalid ID. */

@@ -32,12 +32,6 @@ test("selects the cheapest model with lowest reasoning for each provider", () =>
   assert.equal(opencodeSelection.providerId, "opencode")
   assert.equal(opencodeSelection.model, "opencode/big-pickle")
   assert.equal(opencodeSelection.effort, "default")
-
-  // Antigravity: default with default reasoning
-  const antigravitySelection = resolveCheapestAiModelSelection("antigravity")
-  assert.equal(antigravitySelection.providerId, "antigravity")
-  assert.equal(antigravitySelection.model, "antigravity/default")
-  assert.equal(antigravitySelection.effort, "default")
 })
 
 test("respects environment variable overrides for model and reasoning effort", () => {

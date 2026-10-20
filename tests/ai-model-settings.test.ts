@@ -10,10 +10,10 @@ import {
   CODEX_MODEL_OPTIONS,
   DEFAULT_AI_MODEL_SETTINGS,
   DEFAULT_AI_MODELS,
+  DEFAULT_AI_REASONING_EFFORTS,
   getDefaultAiModelOption,
   getAiProviderOptionsForTask,
   getSupportedAiReasoningEfforts,
-  isLegacyAiModelOption,
   groupCodexModelOptions,
   resolveAiTaskSelection,
   resolveAiModel,
@@ -103,7 +103,6 @@ test("selects a provider-owned default model", () => {
   assert.equal(getDefaultAiModelOption("codex").id, "gpt-6-luna")
   assert.equal(getDefaultAiModelOption("claude-code").id, "sonnet")
   assert.equal(getDefaultAiModelOption("opencode").id, "opencode/big-pickle")
-  assert.equal(getDefaultAiModelOption("antigravity").id, "antigravity/default")
 })
 
 /** Confirms research stays on providers whose reviewed capabilities include web search. */
@@ -114,7 +113,7 @@ test("filters providers by task capability", () => {
   )
   assert.deepEqual(
     getAiProviderOptionsForTask("reply").map((option) => option.id),
-    ["codex", "claude-code", "opencode", "antigravity"]
+    ["codex", "claude-code", "opencode"]
   )
 })
 
@@ -123,13 +122,13 @@ test("resolves a provider selection for each task", () => {
   const settings = validateAiModelSettings({
     researchModel: "gpt-5.6-luna",
     replyModel: "claude-sonnet",
-    cardGenerationModel: "antigravity/default",
+    cardGenerationModel: "opencode/big-pickle",
     researchEffort: "medium",
     replyEffort: "high",
     cardGenerationEffort: "default",
     researchProvider: "codex",
     replyProvider: "claude-code",
-    cardGenerationProvider: "antigravity",
+    cardGenerationProvider: "opencode",
   })
   assert.deepEqual(resolveAiTaskSelection(settings, "reply"), {
     providerId: "claude-code",
@@ -137,8 +136,8 @@ test("resolves a provider selection for each task", () => {
     effort: "high",
   })
   assert.deepEqual(resolveAiTaskSelection(settings, "cardGeneration"), {
-    providerId: "antigravity",
-    model: "antigravity/default",
+    providerId: "opencode",
+    model: "opencode/big-pickle",
     effort: "default",
   })
 })
@@ -251,20 +250,6 @@ test("groups models by major and minor generation with dividers", () => {
   assert.equal(customGroups[0]?.options[0]?.id, "custom-worker")
 })
 
-/** Confirms Antigravity keeps only the newest reported Gemini generation above the fold. */
-test("classifies older Antigravity generations as legacy", () => {
-  const options = [
-    { id: "gemini-3.8-flash-high", label: "Gemini 3.8 Flash (High)" },
-    { id: "gemini-3.8-flash-low", label: "Gemini 3.8 Flash (Low)" },
-    { id: "gemini-3.7-flash-high", label: "Gemini 3.7 Flash (High)" },
-    { id: "gemini-pro-agent", label: "Gemini 3.1 Pro (High)" },
-  ]
-  assert.equal(isLegacyAiModelOption("antigravity", options[0], options), false)
-  assert.equal(isLegacyAiModelOption("antigravity", options[1], options), false)
-  assert.equal(isLegacyAiModelOption("antigravity", options[2], options), true)
-  assert.equal(isLegacyAiModelOption("antigravity", options[3], options), true)
-})
-
 /** Confirms unsupported reasoning settings become explicit provider defaults. */
 test("does not advertise ignored ACP or Haiku reasoning controls", () => {
   assert.deepEqual(
@@ -310,18 +295,27 @@ test("validates native provider access choices and task restrictions", () => {
       )
     }
   }
+  assert.deepEqual(
+    getAiProviderOptionsForTask("cardGeneration").map((option) => option.id),
+    ["codex", "claude-code", "opencode"]
+  )
+})
+
+/** A saved provider Blitz no longer offers falls back to Codex, with its model and effort reset, instead of failing to load. */
+test("moves a saved removed provider back to Codex", () => {
   const legacy = validateAiModelSettings({
     ...DEFAULT_AI_MODEL_SETTINGS,
     cardGenerationProvider: "antigravity",
     cardGenerationModel: "antigravity/default",
     cardGenerationEffort: "default",
   })
-  assert.throws(() => validateAiTaskProviders(legacy), /workspace chat only/)
-  assert.ok(
-    !getAiProviderOptionsForTask("cardGeneration").some(
-      (provider) => provider.id === "antigravity"
-    )
+  assert.equal(legacy.cardGenerationProvider, "codex")
+  assert.equal(legacy.cardGenerationModel, DEFAULT_AI_MODELS.cardGenerationModel)
+  assert.equal(
+    legacy.cardGenerationEffort,
+    DEFAULT_AI_REASONING_EFFORTS.cardGenerationEffort
   )
+  assert.doesNotThrow(() => validateAiTaskProviders(legacy))
 })
 
 /** Keeps access-level menus ordered from least to most dangerous top-to-bottom. */
@@ -342,8 +336,4 @@ test("matches each provider's native access-level options", async () => {
       "full-access",
     ])
   }
-  assert.deepEqual(AI_PROVIDER_APPROVAL_POLICIES.antigravity, [
-    "on-request",
-    "full-access",
-  ])
 })
