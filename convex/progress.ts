@@ -7,7 +7,8 @@
 import { v } from "convex/values"
 
 import { mutation, query, type QueryCtx } from "./_generated/server"
-import { conceptStrength } from "../lib/drill"
+import { answersToStrong, conceptStrength } from "../lib/drill"
+import { readiness as moduleReadiness } from "../lib/learning/fsrs"
 import {
   computeStreak,
   DAILY_GOAL_RANGE,
@@ -15,6 +16,9 @@ import {
   DEFAULT_REMINDER_HOUR,
   localDayKey,
   previousDayKey,
+  REVIEW_SECONDS_PER_QUESTION,
+  REVIEW_SESSION_SIZE,
+  scoreAnswers,
   summarizeSession,
   XP,
 } from "../lib/progress"
@@ -59,8 +63,13 @@ async function studyHistory(ctx: Pick<QueryCtx, "db">, tzOffsetMinutes: number, 
       q.eq("eventType", "answer").gte("occurredAt", since)
     )
     .collect()
-  for (const answer of answers)
-    add(answer.occurredAt, answer.outcome === "correct" ? XP.correctAnswer : XP.incorrectAnswer)
+  for (const scored of scoreAnswers(
+    answers.map((answer) => ({
+      occurredAt: answer.occurredAt,
+      correct: answer.outcome === "correct",
+    }))
+  ))
+    add(scored.answer.occurredAt, scored.xp)
   const milestones = await ctx.db
     .query("learningActivity")
     .withIndex("by_occurredAt", (q) => q.gte("occurredAt", since))
@@ -142,14 +151,24 @@ export const today = query({
       break
     }
 
-    // Only concepts from units count; older generated lessons are not part of Teach.
+    // Only concepts from units count; older generated lessons are not part of
+    // Teach, and archived modules are out of the daily review.
     const reviews = await ctx.db.query("conceptReviews").collect()
+    const archived = new Set(
+      (await ctx.db.query("projects").collect())
+        .filter((project) => project.archivedAt !== undefined)
+        .map((project) => String(project._id))
+    )
     let dueConcepts = 0
     for (const review of reviews) {
       if (review.attemptCount <= 0 || review.dueAt > now) continue
+      if (archived.has(String(review.projectId))) continue
       const concept = await ctx.db.get(review.conceptId)
       if (concept?.unitId) dueConcepts += 1
     }
+    // One review session asks at most REVIEW_SESSION_SIZE questions, so a
+    // backlog shows as a short session plus what is left, never as a wall.
+    const reviewCount = Math.min(dueConcepts, REVIEW_SESSION_SIZE)
 
     return {
       today: todayKey,
@@ -161,6 +180,11 @@ export const today = query({
       sectionsToday,
       resume,
       dueConcepts,
+      review: {
+        count: reviewCount,
+        minutes: Math.max(1, Math.round((reviewCount * REVIEW_SECONDS_PER_QUESTION) / 60)),
+        waiting: dueConcepts - reviewCount,
+      },
       reminderHour,
     }
   },
@@ -290,7 +314,11 @@ export const sessionSummary = query({
       }
       const concept = concepts.get(key)
       if (!concept || (unitId && concept.unitId !== String(unitId))) continue
-      answers.push({ conceptId: key, correct: event.outcome === "correct" })
+      answers.push({
+        conceptId: key,
+        correct: event.outcome === "correct",
+        occurredAt: event.occurredAt,
+      })
     }
     const milestones = unitId
       ? (
@@ -318,18 +346,60 @@ export const sessionSummary = query({
       ...totals,
       concepts: totals.concepts.slice(0, 8).map((tally) => {
         const review = reviewByConcept.get(tally.conceptId)
+        const history = {
+          attempts: review?.attemptCount ?? 0,
+          correct: review?.correctCount ?? 0,
+          consecutiveCorrect: review?.consecutiveCorrect ?? 0,
+          ...(review?.lastOutcome ? { lastOutcome: review.lastOutcome } : {}),
+        }
         return {
           ...tally,
           title: concepts.get(tally.conceptId)?.title ?? "",
-          strength: conceptStrength({
-            attempts: review?.attemptCount ?? 0,
-            correct: review?.correctCount ?? 0,
-            consecutiveCorrect: review?.consecutiveCorrect ?? 0,
-            ...(review?.lastOutcome ? { lastOutcome: review.lastOutcome } : {}),
-          }),
+          strength: conceptStrength(history),
+          /** Right answers in a row still needed for the concept to be strong. */
+          toStrong: answersToStrong(history),
         }
       }),
       today: { xp: xpByDay.get(todayKey) ?? 0, goal, streak },
     }
+  },
+})
+
+/**
+ * Estimates how ready a module is for its exam: the share of its unit
+ * concepts the learner would likely recall today, from FSRS memory. Concepts
+ * never answered count as not recalled, so the figure grows with coverage as
+ * well as memory. See `readiness` in `lib/learning/fsrs.ts`.
+ * @param now Client clock rounded to the minute, so the estimate decays live.
+ */
+export const readiness = query({
+  args: { projectId: v.id("projects"), now: v.number() },
+  handler: async (ctx, { projectId, now }) => {
+    const concepts = (
+      await ctx.db
+        .query("concepts")
+        .withIndex("by_project", (q) => q.eq("projectId", projectId))
+        .collect()
+    ).filter((concept) => concept.unitId)
+    const reviews = await ctx.db
+      .query("conceptReviews")
+      .withIndex("by_project_concept", (q) => q.eq("projectId", projectId))
+      .collect()
+    const byConcept = new Map(reviews.map((review) => [String(review.conceptId), review]))
+    return moduleReadiness(
+      concepts.map((concept) => {
+        const review = byConcept.get(String(concept._id))
+        if (!review || review.attemptCount <= 0) return null
+        // Rows written before FSRS have no memory yet; treat the last answer as
+        // a fresh first review until `learning:rescheduleReviews` has run.
+        return (
+          review.memory ?? {
+            stability: review.lastOutcome === "correct" ? 2 : 0.2,
+            lastReviewAt: review.lastAttemptAt ?? review.updatedAt,
+          }
+        )
+      }),
+      now
+    )
   },
 })

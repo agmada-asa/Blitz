@@ -135,3 +135,40 @@ export function recallProbability(
   const elapsedDays = Math.max(0, now - memory.lastReviewAt) / 86_400_000
   return forgetting_curve(scheduler.parameters.w, elapsedDays, memory.stability)
 }
+
+/** How ready a module is, from the predicted recall of each of its concepts. */
+export type Readiness = {
+  /** Concepts in the module. */
+  concepts: number
+  /** Concepts answered at least once. */
+  practised: number
+  /** Mean predicted recall of practised concepts now, 0–1. */
+  recallOfPractised: number
+  /** Expected share of all concepts recalled now, 0–1; unpractised ones count as 0. */
+  readiness: number
+}
+
+/**
+ * Estimates a module's readiness: the share of its concepts the learner would
+ * likely recall today. Concepts never answered count as not recalled, so the
+ * figure rises with both coverage and memory.
+ * @param memories One entry per concept: its FSRS memory, or null if never answered.
+ */
+export function readiness(
+  memories: ReadonlyArray<Pick<ReviewMemory, "stability" | "lastReviewAt"> | null | undefined>,
+  now: number
+): Readiness {
+  let practised = 0
+  let recalled = 0
+  for (const memory of memories) {
+    if (!memory) continue
+    practised += 1
+    recalled += recallProbability(memory, now)
+  }
+  return {
+    concepts: memories.length,
+    practised,
+    recallOfPractised: practised ? recalled / practised : 0,
+    readiness: memories.length ? recalled / memories.length : 0,
+  }
+}
