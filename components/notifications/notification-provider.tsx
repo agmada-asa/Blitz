@@ -36,6 +36,17 @@ const MAX_READ_IDS = 200
 export type NotificationSnapshot = FunctionReturnType<typeof api.activity.list>
 /** One active or terminal row returned by the notification-center query. */
 export type NotificationRow = NotificationSnapshot["tasks"][number]
+
+/**
+ * Returns the toast key for a notification, so a newer state of the same job
+ * replaces its older toast. Mock exam rows (ready, then marked) share their
+ * paper's key; any other row keys on its own ID.
+ * @param item A notification row whose `href` may name an exam paper.
+ */
+function noticeKey(item: { id: string; href: string }): string {
+  const paper = /\/practice\/exam\/([^/?#]+)/.exec(item.href)
+  return paper ? `exam-paper:${paper[1]}` : item.id
+}
 /** Browser notification availability and permission state. */
 export type BrowserNotificationPermission =
   NotificationPermission | "unsupported"
@@ -229,7 +240,7 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
       ) {
         continue
       }
-      notifyBackground(item.title, item.href, "Open")
+      notifyBackground(item.title, item.href, "Open", noticeKey(item))
       announceInBrowser(item)
     }
     for (const item of [...snapshot.notifications, ...snapshot.chatNotifications])
