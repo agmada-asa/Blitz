@@ -16,6 +16,8 @@
     "app_module": { "risk": "read", "actor": "human" },
     "app_review": { "risk": "read", "actor": "human" },
     "app_answer": { "risk": "write", "actor": "human" },
+    "app_reveal": { "risk": "read", "actor": "human" },
+    "app_recall": { "risk": "write", "actor": "human" },
     "app_skip": { "risk": "write", "actor": "human" }
   },
   "widgets": [
