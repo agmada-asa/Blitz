@@ -659,6 +659,7 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
                   onQuizAnswer={answerQuiz}
                   onFollowUp={(text) => void send(text)}
                   busy={running}
+                  sourceOpen={Boolean(source)}
                 />
               ) : (
                 <div className="space-y-3" aria-hidden="true">

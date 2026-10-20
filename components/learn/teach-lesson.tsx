@@ -24,6 +24,7 @@ import {
   TEACH_QUICK_REPLIES,
   type TeachOutline,
 } from "@/lib/teach"
+import { cn } from "@/lib/utils"
 
 /** One saved message from the Teach session. */
 export type TeachMessage = NonNullable<
@@ -56,6 +57,8 @@ type TeachLessonProps = {
   onFollowUp: (text: string) => void
   /** Disables follow-up chips while a reply is being written. */
   busy: boolean
+  /** True while a source is open; the outline rail then appears only on the widest screens. */
+  sourceOpen: boolean
 }
 
 /**
@@ -71,6 +74,7 @@ export function TeachLesson({
   onQuizAnswer,
   onFollowUp,
   busy,
+  sourceOpen,
 }: TeachLessonProps) {
   return (
     <div className="space-y-10">
@@ -90,6 +94,7 @@ export function TeachLesson({
             onCitation={onCitation}
             onQuizAnswer={onQuizAnswer}
             onFollowUp={busy ? undefined : onFollowUp}
+            sourceOpen={sourceOpen}
           />
         )
       )}
@@ -126,6 +131,7 @@ type TutorReplyProps = {
   onCitation: TeachLessonProps["onCitation"]
   onQuizAnswer: TeachLessonProps["onQuizAnswer"]
   onFollowUp: ((text: string) => void) | undefined
+  sourceOpen: boolean
 }
 
 /**
@@ -141,6 +147,7 @@ const TutorReply = memo(function TutorReply({
   onCitation,
   onQuizAnswer,
   onFollowUp,
+  sourceOpen,
 }: TutorReplyProps) {
   const streaming = message.status === "running"
   const marker = useMemo(() => parseTeachSectionMarker(message.content), [message.content])
@@ -181,7 +188,7 @@ const TutorReply = memo(function TutorReply({
       data-message-id={message.id}
       className="scroll-mt-6"
     >
-      {plan ? <LessonPlan outline={plan} /> : null}
+      {plan ? <LessonPlan outline={plan} sourceOpen={sourceOpen} /> : null}
       {sectionNumber >= 0 ? (
         <header className="mb-5 flex items-start gap-3">
           <span
@@ -251,10 +258,28 @@ const TutorReply = memo(function TutorReply({
   )
 })
 
-/** Shows the plan the tutor proposed at the start of the unit. */
-function LessonPlan({ outline }: { outline: TeachOutline }) {
+/**
+ * Shows the plan the tutor proposed at the start of the unit. On wide screens
+ * the session's outline rail already lists it, so the card hides wherever the
+ * rail is visible. The breakpoints mirror the rail's in teach-session.tsx: the
+ * rail shows at `lg`, or at `2xl` while a source is open beside the lesson.
+ */
+function LessonPlan({
+  outline,
+  sourceOpen,
+}: {
+  outline: TeachOutline
+  /** Matches the rail's breakpoint, which moves wider while a source is open. */
+  sourceOpen: boolean
+}) {
   return (
-    <section aria-label="Lesson plan" className="mb-8 rounded-2xl border border-border bg-card p-5">
+    <section
+      aria-label="Lesson plan"
+      className={cn(
+        "mb-8 rounded-2xl border border-border bg-card p-5",
+        sourceOpen ? "2xl:hidden" : "lg:hidden"
+      )}
+    >
       <h2 className="font-heading text-lg font-semibold">{outline.title}</h2>
       <ol className="mt-3 grid gap-1.5 text-sm text-muted-foreground sm:grid-cols-2">
         {outline.sections.map((section, index) => (
