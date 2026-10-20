@@ -56,7 +56,8 @@ export function SegmentedBar({
         >
           <span
             className={cn(
-              "block h-full rounded-full transition-[width] duration-500 motion-reduce:transition-none",
+              // Fill and colour ease over 400 ms when a value changes; the first paint has no transition.
+              "block h-full rounded-full transition-[width,background-color] duration-400 ease-out motion-reduce:transition-none",
               segment.tone ?? "bg-brand"
             )}
             style={{ width: `${Math.round(Math.min(1, Math.max(0, segment.fill)) * 100)}%` }}
@@ -117,13 +118,20 @@ export function PathMarker({
 /**
  * The line joining one step's marker to the next, filled once the step is
  * done. Place it inside a `relative` list item; `className` positions it so it
- * runs from below this marker to the next one.
+ * runs from below this marker to the next one. The colour eases over 400 ms
+ * when `done` changes, and the first paint shows the final colour.
+ * @param done Whether the step before this line is done.
+ * @param className Extra classes that position the line.
  */
 export function PathConnector({ done, className }: { done: boolean; className?: string }) {
   return (
     <span
       aria-hidden="true"
-      className={cn("absolute w-px", done ? "bg-brand" : "bg-border", className)}
+      className={cn(
+        "absolute w-px transition-colors duration-400 ease-out motion-reduce:transition-none",
+        done ? "bg-brand" : "bg-border",
+        className
+      )}
     />
   )
 }
