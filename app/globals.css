@@ -332,6 +332,163 @@
   }
 }
 
+/* Answer cues run once when their class is added; see components/ui/interactive-blocks/answer-feedback.ts. */
+@keyframes answer-pulse {
+  0% {
+    transform: scale(1);
+    box-shadow: 0 0 0 0 transparent;
+  }
+  40% {
+    transform: scale(1.03);
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--brand) 30%, transparent);
+  }
+  100% {
+    transform: scale(1);
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+
+@keyframes answer-shake {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  15% {
+    transform: translateX(-6px);
+  }
+  30% {
+    transform: translateX(6px);
+  }
+  45% {
+    transform: translateX(-5px);
+  }
+  60% {
+    transform: translateX(4px);
+  }
+  75% {
+    transform: translateX(-2px);
+  }
+}
+
+.answer-pulse {
+  animation: answer-pulse 300ms ease-out;
+}
+
+.answer-shake {
+  animation: answer-shake 350ms ease-in-out;
+}
+
+/* The streak bolt glows once when today's goal is first met; see components/progress/today-panel.tsx. */
+@keyframes goal-met-glow {
+  0% {
+    transform: scale(1);
+    filter: drop-shadow(0 0 0 transparent);
+  }
+  40% {
+    transform: scale(1.18);
+    filter: drop-shadow(0 0 6px color-mix(in srgb, var(--brand) 65%, transparent));
+  }
+  100% {
+    transform: scale(1);
+    filter: drop-shadow(0 0 0 transparent);
+  }
+}
+
+.goal-met-glow {
+  animation: goal-met-glow 1000ms ease-out;
+}
+
+/* A finished unit's summary: the heading scales in over a one-off burst of dots; see components/progress/session-summary.tsx. */
+@keyframes summary-title-in {
+  from {
+    opacity: 0;
+    transform: scale(0.94);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes summary-burst {
+  0% {
+    opacity: 1;
+    transform: rotate(var(--burst-angle)) translateX(0) scale(0.4);
+  }
+  100% {
+    opacity: 0;
+    transform: rotate(var(--burst-angle)) translateX(var(--burst-distance)) scale(1);
+  }
+}
+
+.summary-title-in {
+  transform-origin: left center;
+  animation: summary-title-in 600ms ease-out;
+}
+
+.summary-burst-dot {
+  animation: summary-burst 800ms ease-out forwards;
+}
+
+/* XP earned by a Review answer floats up from the XP chip; see components/feed/feed.tsx. */
+@keyframes xp-pop {
+  0% {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  20% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-14px);
+  }
+}
+
+.xp-pop {
+  animation: xp-pop 1100ms ease-out forwards;
+}
+
+/* The run counter pops each time the run grows. */
+@keyframes combo-chip-in {
+  0% {
+    transform: scale(0.9);
+  }
+  50% {
+    transform: scale(1.06);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+.combo-chip {
+  animation: combo-chip-in 300ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .xp-pop {
+    animation: none;
+    opacity: 0;
+  }
+  .combo-chip {
+    animation: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .answer-pulse,
+  .answer-shake,
+  .goal-met-glow,
+  .summary-title-in,
+  .summary-burst-dot {
+    animation: none;
+  }
+  .summary-burst {
+    display: none;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .feed-backdrop::before,
   .feed-backdrop::after {

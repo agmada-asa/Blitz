@@ -4,7 +4,7 @@
 
 Blitz teaches you your own course material. Drop in a week's lecture slides, transcripts, and notes, and it teaches them back in short sessions, quizzes you, and keeps returning to what hasn't stuck. In exam season, import past papers and sit mock exams marked against the mark scheme.
 
-It runs on your Mac and uses the AI coding agent you already pay for (Codex, Claude Code, OpenCode, or Google Antigravity) instead of an API key. Your material and progress stay in a local database.
+It runs on your Mac and uses the AI coding agent you already pay for (Codex, Claude Code, or OpenCode) instead of an API key. Your material and progress stay in a local database.
 
 ## Quick start
 
@@ -35,7 +35,7 @@ Open a project or topic for a focused feed, Study with immediate feedback, or a 
 
 Choose `Study` then `Written answers` for a separate writing activity. Save a draft or compare your response with the prepared reference. Written activities resume where you left off and do not award an automatic score.
 
-Questions use single choice, multiple answers, or true/false. Answers receive server-scored feedback. Reading and skipping never count as knowing a concept. `Ask in chat` attaches a card and its source section to your own question, and follow-ups reuse the conversation. Web and Android replies stream as they arrive, with Markdown formatting and saved history after reconnecting.
+Questions use single choice, multiple answers, or true/false. Answers receive server-scored feedback. Reading and skipping never count as knowing a concept. `Ask in chat` attaches a card and its source section to your own question, and follow-ups reuse the conversation. Web replies stream as they arrive, with Markdown formatting and saved history after reconnecting.
 
 Imports accept text PDFs, Markdown, plain text, and PowerPoint `.pptx` files. Public links can return those formats or HTML. Source URLs and page/slide markers are retained. Scanned PDFs need OCR elsewhere, and each extracted source is currently limited to 120,000 characters.
 
@@ -43,7 +43,7 @@ Use `Find sources` within a project to ask Blitz for a proposed learning scope a
 
 ## Run locally in detail
 
-Use Node.js 22.13 or newer, with at least one supported local provider installed and signed in. Codex is the default provider. Claude Code 2.1.248 or newer can run replies and card generation with tools disabled. OpenCode v1.18.21 or newer within v1 supports native tool permissions. Google Antigravity ACP supports interactive workspace chat. Development has been verified with Node.js 24 on macOS.
+Use Node.js 22.13 or newer, with at least one supported local provider installed and signed in. Codex is the default provider. Claude Code 2.1.248 or newer can run replies and card generation with tools disabled. OpenCode v1.18.21 or newer within v1 supports native tool permissions. Development has been verified with Node.js 24 on macOS.
 
 ```bash
 npm ci
@@ -73,7 +73,6 @@ Provider access is saved separately for each provider. Chat's **Provider policy*
 | Codex           | Read-only sandbox, approvals `never`                    | `on-request`, or `untrusted`                                  | `danger-full-access`, approvals `never`          |
 | Claude Code     | Restricted mode with all tools disabled                 | Explicit tool ask rules and the SDK's stdin approval protocol | `bypassPermissions`                              |
 | OpenCode        | Dedicated agent with `permission["*"] = "deny"`         | Dedicated agent with `permission["*"] = "ask"`                | Dedicated agent with `permission["*"] = "allow"` |
-| Antigravity ACP | Native `default` mode; Blitz denies permission requests | Native `default` mode; Blitz reviews permission requests      | Native `yolo` mode                               |
 
 Claude and ACP requests use the composer request panel. Codex approvals,
 native provider tool asks, Blitz-owned Codex questions and confirmation
@@ -92,25 +91,15 @@ that material cannot resolve a question or a tool would materially improve the
 answer, Codex chat can use live web search when the provider allows it. External
 findings stay separate from attached source citations.
 
-Background card preparation and card replies always use restricted policies regardless of saved full access. Claude removes all tools; OpenCode denies all native tools. Antigravity is unavailable for these background tasks: its ACP default mode allows reads, and there is no advertised tool-off mode. The installed `agy` CLI's `--prompt`/`--print` selects one-shot output, not tool isolation. A local CLI 1.1.22 probe with a custom agent declaring `tools: []` still advertised shell, file, browser, and network tools. The adapter does not treat that as a security boundary.
+Background card preparation and card replies always use restricted policies regardless of saved full access. Claude removes all tools; OpenCode denies all native tools.
 
-For Antigravity, Blitz first checks `BLITZ_ANTIGRAVITY_ACP_COMMAND`, its own managed runtime directory, common ACP client directories, and the macOS file index for a compatible `agy_acp_server.par`. If no shared copy exists, **Install and connect** downloads the current machine-specific package from the [official ACP registry](https://github.com/agentclientprotocol/registry/blob/main/antigravity-acp/agent.json), installs it under Blitz application data, and starts personal Google login. Once installed, Settings exposes every authentication method and model variant advertised by the runtime. Antigravity bundles its reasoning tier into each native model choice, and Blitz reapplies that exact choice with ACP `session/set_config_option` before a turn. The Antigravity desktop app, the `agy` CLI, and Antigravity ACP keep separate authentication state.
-
-Claude passes supported reasoning selections with `--effort`. Haiku and OpenCode expose only the provider default. Antigravity reports model-specific reasoning tiers as distinct native model choices. Legacy unsupported effort selections are normalized to the provider default. Native permission references: [Claude CLI](https://code.claude.com/docs/en/cli-reference), [Claude SDK approvals](https://code.claude.com/docs/en/agent-sdk/user-input), [OpenCode permissions](https://opencode.ai/docs/permissions/), [Antigravity CLI headless behavior](https://antigravity.google/docs/cli/headless/). Antigravity ACP modes were verified against Google's official `agy_acp_server_1.1.1` distribution; its defaults differ from CLI print mode.
+Claude passes supported reasoning selections with `--effort`. Haiku and OpenCode expose only the provider default. Legacy unsupported effort selections are normalized to the provider default. Native permission references: [Claude CLI](https://code.claude.com/docs/en/cli-reference), [Claude SDK approvals](https://code.claude.com/docs/en/agent-sdk/user-input), [OpenCode permissions](https://opencode.ai/docs/permissions/). Saved settings that name the removed Antigravity provider fall back to Codex.
 
 The ACP client negotiates `session/load` and `session/resume`. If neither is supported, it fails before accepting a turn so workspace chat can rebuild its saved history in a new session. Historical load notifications are excluded from the new answer. Both adapters bound stdout and assistant output, decode split UTF-8 safely, and terminate on transport failures or deadlines.
 
 ## Use from other agents
 
 `node mcp/server.mjs` is an MCP server that lets other agents see what's due, read the Library and add material to a unit while Blitz is running. See [the MCP server](mcp/README.md).
-
-## Android
-
-The React Native app lives in `mobile/` with its own dependencies and checks. It connects to the same printed LAN address. Prepared cards are cached, and offline answers wait for server feedback after sync. The app is frozen during the overhaul: card chat questions, pasted notes, and links added from Android are saved but no longer answered or prepared.
-
-See [Android setup](docs/mobile.md) for development and the bundled debug APK build. Browser imports remain available through the native Library action.
-
-After building the APK, `npm run dev:lan` also prints its download link. The launcher uses the ignored `build/android/blitz-android-debug.apk` when present; set `BLITZ_ANDROID_APK_PATH` to serve a different local build.
 
 ## Checks and implementation
 
@@ -124,15 +113,14 @@ npm run check:runtimes
 
 `npm run check:runtimes` reports when an installed provider CLI no longer matches what Blitz relies on. See [AI model settings](docs/ai-model-settings.md).
 
-Run native checks from `mobile/`. The [overhaul plan](docs/overhaul-plan.md) records the current direction, and [`docs/history`](docs/history/README.md) keeps the early planning notes. Implementation details are in [Teach](docs/teach.md), [source ingestion](docs/source-ingestion.md), [learning API](docs/learning-api.md), and [Codex text turns and legacy card chat](docs/card-chat.md).
+The [overhaul plan](docs/overhaul-plan.md) records the current direction, and [`docs/history`](docs/history/README.md) keeps the early planning notes. Implementation details are in [Teach](docs/teach.md), [source ingestion](docs/source-ingestion.md), [learning API](docs/learning-api.md), and [Codex text turns and legacy card chat](docs/card-chat.md).
 
 ## Known limits
 
-This version is a personal local app without account authentication. It is not configured for public hosting. Android offline storage and the local agent are separate from any future cloud sync service. Creating proposed notes, richer diagrams, and moving topics are still outside this version. Android now includes native project browsing, creation, rename, and deletion. Written activities and source imports still use the browser.
+This version is a personal local app without account authentication. It is not configured for public hosting. The local agent is separate from any future cloud sync service. Creating proposed notes, richer diagrams, and moving topics are still outside this version.
 
 - The agents, local database, and speech run on the computer hosting Blitz; a phone is only a client of it.
 - Six local processes (Next.js, Convex, and workers) run under one supervisor. Consolidating the workers is planned.
-- The Android app is frozen during the overhaul.
 - Citations land on a page, slide, timestamp, or heading when the source has one; other passages only get a section label.
 
 ## Credits

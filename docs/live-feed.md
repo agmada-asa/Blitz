@@ -20,7 +20,6 @@ the feed without recording an incorrect answer. The feed fills the screen; the s
 context. The first question is sent to `POST /api/chat` without an existing
 chat ID, so it creates a new session that appears in the Chat history. The
 saved workspace transcript keeps the card attached and available across
-reloads. Older card-conversation links and native clients continue using the
-legacy persisted card-chat flow.
+reloads. Older card-conversation links still open their saved chat.
 
 The feed prefetches near the last three loaded cards and follows an opaque server cursor. It keeps unique card IDs and combines filter metadata across pages. Empty eligible pages have a three-page automatic bound before `Load more` is offered. Filter changes cancel older requests, and continuation errors remain retryable without removing loaded cards.

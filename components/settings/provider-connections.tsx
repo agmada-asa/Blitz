@@ -136,7 +136,7 @@ export function ProviderConnections() {
   /** Sends a connect or disconnect request, then reads the provider state again. */
   const changeConnection = async (
     provider: ProviderAvailability,
-    action: "connect" | "disconnect" | "install"
+    action: "connect" | "disconnect"
   ): Promise<void> => {
     setBusyProvider(provider.providerId)
     setFeedback(null)
@@ -166,13 +166,9 @@ export function ProviderConnections() {
       setFeedback({
         tone: "success",
         message:
-          action === "install"
-            ? "Antigravity ACP installed and connected."
-            : action === "connect" && provider.providerId !== "antigravity"
-              ? "Finish the provider sign in, then check again."
-              : action === "connect"
-                ? "Provider connected."
-                : "Provider disconnected.",
+          action === "connect"
+            ? "Finish the provider sign in, then check again."
+            : "Provider disconnected.",
       })
     } catch (error) {
       setFeedback({
@@ -243,12 +239,6 @@ export function ProviderConnections() {
                       <p className="mt-1 text-sm text-muted-foreground">
                         {provider.message}
                       </p>
-                      {provider.providerId === "antigravity" ? (
-                        <p className="mt-1 text-xs text-muted-foreground">
-                          Antigravity ACP has its own account. Signing into the
-                          desktop app or agy does not connect it.
-                        </p>
-                      ) : null}
                     </div>
                     <div className="flex flex-wrap items-center gap-2 sm:justify-end">
                       {provider.available &&
@@ -278,19 +268,6 @@ export function ProviderConnections() {
                             ))}
                           </SelectContent>
                         </Select>
-                      ) : null}
-                      {!provider.available &&
-                      provider.providerId === "antigravity" ? (
-                        <Button
-                          type="button"
-                          size="sm"
-                          disabled={busy}
-                          onClick={() =>
-                            void changeConnection(provider, "install")
-                          }
-                        >
-                          {busy ? "Installing" : "Install and connect"}
-                        </Button>
                       ) : null}
                       {provider.available && provider.authenticated !== true ? (
                         <Button

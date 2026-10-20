@@ -18,8 +18,15 @@ export type InteractiveBlocksContextValue = {
   /** Server-scored answer. Return null to fall back to local scoring. Throwing shows a retryable error. */
   onQuizAnswer?: (
     block: QuizBlock,
-    selectedOptionIds: string[]
+    selectedOptionIds: string[],
+    /** `guess` when the learner marked the answer as a guess. */
+    confidence?: "guess"
   ) => Promise<{ correct: boolean } | null>
+  /**
+   * True where answers become review evidence (Teach and drills), so quizzes
+   * offer the "I'm guessing" toggle and pass its value to `onQuizAnswer`.
+   */
+  acceptsConfidence?: boolean
   /** Previously recorded answers keyed by quiz id, so reloads show answered state. */
   answeredQuizzes?: Record<
     string,

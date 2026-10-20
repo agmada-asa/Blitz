@@ -24,9 +24,11 @@ code output for short deterministic programs (see `docs/learning-core.md` for
 how each is scored). Ordering and matching items are shuffled with a stable
 seed, so the browser and server always agree on the order shown.
 
-A unit's first bank starts automatically, once, when Teach reaches its second
-section (`startFirstQuestionBank`, called from the chat route). Later batches
-are written on request from the Practice screen.
+A unit's first bank starts automatically, once, as soon as its Teach session
+has an outline (`startFirstQuestionBank`, called from the chat route), so
+Practice and Review have questions by the time the pre-check is done. When the
+outline lists concepts, every generated question is tagged with one of them.
+Later batches are written on request from the Practice screen.
 
 ## Saving chat quizzes
 
@@ -75,27 +77,66 @@ so a paper's answers are never shown before it is taken.
 
 ## Review feed
 
-`GET /api/learning/feed` now serves `practice.feed`: questions and recaps from
+`GET /api/learning/feed` serves `practice.feed`: questions and recaps from
 units the learner has started (a Teach outline exists or a question was
 answered), in drill order, with a recap placed before a question on a concept
-that is not strong yet (at most one recap per two questions). The cursor holds
-the item IDs already shown in the session; when everything has been shown, a
-new round begins that still skips the most recent eight. The feed never ends.
+that is not strong yet (at most one recap per two questions). Archived modules
+are left out of the mixed feed. The cursor holds the item IDs already shown;
+when everything has been shown, a new round begins that still skips the most
+recent eight. The feed never ends.
+
+Each visit to `/review` is a **session** with a target: the questions due
+today, capped at `REVIEW_SESSION_SIZE` (20), or a round of ten when nothing is
+due. The header counts answers against the target and shows the current run
+of right answers; reaching the target opens the session summary, and **Keep
+going** carries on with the feed. The Today panel offers the same session as
+"Review 20 questions, about 7 min", with what is left after it.
+
+About half the single-choice questions that make sense without their options
+start as **recall** (`lib/learning/recall.ts`): the learner answers in their
+head, taps **Show answer** (`POST /api/learning/recall`, which records
+nothing), then says **I knew it** or **I didn't**, which is recorded as a
+self-graded answer. **Show options** turns the card back into a normal
+question. Every question, here and in Teach and drills, has an **I'm
+guessing** toggle; a right guess schedules sooner (see
+`docs/learning-core.md`) and the Teach pre-check treats it as not known. The
+Ocean mini app's Review uses the same card through `app_answer`, `app_reveal`,
+and `app_recall`.
 
 ## XP, goals, and streaks
 
 `lib/progress.ts` defines XP: 10 per correct answer, 4 per wrong answer, 25 per
-Teach section reached, and 50 per finished unit. Sections and units are logged
-once each in `learningActivity` by `units.recordTeachProgress`, so restarting a
-unit cannot earn them again. `progress.today` groups XP by the learner's local
-day (the browser sends its timezone offset), computes the streak of days that
-met the daily goal (an unfinished today never breaks it), and returns the last
-seven days, the Teach session to continue, and the number of unit concepts due
-for review. The daily goal (default 50 XP) is set under Settings.
+Teach section reached, and 50 per finished unit. Runs of right answers less
+than 30 minutes apart earn a combo bonus (`scoreAnswers`): +2 for the third in
+a row, +4 for the fourth, up to +10. The run is scored across every answer,
+not per screen, so `progress.today` returns the run still going and Drills and
+Review start their run counter from it. Review floats the XP each answer
+earned, and session summaries take each answer's XP from the same scoring, so
+their total matches the day's. Sections and units are
+logged once each in `learningActivity` by `units.recordTeachProgress`, so
+restarting a unit cannot earn them again.
+
+`progress.today` groups XP by the learner's local day (the browser sends its
+timezone offset). The **streak** counts consecutive days with any study; the
+daily goal (default 50 XP, set under Settings) is a separate target. Every
+seven streak days earn a **streak freeze** (at most two), and a day with no
+study uses one instead of breaking the streak; the week chart marks it with a
+snowflake. An unfinished today never breaks the streak. `progress.today` also
+returns the last seven days, the Teach session to continue, and the review
+session size and time estimate.
+
+Session summaries add the best run and name up to two concepts that one to
+three more right answers in a row would make strong (`answersToStrong` in
+`lib/drill.ts`).
+
+**Exam readiness** on the Practice screen (`progress.readiness`) is the share
+of the module's concepts the learner would likely recall today: the mean FSRS
+recall probability with never-answered concepts counted as zero, shown with
+how many concepts are practised and the recall on those.
 
 The Today panel (`components/progress/today-panel.tsx`) sits above the Library
-on the start page (`/`). It links to the Teach session to continue and to the
-Review feed (`/review`), and stays hidden until the learner has studied.
+on the start page (`/`). It links to the Teach session to continue and to a
+Review session, and stays hidden until the learner has studied.
 
 ## Daily reminder
 

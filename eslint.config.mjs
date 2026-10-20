@@ -18,8 +18,6 @@ const eslintConfig = defineConfig([
     "build/**",
     "next-env.d.ts",
     "convex/_generated/**",
-    // The native package owns its React Native checks and generated Android files.
-    "mobile/**",
     // Temporary git worktrees created by coding agents are separate checkouts.
     ".claude/worktrees/**",
     // Ocean builds the mini app here; the sources are in ocean-app/src.

@@ -22,7 +22,8 @@ import {
 import { LoadingIcon } from "@/components/ui/icon"
 import { Input } from "@/components/ui/input"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
-import { MOCK_EXAM_MINUTES } from "@/lib/exam-scoring"
+import { Textarea } from "@/components/ui/textarea"
+import { MAX_MOCK_GUIDANCE_CHARS, MOCK_EXAM_MINUTES } from "@/lib/exam-scoring"
 
 /** File types accepted for a paper or its solutions, matching what the upload route can read. */
 const PAPER_ACCEPT = ".pdf,.txt,.md,.markdown"
@@ -237,7 +238,7 @@ export function LengthChoice({
 /** A unit the learner can include in a mock exam. */
 export type MockUnitOption = { id: string; title: string }
 
-/** Dialog that writes a mock exam from the chosen units and length. */
+/** Dialog that writes a mock exam from chosen units, length, and optional instructions. */
 export function WriteMockExamDialog({
   projectId,
   units,
@@ -253,6 +254,7 @@ export function WriteMockExamDialog({
   // Null means "every unit", so units added while the dialog is closed are included by default.
   const [chosen, setChosen] = useState<string[] | null>(null)
   const [minutes, setMinutes] = useState("60")
+  const [guidance, setGuidance] = useState("")
   const [starting, setStarting] = useState(false)
   const [error, setError] = useState("")
   const selected = chosen ?? units.map((unit) => unit.id)
@@ -262,6 +264,7 @@ export function WriteMockExamDialog({
     if (starting) return
     if (!next) {
       setChosen(null)
+      setGuidance("")
       setError("")
     }
     onOpenChange(next)
@@ -281,7 +284,12 @@ export function WriteMockExamDialog({
     const response = await fetch("/api/practice/exam/mock", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ projectId, unitIds: selected, minutes: Number(minutes) }),
+      body: JSON.stringify({
+        projectId,
+        unitIds: selected,
+        minutes: Number(minutes),
+        generationGuidance: guidance,
+      }),
     }).catch(() => null)
     setStarting(false)
     if (!response?.ok) {
@@ -289,6 +297,7 @@ export function WriteMockExamDialog({
       return
     }
     setChosen(null)
+    setGuidance("")
     onOpenChange(false)
   }
 
@@ -333,6 +342,19 @@ export function WriteMockExamDialog({
           onChange={setMinutes}
           disabled={starting}
         />
+        <div className="space-y-1.5">
+          <label htmlFor="mock-guidance" className="text-sm font-medium">
+            Instructions <span className="font-normal text-muted-foreground">(optional)</span>
+          </label>
+          <Textarea
+            id="mock-guidance"
+            value={guidance}
+            onChange={(event) => setGuidance(event.target.value)}
+            placeholder="e.g. 5 multiple-choice questions and 1 essay"
+            maxLength={MAX_MOCK_GUIDANCE_CHARS}
+            disabled={starting}
+          />
+        </div>
         {error ? (
           <p role="alert" className="text-sm text-destructive">
             {error}

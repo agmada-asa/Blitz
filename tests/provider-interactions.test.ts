@@ -208,38 +208,6 @@ test("Claude AskUserQuestion preserves single and multi-select normalized UI ans
   )
 })
 
-test("Antigravity interaction returns the exact native option ID after UI decision", async () => {
-  const { bridge, db, messageId, handlers, chatId } = await setup()
-  const pending = bridge.handleProviderRequest({
-    requestId: 7,
-    method: "session/request_permission",
-    params: {
-      toolCall: { toolCallId: "interaction_7", title: "Environment" },
-      options: [
-        { optionId: "dev", name: "Development", kind: "allow_once" },
-        { optionId: "prod", name: "Production", kind: "allow_once" },
-      ],
-    },
-  })
-  const approval = await waitForPending(db, messageId)
-  await handlers.decideApproval(
-    { db },
-    {
-      chatId,
-      messageId,
-      approvalId: approval.id,
-      decision: "approved",
-      response: JSON.stringify({
-        answers: { interaction_7: { answers: ["prod"] } },
-      }),
-    }
-  )
-  assert.deepEqual(await pending, {
-    outcome: { outcome: "selected", optionId: "prod" },
-  })
-  await bridge.close()
-})
-
 test("ACP approvals preserve once, always, and reject IDs through one-time persistence", async () => {
   for (const [decision, expected] of [
     ["once", "once"],

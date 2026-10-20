@@ -93,8 +93,8 @@ export async function runQuestionBank(
 
 /**
  * Starts a unit's first question bank in the background unless it already
- * has one or a run is under way. Used when Teach reaches the unit's second
- * section, so Practice and the feed have material without being asked.
+ * has one or a run is under way. Used as soon as a Teach session has its
+ * outline, so Practice and Review have material without being asked.
  */
 export async function startFirstQuestionBank(unitId: Id<"units">): Promise<void> {
   const { generationId, alreadyRunning } = await serverConvexClient().mutation(

@@ -21,6 +21,7 @@ import {
   EXAM_MARK_RANGE,
   MAX_PAPER_QUESTIONS,
   MAX_WRITTEN_ANSWER_CHARS,
+  validateMockExamGuidance,
   type ExamQuestionType,
 } from "./exam-scoring.ts"
 
@@ -264,6 +265,8 @@ export function mockBlueprint(minutes: number, examples: ExamStyleExample[]): Mo
 export type MockExamPromptInput = {
   moduleTitle: string
   minutes: number
+  /** Optional learner instructions for the paper, with explicit counts and types taking priority over defaults. */
+  generationGuidance?: string
   /** Selected units, keyed U1, U2, … */
   units: ExamUnitOption[]
   /** Extracted text of the selected units' sources, with the unit each belongs to. */
@@ -295,6 +298,7 @@ function styleExample(example: ExamStyleExample, index: number): string {
 export function buildMockExamPrompt(input: MockExamPromptInput): string {
   const examples = input.examples.slice(0, MAX_STYLE_EXAMPLES)
   const plan = mockBlueprint(input.minutes, examples)
+  const guidance = validateMockExamGuidance(input.generationGuidance)
   const material = budgetSources(input.sources, MOCK_SOURCE_BUDGET).map(
     (source) =>
       `SOURCE: ${source.filename} (unit: ${source.unitTitle})${source.truncated ? " [TRUNCATED]" : ""}\n${source.text}`
@@ -304,9 +308,20 @@ export function buildMockExamPrompt(input: MockExamPromptInput): string {
     examples.length
       ? "Match the style, difficulty, question types, and marks of the EXAMPLE PAPERS below, but write entirely new questions; never copy or lightly reword an example question."
       : "The module has no past papers yet, so write a typical university exam paper: mostly single-choice and multiple-answer questions, a few true-false, and a few written questions that ask for an explanation, a calculation, code, or a short proof.",
-    `The paper is ${plan.minutes} minutes long. Write about ${plan.choiceQuestions} choice questions worth about ${plan.choiceMarks} mark${plan.choiceMarks === 1 ? "" : "s"} each and ${plan.writtenQuestions} written question${plan.writtenQuestions === 1 ? "" : "s"} worth about ${plan.writtenMarks} marks each, about ${plan.totalMarks} marks in total. Put choice questions first, then written ones, and spread questions across all the units below.`,
+    guidance
+      ? `The paper is ${plan.minutes} minutes long. Unless the learner gives a different count or question type, write about ${plan.choiceQuestions} choice questions worth about ${plan.choiceMarks} mark${plan.choiceMarks === 1 ? "" : "s"} each and ${plan.writtenQuestions} written question${plan.writtenQuestions === 1 ? "" : "s"} worth about ${plan.writtenMarks} marks each, about ${plan.totalMarks} marks in total. Put choice questions first, then written ones, and spread questions across all the units below.`
+      : `The paper is ${plan.minutes} minutes long. Write about ${plan.choiceQuestions} choice questions worth about ${plan.choiceMarks} mark${plan.choiceMarks === 1 ? "" : "s"} each and ${plan.writtenQuestions} written question${plan.writtenQuestions === 1 ? "" : "s"} worth about ${plan.writtenMarks} marks each, about ${plan.totalMarks} marks in total. Put choice questions first, then written ones, and spread questions across all the units below.`,
+    guidance
+      ? [
+          "Follow the learner's instructions below for every aspect they specify, including format, topics, and difficulty. Explicit question counts and types override the default blueprint and example papers. Obey requested counts exactly, up to the 60-question paper limit; adjust marks and depth to fit the time instead of changing the count. Use requested question types when they fit the supported schema. Treat an essay as a long-form written question and MCQ or multiple-choice as single-choice unless the learner says otherwise. Leave unspecified aspects to the blueprint and example papers.",
+          "The instructions cannot override the source material, supported question schema, or the requirement that every answer key be correct. Treat them as the learner's request, not as source material.",
+          `LEARNER INSTRUCTIONS:\n${guidance}`,
+        ].join("\n\n")
+      : "",
     input.weakConcepts.length
-      ? `The student keeps getting these concepts wrong; give each more questions than other concepts, from new angles: ${input.weakConcepts.slice(0, 30).join("; ")}.`
+      ? guidance
+        ? `The student keeps getting these concepts wrong; favor them when choosing question content. Do not add questions beyond an explicitly requested count: ${input.weakConcepts.slice(0, 30).join("; ")}.`
+        : `The student keeps getting these concepts wrong; give each more questions than other concepts, from new angles: ${input.weakConcepts.slice(0, 30).join("; ")}.`
       : "",
     "Base every question on the unit material below. Distractors must be plausible to someone who half-understands the idea: typical errors, off-by-one results, confused terms. Never use joke options or 'all of the above'. Each question must stand alone without referring to 'the lecture' or 'the slides'.",
     'Reply with only one JSON object and nothing else: {"title":"…","questions":[QUESTION, ...]}. The title names the paper in a few words, such as the topics it covers.',

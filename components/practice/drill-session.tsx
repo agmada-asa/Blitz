@@ -26,6 +26,7 @@ import { api } from "@/convex/_generated/api"
 import type { Id } from "@/convex/_generated/dataModel"
 import { createClientMessageId } from "@/lib/client/teach-turn"
 import type { QuizBlock } from "@/lib/interactive-blocks"
+import { COMBO_START, comboBonus } from "@/lib/progress"
 
 /** One question in the drill deck. */
 type DrillQuestion = FunctionReturnType<typeof api.practice.drill>[number]
@@ -44,7 +45,8 @@ type DrillResult = { correct: boolean }
 async function submitAnswer(
   projectId: string,
   question: DrillQuestion,
-  selectedOptionIds: string[]
+  selectedOptionIds: string[],
+  confidence?: "guess"
 ): Promise<{ correct: boolean }> {
   const [first] = selectedOptionIds
   const answer =
@@ -62,6 +64,7 @@ async function submitAnswer(
       clientEventId: `drill:${createClientMessageId()}`,
       occurredAt: Date.now(),
       answer,
+      ...(confidence ? { confidence } : {}),
     }),
   })
   const payload = (await response.json().catch(() => null)) as {
@@ -84,26 +87,36 @@ export function DrillSession({ projectId, unitId }: { projectId: string; unitId?
   const [round, setRound] = useState(0)
   // When this round's deck arrived; the summary counts answers from then on.
   const [startedAt, setStartedAt] = useState(0)
+  // Right answers in a row, for the combo counter. It starts from the run the
+  // server is scoring, so a run carried in from Review keeps its bonus.
+  const [run, setRun] = useState(0)
   const nextRef = useRef<HTMLButtonElement>(null)
   const base = `/projects/${encodeURIComponent(projectId)}`
 
   // Fetches a fresh deck at the start of each round.
   useEffect(() => {
     let active = true
-    convex
-      .query(api.practice.drill, {
+    const now = Date.now()
+    Promise.all([
+      convex.query(api.practice.drill, {
         projectId: projectId as Id<"projects">,
         ...(unitId ? { unitId: unitId as Id<"units"> } : {}),
         limit: DRILL_LENGTH,
-        now: Date.now(),
-      })
-      .then((questions) => {
+        now,
+      }),
+      convex.query(api.progress.today, {
+        tzOffsetMinutes: new Date().getTimezoneOffset(),
+        now,
+      }),
+    ])
+      .then(([questions, today]) => {
         if (!active) return
         setLoadError("")
         setDeck(questions)
         setStartedAt(Date.now())
         setIndex(0)
         setResults({})
+        setRun(today.run)
       })
       .catch(() => {
         if (active) setLoadError("Questions could not be loaded. Try again.")
@@ -118,17 +131,21 @@ export function DrillSession({ projectId, unitId }: { projectId: string; unitId?
   const finished = Boolean(deck && deck.length && index >= deck.length)
 
   const onQuizAnswer = useCallback(
-    async (_block: QuizBlock, selectedOptionIds: string[]) => {
+    async (_block: QuizBlock, selectedOptionIds: string[], confidence?: "guess") => {
       if (!current) return null
-      const result = await submitAnswer(projectId, current, selectedOptionIds)
+      const result = await submitAnswer(projectId, current, selectedOptionIds, confidence)
       setResults((previous) => ({ ...previous, [current.itemId]: result }))
+      setRun((value) => (result.correct ? value + 1 : 0))
       // Move focus to Next so keyboard learners can continue with Enter.
       window.requestAnimationFrame(() => nextRef.current?.focus())
       return result
     },
     [current, projectId]
   )
-  const interactive = useMemo(() => ({ onQuizAnswer }), [onQuizAnswer])
+  const interactive = useMemo(
+    () => ({ onQuizAnswer, acceptsConfidence: true }),
+    [onQuizAnswer]
+  )
 
   const correctCount = Object.values(results).filter((result) => result.correct).length
   const missed = deck?.filter((question) => results[question.itemId]?.correct === false) ?? []
@@ -142,8 +159,15 @@ export function DrillSession({ projectId, unitId }: { projectId: string; unitId?
           </Link>
         </Button>
         {deck && deck.length && !finished ? (
-          <p className="text-sm text-muted-foreground tabular-nums">
-            {index + 1} of {deck.length}
+          <p className="flex items-center gap-3 text-sm text-muted-foreground tabular-nums">
+            {run >= COMBO_START ? (
+              <span key={run} className="combo-chip font-medium text-brand">
+                {run} in a row · +{comboBonus(run)} XP
+              </span>
+            ) : null}
+            <span>
+              {index + 1} of {deck.length}
+            </span>
           </p>
         ) : null}
       </div>

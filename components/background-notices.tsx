@@ -13,38 +13,61 @@ import {
   type ReactNode,
 } from "react"
 
+/** Most notices shown at once; the newest keeps the corner stack short over page content. */
+const MAX_VISIBLE_NOTICES = 2
+
 /** One user-facing acknowledgement for work that continues after navigation. */
 type BackgroundNotice = {
   id: number
+  /** Notices with the same key describe one job; a newer one replaces the older. */
+  key?: string
   message: string
   href?: string
   label?: string
 }
 
-/** Adds one notice to the shared background-job tray. */
+/**
+ * Adds one notice to the shared background-job tray.
+ * @param key Optional job identity. A notice with a key already showing is replaced rather than stacked.
+ */
 type NotifyBackgroundNotice = (
   message: string,
   href?: string,
-  label?: string
+  label?: string,
+  key?: string
 ) => void
 
 const BackgroundNoticeContext = createContext<NotifyBackgroundNotice | null>(
   null
 )
 
-/** Renders an eight-second notice tray for background work. */
+/**
+ * Renders an eight-second notice tray for background work. The tray holds at
+ * most two notices, one per job key, so it covers a small corner of the page.
+ */
 export function BackgroundNotices({ children }: { children: ReactNode }) {
   const [notices, setNotices] = useState<BackgroundNotice[]>([])
   const router = useRouter()
 
-  /** Shows one notice with an optional route action, then removes it automatically. */
-  const notify = useCallback<NotifyBackgroundNotice>((message, href, label) => {
-    const notice = { id: Date.now() + Math.random(), message, href, label }
-    setNotices((current) => [...current.slice(-2), notice])
-    window.setTimeout(() => {
-      setNotices((current) => current.filter((item) => item.id !== notice.id))
-    }, 8_000)
-  }, [])
+  /**
+   * Shows one notice with an optional route action, then removes it automatically.
+   * A keyed notice drops any earlier notice with the same key, and the oldest
+   * notice drops when the tray is full.
+   */
+  const notify = useCallback<NotifyBackgroundNotice>(
+    (message, href, label, key) => {
+      const notice = { id: Date.now() + Math.random(), key, message, href, label }
+      setNotices((current) =>
+        [...current.filter((item) => !key || item.key !== key), notice].slice(
+          -MAX_VISIBLE_NOTICES
+        )
+      )
+      window.setTimeout(() => {
+        setNotices((current) => current.filter((item) => item.id !== notice.id))
+      }, 8_000)
+    },
+    []
+  )
 
   return (
     <BackgroundNoticeContext.Provider value={notify}>

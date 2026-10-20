@@ -3,38 +3,7 @@ import { EventEmitter } from "node:events"
 import assert from "node:assert/strict"
 import test from "node:test"
 
-import {
-  extractAntigravityUserInputQuestion,
-  makeAntigravityUserInputResponse,
-  runAcpTextTurn,
-  type AcpChildProcess,
-} from "../lib/server/providers/acp.ts"
-
-test("normalizes Antigravity interaction permission requests and exact answers", () => {
-  const params = {
-    sessionId: "session-1",
-    toolCall: { toolCallId: "interaction_1", title: "Which environment?" },
-    options: [
-      { optionId: "dev", kind: "allow_once", name: "Development" },
-      { optionId: "prod", kind: "allow_once", name: "Production" },
-    ],
-  }
-  assert.deepEqual(extractAntigravityUserInputQuestion(params)?.options[0], {
-    value: "dev",
-    label: "Development",
-    description: "Development",
-  })
-  assert.deepEqual(
-    makeAntigravityUserInputResponse(params, { interaction_1: "prod" }),
-    {
-      outcome: { outcome: "selected", optionId: "prod" },
-    }
-  )
-  assert.equal(
-    makeAntigravityUserInputResponse(params, { interaction_1: "unknown" }),
-    undefined
-  )
-})
+import { runAcpTextTurn, type AcpChildProcess } from "../lib/server/providers/acp.ts"
 
 /** Minimal ACP peer used to inspect requests without starting a provider binary. */
 class AcpFixture extends EventEmitter implements AcpChildProcess {
@@ -173,7 +142,7 @@ function runFixture(
 ) {
   return runAcpTextTurn(
     {
-      selection: { providerId: "antigravity", model },
+      selection: { providerId: "opencode", model },
       workspaceDirectory: "/tmp/blitz-acp-test",
       prompt: "hello",
       ...(signal ? { signal } : {}),
@@ -212,7 +181,7 @@ test("ACP never policy denies native permission without invoking the UI handler"
   let calls = 0
   await runAcpTextTurn(
     {
-      selection: { providerId: "antigravity", model: "provider/model-high" },
+      selection: { providerId: "opencode", model: "provider/model-high" },
       workspaceDirectory: "/tmp/blitz-acp-test",
       prompt: "hello",
       approvalPolicy: "never",

@@ -280,7 +280,7 @@ export function ModelReasoningPicker({
               label: opt.label,
               provider: p.id,
               providerLabel: p.label,
-              isLegacy: isLegacyAiModelOption(p.id, opt, opts),
+              isLegacy: isLegacyAiModelOption(p.id, opt),
             })
           }
         }
@@ -307,7 +307,7 @@ export function ModelReasoningPicker({
       label: opt.label,
       provider: pId,
       providerLabel: pOpt?.label ?? pId,
-      isLegacy: isLegacyAiModelOption(pId, opt, opts),
+      isLegacy: isLegacyAiModelOption(pId, opt),
     }))
 
     if (!query) return enriched

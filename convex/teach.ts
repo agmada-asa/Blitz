@@ -153,3 +153,55 @@ export const answeredQuizzes = query({
     return answered
   },
 })
+
+/**
+ * Returns the learner's answers to a Teach session's pre-check: the quizzes in
+ * the first tutor reply, each with its concept, question, and whether the
+ * latest answer was right. Unanswered pre-check quizzes are left out. The chat
+ * route sends these with `Plan my lesson` so the tutor can skip known sections.
+ */
+export const precheckResults = query({
+  args: { chatId: v.id("workspaceChats") },
+  handler: async (ctx, { chatId }) => {
+    const chat = await ctx.db.get(chatId)
+    if (!chat || chat.purpose !== "teach" || !chat.projectId) return []
+    const projectId = chat.projectId
+    const first = await ctx.db
+      .query("workspaceChatMessages")
+      .withIndex("by_chat_createdAt", (q) => q.eq("chatId", chatId))
+      .filter((q) => q.eq(q.field("role"), "assistant"))
+      .first()
+    if (!first) return []
+    const items = await ctx.db
+      .query("learningItems")
+      .withIndex("by_project_teachKey", (q) =>
+        q
+          .eq("projectId", projectId)
+          .gte("teachKey", `${first._id}:`)
+          .lt("teachKey", `${first._id};`)
+      )
+      .collect()
+    const results: Array<{
+      concept: string
+      question: string
+      correct: boolean
+      guessed: boolean
+    }> = []
+    for (const item of items) {
+      const event = await ctx.db
+        .query("studyEvents")
+        .withIndex("by_item_occurredAt", (q) => q.eq("itemId", item._id))
+        .order("desc")
+        .filter((q) => q.eq(q.field("eventType"), "answer"))
+        .first()
+      if (!event?.outcome) continue
+      results.push({
+        concept: item.title,
+        question: item.question ?? "",
+        correct: event.outcome === "correct",
+        guessed: event.confidence === "guess",
+      })
+    }
+    return results
+  },
+})

@@ -59,11 +59,14 @@ import { restartSitting, sittingStart } from "@/lib/client/teach-sitting"
 import { createClientMessageId, sendTeachTurn } from "@/lib/client/teach-turn"
 import type { QuizBlock } from "@/lib/interactive-blocks"
 import {
+  isTeachPrecheck,
   parseTeachOutline,
+  parseTeachPlan,
   parseTeachSectionMarker,
   TEACH_QUICK_REPLIES,
   teachJumpMessage,
   type TeachOutline,
+  type TeachSectionPlan,
 } from "@/lib/teach"
 
 /** Scrolls an element into view, respecting the reduced-motion preference. */
@@ -218,6 +221,43 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
   const complete =
     Boolean(outline) && sectionIndex >= (outline?.sections.length ?? 0)
 
+  // The saved plan wins; until the planning reply finishes, read it live.
+  const plan: TeachSectionPlan | null = useMemo(() => {
+    if (unit.plan) return unit.plan
+    if (!outline) return null
+    for (const message of messages) {
+      if (message.role !== "assistant") continue
+      const found = parseTeachPlan(message.content, outline)
+      if (found) return found
+    }
+    return null
+  }, [unit.plan, outline, messages])
+  // Sections after the current one that the tutor will still teach.
+  const sectionsLeft = outline
+    ? outline.sections.filter(
+        (section, index) =>
+          index > sectionIndex &&
+          plan?.find((entry) => entry.id === section.id)?.mode !== "skip"
+      ).length
+    : 0
+  // Celebrate only when the recap arrived in this sitting, not on every revisit.
+  const finishedThisSitting =
+    complete &&
+    messages.some(
+      (message) =>
+        message.role === "assistant" &&
+        message.createdAt >= sittingStartedAt &&
+        parseTeachSectionMarker(message.content)?.kind === "done"
+    )
+  // The pre-check waits for `Plan my lesson` or `Skip the check`.
+  const awaitingPlan =
+    lastMessage?.role === "assistant" &&
+    lastMessage.status === "completed" &&
+    isTeachPrecheck(lastMessage.content)
+  const precheckAnswered = awaitingPlan
+    ? Object.keys(answered?.[lastMessage.id] ?? {}).length
+    : 0
+
   /** Sends a learner message or quick reply, or resumes a paused reply. */
   const send = useCallback(
     async (message: string, continuationOf?: string) => {
@@ -319,7 +359,8 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
     async (
       messageId: string,
       block: QuizBlock,
-      selectedOptionIds: string[]
+      selectedOptionIds: string[],
+      confidence?: "guess"
     ) => {
       if (!activeChatId) return null
       const response = await fetch("/api/teach/answer", {
@@ -331,6 +372,7 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
           quizId: block.id,
           selectedOptionIds,
           clientEventId: createClientMessageId(),
+          ...(confidence ? { confidence } : {}),
         }),
       })
       const payload = (await response.json().catch(() => null)) as {
@@ -401,29 +443,31 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
         ? { kind: outline ? "writing" : "starting" }
         : lastMessage?.role === "assistant" && lastMessage.status === "failed"
           ? { kind: "paused", hasText: Boolean(lastMessage.content.trim()) }
-          : complete
-            ? {
-                kind: "complete",
-                practiceHref: `${projectHref}/practice`,
-                nextUnit: unit.nextUnit
-                  ? {
-                      href: `${projectHref}/learn/${encodeURIComponent(String(unit.nextUnit.id))}`,
-                      title: unit.nextUnit.title,
-                    }
-                  : null,
-              }
-            : {
-                kind: "ready",
-                isLastSection:
-                  Boolean(outline) &&
-                  sectionIndex >= (outline?.sections.length ?? 0) - 1,
-              }
+          : awaitingPlan
+            ? { kind: "precheck", answered: precheckAnswered }
+            : complete
+              ? {
+                  kind: "complete",
+                  practiceHref: `${projectHref}/practice`,
+                  nextUnit: unit.nextUnit
+                    ? {
+                        href: `${projectHref}/learn/${encodeURIComponent(String(unit.nextUnit.id))}`,
+                        title: unit.nextUnit.title,
+                      }
+                    : null,
+                }
+              : {
+                  kind: "ready",
+                  isLastSection: Boolean(outline) && sectionsLeft === 0,
+                }
   const currentSectionTitle =
     outline && !complete ? outline.sections[sectionIndex]?.title : undefined
   const progressLabel = outline
-    ? complete
-      ? "Unit complete"
-      : `Section ${Math.min(sectionIndex + 1, outline.sections.length)} of ${outline.sections.length}`
+    ? awaitingPlan
+      ? "Quick check"
+      : complete
+        ? "Unit complete"
+        : `Section ${Math.min(sectionIndex + 1, outline.sections.length)} of ${outline.sections.length}`
     : running
       ? "Planning the lesson"
       : null
@@ -433,6 +477,7 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
       outline={outline}
       sectionIndex={sectionIndex}
       taughtSectionIds={taughtSectionIds}
+      plan={plan}
       busy={running}
       onOpenSection={openSection}
       onJumpToSection={jumpToSection}
@@ -573,6 +618,7 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
                 outline={outline}
                 sectionIndex={sectionIndex}
                 taughtSectionIds={taughtSectionIds}
+                plan={plan}
                 className={cn("mt-3", source ? "hidden 2xl:flex" : "hidden lg:flex")}
               />
               {/* Narrow screens have no rail, so the progress bar opens the outline. */}
@@ -590,6 +636,7 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
                       outline={outline}
                       sectionIndex={sectionIndex}
                       taughtSectionIds={taughtSectionIds}
+                      plan={plan}
                     />
                     <ArrowDownIcon aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />
                   </button>
@@ -623,6 +670,7 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
                   onQuizAnswer={answerQuiz}
                   onFollowUp={(text) => void send(text)}
                   busy={running}
+                  sourceOpen={Boolean(source)}
                 />
               ) : (
                 <div className="space-y-3" aria-hidden="true">
@@ -639,6 +687,7 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
                     since={messages[0]?.createdAt ?? 0}
                     eyebrow="Unit complete"
                     title={`You finished ${unit.title}`}
+                    celebrate={finishedThisSitting}
                   />
                 </div>
               ) : null}

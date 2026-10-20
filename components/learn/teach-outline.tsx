@@ -15,7 +15,7 @@ import {
   pathStateLabel,
   type PathState,
 } from "@/components/progress/progress-path"
-import type { TeachOutline } from "@/lib/teach"
+import type { TeachOutline, TeachSectionMode, TeachSectionPlan } from "@/lib/teach"
 import { cn } from "@/lib/utils"
 
 /** Outline plus the learner's position and navigation callbacks. */
@@ -25,6 +25,8 @@ export type TeachOutlineProps = {
   sectionIndex: number
   /** Sections actually taught; others can be jumped to even if earlier. */
   taughtSectionIds: ReadonlySet<string>
+  /** Skip, skim, or teach per section from the pre-check, once agreed. */
+  plan?: TeachSectionPlan | null
   /** Disables jumping ahead while a reply is being written. */
   busy: boolean
   /** Scrolls to a section already taught. */
@@ -33,14 +35,29 @@ export type TeachOutlineProps = {
   onJumpToSection: (index: number) => void
 }
 
-/** Returns a section's state from the learner's position and taught sections. */
+/**
+ * Returns a section's state from the learner's position and taught sections.
+ * A section the pre-check showed the learner already knows counts as done.
+ */
 function sectionState(
   index: number,
   sectionIndex: number,
-  taught: boolean
+  taught: boolean,
+  mode?: TeachSectionMode
 ): PathState {
   if (index === sectionIndex) return "current"
-  return taught ? "done" : "ahead"
+  return taught || mode === "skip" ? "done" : "ahead"
+}
+
+/** Looks up a section's planned mode, if a plan exists. */
+function modeOf(plan: TeachSectionPlan | null | undefined, id: string) {
+  return plan?.find((entry) => entry.id === id)?.mode
+}
+
+/** Short labels shown beside sections the pre-check changed. */
+const MODE_LABELS: Partial<Record<TeachSectionMode, string>> = {
+  skip: "Known",
+  skim: "Quick",
 }
 
 /**
@@ -52,8 +69,9 @@ export function TeachProgressBar({
   outline,
   sectionIndex,
   taughtSectionIds,
+  plan,
   className,
-}: Pick<TeachOutlineProps, "outline" | "sectionIndex" | "taughtSectionIds"> & {
+}: Pick<TeachOutlineProps, "outline" | "sectionIndex" | "taughtSectionIds" | "plan"> & {
   className?: string
 }) {
   return (
@@ -62,7 +80,12 @@ export function TeachProgressBar({
       segments={pathSegments(
         outline.sections.map((section, index) => ({
           key: section.id,
-          state: sectionState(index, sectionIndex, taughtSectionIds.has(section.id)),
+          state: sectionState(
+            index,
+            sectionIndex,
+            taughtSectionIds.has(section.id),
+            modeOf(plan, section.id)
+          ),
         }))
       )}
     />
@@ -80,6 +103,7 @@ export function TeachOutlineList({
   outline,
   sectionIndex,
   taughtSectionIds,
+  plan,
   busy,
   onOpenSection,
   onJumpToSection,
@@ -87,13 +111,13 @@ export function TeachOutlineList({
   return (
     <ol className="space-y-1">
       {outline.sections.map((section, index) => {
-        const state = sectionState(
-          index,
-          sectionIndex,
-          taughtSectionIds.has(section.id)
-        )
-        // Only taught sections have a place in the lesson to scroll to.
-        const reached = state !== "ahead"
+        const mode = modeOf(plan, section.id)
+        const taught = taughtSectionIds.has(section.id)
+        const state = sectionState(index, sectionIndex, taught, mode)
+        const label = taught ? undefined : mode && MODE_LABELS[mode]
+        // Only taught sections have a place in the lesson to scroll to; a
+        // known section the tutor skipped is taught in full when chosen.
+        const reached = state === "current" || taught
         const last = index === outline.sections.length - 1
         return (
           <li key={section.id} className="relative">
@@ -121,6 +145,14 @@ export function TeachOutlineList({
               <span className="min-w-0 flex-1 break-words">
                 {section.title}
                 <span className="sr-only"> ({pathStateLabel(state)})</span>
+                {label ? (
+                  <span className="ml-2 inline-block rounded-full bg-muted px-2 py-px align-[1px] text-[11px] text-muted-foreground">
+                    {label}
+                    <span className="sr-only">
+                      {mode === "skip" ? ": the check showed you know this" : ": taught briefly"}
+                    </span>
+                  </span>
+                ) : null}
               </span>
             </button>
           </li>

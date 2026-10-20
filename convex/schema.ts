@@ -4,6 +4,8 @@ import { defineSchema, defineTable } from "convex/server"
 import { v } from "convex/values"
 import { citationFields } from "./citationFields"
 import { examAnswerFields, examQuestionFields, examResultFields } from "./examFields"
+import { reviewMemoryFields } from "./reviewFields"
+import { teachOutlineFields, teachSectionPlanFields } from "./teachFields"
 
 /** Validator shared by the cards table's supported learning formats. */
 const cardType = v.union(
@@ -74,6 +76,8 @@ export default defineSchema({
     /** Five-step length preference copied into each new content generation job. */
     contentDepth: v.optional(v.number()),
     title: v.string(),
+    /** Set while the project is archived; archived projects keep all their data and are hidden from the Library grid. */
+    archivedAt: v.optional(v.number()),
     createdAt: v.number(),
     /** Optional stable key for the project-local desktop workspace. */
     workspaceKey: v.optional(v.string()),
@@ -332,6 +336,8 @@ export default defineSchema({
     solutionsSourceId: v.optional(v.id("sources")),
     /** Mock papers: units the paper covers. */
     unitIds: v.optional(v.array(v.id("units"))),
+    /** Mock papers: optional learner guidance for question format, topics, or difficulty, capped at 1,000 characters. */
+    generationGuidance: v.optional(v.string()),
     /** Time allowed in minutes: stated on a past paper, or chosen for a mock. */
     durationMinutes: v.optional(v.number()),
     /** Total marks printed on a past paper, when stated. */
@@ -441,6 +447,13 @@ export default defineSchema({
     ),
     answer: v.optional(v.union(v.string(), v.boolean(), v.array(v.string()))),
     outcome: v.optional(v.union(v.literal("correct"), v.literal("incorrect"))),
+    /** `guess` when the learner marked a right answer as a guess. */
+    confidence: v.optional(v.union(v.literal("sure"), v.literal("guess"))),
+    /**
+     * `recall` when the learner answered from memory before seeing options
+     * and graded themselves; such events have no `answer`.
+     */
+    answerMode: v.optional(v.literal("recall")),
   })
     .index("by_project_clientEventId", ["projectId", "clientEventId"])
     .index("by_project_concept_occurredAt", [
@@ -494,6 +507,8 @@ export default defineSchema({
     lastOutcome: v.optional(
       v.union(v.literal("correct"), v.literal("incorrect"))
     ),
+    /** FSRS memory after the latest answer (see `lib/learning/fsrs.ts`). */
+    memory: v.optional(reviewMemoryFields),
     updatedAt: v.number(),
   })
     .index("by_project_concept", ["projectId", "conceptId"])
@@ -783,12 +798,9 @@ export default defineSchema({
     /** Unit taught by a Teach session. */
     unitId: v.optional(v.id("units")),
     /** Lesson outline the tutor proposed in its first Teach reply. */
-    teachOutline: v.optional(
-      v.object({
-        title: v.string(),
-        sections: v.array(v.object({ id: v.string(), title: v.string() })),
-      })
-    ),
+    teachOutline: v.optional(teachOutlineFields),
+    /** Skip, skim, or teach per section, set from the pre-check. */
+    teachSectionPlan: v.optional(teachSectionPlanFields),
     /** Zero-based index of the section being taught; the outline length once complete. */
     teachSectionIndex: v.optional(v.number()),
     /** Ids of the outline sections actually taught. */

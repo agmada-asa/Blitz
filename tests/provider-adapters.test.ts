@@ -174,7 +174,7 @@ test("inspects ACP authentication methods without starting a model turn", async 
     },
   ]
   const result = await inspectAcpAuthentication(
-    { executable: "fake-antigravity", args: [] },
+    { executable: "fake-opencode", args: [] },
     "/tmp/blitz-provider-test",
     { spawnProcess: () => child }
   )
@@ -190,8 +190,8 @@ test("inspects ACP authentication methods without starting a model turn", async 
   ])
 })
 
-/** Confirms nested Antigravity choices retain native IDs and recognizable reasoning tiers. */
-test("extracts Antigravity models from ACP session configuration", () => {
+/** Confirms nested ACP model choices retain native IDs and recognizable reasoning tiers. */
+test("extracts models from ACP session configuration", () => {
   assert.deepEqual(
     parseAcpModelOptions({
       configOptions: [
@@ -245,8 +245,8 @@ test("extracts models from the native models.availableModels shape", () => {
   )
 })
 
-/** Confirms an explicit Antigravity variant is applied through its native model selector. */
-test("applies an Antigravity model and encoded reasoning choice", async () => {
+/** Confirms an explicit ACP model variant is applied through its native model selector. */
+test("applies an ACP model and encoded reasoning choice", async () => {
   const child = new FakeAcpProcess()
   child.sessionResult = {
     sessionId: "acp-session-1",
@@ -262,7 +262,7 @@ test("applies an Antigravity model and encoded reasoning choice", async () => {
   await runAcpTextTurn(
     {
       selection: {
-        providerId: "antigravity",
+        providerId: "opencode",
         model: "gemini-flash-high",
         effort: "high",
       },
@@ -272,7 +272,7 @@ test("applies an Antigravity model and encoded reasoning choice", async () => {
       webSearchMode: "live",
     },
     {
-      command: { executable: "fake-antigravity", args: [] },
+      command: { executable: "fake-opencode", args: [] },
       providerInstanceId: "local",
       spawnProcess: () => child,
     }
@@ -444,33 +444,30 @@ test("normalizes ACP provider output", async () => {
 
 /** Reapplies the selected native ACP mode after loading an existing conversation. */
 test("ACP sets the current access mode before every resumed prompt", async () => {
-  for (const [approvalPolicy, modeId] of [
-    ["on-request", "default"],
-    ["full-access", "yolo"],
-  ] as const) {
+  for (const approvalPolicy of ["on-request", "full-access"] as const) {
     const child = new FakeAcpProcess()
     child.capabilities = { sessionCapabilities: { resume: {} } }
     await runAcpTextTurn(
       {
-        selection: { providerId: "antigravity", model: "default" },
+        selection: { providerId: "opencode", model: "default" },
         workspaceDirectory: "/tmp/blitz-provider-test",
         prompt: "Use the current access mode.",
         session: {
-          providerId: "antigravity",
+          providerId: "opencode",
           providerSessionId: "acp-session-1",
         },
         approvalPolicy,
         webSearchMode: "live",
       },
       {
-        command: { executable: "fake-antigravity", args: [] },
+        command: { executable: "fake-opencode", args: [] },
         providerInstanceId: "local",
         spawnProcess: () => child,
       }
     )
-    assert.deepEqual(child.modeSelections, [
-      { sessionId: "acp-session-1", modeId },
-    ])
+    assert.equal(child.modeSelections.length, 1)
+    assert.equal(child.modeSelections[0]?.sessionId, "acp-session-1")
+    assert.match(child.modeSelections[0]?.modeId ?? "", /^blitz-/)
     assert.ok(
       child.methods.indexOf("session/set_mode") <
         child.methods.indexOf("session/prompt")
@@ -543,31 +540,6 @@ test("ACP without resume capabilities fails before accepting a turn so chat can 
   const child = new FakeAcpProcess()
   await assert.rejects(acpTurn(child, true), /replay the conversation/)
   assert.deepEqual(child.methods, ["initialize"])
-})
-
-test("Antigravity refuses restricted source work before spawning", async () => {
-  let spawned = false
-  await assert.rejects(
-    runAcpTextTurn(
-      {
-        selection: { providerId: "antigravity", model: "default" },
-        workspaceDirectory: "/tmp/blitz-provider-test",
-        prompt: "Untrusted source",
-        sandbox: "read-only",
-        approvalPolicy: "never",
-      },
-      {
-        command: { executable: "opencode", args: [] },
-        providerInstanceId: "local",
-        spawnProcess: () => {
-          spawned = true
-          return new FakeAcpProcess()
-        },
-      }
-    ),
-    /no tool-free ACP mode/
-  )
-  assert.equal(spawned, false)
 })
 
 test("Claude normalizes saved aliases, passes effort, and removes tool access", () => {

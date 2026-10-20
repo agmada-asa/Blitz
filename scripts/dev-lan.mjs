@@ -6,7 +6,6 @@
  * network connection Blitz still runs on this Mac; phone access needs Wi-Fi.
  */
 
-import { existsSync } from "node:fs"
 import { networkInterfaces } from "node:os"
 import { isIP } from "node:net"
 import { fileURLToPath } from "node:url"
@@ -19,12 +18,6 @@ const lanAddress =
   configuredLanAddress && isIP(configuredLanAddress) === 4
     ? configuredLanAddress
     : findLanAddress()
-const defaultApkPath = fileURLToPath(
-  new URL("../build/android/blitz-android-debug.apk", import.meta.url)
-)
-const apkPath =
-  process.env.BLITZ_ANDROID_APK_PATH?.trim() ||
-  (existsSync(defaultApkPath) ? defaultApkPath : undefined)
 
 const services = new ServiceManager({
   cwd: fileURLToPath(new URL("..", import.meta.url)),
@@ -34,7 +27,6 @@ const services = new ServiceManager({
   environment: {
     ...process.env,
     ...(lanAddress ? { BLITZ_LAN_ADDRESS: lanAddress } : {}),
-    ...(apkPath ? { BLITZ_ANDROID_APK_PATH: apkPath } : {}),
   },
   onStatus: reportStatus,
 })
@@ -57,7 +49,6 @@ if (lanAddress) {
   } catch (error) {
     console.error("Could not render QR code for terminal:", error)
   }
-  if (apkPath) console.log(`Android installer: ${lanUrl}/api/android\n`)
 } else {
   console.log(
     "No Wi-Fi address found, so phones cannot connect. Blitz still runs on this Mac.\n"

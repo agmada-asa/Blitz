@@ -1,6 +1,6 @@
 "use client"
 
-/** Shares accessible rename and confirmed deletion controls between the library and project page. */
+/** Shares the project menu: rename, archive and confirmed deletion, used by the library cards and the project page. */
 
 import { useRef, useState } from "react"
 import { useMutation } from "convex/react"
@@ -8,7 +8,9 @@ import { ConvexError } from "convex/values"
 import { useRouter } from "next/navigation"
 import { api } from "@/convex/_generated/api"
 import type { Id } from "@/convex/_generated/dataModel"
+import { useBackgroundNotice } from "@/components/background-notices"
 import { Button } from "@/components/ui/button"
+import { isArchived } from "@/lib/projects"
 import { Input } from "@/components/ui/input"
 import {
   Dialog,
@@ -25,22 +27,37 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 
-/** Opens project actions, reports mutation failures, and returns to the library after deletion when requested. */
+/**
+ * Opens project actions, reports mutation failures, and returns to the library after deletion when requested.
+ * Archive and restore run at once without a dialog because they are reversible; a failure shows a background notice.
+ */
 export function ProjectActions({
   project,
   returnToLibrary = false,
 }: {
-  project: { _id: string; title: string }
+  project: { _id: string; title: string; archivedAt?: number }
   returnToLibrary?: boolean
 }) {
   const router = useRouter()
   const rename = useMutation(api.projects.renameProject)
   const remove = useMutation(api.projects.deleteProject)
+  const setArchived = useMutation(api.projects.setProjectArchived)
+  const notify = useBackgroundNotice()
   const trigger = useRef<HTMLButtonElement>(null)
   const [action, setAction] = useState<"rename" | "delete" | null>(null)
   const [title, setTitle] = useState(project.title)
   const [pending, setPending] = useState(false)
   const [error, setError] = useState("")
+
+  /** Archives an active project or restores an archived one; reports failure without changing the dialog state. */
+  async function toggleArchive() {
+    const archive = !isArchived(project)
+    try {
+      await setArchived({ projectId: project._id as Id<"projects">, archived: archive })
+    } catch {
+      notify(`Could not ${archive ? "archive" : "unarchive"} “${project.title}”. Try again.`)
+    }
+  }
 
   /** Opens a fresh form with the latest persisted project title. */
   function open(next: "rename" | "delete") {
@@ -90,6 +107,9 @@ export function ProjectActions({
         <DropdownMenuContent align="end">
           <DropdownMenuItem onSelect={() => open("rename")}>
             Rename project
+          </DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => void toggleArchive()}>
+            {isArchived(project) ? "Unarchive project" : "Archive project"}
           </DropdownMenuItem>
           <DropdownMenuItem
             className="text-destructive"

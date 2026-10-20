@@ -22,6 +22,10 @@ import {
   DragHandleIcon,
 } from "@/components/ui/icon"
 import { Input } from "@/components/ui/input"
+import {
+  answerCueClass,
+  type AnswerCue,
+} from "@/components/ui/interactive-blocks/answer-feedback"
 import type { MarkdownRenderer } from "@/components/ui/interactive-blocks/context"
 import {
   Select,
@@ -65,26 +69,32 @@ type StructuredAnswerProps = {
   answerKey?: StructuredAnswerKey
   /** Whether the whole answer was correct; only meaningful with `answerKey`. */
   correct?: boolean
+  /** Plays the answer cue once; pass it only on the render where the answer was just checked. */
+  cue?: AnswerCue
   renderMarkdown: MarkdownRenderer
   /** Unique prefix for element ids. */
   idBase: string
 }
 
 /**
- * Renders the input for one structured question.
+ * Renders the input for one structured question, wrapped so a checked answer can
+ * play its feedback cue on the whole answer.
  * @returns The ordering list, matching pickers, blank fields, or output box.
  */
 export function StructuredAnswer(props: StructuredAnswerProps) {
-  switch (props.shape.type) {
-    case "ordering":
-      return <OrderingAnswer {...props} />
-    case "matching":
-      return <MatchingAnswer {...props} />
-    case "cloze":
-      return <ClozeAnswer {...props} />
-    default:
-      return <OutputAnswer {...props} />
-  }
+  return (
+    <div className={answerCueClass(props.cue)}>
+      {props.shape.type === "ordering" ? (
+        <OrderingAnswer {...props} />
+      ) : props.shape.type === "matching" ? (
+        <MatchingAnswer {...props} />
+      ) : props.shape.type === "cloze" ? (
+        <ClozeAnswer {...props} />
+      ) : (
+        <OutputAnswer {...props} />
+      )}
+    </div>
+  )
 }
 
 /** A small correct or incorrect mark with visible text, so it never relies on colour. */

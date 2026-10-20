@@ -4,11 +4,11 @@
  * The end-of-session screen shared by drills and Teach: what the session
  * added up to (XP, questions, sections, time), how each concept went and how
  * strong it is now, and where today's goal and streak stand. Callers supply
- * the heading and the next actions.
+ * the heading and the next actions, and set `celebrate` for a finished unit.
  */
 
 import { useQuery } from "convex/react"
-import { useId, type ReactNode } from "react"
+import { useId, type CSSProperties, type ReactNode } from "react"
 
 import { strengthStyle } from "@/components/practice/practice-hub"
 import { Progress } from "@/components/ui/progress"
@@ -16,11 +16,13 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { api } from "@/convex/_generated/api"
 import type { Id } from "@/convex/_generated/dataModel"
 import { useMinuteClock } from "@/hooks/use-minute-clock"
+import { COMBO_START, streakMessage } from "@/lib/progress"
 import { cn } from "@/lib/utils"
 
 /** Props for a session summary. */
 type SessionSummaryProps = {
-  projectId: string
+  /** Module the session belongs to; omit for Review, which mixes modules. */
+  projectId?: string
   /** Limits the summary to one unit. */
   unitId?: string
   /** When the session started, in milliseconds since the epoch. */
@@ -35,6 +37,41 @@ type SessionSummaryProps = {
   actions?: ReactNode
   /** Heading level, so the summary nests correctly in its page. */
   headingLevel?: "h1" | "h2"
+  /** Plays a one-off entrance for a finished unit: the heading scales in over a burst of dots. */
+  celebrate?: boolean
+}
+
+/** Angle and distance of each dot in the completion burst. */
+const BURST_DOTS = Array.from({ length: 10 }, (_, index) => ({
+  angle: index * 36,
+  distance: index % 2 ? 44 : 64,
+}))
+
+/**
+ * Brand-coloured dots that fly out from behind a heading once, when it mounts.
+ * Pure decoration, hidden from assistive technology; the motion is CSS only
+ * and is removed under reduced motion.
+ */
+function CompletionBurst() {
+  return (
+    <span
+      aria-hidden="true"
+      className="summary-burst pointer-events-none absolute top-1/2 left-6 -z-10 size-0"
+    >
+      {BURST_DOTS.map((dot) => (
+        <span
+          key={dot.angle}
+          className="summary-burst-dot absolute -m-0.75 size-1.5 rounded-full bg-brand"
+          style={
+            {
+              "--burst-angle": `${dot.angle}deg`,
+              "--burst-distance": `${dot.distance}px`,
+            } as CSSProperties
+          }
+        />
+      ))}
+    </span>
+  )
 }
 
 /**
@@ -66,10 +103,11 @@ export function SessionSummary({
   children,
   actions,
   headingLevel = "h2",
+  celebrate = false,
 }: SessionSummaryProps) {
   const now = useMinuteClock()
   const summary = useQuery(api.progress.sessionSummary, {
-    projectId: projectId as Id<"projects">,
+    ...(projectId ? { projectId: projectId as Id<"projects"> } : {}),
     ...(unitId ? { unitId: unitId as Id<"units"> } : {}),
     since,
     tzOffsetMinutes: new Date().getTimezoneOffset(),
@@ -101,6 +139,7 @@ export function SessionSummary({
       : summary.sections
         ? `${summary.sections} ${summary.sections === 1 ? "section" : "sections"} taught`
         : "No answers yet this session")
+  const spent = (summary.lastActivityAt ?? now) - since
   const stats = [
     { label: "XP earned", value: `+${summary.xp}` },
     ...(summary.sections
@@ -119,29 +158,37 @@ export function SessionSummary({
           },
         ]
       : []),
-    ...(now - since <= MAX_TIMED_SPAN_MS
-      ? [{ label: "Time", value: minutes(Math.max(0, now - since)) }]
+    ...(summary.bestRun >= COMBO_START
+      ? [{ label: "Best run", value: `${summary.bestRun} in a row` }]
+      : []),
+    ...(spent <= MAX_TIMED_SPAN_MS
+      ? [{ label: "Time", value: minutes(Math.max(0, spent)) }]
       : []),
   ]
   const { today } = summary
-  const remaining = Math.max(0, today.goal - today.xp)
-  const streakText = today.streak.todayMet
-    ? today.streak.current > 1
-      ? `Today's goal is met. ${today.streak.current}-day streak.`
-      : "Today's goal is met."
-    : today.streak.current
-      ? `${remaining} XP more keeps your ${today.streak.current}-day streak.`
-      : `${remaining} XP more meets today's goal.`
+  const streakText = streakMessage(today.streak, today.xp, today.goal)
+  // Concepts one to three right answers from strong are worth one more go.
+  const nearlyStrong = summary.concepts
+    .filter((concept) => concept.toStrong > 0 && concept.toStrong <= 3)
+    .sort((a, b) => a.toStrong - b.toStrong)
+    .slice(0, 2)
 
   return (
     <section aria-labelledby={titleId}>
       <p className="text-xs font-medium text-brand">{eyebrow}</p>
-      <Heading
-        id={titleId}
-        className="mt-1 font-heading text-3xl font-semibold tracking-tight text-balance"
-      >
-        {heading}
-      </Heading>
+      {/* `isolate` keeps the burst behind the heading text but above the card. */}
+      <div className="relative isolate">
+        {celebrate ? <CompletionBurst /> : null}
+        <Heading
+          id={titleId}
+          className={cn(
+            "mt-1 font-heading text-3xl font-semibold tracking-tight text-balance",
+            celebrate && "summary-title-in"
+          )}
+        >
+          {heading}
+        </Heading>
+      </div>
 
       <dl
         className={cn(
@@ -206,6 +253,20 @@ export function SessionSummary({
             ))}
           </ul>
         </div>
+      ) : null}
+
+      {nearlyStrong.length ? (
+        <ul className="mt-3 space-y-1 text-sm text-muted-foreground">
+          {nearlyStrong.map((concept) => (
+            <li key={concept.conceptId}>
+              {concept.toStrong === 1
+                ? "One more right answer"
+                : `${concept.toStrong} more right answers in a row`}{" "}
+              and <span className="font-medium text-foreground">{concept.title}</span> is
+              strong.
+            </li>
+          ))}
+        </ul>
       ) : null}
 
       {children}

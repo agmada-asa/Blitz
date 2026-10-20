@@ -6,6 +6,7 @@ import {
   type AnswerInput,
   type ConceptReviewState,
 } from "./core.ts"
+import type { AnswerConfidence } from "./fsrs.ts"
 
 /** A server-scored answer event in the order-independent replay log. */
 export interface ScoredReviewEvent {
@@ -17,6 +18,8 @@ export interface ScoredReviewEvent {
   readonly eventId: string
   /** Server-derived answer outcome. */
   readonly outcome: "correct" | "incorrect"
+  /** Whether the learner marked a right answer as a guess. */
+  readonly confidence?: AnswerConfidence
 }
 
 /**
@@ -57,6 +60,7 @@ export function replayReviewEvents(
       type: "answer",
       outcome: event.outcome,
       occurredAt: event.occurredAt,
+      ...(event.confidence ? { confidence: event.confidence } : {}),
     })
   }
   return state

@@ -7,6 +7,7 @@
  */
 
 import {
+  internalMutation,
   mutation,
   query,
   type MutationCtx,
@@ -353,6 +354,9 @@ const learningItemInput = v.object({
 /** Scalar answer values accepted by the event mutation. */
 const answer = v.union(v.string(), v.boolean(), v.array(v.string()))
 
+/** How sure the learner was; see `AnswerConfidence` in `lib/learning/fsrs.ts`. */
+const answerConfidence = v.union(v.literal("sure"), v.literal("guess"))
+
 /** Maximum clock skew accepted for an offline device timestamp. */
 const MAX_FUTURE_SKEW_MS = 5 * 60 * 1000
 
@@ -609,6 +613,7 @@ async function recomputeReview(
         receivedAt: event.receivedAt,
         eventId: String(event._id),
         outcome: event.outcome,
+        ...(event.confidence ? { confidence: event.confidence } : {}),
       })),
       now
     ),
@@ -631,6 +636,7 @@ function reviewStateFromDoc(
     lastAttemptAt: review.lastAttemptAt ?? null,
     dueAt: review.dueAt,
     lastOutcome: review.lastOutcome ?? null,
+    memory: review.memory ?? null,
   }
 }
 
@@ -777,6 +783,7 @@ async function saveReview(
       : { lastAttemptAt: state.lastAttemptAt }),
     dueAt: state.dueAt,
     ...(state.lastOutcome === null ? {} : { lastOutcome: state.lastOutcome }),
+    ...(state.memory ? { memory: state.memory } : {}),
     updatedAt,
   }
   if (existing[0]) {
@@ -1324,6 +1331,8 @@ export const recordAnswerEvent = mutation({
     itemId: v.id("learningItems"),
     occurredAt: v.number(),
     answer,
+    /** `guess` when the learner marked the answer as a guess before checking. */
+    confidence: v.optional(answerConfidence),
   },
   handler: async (ctx, args) => {
     await requireProject(ctx, args.projectId)
@@ -1391,6 +1400,7 @@ export const recordAnswerEvent = mutation({
       eventType: "answer",
       answer: args.answer,
       outcome: evaluation.status,
+      ...(args.confidence ? { confidence: args.confidence } : {}),
     })
     // Keep the latest outcome on the item, and mark its unit as started.
     if ((item.lastAnsweredAt ?? 0) <= args.occurredAt)
@@ -1425,6 +1435,117 @@ export const recordAnswerEvent = mutation({
       review: reviewProgress.review,
       feedback: answerFeedbackForItem(item),
     }
+  },
+})
+
+/**
+ * Records a self-graded recall attempt: the learner answered a question from
+ * memory before seeing its options, then said whether they knew it. This is
+ * the only answer whose outcome comes from the learner rather than the
+ * server, which is why it is kept apart from `recordAnswerEvent` and marked
+ * with `answerMode: "recall"`. It updates review scheduling like any answer.
+ */
+export const recordRecallEvent = mutation({
+  args: {
+    clientEventId: v.string(),
+    projectId: v.id("projects"),
+    itemId: v.id("learningItems"),
+    occurredAt: v.number(),
+    outcome: v.union(v.literal("correct"), v.literal("incorrect")),
+  },
+  handler: async (ctx, args) => {
+    await requireProject(ctx, args.projectId)
+    const receivedAt = Date.now()
+    validOccurredAt(args.occurredAt, receivedAt)
+    const clientEventId = boundedText(args.clientEventId, "Client event id", 200)
+    const item = await ctx.db.get(args.itemId)
+    if (!item || item.projectId !== args.projectId)
+      throw new Error("Learning item does not belong to project")
+    const existing = await findEvent(ctx, args.projectId, clientEventId)
+    if (existing) {
+      if (existing.itemId !== args.itemId || existing.answerMode !== "recall")
+        throw new Error("Client event id is already used for another event")
+      return { eventId: existing._id, alreadyRecorded: true }
+    }
+    const eventId = await ctx.db.insert("studyEvents", {
+      clientEventId,
+      projectId: args.projectId,
+      itemId: args.itemId,
+      conceptId: item.conceptId,
+      occurredAt: args.occurredAt,
+      receivedAt,
+      eventType: "answer",
+      outcome: args.outcome,
+      answerMode: "recall",
+    })
+    if ((item.lastAnsweredAt ?? 0) <= args.occurredAt)
+      await ctx.db.patch(item._id, {
+        lastOutcome: args.outcome,
+        lastAnsweredAt: args.occurredAt,
+      })
+    const reviewProgress = await recomputeReview(
+      ctx,
+      args.projectId,
+      item.conceptId,
+      receivedAt
+    )
+    await saveReview(
+      ctx,
+      args.projectId,
+      item.conceptId,
+      reviewProgress.review,
+      reviewProgress.answeredQuestionCount,
+      receivedAt
+    )
+    return { eventId, alreadyRecorded: false }
+  },
+})
+
+/**
+ * Returns the answer to a single-choice question so the learner can check an
+ * answer recalled from memory. Records nothing; the learner's verdict goes
+ * through `recordRecallEvent`. Other question types return null.
+ */
+export const revealAnswer = query({
+  args: { projectId: v.id("projects"), itemId: v.id("learningItems") },
+  handler: async (ctx, args) => {
+    const item = await ctx.db.get(args.itemId)
+    if (!item || item.projectId !== args.projectId) return null
+    if (item.type !== "single-choice" || !item.correctOptionId) return null
+    const option = item.options?.find((entry) => entry.id === item.correctOptionId)
+    if (!option) return null
+    return { answer: option.text, body: item.body }
+  },
+})
+
+/**
+ * Re-runs every concept's review schedule from its answer log. Run once after
+ * the switch to FSRS so concepts answered under the old fixed intervals get
+ * FSRS due dates: `npx convex run learning:rescheduleReviews`. Safe to repeat;
+ * a project is processed per call when the library is large.
+ */
+export const rescheduleReviews = internalMutation({
+  args: { projectId: v.optional(v.id("projects")) },
+  handler: async (ctx, args) => {
+    const reviews = args.projectId
+      ? await ctx.db
+          .query("conceptReviews")
+          .withIndex("by_project_concept", (q) => q.eq("projectId", args.projectId!))
+          .collect()
+      : await ctx.db.query("conceptReviews").collect()
+    const now = Date.now()
+    for (const review of reviews) {
+      const progress = await recomputeReview(ctx, review.projectId, review.conceptId, now)
+      await saveReview(
+        ctx,
+        review.projectId,
+        review.conceptId,
+        progress.review,
+        progress.answeredQuestionCount,
+        now
+      )
+    }
+    return { rescheduled: reviews.length }
   },
 })
 

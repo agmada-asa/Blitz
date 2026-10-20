@@ -11,7 +11,7 @@ complete text.
 Part filenames retain the original extension, for example
 `manual (Part 2 of 4).pdf`.
 
-`createAndEnqueue`, used by the mobile API, saves each source part and its
+`createAndEnqueue` saves each source part and its
 preparation job atomically. No worker processes those jobs any more.
 It computes and indexes a deterministic fingerprint for each part,
 then verifies filename, kind, text, and URL on the indexed candidate. This makes

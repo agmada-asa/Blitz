@@ -15,7 +15,7 @@ const CHECK_INTERVAL_MS = 10 * 60 * 1000
  * @typedef {{
  *   todayXp: number,
  *   goal: number,
- *   streak: { current: number, todayMet: boolean },
+ *   streak: { current: number, todayMet: boolean, todayStudied?: boolean },
  *   resume: { projectId: string, unitId: string, unitTitle: string } | null,
  *   reminderHour: number | null,
  * }} ReminderSummary
@@ -37,9 +37,12 @@ export function reminderFor({ now, lastRemindedDay, summary }) {
   if (now.getHours() < summary.reminderHour) return null
   if (lastRemindedDay === day || summary.streak.todayMet) return null
   const remaining = Math.max(0, summary.goal - summary.todayXp)
-  const title = summary.streak.current
-    ? `Keep your ${summary.streak.current}-day streak`
-    : "Time for today's study"
+  // Any study keeps the streak, so once today counts the nudge is the goal.
+  const title = summary.streak.todayStudied
+    ? "Today's goal is in reach"
+    : summary.streak.current
+      ? `Keep your ${summary.streak.current}-day streak`
+      : "Time for today's study"
   const body = summary.resume
     ? `${remaining} XP to go. Continue ${summary.resume.unitTitle}.`
     : `${remaining} XP to go. A few questions will do it.`

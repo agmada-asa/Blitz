@@ -13,6 +13,8 @@ import type {
   FeedCard,
   FeedResponse,
   LearningAnswer,
+  RecallRequest,
+  RecallReveal,
 } from "../learning/client-contracts.ts"
 
 /** Maximum JSON request body accepted by learning routes. */
@@ -113,6 +115,33 @@ export function parseAnswerRequest(value: unknown): AnswerRequest {
     clientEventId: boundedId(input.clientEventId, "Client event ID"),
     occurredAt: input.occurredAt,
     answer: parseAnswer(input.answer),
+    ...(input.confidence === "guess" || input.confidence === "sure"
+      ? { confidence: input.confidence }
+      : {}),
+  }
+}
+
+/** Validates one recall request: a reveal, or the learner's own verdict. */
+export function parseRecallRequest(value: unknown): RecallRequest {
+  if (!value || typeof value !== "object")
+    throw new LearningApiError("Invalid recall request", 400)
+  const input = value as Record<string, unknown>
+  const projectId = boundedId(input.projectId, "Project ID")
+  const itemId = boundedId(input.itemId, "Item ID")
+  if (input.action === "reveal") return { action: "reveal", projectId, itemId }
+  if (input.action !== "grade")
+    throw new LearningApiError("Recall action is invalid", 400)
+  if (input.outcome !== "correct" && input.outcome !== "incorrect")
+    throw new LearningApiError("Recall outcome is invalid", 400)
+  if (typeof input.occurredAt !== "number" || !Number.isFinite(input.occurredAt))
+    throw new LearningApiError("Occurred time is invalid", 400)
+  return {
+    action: "grade",
+    projectId,
+    itemId,
+    clientEventId: boundedId(input.clientEventId, "Client event ID"),
+    occurredAt: input.occurredAt,
+    outcome: input.outcome,
   }
 }
 
@@ -222,6 +251,7 @@ export async function answerLearningItem(
         clientEventId: input.clientEventId,
         occurredAt: input.occurredAt,
         answer: input.answer,
+        ...(input.confidence ? { confidence: input.confidence } : {}),
       }
     )
     return {
@@ -260,6 +290,37 @@ export async function recordLearningEvent(
       alreadyRecorded: result.alreadyRecorded,
       eventType: result.eventType,
     }
+  } catch (error) {
+    if (error instanceof LearningApiError) throw error
+    throw new LearningApiError("Learning service is unavailable", 503)
+  }
+}
+
+/**
+ * Reveals a question's answer for recall, or records the learner's verdict.
+ * @returns The answer text and explanation for `reveal`; `{ recorded: true }` for `grade`.
+ */
+export async function recallLearningItem(
+  input: RecallRequest
+): Promise<RecallReveal | { recorded: true }> {
+  try {
+    const client = convexClient()
+    if (input.action === "reveal") {
+      const reveal = await client.query(api.learning.revealAnswer, {
+        projectId: input.projectId as Id<"projects">,
+        itemId: input.itemId as Id<"learningItems">,
+      })
+      if (!reveal) throw new LearningApiError("This question can't be answered from memory", 400)
+      return reveal
+    }
+    await client.mutation(api.learning.recordRecallEvent, {
+      projectId: input.projectId as Id<"projects">,
+      itemId: input.itemId as Id<"learningItems">,
+      clientEventId: input.clientEventId,
+      occurredAt: input.occurredAt,
+      outcome: input.outcome,
+    })
+    return { recorded: true }
   } catch (error) {
     if (error instanceof LearningApiError) throw error
     throw new LearningApiError("Learning service is unavailable", 503)

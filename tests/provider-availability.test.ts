@@ -64,7 +64,6 @@ test("reports missing and obsolete Claude runtimes before a turn starts", async 
 test("reports missing ACP executables with actionable setup guidance", async () => {
   for (const [provider, key] of [
     ["opencode", "BLITZ_OPENCODE_COMMAND"],
-    ["antigravity", "BLITZ_ANTIGRAVITY_ACP_COMMAND"],
   ] as const) {
     const original = process.env[key]
     try {

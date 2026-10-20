@@ -104,3 +104,16 @@ export function selectDrillQuestions(
   }
   return chosen.map((candidate) => candidate.itemId)
 }
+
+/**
+ * Counts how many more right answers in a row would make a concept strong
+ * under `conceptStrength`: at least three in a row and 80% accuracy overall.
+ * Used for near-miss prompts such as "2 more right and Heaps is strong".
+ * @returns 0 when the concept is already strong.
+ */
+export function answersToStrong(history: ConceptHistory): number {
+  // With n more right answers: streak + n >= 3, and
+  // (correct + n) / (attempts + n) >= 0.8, which simplifies to n >= 4a - 5c.
+  const streak = history.lastOutcome === "incorrect" ? 0 : history.consecutiveCorrect
+  return Math.max(0, 3 - streak, 4 * history.attempts - 5 * history.correct)
+}

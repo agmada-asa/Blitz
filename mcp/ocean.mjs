@@ -84,8 +84,38 @@ export const APP_TOOLS = [
           description:
             "An option id, true or false, or a list of option ids, an order or blanks.",
         },
+        confidence: text('"guess" when Allen marked the answer as a guess. Optional.'),
       },
       required: ["module", "item", "event", "at", "answer"],
+    },
+  },
+  {
+    name: "app_reveal",
+    description:
+      "For the Blitz mini app in Ocean: shows the answer to a single-choice question Allen is answering from memory. Records nothing.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        module: text("The question's module id."),
+        item: text("The question's id."),
+      },
+      required: ["module", "item"],
+    },
+  },
+  {
+    name: "app_recall",
+    description:
+      "For the Blitz mini app in Ocean: records whether Allen knew the answer he recalled from memory, which schedules the question's next review.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        module: text("The question's module id."),
+        item: text("The question's id."),
+        event: text("A unique id for this answer, so a retry isn't counted twice."),
+        at: { type: "number", description: "When he answered, in ms." },
+        knewIt: { type: "boolean", description: "Whether he knew it." },
+      },
+      required: ["module", "item", "event", "at", "knewIt"],
     },
   },
   {
@@ -284,6 +314,26 @@ export async function callAppTool(name, args) {
           clientEventId: required(args, "event"),
           occurredAt: Number(args.at),
           answer: args.answer,
+          ...(args.confidence === "guess" ? { confidence: "guess" } : {}),
+        })
+      )
+    case "app_reveal":
+      return JSON.stringify(
+        await post(blitz, "recall", {
+          action: "reveal",
+          projectId: required(args, "module"),
+          itemId: required(args, "item"),
+        })
+      )
+    case "app_recall":
+      return JSON.stringify(
+        await post(blitz, "recall", {
+          action: "grade",
+          projectId: required(args, "module"),
+          itemId: required(args, "item"),
+          clientEventId: required(args, "event"),
+          occurredAt: Number(args.at),
+          outcome: args.knewIt === true ? "correct" : "incorrect",
         })
       )
     case "app_skip":

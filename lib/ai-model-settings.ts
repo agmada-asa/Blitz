@@ -1,12 +1,7 @@
 /** Defines task-specific provider, model, and reasoning settings shared by Blitz. */
 
 /** Provider integrations Blitz can route local AI work through. */
-export const AI_PROVIDER_IDS = [
-  "codex",
-  "claude-code",
-  "opencode",
-  "antigravity",
-] as const
+export const AI_PROVIDER_IDS = ["codex", "claude-code", "opencode"] as const
 
 /** Stable identifier for one local provider integration. */
 export type AiProviderId = (typeof AI_PROVIDER_IDS)[number]
@@ -32,7 +27,6 @@ export const AI_PROVIDER_APPROVAL_POLICIES: Readonly<
   codex: ["on-request", "untrusted", "full-access"],
   "claude-code": ["never", "on-request", "full-access"],
   opencode: ["never", "on-request", "full-access"],
-  antigravity: ["on-request", "full-access"],
 }
 
 /** Validates persisted policies and fills legacy records with conservative defaults. */
@@ -88,11 +82,6 @@ export const AI_PROVIDER_OPTIONS: readonly AiProviderOption[] = [
     label: "OpenCode",
     description: "Use a local OpenCode ACP installation.",
   },
-  {
-    id: "antigravity",
-    label: "Antigravity",
-    description: "Use a managed or configured Antigravity ACP runtime.",
-  },
 ]
 
 /** Names the task-specific provider field stored beside the legacy model fields. */
@@ -124,7 +113,6 @@ export const AI_PROVIDER_TASKS: Readonly<
   codex: ["research", "reply", "cardGeneration"],
   "claude-code": ["reply", "cardGeneration"],
   opencode: ["reply", "cardGeneration"],
-  antigravity: ["reply"],
 }
 
 /** Names the persisted model field used for each kind of AI work. */
@@ -278,13 +266,6 @@ export const AI_PROVIDER_MODEL_OPTIONS: Readonly<
       reasoningEfforts: ["default"],
     },
   ],
-  antigravity: [
-    {
-      id: "antigravity/default",
-      label: "Antigravity default",
-      reasoningEfforts: ["default"],
-    },
-  ],
 }
 
 /** Untrusted model and reasoning strings accepted at the persistence boundary. */
@@ -413,8 +394,7 @@ export function getAiModelPickerOptions(
 /** Returns whether a picker model belongs in its provider's legacy section. */
 export function isLegacyAiModelOption(
   provider: AiProviderId,
-  option: Pick<AiProviderModelOption, "id" | "label">,
-  options: readonly Pick<AiProviderModelOption, "id" | "label">[]
+  option: Pick<AiProviderModelOption, "id" | "label">
 ): boolean {
   if (provider === "codex")
     return (
@@ -424,40 +404,7 @@ export function isLegacyAiModelOption(
       option.id.startsWith("gpt-5.3") ||
       option.id.startsWith("gpt-4")
     )
-  if (provider !== "antigravity") return false
-
-  /** Reads a Gemini major and minor generation from a provider label or ID. */
-  const generation = (
-    candidate: Pick<AiProviderModelOption, "id" | "label">
-  ): readonly [number, number] | undefined => {
-    const match = `${candidate.label} ${candidate.id}`.match(
-      /gemini(?:[\s_-]+)(\d+)(?:[.\-_](\d+))?/i
-    )
-    if (!match?.[1]) return undefined
-    return [Number(match[1]), Number(match[2] ?? 0)]
-  }
-
-  const current = generation(option)
-  if (!current) return false
-  const newest = options.reduce<readonly [number, number] | undefined>(
-    (latest, candidate) => {
-      const next = generation(candidate)
-      if (!next) return latest
-      if (
-        !latest ||
-        next[0] > latest[0] ||
-        (next[0] === latest[0] && next[1] > latest[1])
-      )
-        return next
-      return latest
-    },
-    undefined
-  )
-  return Boolean(
-    newest &&
-    (current[0] < newest[0] ||
-      (current[0] === newest[0] && current[1] < newest[1]))
-  )
+  return false
 }
 
 /** Returns the curated default model for a provider when a task changes providers. */
@@ -517,8 +464,6 @@ export function getSupportedAiReasoningEffortsForProvider(
   runtimeOptions?: readonly AiProviderModelOption[]
 ): readonly AiReasoningEffort[] {
   if (provider === "opencode") return ["default"]
-  if (provider === "antigravity" && !runtimeOptions?.length)
-    return ["default"]
   const normalizedModel =
     provider === "claude-code"
       ? model.replace(/^claude-(sonnet|opus|haiku)$/, "$1")
@@ -528,6 +473,38 @@ export function getSupportedAiReasoningEffortsForProvider(
       (option) => option.id === normalizedModel
     )?.reasoningEfforts ?? AI_REASONING_EFFORTS
   )
+}
+
+/** Provider IDs Blitz no longer offers, each mapped to the default provider that replaces it. */
+const REMOVED_PROVIDER_FALLBACKS: Readonly<Record<string, AiProviderId>> = {
+  antigravity: "codex",
+}
+
+/** Provider, model, and effort field names for each task, in settings order. */
+const TASK_SETTING_FIELDS = [
+  ["researchProvider", "researchModel", "researchEffort"],
+  ["replyProvider", "replyModel", "replyEffort"],
+  ["cardGenerationProvider", "cardGenerationModel", "cardGenerationEffort"],
+] as const
+
+/**
+ * Moves a task that saved a removed provider back to the default provider. The
+ * model and effort saved for that provider no longer apply, so they reset to
+ * Blitz's defaults. Settings read from storage keep loading instead of erroring.
+ */
+function replaceRemovedProviders(
+  settings: AiModelSettingsInput
+): AiModelSettingsInput {
+  const next = { ...settings }
+  for (const [providerField, modelField, effortField] of TASK_SETTING_FIELDS) {
+    const saved = next[providerField]?.trim()
+    const replacement = saved ? REMOVED_PROVIDER_FALLBACKS[saved] : undefined
+    if (!replacement) continue
+    next[providerField] = replacement
+    next[modelField] = DEFAULT_AI_MODELS[modelField]
+    next[effortField] = DEFAULT_AI_REASONING_EFFORTS[effortField]
+  }
+  return next
 }
 
 /** Validates one persisted provider field and defaults older records to Codex. */
@@ -626,9 +603,10 @@ export function validateAiReasoningEffort(
 
 /** Validates setting shape and provider-reported model support when catalogs are available. */
 export function validateAiModelSettings(
-  settings: AiModelSettingsInput,
+  rawSettings: AiModelSettingsInput,
   modelCatalogs?: AiProviderModelCatalogs
 ): AiModelSettings {
+  const settings = replaceRemovedProviders(rawSettings)
   const researchModel = validateAiModelName(
     settings.researchModel,
     "researchModel"
@@ -775,7 +753,7 @@ export function validateAiTaskProviders(settings: AiModelSettings): void {
     )
   )
     throw new Error(
-      "Antigravity supports interactive workspace chat only. Choose another provider for practice questions."
+      "The selected provider cannot write practice questions. Choose another provider."
     )
 }
 
@@ -796,8 +774,6 @@ export const AI_MODEL_COST_RANKS: Readonly<Record<string, number>> = {
   opus: 3,
   // OpenCode
   "opencode/big-pickle": 1,
-  // Antigravity
-  "antigravity/default": 1,
 }
 
 /**

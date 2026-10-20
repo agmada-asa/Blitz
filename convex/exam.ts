@@ -48,6 +48,7 @@ import {
   type ExamAnswer,
   type ExamChangeLock,
   type ExamQuestionResult,
+  validateMockExamGuidance,
 } from "../lib/exam-scoring"
 
 /** A paper or grading run older than this is treated as abandoned. */
@@ -333,8 +334,10 @@ export const createPastPaper = mutation({
 })
 
 /**
- * Records a mock paper for the chosen units and length and starts writing
- * it. Only one mock is written per module at a time.
+ * Records a mock paper for the chosen units, length, and optional bounded
+ * instructions, then starts writing it. Only one mock is written per module
+ * at a time.
+ * @param generationGuidance Optional learner instructions, trimmed and capped at 1,000 characters.
  * @returns The paper ID, and the run's `runStartedAt` when the caller should start a run.
  */
 export const createMockPaper = mutation({
@@ -342,10 +345,12 @@ export const createMockPaper = mutation({
     projectId: v.id("projects"),
     unitIds: v.array(v.id("units")),
     minutes: v.number(),
+    generationGuidance: v.optional(v.string()),
   },
-  handler: async (ctx, { projectId, unitIds, minutes }) => {
+  handler: async (ctx, { projectId, unitIds, minutes, generationGuidance: rawGuidance }) => {
     if (!(MOCK_EXAM_MINUTES as readonly number[]).includes(minutes))
       throw new Error("Choose 30, 60, or 90 minutes")
+    const generationGuidance = validateMockExamGuidance(rawGuidance)
     const unique = [...new Set(unitIds)]
     if (!unique.length || unique.length > MAX_MOCK_UNITS) throw new Error("Choose at least one unit")
     for (const unitId of unique) {
@@ -367,6 +372,7 @@ export const createMockPaper = mutation({
       status: "processing",
       unitIds: unique,
       durationMinutes: minutes,
+      ...(generationGuidance ? { generationGuidance } : {}),
       questions: [],
       runStartedAt: now,
       createdAt: now,
@@ -404,9 +410,10 @@ async function reviewsByConcept(ctx: Pick<QueryCtx, "db">, projectId: Id<"projec
 /**
  * Supplies the server run with what its prompt needs. For a past paper: the
  * paper and solutions text and the module's units with their concept names.
- * For a mock: the selected units' material and concepts, weak concepts, and
- * up to two ready past papers as style examples. Units are keyed U1, U2, …
- * so the model can name one; `unitIds` maps keys back. Server-only.
+ * For a mock: the selected units' material and concepts, weak concepts,
+ * optional saved format instructions, and up to two ready past papers as
+ * style examples. Units are keyed U1, U2, … so the model can name one;
+ * `unitIds` maps keys back. Server-only.
  */
 export const paperContext = query({
   args: { paperId: v.id("examPapers") },
@@ -447,6 +454,7 @@ export const paperContext = query({
       const solutions = paper.solutionsSourceId ? await ctx.db.get(paper.solutionsSourceId) : null
       return {
         ...base,
+        kind: "past" as const,
         paper: source
           ? {
               filename: source.filename,
@@ -506,9 +514,11 @@ export const paperContext = query({
       .slice(0, MAX_STYLE_EXAMPLES)
     return {
       ...base,
+      kind: "mock" as const,
       paper: null,
       solutions: null,
       minutes: paper.durationMinutes ?? DEFAULT_EXAM_MINUTES,
+      ...(paper.generationGuidance ? { generationGuidance: paper.generationGuidance } : {}),
       sources,
       weakConcepts,
       examples: pastPapers.map((other) => ({

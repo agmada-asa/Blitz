@@ -46,7 +46,7 @@ const run = promisify(execFile)
 /** Upper bound for each CLI call so a hung runtime cannot stall the check. */
 const COMMAND_TIMEOUT_MS = 30_000
 
-/** Providers with a CLI that reports its version. Antigravity's ACP server does not. */
+/** Providers whose CLI reports its version, which the check compares with the supported range. */
 const VERSIONED_PROVIDERS: readonly { id: AiProviderId; name: string }[] = [
   { id: "codex", name: "Codex" },
   { id: "claude-code", name: "Claude Code" },
@@ -211,7 +211,6 @@ async function main(): Promise<void> {
       await checkCodexProtocol(executable, directory)
       await checkCodexModels(executable, directory)
     }
-    note("Antigravity: not checked, its ACP server does not report a version")
   } finally {
     await rm(directory, { recursive: true, force: true })
   }

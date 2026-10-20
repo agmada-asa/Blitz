@@ -84,7 +84,27 @@ export type AnswerRequest = {
   clientEventId: string
   occurredAt: number
   answer: LearningAnswer
+  /** `guess` when the learner marked the answer as a guess before checking. */
+  confidence?: "sure" | "guess"
 }
+
+/**
+ * Request for answering a question from memory: `reveal` returns the answer
+ * without recording anything; `grade` records the learner's own verdict.
+ */
+export type RecallRequest =
+  | { action: "reveal"; projectId: string; itemId: string }
+  | {
+      action: "grade"
+      projectId: string
+      itemId: string
+      clientEventId: string
+      occurredAt: number
+      outcome: "correct" | "incorrect"
+    }
+
+/** The answer shown after the learner recalled it from memory. */
+export type RecallReveal = { answer: string; body: string }
 
 /** Server-owned fields revealed only after an answer is evaluated. */
 export type AnswerFeedback = {

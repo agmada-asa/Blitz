@@ -2,8 +2,7 @@
 
 The morning fixes add an Activity route, background notices, saved-chat links,
 research stages and elapsed time, recoverable large imports, and answer colors.
-The fullscreen feed retains floating Library and Activity controls. Android
-still opens Library in the browser; a native Library is outstanding.
+The fullscreen feed retains floating Library and Activity controls.
 
 ## Checks
 

@@ -99,6 +99,7 @@ export function PracticeHub({ projectId }: { projectId: string }) {
   const project = useQuery(api.projects.getProject, { projectId: convexProjectId })
   const now = useMinuteClock()
   const data = useQuery(api.practice.overview, { projectId: convexProjectId, now })
+  const readiness = useQuery(api.progress.readiness, { projectId: convexProjectId, now })
   const base = `/projects/${encodeURIComponent(projectId)}`
 
   if (project === null)
@@ -139,6 +140,19 @@ export function PracticeHub({ projectId }: { projectId: string }) {
             {allConcepts.length} concept{allConcepts.length === 1 ? "" : "s"}: {strengthCounts(allConcepts)}
           </p>
           <SegmentedBar segments={conceptSegments(allConcepts)} className="mt-2" />
+          {readiness?.practised ? (
+            <p className="mt-3 text-sm">
+              <span className="font-medium">
+                Exam readiness {Math.round(readiness.readiness * 100)}%
+              </span>
+              <span className="text-muted-foreground">
+                {" "}
+                · the share of this module you&apos;d likely recall today. {readiness.practised} of{" "}
+                {readiness.concepts} concepts practised, {Math.round(readiness.recallOfPractised * 100)}%
+                recall on those.
+              </span>
+            </p>
+          ) : null}
         </div>
       ) : null}
 

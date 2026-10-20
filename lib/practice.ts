@@ -30,6 +30,11 @@ export type BankPromptInput = {
   existingQuestions: string[]
   /** Concept names already used in this unit, to reuse rather than invent. */
   existingConcepts: string[]
+  /**
+   * The fine-grained concept names from the unit's Teach outline. When
+   * present, every question must be tagged with one of them.
+   */
+  outlineConcepts?: string[]
   count: number
 }
 
@@ -73,8 +78,10 @@ export function buildQuestionBankPrompt(input: BankPromptInput): string {
     '- type "ordering": options are 3–6 items written in the correct order, first to last; no answer field. Never shuffle them yourself: Blitz shuffles them for the learner, and your order is the answer key. The question says what order to use, such as "first to last".',
     '- type "matching": no options or answer; "pairs":[["item","its match"], …] with 3–5 pairs, and optionally "extras":["plausible unused match"] (at most 2).',
     '- type "code-output": the question contains a short fenced code block (at most 15 lines, no input, no randomness, no timing); no options; answer is the exact printed output, or a list of accepted outputs. Line breaks matter; repeated spaces do not.',
-    "- id: unique within this reply (b1, b2, …). concept: the broad idea the question tests, at most 60 characters, such as a section title. Use 4 to 8 distinct concept names for the whole batch so each concept has several questions; never invent a separate concept for each question.",
-    input.existingConcepts.length
+    input.outlineConcepts?.length
+      ? `- id: unique within this reply (b1, b2, …). concept: the specific idea the question tests, copied exactly from this list: ${input.outlineConcepts.join("; ")}. Spread the batch across the list so every concept gets at least one question and the most examinable ones get more.`
+      : "- id: unique within this reply (b1, b2, …). concept: the broad idea the question tests, at most 60 characters, such as a section title. Use 4 to 8 distinct concept names for the whole batch so each concept has several questions; never invent a separate concept for each question.",
+    !input.outlineConcepts?.length && input.existingConcepts.length
       ? `- Reuse these existing concept names exactly when a question fits one: ${input.existingConcepts.join("; ")}.`
       : "",
     "- explanation: one or two sentences on why the answer is right, then the misunderstanding behind the most tempting wrong answer or most common mistake.",

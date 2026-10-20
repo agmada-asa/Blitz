@@ -9,15 +9,19 @@
 
 import Link from "next/link"
 import { useQuery } from "convex/react"
-import { useState } from "react"
+import { useEffect, useState } from "react"
 
 import { SegmentedBar, pathSegments } from "@/components/progress/progress-path"
-import { ArrowRightIcon, ZapIcon } from "@/components/ui/icon"
+import { ArrowRightIcon, SnowflakeIcon, ZapIcon } from "@/components/ui/icon"
 import { Progress } from "@/components/ui/progress"
 import { Skeleton } from "@/components/ui/skeleton"
 import { api } from "@/convex/_generated/api"
 import { useMinuteClock } from "@/hooks/use-minute-clock"
+import { streakMessage } from "@/lib/progress"
 import { cn } from "@/lib/utils"
+
+/** Set once a Today panel has shown today's goal as met in this page session, so the streak bolt glows only the first time. */
+let goalMetSeen = false
 
 /** Formats a `YYYY-MM-DD` key as a short weekday label. */
 function weekday(day: string, style: "narrow" | "long"): string {
@@ -36,6 +40,12 @@ export function TodayPanel() {
   const [tzOffsetMinutes] = useState(() => new Date().getTimezoneOffset())
   const now = useMinuteClock()
   const summary = useQuery(api.progress.today, { tzOffsetMinutes, now })
+  // Decided once per mount. The glow class then stays on while the goal is met, so it plays once and never restarts.
+  const [glowArmed] = useState(() => !goalMetSeen)
+  const goalMet = summary?.streak.todayMet ?? false
+  useEffect(() => {
+    if (goalMet) goalMetSeen = true
+  }, [goalMet])
 
   if (summary === undefined)
     return (
@@ -60,13 +70,25 @@ export function TodayPanel() {
           <h2 className="mt-1 flex items-center gap-2.5 text-2xl font-medium tracking-[-0.04em]">
             <ZapIcon
               aria-hidden="true"
-              className={cn("size-[0.8em] shrink-0", summary.streak.current ? "text-brand" : "text-muted-foreground")}
+              className={cn(
+                "size-[0.8em] shrink-0",
+                summary.streak.current ? "text-brand" : "text-muted-foreground",
+                glowArmed && goalMet && "goal-met-glow"
+              )}
             />
             {summary.streak.current ? `${summary.streak.current}-day streak` : "Start a streak today"}
           </h2>
         </div>
-        <p className="text-sm tabular-nums text-muted-foreground">
-          {summary.todayXp} / {summary.goal} XP
+        <p className="flex items-center gap-3 text-sm tabular-nums text-muted-foreground">
+          {summary.streak.freezes ? (
+            <span className="flex items-center gap-1" title="A freeze covers a day you miss">
+              <SnowflakeIcon aria-hidden="true" className="size-3.5" />
+              {summary.streak.freezes} {summary.streak.freezes === 1 ? "freeze" : "freezes"}
+            </span>
+          ) : null}
+          <span>
+            {summary.todayXp} / {summary.goal} XP
+          </span>
         </p>
       </div>
       <Progress
@@ -75,12 +97,10 @@ export function TodayPanel() {
         className="mt-3 h-2 [&_[data-slot=progress-indicator]]:bg-brand"
       />
       <p className="mt-2 text-xs text-muted-foreground">
-        {summary.streak.todayMet
-          ? "Daily goal met. Anything more is extra."
-          : `${summary.goal - summary.todayXp} XP to keep your streak. A taught section is 25 XP, a correct answer 10.`}
+        {streakMessage(summary.streak, summary.todayXp, summary.goal)}
       </p>
 
-      <div className="mt-6 grid gap-6 md:grid-cols-[minmax(0,1fr)_minmax(0,16rem)] md:items-end">
+      <div className="mt-6 grid grid-cols-1 gap-6 md:grid-cols-[minmax(0,1fr)_minmax(0,16rem)] md:items-end">
         <div className="flex flex-col gap-3">
           {resume ? (
             <Link
@@ -118,9 +138,12 @@ export function TodayPanel() {
               className="group flex items-center gap-4 rounded-2xl border border-border bg-card px-5 py-4 transition-colors hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
             >
               <span className="min-w-0 flex-1">
-                <span className="block font-medium">Review</span>
+                <span className="block font-medium">
+                  Review {summary.review.count} {summary.review.count === 1 ? "question" : "questions"}
+                </span>
                 <span className="block truncate text-xs text-muted-foreground">
-                  {summary.dueConcepts} concept{summary.dueConcepts === 1 ? " is" : "s are"} due
+                  About {summary.review.minutes} min
+                  {summary.review.waiting ? ` · ${summary.review.waiting} more due after this` : ""}
                 </span>
               </span>
               <ArrowRightIcon
@@ -137,7 +160,11 @@ export function TodayPanel() {
             </Link>
           ) : null}
         </div>
-        <WeekChart week={summary.week} goal={summary.goal} />
+        <WeekChart
+          week={summary.week}
+          goal={summary.goal}
+          frozenDays={summary.streak.frozenDays}
+        />
       </div>
     </section>
   )
@@ -173,19 +200,35 @@ export function TodayXpChip() {
   )
 }
 
-/** Seven bars showing XP per day; days that met the goal are filled. */
-function WeekChart({ week, goal }: { week: Array<{ day: string; xp: number }>; goal: number }) {
+/**
+ * Seven bars showing XP per day; days that met the goal are filled, and a day
+ * a streak freeze covered shows a snowflake.
+ */
+function WeekChart({
+  week,
+  goal,
+  frozenDays,
+}: {
+  week: Array<{ day: string; xp: number }>
+  goal: number
+  frozenDays: string[]
+}) {
   const ceiling = Math.max(goal, ...week.map((entry) => entry.xp))
   return (
     <ol aria-label="XP over the last seven days" className="grid h-20 grid-cols-7 items-end gap-2">
       {week.map((entry, index) => {
         const met = entry.xp >= goal
         const isToday = index === week.length - 1
+        const frozen = frozenDays.includes(entry.day)
         return (
           <li key={entry.day} className="flex h-full flex-col items-center justify-end gap-1.5">
             <span className="sr-only">
               {weekday(entry.day, "long")}: {entry.xp} XP{met ? ", goal met" : ""}
+              {frozen ? ", covered by a streak freeze" : ""}
             </span>
+            {frozen ? (
+              <SnowflakeIcon aria-hidden="true" className="size-3.5 text-muted-foreground" />
+            ) : null}
             <span
               aria-hidden="true"
               className={cn(

@@ -62,8 +62,6 @@ export function resolveProviderExecution(
     request.sandbox === "read-only" ||
     request.webSearchMode === "disabled" ||
     approvalPolicy === "never"
-  if (request.providerId === "antigravity" && toolsDisabled)
-    throw new Error("Antigravity does not support a tool-free execution mode.")
   const bypass = approvalPolicy === "full-access"
   return {
     workingDirectory: request.workspaceDirectory,

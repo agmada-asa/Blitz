@@ -28,6 +28,8 @@ type TeachAnswerRequest = {
   quizId: string
   selectedOptionIds: string[]
   clientEventId: string
+  /** `guess` when the learner marked the answer as a guess. */
+  confidence?: "guess"
 }
 
 /** Error whose message is safe to show the learner. */
@@ -63,6 +65,7 @@ function parseRequest(value: unknown): TeachAnswerRequest {
     // Option ids for choice questions; typed or arranged values otherwise, checked once the quiz is known.
     selectedOptionIds: selected as string[],
     clientEventId: boundedId(body.clientEventId, "Answer"),
+    ...(body.confidence === "guess" ? { confidence: "guess" as const } : {}),
   }
 }
 
@@ -115,6 +118,7 @@ export async function POST(request: Request): Promise<Response> {
       projectId,
       itemId,
       occurredAt: Date.now(),
+      ...(input.confidence ? { confidence: input.confidence } : {}),
       answer:
         quiz.type === "true-false"
           ? first === "true"

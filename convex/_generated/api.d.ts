@@ -10,9 +10,7 @@
 
 import type * as activity from "../activity.js";
 import type * as ai_provider_settings from "../ai_provider_settings.js";
-import type * as attempts from "../attempts.js";
 import type * as audioSettings from "../audioSettings.js";
-import type * as cards from "../cards.js";
 import type * as chatAgents from "../chatAgents.js";
 import type * as chatCitations from "../chatCitations.js";
 import type * as chatContext from "../chatContext.js";
@@ -28,12 +26,13 @@ import type * as projectAgents from "../projectAgents.js";
 import type * as projects from "../projects.js";
 import type * as quizFields from "../quizFields.js";
 import type * as research from "../research.js";
+import type * as reviewFields from "../reviewFields.js";
 import type * as settings from "../settings.js";
 import type * as sourceRetrieval from "../sourceRetrieval.js";
 import type * as sources from "../sources.js";
 import type * as study from "../study.js";
 import type * as teach from "../teach.js";
-import type * as topics from "../topics.js";
+import type * as teachFields from "../teachFields.js";
 import type * as units from "../units.js";
 import type * as workspaceChats from "../workspaceChats.js";
 import type * as writing from "../writing.js";
@@ -47,9 +46,7 @@ import type {
 declare const fullApi: ApiFromModules<{
   activity: typeof activity;
   ai_provider_settings: typeof ai_provider_settings;
-  attempts: typeof attempts;
   audioSettings: typeof audioSettings;
-  cards: typeof cards;
   chatAgents: typeof chatAgents;
   chatCitations: typeof chatCitations;
   chatContext: typeof chatContext;
@@ -65,12 +62,13 @@ declare const fullApi: ApiFromModules<{
   projects: typeof projects;
   quizFields: typeof quizFields;
   research: typeof research;
+  reviewFields: typeof reviewFields;
   settings: typeof settings;
   sourceRetrieval: typeof sourceRetrieval;
   sources: typeof sources;
   study: typeof study;
   teach: typeof teach;
-  topics: typeof topics;
+  teachFields: typeof teachFields;
   units: typeof units;
   workspaceChats: typeof workspaceChats;
   writing: typeof writing;
