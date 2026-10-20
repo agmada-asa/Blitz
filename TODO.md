@@ -71,10 +71,6 @@ names the PR that delivers it once one exists.
 - [x] Podcasts can cover one unit or the whole module
 - [x] Notifications for practice questions, exam papers, and marking; retired lesson pipeline rows removed
 
-## Phase 6: mobile and sync
+## Phase 6: sync
 
-- [x] React Native app on the new contracts: Today, Library, module path,
-      Teach with the live tutor, drills, every question format, session summaries
-- [x] Offline cache of opened lessons, modules, and drills; offline lesson quiz
-      answers queued and recorded on reconnect
 - [ ] Hosted Convex option

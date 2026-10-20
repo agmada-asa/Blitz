@@ -35,7 +35,7 @@ Open a project or topic for a focused feed, Study with immediate feedback, or a 
 
 Choose `Study` then `Written answers` for a separate writing activity. Save a draft or compare your response with the prepared reference. Written activities resume where you left off and do not award an automatic score.
 
-Questions use single choice, multiple answers, or true/false. Answers receive server-scored feedback. Reading and skipping never count as knowing a concept. `Ask in chat` attaches a card and its source section to your own question, and follow-ups reuse the conversation. Web and Android replies stream as they arrive, with Markdown formatting and saved history after reconnecting.
+Questions use single choice, multiple answers, or true/false. Answers receive server-scored feedback. Reading and skipping never count as knowing a concept. `Ask in chat` attaches a card and its source section to your own question, and follow-ups reuse the conversation. Web replies stream as they arrive, with Markdown formatting and saved history after reconnecting.
 
 Imports accept text PDFs, Markdown, plain text, and PowerPoint `.pptx` files. Public links can return those formats or HTML. Source URLs and page/slide markers are retained. Scanned PDFs need OCR elsewhere, and each extracted source is currently limited to 120,000 characters.
 
@@ -104,14 +104,6 @@ The ACP client negotiates `session/load` and `session/resume`. If neither is sup
 
 `node mcp/server.mjs` is an MCP server that lets other agents see what's due, read the Library and add material to a unit while Blitz is running. See [the MCP server](mcp/README.md).
 
-## Android
-
-The React Native app lives in `mobile/` with its own dependencies and checks. It connects to the same printed LAN address. Prepared cards are cached, and offline answers wait for server feedback after sync. The app is frozen during the overhaul: card chat questions, pasted notes, and links added from Android are saved but no longer answered or prepared.
-
-See [Android setup](docs/mobile.md) for development and the bundled debug APK build. Browser imports remain available through the native Library action.
-
-After building the APK, `npm run dev:lan` also prints its download link. The launcher uses the ignored `build/android/blitz-android-debug.apk` when present; set `BLITZ_ANDROID_APK_PATH` to serve a different local build.
-
 ## Checks and implementation
 
 ```bash
@@ -124,15 +116,14 @@ npm run check:runtimes
 
 `npm run check:runtimes` reports when an installed provider CLI no longer matches what Blitz relies on. See [AI model settings](docs/ai-model-settings.md).
 
-Run native checks from `mobile/`. The [overhaul plan](docs/overhaul-plan.md) records the current direction, and [`docs/history`](docs/history/README.md) keeps the early planning notes. Implementation details are in [Teach](docs/teach.md), [source ingestion](docs/source-ingestion.md), [learning API](docs/learning-api.md), and [Codex text turns and legacy card chat](docs/card-chat.md).
+The [overhaul plan](docs/overhaul-plan.md) records the current direction, and [`docs/history`](docs/history/README.md) keeps the early planning notes. Implementation details are in [Teach](docs/teach.md), [source ingestion](docs/source-ingestion.md), [learning API](docs/learning-api.md), and [Codex text turns and legacy card chat](docs/card-chat.md).
 
 ## Known limits
 
-This version is a personal local app without account authentication. It is not configured for public hosting. Android offline storage and the local agent are separate from any future cloud sync service. Creating proposed notes, richer diagrams, and moving topics are still outside this version. Android now includes native project browsing, creation, rename, and deletion. Written activities and source imports still use the browser.
+This version is a personal local app without account authentication. It is not configured for public hosting. The local agent is separate from any future cloud sync service. Creating proposed notes, richer diagrams, and moving topics are still outside this version.
 
 - The agents, local database, and speech run on the computer hosting Blitz; a phone is only a client of it.
 - Six local processes (Next.js, Convex, and workers) run under one supervisor. Consolidating the workers is planned.
-- The Android app is frozen during the overhaul.
 - Citations land on a page, slide, timestamp, or heading when the source has one; other passages only get a section label.
 
 ## Credits

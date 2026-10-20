@@ -43,7 +43,6 @@
     ".next-build-check/dev/types/**/*.ts"
   ],
   "exclude": [
-    "node_modules",
-    "mobile"
+    "node_modules"
   ]
 }
