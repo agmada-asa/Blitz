@@ -5,15 +5,17 @@
  * a box for the learner's own questions, and pause or resume controls while
  * the tutor is writing. After the opening pre-check it offers to plan the
  * lesson around the answers or skip the check; after the recap it offers
- * practice and the next unit.
+ * practice and the next unit. N sends the next section from the keyboard
+ * while the lesson waits for the learner.
  */
 
 import Link from "next/link"
-import { useState, type FormEvent, type KeyboardEvent } from "react"
+import { useEffect, useState, type FormEvent, type KeyboardEvent } from "react"
 
 import { Button } from "@/components/ui/button"
 import { ArrowRightIcon, SendIcon } from "@/components/ui/icon"
 import { Textarea } from "@/components/ui/textarea"
+import { isTypingTarget } from "@/hooks/use-quiz-shortcuts"
 import { TEACH_QUICK_REPLIES } from "@/lib/teach"
 
 /** What the dock should offer for the session's current state. */
@@ -60,6 +62,28 @@ export function TeachDock({
 }: TeachDockProps) {
   const [draft, setDraft] = useState("")
   const canAsk = state.kind === "ready" || state.kind === "complete"
+  const ready = state.kind === "ready"
+
+  // While the lesson waits for the learner, N sends "Next section" unless they are typing or hold a modifier.
+  useEffect(() => {
+    if (!ready) return
+    const onKeyDown = (event: WindowEventMap["keydown"]) => {
+      if (event.key.toLowerCase() !== "n") return
+      if (event.repeat || event.isComposing || event.defaultPrevented) return
+      if (event.ctrlKey || event.metaKey || event.altKey || event.shiftKey)
+        return
+      if (isTypingTarget(event.target)) return
+      // A dialog such as the session summary takes the keyboard; N belongs to it.
+      if (
+        event.target instanceof Element &&
+        event.target.closest('[role="dialog"]')
+      )
+        return
+      onSend(TEACH_QUICK_REPLIES.next)
+    }
+    window.addEventListener("keydown", onKeyDown)
+    return () => window.removeEventListener("keydown", onKeyDown)
+  }, [ready, onSend])
 
   /** Sends the typed question and clears the box. */
   function submit(event?: FormEvent) {
@@ -144,6 +168,12 @@ export function TeachDock({
               className="min-h-11 shrink-0 rounded-full bg-brand px-5 text-brand-foreground hover:bg-brand/85"
             >
               {state.isLastSection ? "Finish unit" : "Next section"}
+              <kbd
+                aria-hidden="true"
+                className="hidden rounded border border-current/25 px-1 font-sans text-[11px] leading-4 font-normal opacity-70 pointer-fine:inline"
+              >
+                N
+              </kbd>
               <ArrowRightIcon aria-hidden="true" />
             </Button>
             {SECONDARY_REPLIES.map((reply) => (

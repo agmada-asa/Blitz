@@ -1,8 +1,11 @@
 "use client"
 
-/** Renders one server-backed card and owns its answer selection and feedback state. */
+/**
+ * Renders one server-backed card and owns its answer selection and feedback state. Number keys,
+ * letters, and Enter answer the card or move on once it is answered (see `hooks/use-quiz-shortcuts.ts`).
+ */
 
-import { useId, useState } from "react"
+import { useId, useRef, useState } from "react"
 
 import type {
   AnswerResponse,
@@ -13,6 +16,7 @@ import type {
 import { Button } from "@/components/ui/button"
 import { CancelIcon, CheckIcon } from "@/components/ui/icon"
 import { plainMarkdownRenderer } from "@/components/ui/markdown"
+import { useQuizShortcuts } from "@/hooks/use-quiz-shortcuts"
 import {
   answerCueClass,
   vibrateForAnswer,
@@ -55,6 +59,7 @@ export function FeedCardView({ card, onAsk, onSkip, onAnswer }: FeedCardProps) {
   const [feedback, setFeedback] = useState<AnswerResponse | null>(null)
   const [pending, setPending] = useState(false)
   const [error, setError] = useState("")
+  const cardRef = useRef<HTMLElement>(null)
   const isMultipleAnswer = card.type === "multiple-answer"
   const idBase = useId()
   const structured = card.type !== "explain" && !isChoiceQuiz(card.type)
@@ -76,6 +81,12 @@ export function FeedCardView({ card, onAsk, onSkip, onAnswer }: FeedCardProps) {
       ? "correct"
       : "wrong"
     : undefined
+  // Enter moves on once answered; explanations have no answer to check.
+  useQuizShortcuts(cardRef, {
+    answerable: !pending && !feedback && card.type !== "explain",
+    lettered: card.type !== "true-false",
+    onAdvance: feedback ? () => onSkip(card) : undefined,
+  })
   // Cloze blanks show as numbered gaps; every other prompt shows as written.
   const prompt =
     card.type === "explain"
@@ -179,7 +190,11 @@ export function FeedCardView({ card, onAsk, onSkip, onAnswer }: FeedCardProps) {
   }
 
   return (
-    <article className="feed-card flex h-svh snap-start items-center px-4 pt-24 pb-10 sm:px-8 sm:pt-20 sm:pb-8">
+    <article
+      ref={cardRef}
+      data-quiz-scope=""
+      className="feed-card flex h-svh snap-start items-center px-4 pt-24 pb-10 sm:px-8 sm:pt-20 sm:pb-8"
+    >
       <div className="feed-card-content mx-auto flex max-h-full min-h-0 w-full max-w-[680px] [scrollbar-width:none] flex-col overflow-y-auto [&::-webkit-scrollbar]:hidden">
         {card.type === "explain" ? (
           <p className="mb-3 text-xs font-medium text-brand">Recap</p>
@@ -234,9 +249,16 @@ export function FeedCardView({ card, onAsk, onSkip, onAnswer }: FeedCardProps) {
                 disabled={
                   !structuredAnswerReady(shape.type, structuredValue) || pending
                 }
+                data-quiz-check=""
                 className="mt-5 h-11 rounded-full bg-brand px-5 text-sm font-medium text-brand-foreground hover:bg-brand/85 focus-visible:ring-ring"
               >
                 Check answer
+                <kbd
+                  aria-hidden="true"
+                  className="ml-1 hidden rounded border border-current/25 px-1 font-sans text-[11px] leading-4 font-normal opacity-70 pointer-fine:inline"
+                >
+                  Enter
+                </kbd>
               </Button>
             ) : null}
           </>
@@ -264,6 +286,7 @@ export function FeedCardView({ card, onAsk, onSkip, onAnswer }: FeedCardProps) {
                   <button
                     key={option.id}
                     type="button"
+                    data-quiz-option=""
                     role={optionRole}
                     aria-checked={isSelected}
                     disabled={pending || feedback !== null}
@@ -319,9 +342,16 @@ export function FeedCardView({ card, onAsk, onSkip, onAnswer }: FeedCardProps) {
                 type="button"
                 onClick={submitMultiple}
                 disabled={!selectedMany.length || pending || feedback !== null}
+                data-quiz-check=""
                 className="mt-5 h-11 rounded-full bg-brand px-5 text-sm font-medium text-brand-foreground hover:bg-brand/85 focus-visible:ring-ring"
               >
                 Check answers
+                <kbd
+                  aria-hidden="true"
+                  className="ml-1 hidden rounded border border-current/25 px-1 font-sans text-[11px] leading-4 font-normal opacity-70 pointer-fine:inline"
+                >
+                  Enter
+                </kbd>
               </Button>
             ) : null}
           </>

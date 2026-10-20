@@ -8,8 +8,9 @@
  * questions use `StructuredAnswer` and also submit with `Check answer`. Answers are scored by the provider's
  * `onQuizAnswer` handler when present (falling back to local grading when it returns null) and shown
  * with icons and text, the explanation, and `Try again` for incorrect answers. A freshly checked answer
- * also plays a short pulse or shake and buzzes phones (see `answer-feedback.ts`). Recorded answers from
- * the provider restore the answered state after a reload.
+ * also plays a short pulse or shake and buzzes phones (see `answer-feedback.ts`). Number keys pick an
+ * option and Enter checks it, for the quiz that owns the keyboard (see `hooks/use-quiz-shortcuts.ts`).
+ * Recorded answers from the provider restore the answered state after a reload.
  */
 import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react"
 import {
@@ -39,6 +40,7 @@ import {
   type AnswerCue,
 } from "@/components/ui/interactive-blocks/answer-feedback"
 import { QuizSaveAction } from "@/components/ui/interactive-blocks/quiz-save"
+import { useQuizShortcuts } from "@/hooks/use-quiz-shortcuts"
 import {
   StructuredAnswer,
   structuredHints,
@@ -141,6 +143,7 @@ export function QuizBlockView({
   const baseId = useId()
   const questionId = `${baseId}-question`
   const hintId = `${baseId}-hint`
+  const sectionRef = useRef<HTMLElement>(null)
   const optionsRef = useRef<HTMLDivElement>(null)
   const feedbackRef = useRef<HTMLDivElement>(null)
   const focusFirstOption = useRef(false)
@@ -171,6 +174,10 @@ export function QuizBlockView({
   // Formats that collect an answer first and check it with a button.
   const checked = multiple || structured
   const locked = attempt.status === "pending" || attempt.status === "answered"
+  useQuizShortcuts(sectionRef, {
+    answerable: !locked,
+    lettered: block.type !== "true-false",
+  })
   // The cue plays only for an answer checked in this view, so a recorded answer does not replay on load.
   const cue: AnswerCue | undefined =
     localAttempt?.status === "answered"
@@ -272,9 +279,11 @@ export function QuizBlockView({
 
   return (
     <section
+      ref={sectionRef}
       className="interactive-block rounded-xl border border-border bg-card p-4 sm:p-5"
       aria-labelledby={questionId}
       data-quiz-id={block.id}
+      data-quiz-scope=""
     >
       <fieldset className="min-w-0" aria-describedby={hintId}>
         <legend className="w-full">
@@ -416,6 +425,7 @@ export function QuizBlockView({
         <Button
           type="button"
           className="mt-3 h-11 px-4 sm:h-9"
+          data-quiz-check=""
           disabled={
             structured
               ? !structuredAnswerReady(block.type, attempt.selected)
@@ -424,6 +434,12 @@ export function QuizBlockView({
           onClick={() => void submit(attempt.selected)}
         >
           Check answer
+          <kbd
+            aria-hidden="true"
+            className="ml-1 hidden rounded border border-current/25 px-1 font-sans text-[11px] leading-4 font-normal opacity-70 pointer-fine:inline"
+          >
+            Enter
+          </kbd>
         </Button>
       ) : null}
 
