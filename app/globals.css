@@ -378,10 +378,68 @@
   animation: answer-shake 350ms ease-in-out;
 }
 
+/* The streak bolt glows once when today's goal is first met; see components/progress/today-panel.tsx. */
+@keyframes goal-met-glow {
+  0% {
+    transform: scale(1);
+    filter: drop-shadow(0 0 0 transparent);
+  }
+  40% {
+    transform: scale(1.18);
+    filter: drop-shadow(0 0 6px color-mix(in srgb, var(--brand) 65%, transparent));
+  }
+  100% {
+    transform: scale(1);
+    filter: drop-shadow(0 0 0 transparent);
+  }
+}
+
+.goal-met-glow {
+  animation: goal-met-glow 1000ms ease-out;
+}
+
+/* A finished unit's summary: the heading scales in over a one-off burst of dots; see components/progress/session-summary.tsx. */
+@keyframes summary-title-in {
+  from {
+    opacity: 0;
+    transform: scale(0.94);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes summary-burst {
+  0% {
+    opacity: 1;
+    transform: rotate(var(--burst-angle)) translateX(0) scale(0.4);
+  }
+  100% {
+    opacity: 0;
+    transform: rotate(var(--burst-angle)) translateX(var(--burst-distance)) scale(1);
+  }
+}
+
+.summary-title-in {
+  transform-origin: left center;
+  animation: summary-title-in 600ms ease-out;
+}
+
+.summary-burst-dot {
+  animation: summary-burst 800ms ease-out forwards;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .answer-pulse,
-  .answer-shake {
+  .answer-shake,
+  .goal-met-glow,
+  .summary-title-in,
+  .summary-burst-dot {
     animation: none;
+  }
+  .summary-burst {
+    display: none;
   }
 }
 

@@ -9,7 +9,7 @@
 
 import Link from "next/link"
 import { useQuery } from "convex/react"
-import { useState } from "react"
+import { useEffect, useState } from "react"
 
 import { SegmentedBar, pathSegments } from "@/components/progress/progress-path"
 import { ArrowRightIcon, ZapIcon } from "@/components/ui/icon"
@@ -18,6 +18,9 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { api } from "@/convex/_generated/api"
 import { useMinuteClock } from "@/hooks/use-minute-clock"
 import { cn } from "@/lib/utils"
+
+/** Set once a Today panel has shown today's goal as met in this page session, so the streak bolt glows only the first time. */
+let goalMetSeen = false
 
 /** Formats a `YYYY-MM-DD` key as a short weekday label. */
 function weekday(day: string, style: "narrow" | "long"): string {
@@ -36,6 +39,12 @@ export function TodayPanel() {
   const [tzOffsetMinutes] = useState(() => new Date().getTimezoneOffset())
   const now = useMinuteClock()
   const summary = useQuery(api.progress.today, { tzOffsetMinutes, now })
+  // Decided once per mount. The glow class then stays on while the goal is met, so it plays once and never restarts.
+  const [glowArmed] = useState(() => !goalMetSeen)
+  const goalMet = summary?.streak.todayMet ?? false
+  useEffect(() => {
+    if (goalMet) goalMetSeen = true
+  }, [goalMet])
 
   if (summary === undefined)
     return (
@@ -60,7 +69,11 @@ export function TodayPanel() {
           <h2 className="mt-1 flex items-center gap-2.5 text-2xl font-medium tracking-[-0.04em]">
             <ZapIcon
               aria-hidden="true"
-              className={cn("size-[0.8em] shrink-0", summary.streak.current ? "text-brand" : "text-muted-foreground")}
+              className={cn(
+                "size-[0.8em] shrink-0",
+                summary.streak.current ? "text-brand" : "text-muted-foreground",
+                glowArmed && goalMet && "goal-met-glow"
+              )}
             />
             {summary.streak.current ? `${summary.streak.current}-day streak` : "Start a streak today"}
           </h2>

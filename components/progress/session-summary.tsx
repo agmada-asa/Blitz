@@ -4,11 +4,11 @@
  * The end-of-session screen shared by drills and Teach: what the session
  * added up to (XP, questions, sections, time), how each concept went and how
  * strong it is now, and where today's goal and streak stand. Callers supply
- * the heading and the next actions.
+ * the heading and the next actions, and set `celebrate` for a finished unit.
  */
 
 import { useQuery } from "convex/react"
-import { useId, type ReactNode } from "react"
+import { useId, type CSSProperties, type ReactNode } from "react"
 
 import { strengthStyle } from "@/components/practice/practice-hub"
 import { Progress } from "@/components/ui/progress"
@@ -35,6 +35,41 @@ type SessionSummaryProps = {
   actions?: ReactNode
   /** Heading level, so the summary nests correctly in its page. */
   headingLevel?: "h1" | "h2"
+  /** Plays a one-off entrance for a finished unit: the heading scales in over a burst of dots. */
+  celebrate?: boolean
+}
+
+/** Angle and distance of each dot in the completion burst. */
+const BURST_DOTS = Array.from({ length: 10 }, (_, index) => ({
+  angle: index * 36,
+  distance: index % 2 ? 44 : 64,
+}))
+
+/**
+ * Brand-coloured dots that fly out from behind a heading once, when it mounts.
+ * Pure decoration, hidden from assistive technology; the motion is CSS only
+ * and is removed under reduced motion.
+ */
+function CompletionBurst() {
+  return (
+    <span
+      aria-hidden="true"
+      className="summary-burst pointer-events-none absolute top-1/2 left-6 -z-10 size-0"
+    >
+      {BURST_DOTS.map((dot) => (
+        <span
+          key={dot.angle}
+          className="summary-burst-dot absolute -m-0.75 size-1.5 rounded-full bg-brand"
+          style={
+            {
+              "--burst-angle": `${dot.angle}deg`,
+              "--burst-distance": `${dot.distance}px`,
+            } as CSSProperties
+          }
+        />
+      ))}
+    </span>
+  )
 }
 
 /**
@@ -66,6 +101,7 @@ export function SessionSummary({
   children,
   actions,
   headingLevel = "h2",
+  celebrate = false,
 }: SessionSummaryProps) {
   const now = useMinuteClock()
   const summary = useQuery(api.progress.sessionSummary, {
@@ -136,12 +172,19 @@ export function SessionSummary({
   return (
     <section aria-labelledby={titleId}>
       <p className="text-xs font-medium text-brand">{eyebrow}</p>
-      <Heading
-        id={titleId}
-        className="mt-1 font-heading text-3xl font-semibold tracking-tight text-balance"
-      >
-        {heading}
-      </Heading>
+      {/* `isolate` keeps the burst behind the heading text but above the card. */}
+      <div className="relative isolate">
+        {celebrate ? <CompletionBurst /> : null}
+        <Heading
+          id={titleId}
+          className={cn(
+            "mt-1 font-heading text-3xl font-semibold tracking-tight text-balance",
+            celebrate && "summary-title-in"
+          )}
+        >
+          {heading}
+        </Heading>
+      </div>
 
       <dl
         className={cn(
