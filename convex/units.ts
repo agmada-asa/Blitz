@@ -687,11 +687,15 @@ export const recordTeachProgress = mutation({
  * Teach session records, never whole source lists, so it stays cheap. A module
  * with no units gets an entry only when it has taught material outside a unit,
  * found by reading its sources until the first one that is not an exam paper
- * or a reference book (usually the first).
+ * or a reference book (usually the first). Also counts each module's concepts
+ * due for review at `now`, using the same rule as the Today panel.
+ * @param now Client clock rounded to the minute, so due counts roll over as time passes.
+ *   Callers without a client clock (server and CLI reads) omit it and get the server time.
  */
 export const libraryProgress = query({
-  args: {},
-  handler: async (ctx) => {
+  args: { now: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    const now = args.now ?? Date.now()
     const units = await ctx.db.query("units").collect()
     const byProject = new Map<
       string,
@@ -704,6 +708,8 @@ export const libraryProgress = query({
         hasUnsortedSources: boolean
         /** Share of each unit's sections taught (0 to 1), in path order. */
         unitProgress: number[]
+        /** Concepts taught in a unit that are due for review at `now`. */
+        dueCount: number
       }
     >()
     const ordered = [...units].sort((a, b) => a.order - b.order)
@@ -716,6 +722,7 @@ export const libraryProgress = query({
         lastStudiedAt: 0,
         hasUnsortedSources: false,
         unitProgress: [],
+        dueCount: 0,
       }
       entry.unitCount += 1
       const chat = await latestTeachChat(ctx, unit._id)
@@ -730,7 +737,23 @@ export const libraryProgress = query({
       )
       byProject.set(key, entry)
     }
-    for (const project of await ctx.db.query("projects").collect()) {
+    const projects = await ctx.db.query("projects").collect()
+    // Only modules with units can have due concepts, so only their entries are counted.
+    // Each module reads its own due index range, never every review in the database.
+    for (const project of projects) {
+      const entry = byProject.get(String(project._id))
+      if (!entry) continue
+      for await (const review of ctx.db
+        .query("conceptReviews")
+        .withIndex("by_project_dueAt", (q) =>
+          q.eq("projectId", project._id).lte("dueAt", now)
+        )) {
+        if (review.attemptCount <= 0) continue
+        const concept = await ctx.db.get(review.conceptId)
+        if (concept?.unitId) entry.dueCount += 1
+      }
+    }
+    for (const project of projects) {
       if (byProject.has(String(project._id))) continue
       const examSources = new Set<string>()
       for (const paper of await ctx.db
@@ -749,6 +772,7 @@ export const libraryProgress = query({
           lastStudiedAt: 0,
           hasUnsortedSources: true,
           unitProgress: [],
+          dueCount: 0,
         })
         break
       }

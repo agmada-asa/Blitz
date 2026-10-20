@@ -9,12 +9,14 @@ import { useMutation, useQuery } from "convex/react"
 
 import { ProjectGrid } from "@/components/projects/project-grid"
 import { TodayPanel } from "@/components/progress/today-panel"
+import { useMinuteClock } from "@/hooks/use-minute-clock"
 import { api } from "@/convex/_generated/api"
 
 /** Renders the Today panel and the live project library. */
 export default function Page() {
+  const now = useMinuteClock()
   const projects = useQuery(api.projects.listProjects)
-  const progress = useQuery(api.units.libraryProgress, {})
+  const progress = useQuery(api.units.libraryProgress, { now })
   const createProject = useMutation(api.projects.createProject)
 
   return (

@@ -44,6 +44,8 @@ type ModuleProgress = {
   hasUnsortedSources: boolean
   /** Share of each unit taught (0 to 1), in path order. */
   unitProgress: number[]
+  /** Concepts in this module that are due for review now. */
+  dueCount: number
 }
 
 /** Props required to render the project library and create a project. */
@@ -57,8 +59,17 @@ type ProjectGridProps = {
   onCreate: (title: string) => Promise<void>
 }
 
-/** Describes a module's progress in one short line. */
+/**
+ * Describes a module's progress in one short line. A due count leads the line,
+ * so it stays visible when a long unit title is truncated.
+ */
 function progressLine(progress: ModuleProgress | undefined): string {
+  const status = progressStatus(progress)
+  return progress?.dueCount ? `${progress.dueCount} due · ${status}` : status
+}
+
+/** Describes a module's unit progress, or what it still needs, in one short line. */
+function progressStatus(progress: ModuleProgress | undefined): string {
   if (progress?.hasUnsortedSources) return "Sources aren't in a unit yet"
   if (!progress?.unitCount) return "No material yet"
   const taught = `${progress.taughtCount} of ${progress.unitCount} unit${progress.unitCount === 1 ? "" : "s"} taught`
