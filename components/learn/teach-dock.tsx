@@ -231,7 +231,9 @@ export function TeachDock({
               placeholder={
                 canAsk
                   ? "Ask about this section"
-                  : "You can ask once the tutor finishes"
+                  : state.kind === "precheck"
+                    ? "You can ask once your lesson is planned"
+                    : "You can ask once the tutor finishes"
               }
               disabled={!canAsk}
               className="max-h-40 min-h-11 resize-none rounded-2xl px-4 py-2.5"
