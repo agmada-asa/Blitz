@@ -581,7 +581,10 @@ export function Feed({ initialFilter }: { initialFilter?: FeedFilter }) {
               key={run}
               className="combo-chip flex h-10 items-center rounded-full border border-brand/30 bg-brand/10 px-3.5 font-medium text-brand backdrop-blur-md"
             >
-              {run} in a row · +{comboBonus(run)} XP
+              {run} in a row
+              <span className="hidden sm:inline">
+                &nbsp;· +{comboBonus(run)} XP
+              </span>
             </p>
           ) : null}
         </div>
