@@ -223,6 +223,7 @@ export const generationContext = query({
         })),
       taughtSections,
       weakConcepts,
+      outlineConcepts: outline?.sections.flatMap((section) => section.concepts ?? []) ?? [],
       existingQuestions: items.map((item) => item.question ?? "").filter(Boolean),
     }
   },
