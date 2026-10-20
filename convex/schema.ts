@@ -4,6 +4,7 @@ import { defineSchema, defineTable } from "convex/server"
 import { v } from "convex/values"
 import { citationFields } from "./citationFields"
 import { examAnswerFields, examQuestionFields, examResultFields } from "./examFields"
+import { reviewMemoryFields } from "./reviewFields"
 
 /** Validator shared by the cards table's supported learning formats. */
 const cardType = v.union(
@@ -441,6 +442,13 @@ export default defineSchema({
     ),
     answer: v.optional(v.union(v.string(), v.boolean(), v.array(v.string()))),
     outcome: v.optional(v.union(v.literal("correct"), v.literal("incorrect"))),
+    /** `guess` when the learner marked a right answer as a guess. */
+    confidence: v.optional(v.union(v.literal("sure"), v.literal("guess"))),
+    /**
+     * `recall` when the learner answered from memory before seeing options
+     * and graded themselves; such events have no `answer`.
+     */
+    answerMode: v.optional(v.literal("recall")),
   })
     .index("by_project_clientEventId", ["projectId", "clientEventId"])
     .index("by_project_concept_occurredAt", [
@@ -494,6 +502,8 @@ export default defineSchema({
     lastOutcome: v.optional(
       v.union(v.literal("correct"), v.literal("incorrect"))
     ),
+    /** FSRS memory after the latest answer (see `lib/learning/fsrs.ts`). */
+    memory: v.optional(reviewMemoryFields),
     updatedAt: v.number(),
   })
     .index("by_project_concept", ["projectId", "conceptId"])

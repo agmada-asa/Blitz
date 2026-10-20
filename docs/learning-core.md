@@ -42,20 +42,31 @@ for a scored result, using `outcome: "correct"` or `outcome: "incorrect"`.
 
 ## Review scheduling
 
-`createReviewState` starts a concept as immediately due. `applyReviewEvent`
-changes state only for answer events. Correct answers schedule the next review
-at one day, three days, seven days, fourteen days, then thirty days after the
-answer, with the thirty-day interval capped for later correct streaks.
-Incorrect answers reset the consecutive-correct count and retry after ten
-minutes. The counters and timestamps make the rule easy to inspect and sync.
+Scheduling uses [FSRS](https://github.com/open-spaced-repetition/ts-fsrs)
+through `lib/learning/fsrs.ts`. Each concept keeps an FSRS memory (stability,
+difficulty, phase, reps, lapses) on its `conceptReviews` row, and the next
+review is set for when predicted recall falls to 90%, capped at 60 days.
+`applyReviewEvent` grades each scored answer: wrong is `Again`, right but
+marked as a guess is `Hard`, and right is `Good`. A first right answer is due
+again in two days; a miss, or a guess on a new concept, comes back after ten
+minutes. Fuzz is off, so replaying the answer log always gives the same
+schedule; Convex recomputes a concept's review from its full log on every
+answer.
+
+`recallProbability` returns the predicted chance of recalling a concept now,
+used for module readiness. After upgrading from the fixed 1/3/7/14/30-day
+ladder, run `npx convex run learning:rescheduleReviews` once so concepts not
+answered since get FSRS due dates.
 
 `skip` and `exposure` return the state unchanged. Reading, scrolling, and
 skipping therefore cannot become mastery evidence or an automatic wrong
 answer. A late synced answer is applied at the latest known answer timestamp
 so it cannot move a due date backwards.
 
-This is a small initial heuristic. It does not claim to predict mastery or
-replace validated spaced-repetition research.
+A self-graded recall (`learning.recordRecallEvent`) is the one answer whose
+outcome the learner supplies: they answered from memory before seeing the
+options, then said whether they knew it. It is stored with
+`answerMode: "recall"` and schedules like any other answer.
 
 ## Feed selection
 

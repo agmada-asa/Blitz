@@ -8,6 +8,12 @@
  * persistence client.
  */
 
+import {
+  reviewMemory,
+  type AnswerConfidence,
+  type ReviewMemory,
+} from "./fsrs.ts"
+
 /** The question formats supported in ordinary Blitz study flows. */
 export type StandardQuestionType =
   | "single-choice"
@@ -186,6 +192,8 @@ export interface ConceptReviewState {
   readonly dueAt: number
   /** Latest scored outcome, or null before first answer. */
   readonly lastOutcome: "correct" | "incorrect" | null
+  /** FSRS memory after the latest answer; null or absent before the first. */
+  readonly memory?: ReviewMemory | null
 }
 
 /** A scored answer event that may change review scheduling. */
@@ -193,6 +201,8 @@ export interface AnswerReviewEvent {
   readonly type: "answer"
   readonly outcome: "correct" | "incorrect"
   readonly occurredAt: number
+  /** Whether the learner marked a right answer as a guess. */
+  readonly confidence?: AnswerConfidence
 }
 
 /** A passive event that deliberately leaves review evidence unchanged. */
@@ -272,16 +282,6 @@ export interface FeedSelectionOptions {
   readonly recentConceptIds?: readonly string[]
 }
 
-const DAY_MS = 24 * 60 * 60 * 1000
-const INCORRECT_RETRY_MS = 10 * 60 * 1000
-const CORRECT_INTERVALS_MS = [
-  DAY_MS,
-  3 * DAY_MS,
-  7 * DAY_MS,
-  14 * DAY_MS,
-  30 * DAY_MS,
-] as const
-
 /** Checks that a value is a finite timestamp. */
 function isTimestamp(value: number): boolean {
   return Number.isFinite(value)
@@ -303,6 +303,7 @@ export function createReviewState(
     lastAttemptAt: null,
     dueAt: now,
     lastOutcome: null,
+    memory: null,
   }
 }
 
@@ -310,12 +311,6 @@ export function createReviewState(
 export function isReviewDue(state: ConceptReviewState, now: number): boolean {
   if (!isTimestamp(now)) throw new Error("Review timestamp must be finite")
   return state.dueAt <= now
-}
-
-/** Returns the interval for a correct answer based on the updated streak. */
-function intervalAfterCorrect(consecutiveCorrect: number): number {
-  const index = Math.min(consecutiveCorrect, CORRECT_INTERVALS_MS.length) - 1
-  return CORRECT_INTERVALS_MS[Math.max(index, 0)]
 }
 
 /** Applies one review event without mutating the input state. */
@@ -336,6 +331,12 @@ export function applyReviewEvent(
   }
   const correct = event.outcome === "correct"
   const consecutiveCorrect = correct ? state.consecutiveCorrect + 1 : 0
+  const scheduled = reviewMemory(
+    state.memory ?? null,
+    event.outcome,
+    event.occurredAt,
+    event.confidence
+  )
   return {
     ...state,
     attemptCount: state.attemptCount + 1,
@@ -343,10 +344,9 @@ export function applyReviewEvent(
     incorrectCount: state.incorrectCount + (correct ? 0 : 1),
     consecutiveCorrect,
     lastAttemptAt: event.occurredAt,
-    dueAt:
-      event.occurredAt +
-      (correct ? intervalAfterCorrect(consecutiveCorrect) : INCORRECT_RETRY_MS),
+    dueAt: scheduled.dueAt,
     lastOutcome: event.outcome,
+    memory: scheduled.memory,
   }
 }
 
@@ -354,9 +354,15 @@ export function applyReviewEvent(
 export function recordReviewOutcome(
   state: ConceptReviewState,
   outcome: "correct" | "incorrect",
-  occurredAt: number
+  occurredAt: number,
+  confidence?: AnswerConfidence
 ): ConceptReviewState {
-  return applyReviewEvent(state, { type: "answer", outcome, occurredAt })
+  return applyReviewEvent(state, {
+    type: "answer",
+    outcome,
+    occurredAt,
+    ...(confidence ? { confidence } : {}),
+  })
 }
 
 /** Normalizes written text conservatively for exact accepted-answer matching. */

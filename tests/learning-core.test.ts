@@ -11,6 +11,7 @@ import {
   type FeedItem,
   type Question,
 } from "../lib/learning/core.ts"
+import { recallProbability } from "../lib/learning/fsrs.ts"
 
 const NOW = 1_800_000_000_000
 
@@ -158,7 +159,9 @@ test("correct and incorrect answers progress the deterministic schedule", () => 
   })
   assert.equal(correct.attemptCount, 1)
   assert.equal(correct.consecutiveCorrect, 1)
-  assert.equal(correct.dueAt, NOW + 24 * 60 * 60 * 1000)
+  // FSRS: a first right answer on a new concept is next due in two days.
+  assert.equal(correct.dueAt, NOW + 2 * 24 * 60 * 60 * 1000)
+  assert.ok(correct.memory && correct.memory.stability > 0)
   const incorrect = applyReviewEvent(correct, {
     type: "answer",
     outcome: "incorrect",
@@ -305,4 +308,44 @@ test("formatted feed keeps due same-concept items and excludes not-due reviews",
     selected.some((entry) => entry.id === "r5"),
     false
   )
+})
+
+test("FSRS grows intervals with each right answer and treats guesses as weaker", () => {
+  let state = createReviewState("c1", NOW)
+  const gaps: number[] = []
+  let at = NOW
+  for (let index = 0; index < 4; index++) {
+    state = applyReviewEvent(state, { type: "answer", outcome: "correct", occurredAt: at })
+    gaps.push(state.dueAt - at)
+    at = state.dueAt
+  }
+  assert.ok(gaps.every((gap, index) => index === 0 || gap > gaps[index - 1]))
+  assert.ok(gaps.at(-1)! <= 61 * 24 * 60 * 60 * 1000)
+
+  const sure = applyReviewEvent(createReviewState("c2", NOW), {
+    type: "answer",
+    outcome: "correct",
+    occurredAt: NOW,
+  })
+  const guessed = applyReviewEvent(createReviewState("c3", NOW), {
+    type: "answer",
+    outcome: "correct",
+    occurredAt: NOW,
+    confidence: "guess",
+  })
+  assert.ok(guessed.dueAt < sure.dueAt)
+  assert.ok(guessed.memory!.stability < sure.memory!.stability)
+})
+
+test("recall probability falls over time and is zero before any answer", () => {
+  const state = applyReviewEvent(createReviewState("c1", NOW), {
+    type: "answer",
+    outcome: "correct",
+    occurredAt: NOW,
+  })
+  assert.equal(recallProbability(null, NOW), 0)
+  const soon = recallProbability(state.memory, NOW + 60_000)
+  const later = recallProbability(state.memory, NOW + 20 * 24 * 60 * 60 * 1000)
+  assert.ok(soon > 0.95 && soon <= 1)
+  assert.ok(later < soon)
 })
