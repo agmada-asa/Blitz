@@ -81,8 +81,25 @@ keeps today's XP in a chip above the feed.
 
 The tutor's rules live in `TEACH_RULES` in `lib/teach.ts`:
 
-- The first reply opens with ```outline JSON (`title`, 3–8 `sections`) and then
-  teaches section 1.
+- The first reply opens with ```outline JSON (`title`, 3–8 `sections`, each
+  with 2–5 `concepts`: the distinct examinable ideas it teaches). Quizzes and
+  question banks tag questions with these names, so review is scheduled per
+  idea rather than per section. Older outlines have no concepts and fall back
+  to section titles.
+- The first reply then runs a **pre-check** instead of teaching: a ```precheck
+  marker and 4–6 quizzes across the sections. The Teach screen shows it as
+  "Quick check" with **Plan my lesson** and **Skip the check**. Plan my lesson
+  sends the learner's saved answers (`teach.precheckResults`, never trusted
+  from the browser) and the tutor replies with a ```plan block marking each
+  section `skip`, `skim`, or `teach`, then teaches the first section not
+  skipped. The plan is saved on the chat (`teachSectionPlan`); the outline
+  shows skipped sections as **Known** and skimmed ones as **Quick**, and a
+  skipped section counts as covered in unit progress. Jumping to a skipped
+  section teaches it in full. A first message that is a question (such as
+  Relearn) skips the pre-check.
+- Every turn that carries the unit material also lists concepts from the
+  module's other units that the learner knows well or is still shaky on
+  (from their answers), so the tutor builds on them instead of re-teaching.
 - Every reply that teaches a section starts with a ```section block holding the
   section id; the recap after the last section uses `done`.
 - Quick replies (`TEACH_QUICK_REPLIES`) have fixed meanings: next section,

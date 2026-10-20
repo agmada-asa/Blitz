@@ -24,9 +24,11 @@ code output for short deterministic programs (see `docs/learning-core.md` for
 how each is scored). Ordering and matching items are shuffled with a stable
 seed, so the browser and server always agree on the order shown.
 
-A unit's first bank starts automatically, once, when Teach reaches its second
-section (`startFirstQuestionBank`, called from the chat route). Later batches
-are written on request from the Practice screen.
+A unit's first bank starts automatically, once, as soon as its Teach session
+has an outline (`startFirstQuestionBank`, called from the chat route), so
+Practice and Review have questions by the time the pre-check is done. When the
+outline lists concepts, every generated question is tagged with one of them.
+Later batches are written on request from the Practice screen.
 
 ## Saving chat quizzes
 

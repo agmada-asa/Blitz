@@ -50,7 +50,9 @@ import {
 import {
   buildTeachPrompt,
   parseTeachOutline,
+  parseTeachPlan,
   parseTeachSectionMarker,
+  TEACH_QUICK_REPLIES,
   teachUnitTitle,
 } from "@/lib/teach"
 import {
@@ -542,6 +544,12 @@ export async function POST(request: Request): Promise<Response> {
               message: input.message,
             })
           : null
+        // `Plan my lesson` carries the learner's pre-check answers, read from
+        // the saved answers rather than trusted from the browser.
+        const precheck =
+          teach && input.message.trim() === TEACH_QUICK_REPLIES.precheckDone
+            ? await client.query(api.teach.precheckResults, { chatId: turn.chatId })
+            : undefined
         // Recovery sessions need original image bytes because native blocks are
         // not retained by a provider when a fresh session is created.
         const nativeImageDocumentIds = new Set(
@@ -790,6 +798,9 @@ export async function POST(request: Request): Promise<Response> {
             ...(teach!.sectionIndex !== null
               ? { sectionIndex: teach!.sectionIndex }
               : {}),
+            ...(teach!.plan ? { plan: teach!.plan } : {}),
+            ...(precheck ? { precheck } : {}),
+            knownConcepts: teach!.knownConcepts,
             references: teach!.referenceExcerpts,
           })
         let replayPrompt: Promise<string> | undefined
@@ -1063,10 +1074,14 @@ export async function POST(request: Request): Promise<Response> {
           // Progress is derived from the finished reply, never from the client.
           const outline = parseTeachOutline(reply)
           const marker = parseTeachSectionMarker(reply)
+          const knownOutline = teach.outline ?? outline
+          const plan =
+            knownOutline && !teach.plan ? parseTeachPlan(reply, knownOutline) : undefined
           await client
             .mutation(api.units.recordTeachProgress, {
               chatId: turn.chatId,
               ...(outline ? { outline } : {}),
+              ...(plan ? { plan } : {}),
               ...(marker
                 ? { sectionId: marker.kind === "done" ? "done" : marker.id }
                 : {}),
@@ -1079,14 +1094,10 @@ export async function POST(request: Request): Promise<Response> {
                 message: error instanceof Error ? error.message : "Unknown error",
               })
             })
-          // Once a unit is under way, write its first question bank in the
-          // background so Practice and the feed have material to use.
-          const knownOutline = teach.outline ?? outline
-          const reachedSecond =
-            marker?.kind === "done" ||
-            (marker?.kind === "section" &&
-              (knownOutline?.sections.findIndex((section) => section.id === marker.id) ?? -1) >= 1)
-          if (reachedSecond)
+          // As soon as a unit has an outline, write its first question bank in
+          // the background so Practice and Review have material by the time
+          // the learner wants them. The bank call is a no-op after the first.
+          if (knownOutline)
             void startFirstQuestionBank(teach.unitId).catch((error: unknown) => {
               console.error("First question bank could not start", {
                 message: error instanceof Error ? error.message : "Unknown error",

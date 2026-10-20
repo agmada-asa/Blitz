@@ -5,6 +5,7 @@ import { v } from "convex/values"
 import { citationFields } from "./citationFields"
 import { examAnswerFields, examQuestionFields, examResultFields } from "./examFields"
 import { reviewMemoryFields } from "./reviewFields"
+import { teachOutlineFields, teachSectionPlanFields } from "./teachFields"
 
 /** Validator shared by the cards table's supported learning formats. */
 const cardType = v.union(
@@ -793,12 +794,9 @@ export default defineSchema({
     /** Unit taught by a Teach session. */
     unitId: v.optional(v.id("units")),
     /** Lesson outline the tutor proposed in its first Teach reply. */
-    teachOutline: v.optional(
-      v.object({
-        title: v.string(),
-        sections: v.array(v.object({ id: v.string(), title: v.string() })),
-      })
-    ),
+    teachOutline: v.optional(teachOutlineFields),
+    /** Skip, skim, or teach per section, set from the pre-check. */
+    teachSectionPlan: v.optional(teachSectionPlanFields),
     /** Zero-based index of the section being taught; the outline length once complete. */
     teachSectionIndex: v.optional(v.number()),
     /** Ids of the outline sections actually taught. */

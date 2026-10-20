@@ -3,7 +3,9 @@
 /**
  * The bottom of the Teach screen: one-tap replies that move the lesson along,
  * a box for the learner's own questions, and pause or resume controls while
- * the tutor is writing. After the recap it offers practice and the next unit.
+ * the tutor is writing. After the opening pre-check it offers to plan the
+ * lesson around the answers or skip the check; after the recap it offers
+ * practice and the next unit.
  */
 
 import Link from "next/link"
@@ -20,6 +22,8 @@ export type TeachDockState =
   | { kind: "starting" }
   | { kind: "writing" }
   | { kind: "paused"; hasText: boolean }
+  /** The opening check is on screen; `answered` counts its answered quizzes. */
+  | { kind: "precheck"; answered: number }
   | { kind: "ready"; isLastSection: boolean }
   | {
       kind: "complete"
@@ -107,6 +111,30 @@ export function TeachDock({
                 </Link>
               </Button>
             ) : null}
+          </div>
+        ) : state.kind === "precheck" ? (
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              type="button"
+              onClick={() => onSend(TEACH_QUICK_REPLIES.precheckDone)}
+              className="min-h-11 shrink-0 rounded-full bg-brand px-5 text-brand-foreground hover:bg-brand/85"
+            >
+              Plan my lesson
+              <ArrowRightIcon aria-hidden="true" />
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => onSend(TEACH_QUICK_REPLIES.skipPrecheck)}
+              className="min-h-11 shrink-0 rounded-full px-4"
+            >
+              Skip the check
+            </Button>
+            <p className="text-sm text-muted-foreground" role="status">
+              {state.answered
+                ? `${state.answered} answered. Anything you leave gets taught.`
+                : "Answer what you can. Anything you leave gets taught."}
+            </p>
           </div>
         ) : state.kind === "ready" ? (
           <div className="-mx-1 flex [scrollbar-width:none] gap-2 overflow-x-auto px-1 pb-0.5">

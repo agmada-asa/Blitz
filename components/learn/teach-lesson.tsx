@@ -17,6 +17,7 @@ import type { api } from "@/convex/_generated/api"
 import type { ChatCitation } from "@/lib/citations"
 import type { QuizBlock } from "@/lib/interactive-blocks"
 import {
+  isTeachPrecheck,
   parseTeachOutline,
   parseTeachSectionMarker,
   stripTeachMarkers,
@@ -144,6 +145,7 @@ const TutorReply = memo(function TutorReply({
   const streaming = message.status === "running"
   const marker = useMemo(() => parseTeachSectionMarker(message.content), [message.content])
   const plan = useMemo(() => parseTeachOutline(message.content), [message.content])
+  const precheck = useMemo(() => isTeachPrecheck(message.content), [message.content])
   const body = useMemo(() => stripTeachMarkers(message.content), [message.content])
   const sectionNumber =
     marker?.kind === "section" && outline
@@ -203,6 +205,13 @@ const TutorReply = memo(function TutorReply({
               </div>
             ) : null}
           </div>
+        </header>
+      ) : precheck ? (
+        <header className="mb-4">
+          <p className="text-xs font-medium text-brand">Before we start</p>
+          <h2 className="mt-1 font-heading text-2xl font-semibold tracking-tight">
+            Quick check
+          </h2>
         </header>
       ) : marker?.kind === "done" ? (
         <header className="mb-4">

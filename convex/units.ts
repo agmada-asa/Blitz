@@ -14,6 +14,8 @@ import type { Doc, Id } from "./_generated/dataModel"
 import { passageScore } from "../lib/citations"
 import { teachTurnFocus } from "../lib/teach-focus"
 import { searchTerms } from "../lib/search-terms"
+import { conceptStrength } from "../lib/drill"
+import { teachOutlineFields, teachSectionPlanFields } from "./teachFields"
 
 /** Reference-book passages added to one Teach turn. */
 const MAX_REFERENCE_EXCERPTS = 6
@@ -76,6 +78,41 @@ function sourceSummary(source: Doc<"sources">) {
   }
 }
 
+/** Most concept names of each strength passed to the tutor. */
+const MAX_KNOWN_CONCEPTS = 25
+
+/**
+ * Lists concepts from the module's other units that the learner has answered
+ * questions on, split into known well and still shaky, so the tutor can build
+ * on them instead of re-teaching them.
+ */
+async function knownConcepts(
+  ctx: QueryCtx,
+  projectId: Id<"projects">,
+  unitId: Id<"units">
+): Promise<{ strong: string[]; shaky: string[] }> {
+  const reviews = await ctx.db
+    .query("conceptReviews")
+    .withIndex("by_project_concept", (q) => q.eq("projectId", projectId))
+    .collect()
+  const strong: string[] = []
+  const shaky: string[] = []
+  for (const review of reviews) {
+    if (review.attemptCount <= 0) continue
+    const concept = await ctx.db.get(review.conceptId)
+    if (!concept || concept.unitId === unitId) continue
+    const strength = conceptStrength({
+      attempts: review.attemptCount,
+      correct: review.correctCount,
+      consecutiveCorrect: review.consecutiveCorrect,
+      ...(review.lastOutcome ? { lastOutcome: review.lastOutcome } : {}),
+    })
+    if (strength === "strong" && strong.length < MAX_KNOWN_CONCEPTS) strong.push(concept.title)
+    else if (strength !== "strong" && shaky.length < MAX_KNOWN_CONCEPTS) shaky.push(concept.title)
+  }
+  return { strong, shaky }
+}
+
 /** Summarises a Teach session's position in its outline. */
 function teachSummary(chat: Doc<"workspaceChats"> | null) {
   if (!chat) return null
@@ -91,6 +128,10 @@ function teachSummary(chat: Doc<"workspaceChats"> | null) {
     completed: total > 0 && reached >= total,
     /** Sections actually taught; a jump can leave earlier ones untaught. */
     taughtSectionIds: chat.teachTaughtSectionIds ?? [],
+    /** Sections the pre-check showed the learner already knows. */
+    skippedSectionIds: (chat.teachSectionPlan ?? [])
+      .filter((entry) => entry.mode === "skip")
+      .map((entry) => entry.id),
     /** Section ids in outline order, for drawing one segment per section. */
     sectionIds: chat.teachOutline?.sections.map((section) => section.id) ?? [],
     currentSectionTitle:
@@ -108,7 +149,9 @@ function teachSummary(chat: Doc<"workspaceChats"> | null) {
 function taughtShare(summary: ReturnType<typeof teachSummary>): number {
   if (!summary?.sectionCount) return 0
   if (summary.completed) return 1
-  return Math.min(1, summary.taughtSectionIds.length / summary.sectionCount)
+  // A section skipped because the learner already knows it counts as covered.
+  const covered = new Set([...summary.taughtSectionIds, ...summary.skippedSectionIds])
+  return Math.min(1, covered.size / summary.sectionCount)
 }
 
 /**
@@ -200,6 +243,7 @@ export const get = query({
         .map(sourceSummary),
       teach: teachSummary(chat),
       outline: chat?.teachOutline ?? null,
+      plan: chat?.teachSectionPlan ?? null,
       nextUnit:
         position >= 0 && position < siblings.length - 1
           ? { id: siblings[position + 1]._id, title: siblings[position + 1].title }
@@ -523,6 +567,8 @@ export const teachContext = query({
       unitTitleSource: unit.titleSource,
       outline: chat.teachOutline ?? null,
       sectionIndex: chat.teachSectionIndex ?? null,
+      plan: chat.teachSectionPlan ?? null,
+      knownConcepts: await knownConcepts(ctx, unit.projectId, unit._id),
       sources: sources
         .filter((source) => source.extractedText.trim())
         .map((source) => ({
@@ -552,12 +598,9 @@ export const teachContext = query({
 export const recordTeachProgress = mutation({
   args: {
     chatId: v.id("workspaceChats"),
-    outline: v.optional(
-      v.object({
-        title: v.string(),
-        sections: v.array(v.object({ id: v.string(), title: v.string() })),
-      })
-    ),
+    outline: v.optional(teachOutlineFields),
+    /** The skip, skim, or teach plan from the reply after the pre-check. */
+    plan: v.optional(teachSectionPlanFields),
     /** Section id that the reply taught, or `done` after the recap. */
     sectionId: v.optional(v.string()),
     /** Replacement title for an `auto` unit, derived from the outline. */
@@ -587,10 +630,19 @@ export const recordTeachProgress = mutation({
         taught.add(args.sectionId)
       }
     }
+    // Only the first plan counts, and only when it covers this outline.
+    const plan =
+      chat.teachSectionPlan ??
+      (args.plan &&
+      args.plan.length === outline.sections.length &&
+      args.plan.every((entry, position) => entry.id === outline.sections[position].id)
+        ? args.plan
+        : undefined)
     await ctx.db.patch(chat._id, {
       teachOutline: outline,
       teachSectionIndex: index,
       teachTaughtSectionIds: [...taught],
+      ...(plan ? { teachSectionPlan: plan } : {}),
     })
     const startedUnit = await ctx.db.get(chat.unitId)
     if (startedUnit && !startedUnit.startedAt)

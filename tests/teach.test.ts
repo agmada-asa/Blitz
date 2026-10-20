@@ -5,7 +5,9 @@ import test from "node:test"
 
 import {
   buildTeachPrompt,
+  isTeachPrecheck,
   parseTeachOutline,
+  parseTeachPlan,
   parseTeachSectionMarker,
   stripTeachMarkers,
   suggestUnitTitle,
@@ -187,4 +189,65 @@ test("citation focus follows the section the turn will teach", () => {
   assert.equal(teachTurnFocus("Next section", outline, 1), "Multiplication")
   assert.equal(teachTurnFocus("Teach section 2: Karatsuba", outline, 0), "Karatsuba")
   assert.equal(teachTurnFocus("Why three products?", outline, 1), "Why three products? Karatsuba")
+})
+
+test("outline sections keep distinct, bounded concept names", () => {
+  const outline = parseTeachOutline(
+    '```outline\n{"title":"Indexes","sections":[{"id":"s1","title":"B+ trees","concepts":["Node fan-out"," node  fan-out ","Leaf linking",3,""]},{"id":"s2","title":"Hashing"}]}\n```'
+  )
+  assert.deepEqual(outline?.sections[0].concepts, ["Node fan-out", "Leaf linking"])
+  assert.equal(outline?.sections[1].concepts, undefined)
+})
+
+test("the pre-check reply and its plan are read and hidden from the lesson", () => {
+  const outline = {
+    title: "Indexes",
+    sections: [
+      { id: "s1", title: "B+ trees" },
+      { id: "s2", title: "Hashing" },
+      { id: "s3", title: "Costs" },
+    ],
+  }
+  const precheck = "```precheck\n```\nA quick check so I can skip what you know."
+  assert.equal(isTeachPrecheck(precheck), true)
+  assert.equal(isTeachPrecheck("```section\ns1\n```\nHello"), false)
+  assert.equal(stripTeachMarkers(precheck), "A quick check so I can skip what you know.")
+
+  const reply = '```plan\n{"s1":"skip","s2":"skim","s9":"skip","s3":"bogus"}\n```\n```section\ns2\n```\nHashing maps keys to buckets.'
+  assert.deepEqual(parseTeachPlan(reply, outline), [
+    { id: "s1", mode: "skip" },
+    { id: "s2", mode: "skim" },
+    { id: "s3", mode: "teach" },
+  ])
+  assert.equal(parseTeachPlan("```plan\n{\"s1\":", outline), undefined)
+  assert.equal(stripTeachMarkers(reply), "Hashing maps keys to buckets.")
+})
+
+test("the planning turn carries pre-check results and known concepts", () => {
+  const prompt = buildTeachPrompt({
+    moduleTitle: "Databases",
+    unitTitle: "Week 4",
+    sources: [{ filename: "notes.md", text: "Triggers run on events." }],
+    message: TEACH_QUICK_REPLIES.precheckDone,
+    includeContext: true,
+    precheck: [
+      { concept: "Trigger timing", question: "When does a BEFORE trigger run?", correct: true },
+      { concept: "Cursors", question: "What does FETCH do?", correct: false },
+    ],
+    knownConcepts: { strong: ["SELECT basics"], shaky: ["GROUP BY"] },
+  })
+  assert.match(prompt, /RIGHT \[Trigger timing\]/)
+  assert.match(prompt, /WRONG \[Cursors\]/)
+  assert.match(prompt, /Known well: SELECT basics/)
+  assert.match(prompt, /Still shaky: GROUP BY/)
+
+  const live = buildTeachPrompt({
+    moduleTitle: "Databases",
+    unitTitle: "Week 4",
+    sources: [],
+    message: TEACH_QUICK_REPLIES.precheckDone,
+    includeContext: false,
+    precheck: [],
+  })
+  assert.match(live, /answered none of the pre-check questions/)
 })
