@@ -18,7 +18,7 @@ import type {
   ProjectAudioTranscript,
 } from "@/lib/project-audio-types"
 import { validateKokoroVoiceIds, type KokoroVoiceId } from "@/lib/kokoro-voices"
-import { spokenAudioText, type AudioPronunciation } from "@/lib/spoken-audio"
+import { spokenAudioText } from "@/lib/spoken-audio"
 import { loadSavedAiModelSettings } from "./ai-model-settings"
 import { createAudiobookScript } from "./audiobook-script"
 import { synthesizeKokoroToFile } from "./kokoro"
@@ -30,7 +30,6 @@ import { extractStoredSource } from "./source-ingestion/extract"
 type AudioPassage = {
   text: string
   spokenText: string
-  pronunciations: AudioPronunciation[]
   voiceId: KokoroVoiceId
   speaker: ProjectAudioSegment["speaker"]
   pauseBeforeSeconds?: number
@@ -291,31 +290,8 @@ async function readyPodcastSources(
   return sources
 }
 
-/** Finds a pronunciation whose written phrase straddles two chunks. */
-function pronunciationCrossesBoundary(
-  left: string,
-  right: string,
-  pronunciations: readonly AudioPronunciation[]
-): boolean {
-  const joined = `${left} ${right}`
-  return pronunciations.some(({ written }) => {
-    if (!written.includes(" ")) return false
-    let position = joined.indexOf(written)
-    while (position >= 0) {
-      if (position < left.length && position + written.length > left.length + 1)
-        return true
-      position = joined.indexOf(written, position + 1)
-    }
-    return false
-  })
-}
-
-/** Splits speech near sentences without breaking a term's phonetic spelling. */
-function speechChunks(
-  text: string,
-  maxLength = 360,
-  pronunciations: readonly AudioPronunciation[] = []
-): string[] {
+/** Splits ordinary speech text near sentence and word boundaries. */
+function speechChunks(text: string, maxLength = 360): string[] {
   const normalized = text.replace(/\s+/g, " ").trim()
   const sentences = normalized.match(/[^.!?]+[.!?]+["']?|[^.!?]+$/g) ?? [
     normalized,
@@ -352,17 +328,7 @@ function speechChunks(
     }
   }
   if (current) chunks.push(current)
-  const merged: string[] = []
-  for (const chunk of chunks) {
-    const previous = merged.at(-1)
-    if (
-      previous &&
-      pronunciationCrossesBoundary(previous, chunk, pronunciations)
-    )
-      merged[merged.length - 1] = `${previous} ${chunk}`
-    else merged.push(chunk)
-  }
-  return merged
+  return chunks
 }
 
 /** Divides a measured WAV part into shorter follow-along passages without rerunning TTS. */
@@ -372,11 +338,9 @@ function timedPassages(
   durationSeconds: number,
   firstIndex: number
 ): ProjectAudioSegment[] {
-  let lines = speechChunks(passage.text, 140, passage.pronunciations)
-  let spokenLines = lines.map((line) =>
-    spokenAudioText(line, passage.pronunciations)
-  )
-  // Keep the saved speech transcript exact if a rare term crosses a display split.
+  let lines = speechChunks(passage.text, 140)
+  let spokenLines = lines.map((line) => spokenAudioText(line))
+  // Keep the saved speech transcript exact if normalization changes across a display split.
   if (spokenLines.join(" ") !== passage.spokenText) {
     lines = [passage.text]
     spokenLines = [passage.spokenText]
@@ -507,19 +471,16 @@ async function audiobookPass(
     JSON.stringify({ sourceId: manifest.sourceId, sections }, null, 2)
   )
   return sections.flatMap((section, sectionIndex) =>
-    speechChunks(section.text, 360, section.pronunciations).map(
-      (text, chunkIndex) => ({
-        text,
-        spokenText: spokenAudioText(text, section.pronunciations),
-        pronunciations: section.pronunciations,
-        voiceId: manifest.voiceIds[0],
-        speaker: "narrator",
-        pauseBeforeSeconds:
-          sectionIndex > 0 && section.startsNewSection && chunkIndex === 0
-            ? 0.8
-            : 0,
-      })
-    )
+    speechChunks(section.text).map((text, chunkIndex) => ({
+      text,
+      spokenText: spokenAudioText(text),
+      voiceId: manifest.voiceIds[0],
+      speaker: "narrator",
+      pauseBeforeSeconds:
+        sectionIndex > 0 && section.startsNewSection && chunkIndex === 0
+          ? 0.8
+          : 0,
+    }))
   )
 }
 
@@ -553,10 +514,9 @@ async function podcastPass(
     JSON.stringify(script, null, 2)
   )
   return script.turns.flatMap((turn) =>
-    speechChunks(turn.text, 360, turn.pronunciations).map((text) => ({
+    speechChunks(turn.text).map((text) => ({
       text,
-      spokenText: spokenAudioText(text, turn.pronunciations),
-      pronunciations: turn.pronunciations,
+      spokenText: spokenAudioText(text),
       voiceId:
         turn.speaker === "host2" && manifest.voiceIds[1]
           ? manifest.voiceIds[1]
