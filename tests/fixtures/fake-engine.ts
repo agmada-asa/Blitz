@@ -131,6 +131,14 @@ export class FakeEngine implements Engine {
     return []
   }
 
+  async usage(): Promise<never> {
+    throw new Error("not used")
+  }
+
+  async commands(): Promise<never[]> {
+    return []
+  }
+
   async startThread(options: ThreadOptions): Promise<Thread> {
     if (this.startError) throw this.startError
     this.started.push(options)

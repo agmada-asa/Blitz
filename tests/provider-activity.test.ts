@@ -41,6 +41,71 @@ test("normalizes engine tool start and completion with item correlation", () => 
   assert.equal(JSON.stringify(completed).includes("secret output"), false)
 })
 
+test("a running tool's progress message becomes its detail until it completes", () => {
+  const started = normalizeProviderActivity(
+    frame("tool/started", {
+      type: "tool.started",
+      itemId: "m1",
+      tool: { kind: "mcp", name: "fetch_pages", input: {} },
+    })
+  )!
+  const progress = normalizeProviderActivity(
+    frame("tool/progress", {
+      type: "tool.progress",
+      itemId: "m1",
+      message: "Fetched 3 of 10 pages",
+    }),
+    [started]
+  )!
+  assert.equal(progress.status, "running")
+  assert.equal(progress.title, started.title)
+  assert.equal(progress.detail, "Fetched 3 of 10 pages")
+  assert.equal(progress.startedAt, started.startedAt)
+  // Elapsed time alone (Claude) and progress for unknown or finished tools change nothing.
+  assert.equal(
+    normalizeProviderActivity(
+      frame("tool/progress", {
+        type: "tool.progress",
+        itemId: "m1",
+        elapsedSeconds: 4,
+      }),
+      [started]
+    ),
+    undefined
+  )
+  assert.equal(
+    normalizeProviderActivity(
+      frame("tool/progress", {
+        type: "tool.progress",
+        itemId: "x",
+        message: "Hi",
+      }),
+      [started]
+    ),
+    undefined
+  )
+  const completed = normalizeProviderActivity(
+    frame("tool/completed", {
+      type: "tool.completed",
+      itemId: "m1",
+      tool: { kind: "mcp", name: "fetch_pages", input: {} },
+      isError: false,
+    }),
+    [progress]
+  )!
+  assert.equal(
+    normalizeProviderActivity(
+      frame("tool/progress", {
+        type: "tool.progress",
+        itemId: "m1",
+        message: "Late",
+      }),
+      [completed]
+    ),
+    undefined
+  )
+})
+
 test("extracts details for web search, Claude tools, and file changes", () => {
   const search = normalizeProviderActivity(
     frame("tool/completed", {

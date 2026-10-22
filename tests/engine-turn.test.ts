@@ -263,13 +263,14 @@ test("Claude's reply is everything it streamed", async () => {
   )
 })
 
-test("tool and file events become activity frames, subagents' included", async () => {
+test("tool, tool progress and file events become activity frames, subagents' included", async () => {
   const engine = new FakeEngine("codex", (turn) => {
     turn.push({
       type: "tool.started",
       itemId: "c1",
       tool: { kind: "command", name: "shell", input: { command: "ls" } },
     })
+    turn.push({ type: "tool.progress", itemId: "c1", message: "Listing" })
     turn.push({
       type: "tool.completed",
       itemId: "w1",
@@ -292,7 +293,7 @@ test("tool and file events become activity frames, subagents' included", async (
         ? [event.notification.method]
         : []
     ),
-    ["tool/started", "tool/completed", "file/changed"]
+    ["tool/started", "tool/progress", "tool/completed", "file/changed"]
   )
 })
 
