@@ -1,57 +1,36 @@
-# Codex app-server bridge
+# Codex and Claude Code through agent-engines
 
-`lib/server/codex-app-server.ts` is a bounded, server-only transport foundation
-for Blitz's local Codex integration. It starts `codex app-server` over stdio,
-performs the required `initialize` request followed by the `initialized`
-notification, correlates JSON-RPC responses by request ID, and forwards
-server notifications for streamed UI or job consumers.
+Blitz runs Codex and Claude Code through [agent-engines](https://www.npmjs.com/package/agent-engines), a shared library that puts `codex app-server` and the Claude Agent SDK behind one thread, turn, and event API. The library owns the runtime mechanics: starting and resuming threads, streaming, approvals and questions, interrupts, process lifetime, the pinned Codex protocol, and version gates. Blitz owns the policy around them. OpenCode stays on Blitz's own ACP adapter (`lib/server/providers/acp.ts`) until the library has an ACP engine.
 
-The bridge requires an absolute `workspaceDirectory` for every connection and
-passes it as the process working directory. The caller owns the policy that the
-path is a Blitz-owned workspace. There is no implicit current-directory
-fallback. The process inherits the local environment so Codex can use its
-existing subscription login; this module does not read, print, or persist
-authentication tokens.
+## Where things live
 
-The current public surface is intentionally small:
+| File | Owns |
+| --- | --- |
+| `lib/server/providers/engines.ts` | Creates each engine on the configured executable (`BLITZ_CODEX_COMMAND`, `BLITZ_CLAUDE_CODE_COMMAND`, or `codex` and `claude` on `PATH`), and maps availability and model catalogues into Blitz's provider shapes. |
+| `lib/server/providers/run-text-turn.ts` | Turns Blitz's access settings into each runtime's thread options, checks a Codex selection against its catalogue, and routes OpenCode to ACP. |
+| `lib/server/providers/engine-turn.ts` | Runs one turn on an engine: deadline, cancellation, output bounds, which text is the reply and which is thought, failure copy, and cleanup. |
+| `lib/server/agent-request.ts` | Turns a runtime's approval, question, or elicitation into a composer interaction, and the learner's reply back into the runtime's answer. |
+| `lib/server/chat-agent.ts` | Shows requests in the chat composer one at a time, and supplies the chat agent's Codex policy and Blitz's own question and checkpoint tools. |
+| `lib/provider-activity.ts` | Turns tool and file events into the bounded steps shown beside a reply. |
 
-- `CodexAppServerClient.connect(options)` starts a connection and completes the
-  handshake.
-- `startThread({ model?, ephemeral?, approvalPolicy?, sandbox?, dynamicTools? })`
-  creates a thread. Dynamic tools require `experimentalApi: true` during the
-  connection handshake.
-- `resumeThread(threadId, { approvalPolicy?, sandbox? })` reopens a stored
-  thread.
-- `startTurn(threadId, { text, model?, effort? })` starts a text turn.
-- `interruptTurn(threadId, turnId)` requests cancellation.
-- `onEvent(listener)` receives notifications, server requests, process errors,
-  and process closure events.
-- `close()` ends the child process and rejects unanswered calls.
+## Lifetime
 
-Inbound lines, outbound messages, and concurrent requests are bounded. A
-malformed line, oversized line, request timeout, child error, or child exit
-rejects pending calls and terminates the connection. Approval, Codex user-input,
-app-owned dynamic tool, and MCP elicitation requests are surfaced as
-`server-request` events. A caller
-can provide `requestHandler` to return the protocol response after Blitz has
-shown the request in its composer; the older `approvalHandler` remains
-available for approval-only callers. Missing handlers and handler failures fall
-back to safe denial, an empty answer map, a failed dynamic tool result, or MCP
-cancellation.
+Every turn, availability check, and catalogue read creates its own engine and closes it afterwards, so no Codex app-server or Claude Code process outlives the request that started it. A chat keeps its runtime thread ID and resumes it on the next message.
 
-Thread creation and resume explicitly use `approvalPolicy: "on-request"` and
-`sandbox: "read-only"` by default. Callers must opt into other verified
-protocol values such as `workspace-write` when a later Blitz job requires them.
+## Sign-in
 
-This is a transport foundation, not full Codex feature parity. It supports
-bounded application-provided function tools, but does not implement arbitrary
-tool execution, thread listing, reconnection, or persistence of Blitz-side chat
-records. Those belong in the source and chat jobs after this boundary is
-reviewed.
+Both engines run on the sign-in already on the Mac. Blitz allows an API key as well as a subscription (`requireSubscription: false`), since the learner chooses how each runtime is signed in. The settings page's connect and disconnect buttons run the CLIs' own login commands (`lib/server/providers/auth.ts`); the library only reports sign-in state.
 
-The protocol was checked against the installed `codex-cli 0.153.4` using
-`codex app-server --help` and its generated v2 JSON Schema. The tests use an
-injectable in-memory child and never start a live Codex turn.
+## Access
 
-Reference: [Codex App Server](https://learn.chatgpt.com/docs/app-server) and
-[Codex authentication](https://learn.chatgpt.com/docs/auth).
+Codex threads get an explicit approval policy and sandbox on start and resume. Workspace-write threads also set `sandbox_workspace_write` so writes stay in the workspace, with no network and no shared temporary directories. The chat agent sends `approvalsReviewer: "user"` so approvals always reach the learner.
+
+Claude Code background turns load no settings, skills, plugins, hooks, MCP servers, or tools. Chat turns load the learner's user-level Claude Code setup with hooks off, and map access onto permission modes: full access bypasses prompts, approval mode routes them to Blitz, and read-only or no-approval modes refuse anything that would need one. Claude approvals are always once only; Blitz never writes a permission rule to Claude's settings.
+
+## Replies
+
+A Codex reply is its answer messages; progress notes between tool calls and reasoning become the thought trace. A Claude Code reply is everything it streamed in the turn. Subagent text stays out of both, though subagent tool steps still show.
+
+## Checks
+
+The library's own weekly check watches the latest Codex and Claude Code. `npm run check:runtimes` covers the rest: OpenCode's version, and the live Codex catalogue against `CODEX_MODEL_OPTIONS`. Tests use an in-memory engine (`tests/fixtures/fake-engine.ts`) and never start a model turn.

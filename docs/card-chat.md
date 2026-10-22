@@ -1,44 +1,16 @@
-# Codex text turns and legacy card chat
+# Provider text turns and legacy card chat
 
 The web app asks about cards in workspace chat (`docs/workspace-chat.md`). This
-page covers the shared Codex text-turn runner that grew out of card chat, and
+page covers the shared provider text-turn runner that grew out of card chat, and
 the saved card conversations that older chat links still open.
 
-## Codex text turns
+## Provider text turns
 
-`lib/server/card-chat.ts` runs one bounded text turn through the local Codex
-app-server:
-`runCodexTextTurn({ workspaceDirectory, prompt, model?, effort?, ephemeral?, threadId?, signal?, timeoutMs? })`.
-It requires an explicit absolute `workspaceDirectory`, starts or resumes the
-supplied persistent thread, starts one text turn, streams typed `text-delta`,
-`activity`, `completed`, and `error` events, and returns the server-issued
-`threadId` and `turnId` only after `turn/completed` reports
-`status: "completed"`. Optional `model` and `effort` overrides fall back to the
-local Codex configuration. Its event, result, and `CardChatError` types are
-shared by every provider adapter, so they keep their original names.
+`runProviderTextTurn` in `lib/server/providers/run-text-turn.ts` runs one bounded text turn on the selected provider. It requires an explicit absolute `workspaceDirectory`, starts or resumes the supplied thread, streams typed `turn-started`, `text-delta`, `thought-delta`, `activity`, `completed`, and `error` events, and returns the thread and turn IDs only after the runtime reports the turn completed. Codex and Claude Code run through agent-engines (see [Codex and Claude Code through agent-engines](agent-engines.md)); OpenCode runs through ACP. The event, result, and `CardChatError` types in `lib/server/card-chat.ts` are shared by every provider, so they keep their original card chat names.
 
-Streamed assistant text and raced notifications are capped at 250,000
-characters. A completed turn with no assistant text is reported as an error so
-callers cannot treat an empty response as a successful answer.
+Streamed assistant text is capped at 250,000 characters. A completed turn with no assistant text is reported as an error so callers cannot treat an empty response as a successful answer. Abort signals and wall-clock timeouts interrupt the running turn, close the runtime, and emit one typed error.
 
-Thread creation and resume use `approvalPolicy: "on-request"` and
-`sandbox: "read-only"`. The underlying transport declines approval requests
-until Blitz wires a user-facing approval flow. Abort signals and wall-clock
-timeouts interrupt an active turn when its ID is known, close the transport,
-and emit one typed error. Late transport creation is also closed if
-cancellation wins the race.
-
-The `activity` event retains each original app-server notification so later
-tool and richer activity support can be added without changing this boundary.
-The transport layer owns no persistence or UI. Tests inject an
-in-memory transport and never start a live model turn.
-
-A separate local smoke check completed a real ephemeral Luna turn through the
-installed app-server and returned the requested text. Generation uses ephemeral
-threads; conversations may keep their server-issued thread ID for resume.
-
-The event shapes are based on the installed `codex-cli 0.153.0` v2 schema:
-[Codex App Server](https://learn.chatgpt.com/docs/app-server).
+Generation uses ephemeral threads; conversations keep their thread ID for resume.
 
 ## Saved card conversations
 
