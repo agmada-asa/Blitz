@@ -1,6 +1,6 @@
 # Blitz
 
-![Blitz](app/icon.svg)
+<img src="app/icon.svg" alt="Blitz" width="96" height="96">
 
 Blitz teaches you your own course material. Drop in a week's lecture slides, transcripts, and notes, and it teaches them back in short sessions, quizzes you, and keeps returning to what hasn't stuck. In exam season, import past papers and sit mock exams marked against the mark scheme.
 
