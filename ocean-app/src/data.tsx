@@ -1,7 +1,7 @@
 /**
  * @file ocean-app/src/data.tsx
  * @description Data and navigation for the mini app: a hook that calls a Blitz tool and calls it
- * again whenever Ocean says something changed (Allen here, or an agent adding material in an
+ * again whenever Ocean says something changed (the user here, or an agent adding material in an
  * Ocean chat), hash-based routes, and the shapes the `app_*` tools return (see `mcp/ocean.mjs`).
  */
 

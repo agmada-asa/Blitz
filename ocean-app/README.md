@@ -1,6 +1,6 @@
 # Blitz in Ocean
 
-Blitz's mini app for [Ocean](https://github.com/agmada-asa/Ocean), Allen's phone and desktop assistant. It shows Today, the Library, each module's units and Review on the phone or Mac, without opening the web app.
+Blitz's mini app for Ocean, a phone and desktop assistant. It shows Today, the Library, each module's units and Review on the phone or Mac, without opening the web app. Ocean is a separate, optional host; Blitz also runs on its own in a browser or its desktop shell.
 
 `ocean.plugin.json` at the repository root makes the repository an Ocean plug-in. Ocean then:
 
@@ -8,7 +8,7 @@ Blitz's mini app for [Ocean](https://github.com/agmada-asa/Ocean), Allen's phone
 - shows the Today widget from the `ocean://widgets/today` resource (`mcp/ocean.mjs`)
 - opens this app, built into `ocean-app/dist`, in a WebView on the phone or an iframe on the Mac
 
-The app reaches nothing directly. Every read and answer is a call to one of the server's tools through Ocean's bridge (`src/bridge.ts`, the MCP Apps message format). The `app_*` tools are Allen's only: agents keep the plain text tools and never answer review questions for him.
+The app reaches nothing directly. Every read and answer is a call to one of the server's tools through Ocean's bridge (`src/bridge.ts`, the MCP Apps message format). The `app_*` tools are reserved for the user: agents keep the plain text tools and never answer review questions on the user's behalf.
 
 ## Screens
 

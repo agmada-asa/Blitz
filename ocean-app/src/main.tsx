@@ -1,6 +1,6 @@
 /**
  * @file ocean-app/src/main.tsx
- * @description The Blitz mini app inside Ocean: Allen's phone and desktop view of Blitz (Today,
+ * @description The Blitz mini app inside Ocean: the user's phone and desktop view of Blitz (Today,
  * the Library, a module's units and Review) without opening the web app. It starts by asking
  * Ocean for its host context, then shows the route Ocean opened it on, with tabs along the bottom
  * and Ask Ocean in the header. Review takes the whole screen, like /review on the Mac.
