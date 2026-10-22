@@ -283,6 +283,7 @@ async function runTurn(
     }
     if (
       event.type === "tool.started" ||
+      event.type === "tool.progress" ||
       event.type === "tool.completed" ||
       event.type === "file.changed"
     ) {

@@ -11,7 +11,7 @@ Blitz runs Codex and Claude Code through [agent-engines](https://www.npmjs.com/p
 | `lib/server/providers/engine-turn.ts` | Runs one turn on an engine: deadline, cancellation, output bounds, which text is the reply and which is thought, failure copy, and cleanup. |
 | `lib/server/agent-request.ts` | Turns a runtime's approval, question, or elicitation into a composer interaction, and the learner's reply back into the runtime's answer. |
 | `lib/server/chat-agent.ts` | Shows requests in the chat composer one at a time, and supplies the chat agent's Codex policy and Blitz's own question and checkpoint tools. |
-| `lib/provider-activity.ts` | Turns tool and file events into the bounded steps shown beside a reply. |
+| `lib/provider-activity.ts` | Turns tool, tool progress, and file events into the bounded steps shown beside a reply. A running tool's progress message (Codex MCP tools) replaces its detail until it ends. |
 
 ## Lifetime
 

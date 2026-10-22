@@ -142,7 +142,7 @@ function toolTitle(name: string): string {
 }
 
 /**
- * Reads one agent-engines tool or file event, as forwarded by
+ * Reads one agent-engines tool, tool progress or file event, as forwarded by
  * `providers/engine-turn.ts`, without its output.
  */
 function engineActivity(
@@ -154,6 +154,12 @@ function engineActivity(
   if (!id) return undefined
   const prev = previous.find((item) => item.id === id)
   const now = Date.now()
+  if (method === "tool/progress") {
+    // A running tool's own progress message replaces its detail until it ends.
+    const message = text(params.message, MAX_PROVIDER_ACTIVITY_DETAIL)
+    if (!prev || prev.status !== "running" || !message) return undefined
+    return { ...prev, detail: message }
+  }
   if (method === "file/changed") {
     const paths = Array.isArray(params.changes)
       ? params.changes
@@ -242,6 +248,7 @@ export function normalizeProviderActivity(
   if (!method || !params) return undefined
   if (
     method === "tool/started" ||
+    method === "tool/progress" ||
     method === "tool/completed" ||
     method === "file/changed"
   )
