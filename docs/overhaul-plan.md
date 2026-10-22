@@ -2,7 +2,7 @@
 
 This plan records the October 2026 requirements interview and the rebuild that
 follows from it. It supersedes the feed, generation, and platform-priority
-decisions in [`PRODUCT_BRIEF.md`](history/PRODUCT_BRIEF.md) where they conflict. Progress is tracked in
+decisions in the original product brief where they conflict. Progress is tracked in
 `TODO.md`.
 
 ## What Blitz is for
