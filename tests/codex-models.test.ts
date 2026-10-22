@@ -1,52 +1,54 @@
-/** Verifies native Codex model normalization and preflight capability checks. */
+/** Verifies Codex catalogue mapping and preflight capability checks. */
 
 import assert from "node:assert/strict"
 import { test } from "node:test"
+import type { ModelInfo } from "agent-engines"
+import { validateCodexModelSelection } from "../lib/server/providers/codex-models.ts"
 import {
-  normalizeCodexModel,
-  validateCodexModelSelection,
-} from "../lib/server/providers/codex-models.ts"
+  providerModelOption,
+  providerModelOptions,
+} from "../lib/server/providers/engines.ts"
 import { runProviderTextTurn } from "../lib/server/providers/run-text-turn.ts"
 import { CardChatError } from "../lib/server/card-chat.ts"
 
-/** Builds the smallest native model fixture needed by the catalog parser. */
-function nativeModel(overrides: Record<string, unknown> = {}) {
+/** Builds the smallest catalogue entry the mapper reads. */
+function model(overrides: Partial<ModelInfo> = {}): ModelInfo {
   return {
-    id: "spark-id",
-    model: "gpt-spark",
-    displayName: "Spark",
-    supportedReasoningEfforts: [
-      { reasoningEffort: "none", description: "No reasoning" },
-      { reasoningEffort: "minimal", description: "Minimal reasoning" },
-      { reasoningEffort: "future-level", description: "Unknown" },
-    ],
-    defaultReasoningEffort: "minimal",
-    inputModalities: ["text"],
-    hidden: false,
+    id: "gpt-spark",
+    label: "Spark",
+    efforts: ["none", "minimal", "future-level"],
+    defaultEffort: "minimal",
+    fastMode: false,
     isDefault: true,
+    inputModalities: ["text"],
     ...overrides,
   }
 }
 
 // Provider-published levels are kept, including ones Blitz has no label for,
 // so a new reasoning level works without an app update.
-test("normalizes native reasoning, modalities, hidden state, and default metadata", () => {
-  const option = normalizeCodexModel(nativeModel() as never)
-  assert.deepEqual(option, {
+test("maps native reasoning, modalities, and default metadata, and drops hidden models", () => {
+  assert.deepEqual(providerModelOption(model()), {
     id: "gpt-spark",
     label: "Spark",
     reasoningEfforts: ["none", "minimal", "future-level"],
     inputModalities: ["text"],
     isDefault: true,
   })
-  assert.equal(
-    normalizeCodexModel(nativeModel({ hidden: true }) as never)?.id,
-    "gpt-spark"
+  assert.equal(providerModelOption(model({ hidden: true })), undefined)
+  assert.deepEqual(
+    providerModelOption(model({ efforts: [], defaultEffort: undefined }))
+      ?.reasoningEfforts,
+    ["default"]
+  )
+  assert.deepEqual(
+    providerModelOptions([model(), model({ label: "Again" })]).length,
+    1
   )
 })
 
 test("rejects unknown model, effort, and unsupported image input", () => {
-  const option = normalizeCodexModel(nativeModel() as never)
+  const option = providerModelOption(model())
   assert.ok(option)
   assert.throws(() => validateCodexModelSelection([option], { model: "other" }))
   assert.throws(() =>
@@ -67,8 +69,9 @@ test("rejects unknown model, effort, and unsupported image input", () => {
   )
 })
 
-test("custom Codex transports still receive runtime catalog preflight", async () => {
-  let transportCreated = false
+test("an unsupported Codex effort fails before any thread starts", async () => {
+  let threadStarted = false
+  let closed = false
   await assert.rejects(
     runProviderTextTurn(
       {
@@ -79,11 +82,18 @@ test("custom Codex transports still receive runtime catalog preflight", async ()
         prompt: "Question",
       },
       {
-        codexModelCatalog: [normalizeCodexModel(nativeModel() as never)!],
-        createCodexTransport: () => {
-          transportCreated = true
-          throw new Error("transport should not be created")
-        },
+        codexModelCatalog: [providerModelOption(model())!],
+        createEngine: () =>
+          ({
+            provider: "codex",
+            startThread: async () => {
+              threadStarted = true
+              throw new Error("thread should not start")
+            },
+            close: async () => {
+              closed = true
+            },
+          }) as never,
       }
     ),
     (error: unknown) =>
@@ -91,5 +101,6 @@ test("custom Codex transports still receive runtime catalog preflight", async ()
       error.reason === "invalid-input" &&
       /reasoning level/.test(error.message)
   )
-  assert.equal(transportCreated, false)
+  assert.equal(threadStarted, false)
+  assert.equal(closed, true)
 })

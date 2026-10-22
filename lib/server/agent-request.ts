@@ -1,5 +1,13 @@
-/** Normalizes provider requests into safe composer controls and validates replies. */
+/**
+ * Normalizes provider requests into safe composer controls and validates replies.
+ *
+ * Codex and Claude Code requests arrive as agent-engines `AgentRequest`s; ACP
+ * requests and Blitz's own Codex dynamic tools arrive as native method and
+ * params. Every path produces one {@link AgentRequestSpec} for the composer and
+ * turns the learner's reply back into the exact answer the runtime expects.
+ */
 
+import type { AgentRequest, CodexToolCall } from "agent-engines"
 import type {
   AgentRequestField,
   AgentRequestInput,
@@ -7,13 +15,28 @@ import type {
   AgentRequestOption,
   AgentRequestQuestion,
 } from "../agent-request.ts"
-import type { CodexServerRequest } from "./codex-app-server.ts"
-import type { CodexDynamicToolSpec } from "./codex-app-server.ts"
-import {
-  approvalRecord,
-  projectApprovalDetails,
-  supportedProjectApproval,
-} from "./project-agent-approval.ts"
+
+/** One native request handled by Blitz itself: a Codex dynamic tool call or an MCP elicitation. */
+type NativeRequest = {
+  /** Native request or call identifier, when the runtime supplied one. */
+  readonly id?: string | number
+  /** Native method or a Blitz label for the request family. */
+  readonly method: string
+  /** Untrusted native parameters. */
+  readonly params?: unknown
+}
+
+/** A Codex host tool definition, as the app-server's `dynamicTools` expects it. */
+export interface CodexDynamicToolSpec {
+  /** Discriminator required by the app-server dynamic tool protocol. */
+  type: "function"
+  /** Stable tool name presented to the model. */
+  name: string
+  /** Plain-language guidance that tells the model when to call the tool. */
+  description: string
+  /** JSON Schema used to validate the model-supplied arguments. */
+  inputSchema: Record<string, unknown>
+}
 
 /** Maximum raw request text retained in Convex or displayed in the composer. */
 const MAX_REQUEST_DETAILS = 20_000
@@ -149,23 +172,36 @@ function titleForKey(value: string): string {
     .replace(/^./, (character) => character.toUpperCase())
 }
 
-/** Returns the human-readable title used for known approval methods. */
+/** Method label persisted for an engine approval, by what the agent wants to do. */
+const APPROVAL_METHODS: Readonly<Record<string, string>> = {
+  command: "approval/command",
+  "file-change": "approval/file-change",
+  tool: "approval/tool",
+  permissions: "approval/permissions",
+}
+
+/** Method label persisted for an engine question. */
+const QUESTION_METHOD = "question"
+/** Method label persisted for an MCP elicitation. */
+const ELICITATION_METHOD = "elicitation"
+/** Method label persisted for a Blitz dynamic tool call. */
+const DYNAMIC_TOOL_METHOD = "tool/call"
+
+/** Returns the human-readable title used for known request methods. */
 export function agentRequestTitle(method: string): string {
   switch (method) {
-    case "item/commandExecution/requestApproval":
-    case "execCommandApproval":
+    case "approval/command":
       return "Blitz wants to run a command"
-    case "item/fileChange/requestApproval":
-    case "applyPatchApproval":
+    case "approval/file-change":
       return "Blitz wants to change files"
-    case "item/permissions/requestApproval":
+    case "approval/permissions":
       return "Blitz needs more access"
+    case "approval/tool":
     case "session/request_permission":
-    case "claude/can_use_tool":
       return "Blitz wants to use a tool"
-    case "item/tool/requestUserInput":
+    case QUESTION_METHOD:
       return "Blitz needs your input"
-    case "mcpServer/elicitation/request":
+    case ELICITATION_METHOD:
       return "A connected tool needs your input"
     default:
       return "Blitz needs your decision"
@@ -183,43 +219,6 @@ export function genericApprovalRequest(
     const parsed = JSON.parse(details) as unknown
     displayDetails = requestDetails(parsed)
     const params = record(parsed)
-    const toolInput = record(params?.input)
-    if (
-      method === "claude/can_use_tool" &&
-      params?.tool_name === "AskUserQuestion" &&
-      Array.isArray(toolInput?.questions)
-    ) {
-      const questions = toolInput.questions.flatMap((value): AgentRequestQuestion[] => {
-        const question = record(value)
-        const text = stringField(question, "question")
-        if (!text) return []
-        const options = Array.isArray(question?.options)
-          ? question.options.flatMap((option): AgentRequestOption[] => {
-              const item = record(option)
-              const label = stringField(item, "label")
-              return label ? [{ value: label, label }] : []
-            })
-          : []
-        return [
-          {
-            id: text,
-            header: stringField(question, "header") ?? text,
-            question: text,
-            ...(options.length ? { options } : {}),
-            ...(question?.multiSelect === true ? { multiSelect: true } : {}),
-          },
-        ]
-      })
-      if (questions.length && questions.length <= MAX_CONTROLS)
-        return {
-          method,
-          kind: "question",
-          title: "Blitz needs your input",
-          details: displayDetails,
-          prompt: "Answer these questions so Claude can continue.",
-          input: { questions },
-        }
-    }
     if (Array.isArray(params?.options)) {
       const options = params.options.flatMap((value): AgentRequestOption[] => {
         const option = record(value)
@@ -247,36 +246,52 @@ export function genericApprovalRequest(
   }
 }
 
-/** Converts an optional provider reason into short approval guidance. */
+/** Converts an optional runtime reason into short approval guidance. */
 function approvalPrompt(
-  method: string,
-  params: Record<string, unknown>
+  request: Extract<AgentRequest, { kind: "approval" }>
 ): string {
-  const reason = stringField(params, "reason")
-  if (reason) return reason
-  const command = stringField(params, "command")
-  if (command) return `Review the command before allowing it to run.`
-  if (method === "item/fileChange/requestApproval")
+  if (request.reason?.trim()) return request.reason.trim()
+  if (request.command?.trim())
+    return "Review the command before allowing it to run."
+  if (request.action === "file-change")
     return "Review the proposed file changes before allowing them."
-  if (method === "item/permissions/requestApproval")
+  if (request.action === "permissions")
     return "Review the requested access before allowing it for this turn."
   return "Review this request before Blitz continues."
 }
 
-/** Normalizes a known Codex approval request into one composer card. */
+/**
+ * Normalizes one engine approval into one composer card. Codex file changes
+ * must arrive with their proposed diff; an approval without one is refused,
+ * since an opaque grant cannot be reviewed.
+ */
 function approvalRequest(
-  request: CodexServerRequest,
-  item?: unknown
-): AgentRequestSpec {
-  const params = approvalRecord(request.params) ?? {}
+  request: Extract<AgentRequest, { kind: "approval" }>,
+  provider: "codex" | "claude"
+): AgentRequestSpec | undefined {
+  if (
+    provider === "codex" &&
+    request.action === "file-change" &&
+    !request.changes?.length
+  )
+    return undefined
+  const method = APPROVAL_METHODS[request.action] ?? "approval/tool"
   return {
-    method: request.method,
+    method,
     kind: "approval",
-    title: agentRequestTitle(request.method),
-    details: projectApprovalDetails(request, item),
-    prompt: approvalPrompt(request.method, params),
-    ...(request.method === "item/commandExecution/requestApproval" ||
-    request.method === "item/fileChange/requestApproval"
+    title: agentRequestTitle(method),
+    details: requestDetails({
+      request: request.raw ?? {},
+      ...(request.command ? { command: request.command } : {}),
+      ...(request.changes?.length
+        ? { proposedChange: { changes: request.changes } }
+        : {}),
+    }),
+    prompt: approvalPrompt(request),
+    // A session grant stays inside Codex's own session. Claude would write it to
+    // a settings file, which Blitz never does on the learner's behalf.
+    ...(provider === "codex" &&
+    (request.action === "command" || request.action === "file-change")
       ? {
           input: {
             approvalOptions: [
@@ -289,7 +304,7 @@ function approvalRequest(
   }
 }
 
-/** Reads a Codex request_user_input question and its bounded options. */
+/** Reads one structured question and its bounded options. */
 function userInputQuestion(value: unknown): AgentRequestQuestion | undefined {
   const question = record(value)
   const id = stringField(question, "id")
@@ -304,7 +319,7 @@ function userInputQuestion(value: unknown): AgentRequestQuestion | undefined {
       const option = record(value)
       const label = stringField(option, "label")
       const description = stringField(option, "description")
-      if (!label) throw new Error("Codex question option is invalid")
+      if (!label) throw new Error("The agent's question option is invalid")
       return {
         value: label,
         label,
@@ -318,25 +333,26 @@ function userInputQuestion(value: unknown): AgentRequestQuestion | undefined {
     question: text,
     ...(question?.isOther === true ? { isOther: true } : {}),
     ...(question?.isSecret === true ? { isSecret: true } : {}),
+    ...(question?.multiSelect === true ? { multiSelect: true } : {}),
     ...(options ? { options } : {}),
   }
 }
 
-/** Normalizes Codex's structured question request for a composer form. */
-function userInputRequest(request: CodexServerRequest): AgentRequestSpec {
-  const params = approvalRecord(request.params)
+/** Normalizes a structured question request for a composer form. */
+function userInputRequest(request: NativeRequest): AgentRequestSpec {
+  const params = record(request.params)
   const rawQuestions = params?.questions
   if (!Array.isArray(rawQuestions) || rawQuestions.length === 0)
-    throw new Error("Codex user input request has no questions")
+    throw new Error("The agent's question request has no questions")
   if (rawQuestions.length > MAX_CONTROLS)
-    throw new Error("Codex user input request has too many questions")
+    throw new Error("The agent asked too many questions at once")
   const questions = rawQuestions.map(userInputQuestion)
   if (questions.some((question) => question === undefined))
-    throw new Error("Codex user input request is invalid")
+    throw new Error("The agent's question request is invalid")
   return {
-    method: request.method,
+    method: QUESTION_METHOD,
     kind: "question",
-    title: agentRequestTitle(request.method),
+    title: agentRequestTitle(QUESTION_METHOD),
     details: requestDetails({ request: request.params ?? {} }),
     prompt: "Answer these questions so Blitz can continue.",
     input: { questions: questions as AgentRequestQuestion[] },
@@ -344,9 +360,7 @@ function userInputRequest(request: CodexServerRequest): AgentRequestSpec {
 }
 
 /** Reads the arguments from one app-server dynamic tool call. */
-function dynamicToolArguments(
-  request: CodexServerRequest
-): Record<string, unknown> {
+function dynamicToolArguments(request: NativeRequest): Record<string, unknown> {
   const params = record(request.params)
   const args = record(params?.arguments)
   if (!args) throw new Error("Codex dynamic tool request has no arguments")
@@ -354,18 +368,15 @@ function dynamicToolArguments(
 }
 
 /** Converts a Blitz dynamic tool call into the same controls as native requests. */
-function dynamicToolRequest(request: CodexServerRequest): AgentRequestSpec {
+function dynamicToolRequest(request: NativeRequest): AgentRequestSpec {
   const params = record(request.params)
   const tool = stringField(params, "tool")
   const args = dynamicToolArguments(request)
   if (tool === BLITZ_REQUEST_USER_INPUT_TOOL) {
-    const spec = userInputRequest({
-      ...request,
-      method: request.method,
-      params: args,
-    })
+    const spec = userInputRequest({ ...request, params: args })
     return {
       ...spec,
+      method: DYNAMIC_TOOL_METHOD,
       title: "Blitz needs your input",
       details: requestDetails({ request: request.params ?? {} }),
     }
@@ -374,7 +385,7 @@ function dynamicToolRequest(request: CodexServerRequest): AgentRequestSpec {
     const prompt = stringField(args, "prompt")
     if (!prompt) throw new Error("Codex approval request has no prompt")
     return {
-      method: request.method,
+      method: DYNAMIC_TOOL_METHOD,
       kind: "approval",
       title: stringField(args, "title") ?? "Blitz needs your approval",
       prompt,
@@ -488,8 +499,8 @@ function safeHttpUrl(value: string): string | undefined {
 }
 
 /** Normalizes an MCP form or URL elicitation request into composer controls. */
-function mcpRequest(request: CodexServerRequest): AgentRequestSpec {
-  const params = approvalRecord(request.params)
+function mcpRequest(request: NativeRequest): AgentRequestSpec {
+  const params = record(request.params)
   const message =
     stringField(params, "message") ?? "A connected tool needs information."
   const serverName = stringField(params, "serverName")
@@ -502,9 +513,9 @@ function mcpRequest(request: CodexServerRequest): AgentRequestSpec {
     const url = safeHttpUrl(stringField(params, "url") ?? "")
     if (!url) throw new Error("MCP URL request has no URL")
     return {
-      method: request.method,
+      method: ELICITATION_METHOD,
       kind: "url",
-      title: agentRequestTitle(request.method),
+      title: agentRequestTitle(ELICITATION_METHOD),
       details: requestDetails({ request: request.params ?? {} }),
       prompt: message,
       input: { ...inputBase, url },
@@ -515,36 +526,162 @@ function mcpRequest(request: CodexServerRequest): AgentRequestSpec {
   const requestedSchema = record(params?.requestedSchema)
   const fields = requestedSchema ? mcpFields(requestedSchema) : []
   return {
-    method: request.method,
+    method: ELICITATION_METHOD,
     kind: "form",
-    title: agentRequestTitle(request.method),
+    title: agentRequestTitle(ELICITATION_METHOD),
     details: requestDetails({ request: request.params ?? {} }),
     prompt: message,
     input: { ...inputBase, fields },
   }
 }
 
-/** Normalizes one supported Codex server request into a composer interaction. */
-export function normalizeCodexAgentRequest(
-  request: CodexServerRequest,
-  item?: unknown
+/**
+ * Normalizes one Codex or Claude Code request from agent-engines into a
+ * composer interaction.
+ *
+ * @param request - Request event from the running turn.
+ * @param provider - Runtime that raised it; session grants are Codex-only.
+ * @returns The interaction, or undefined when Blitz refuses it unseen (an
+ *   unreviewable file change). Throws when the request is too large or malformed.
+ */
+export function normalizeAgentRequest(
+  request: AgentRequest,
+  provider: "codex" | "claude"
 ): AgentRequestSpec | undefined {
-  if (supportedProjectApproval(request.method))
-    return approvalRequest(request, item)
-  if (request.method === "item/tool/requestUserInput")
-    return userInputRequest(request)
-  if (request.method === "mcpServer/elicitation/request")
-    return mcpRequest(request)
-  if (request.method === "item/tool/call") return dynamicToolRequest(request)
-  return undefined
+  switch (request.kind) {
+    case "approval":
+      return approvalRequest(request, provider)
+    case "question": {
+      if (request.questions.length > MAX_CONTROLS)
+        throw new Error("The agent asked too many questions at once")
+      return userInputRequest({
+        id: request.id,
+        method: QUESTION_METHOD,
+        params: {
+          questions: request.questions.map((question) => ({
+            id: question.id,
+            header: question.header || question.question,
+            question: question.question,
+            ...(question.allowOther ? { isOther: true } : {}),
+            ...(question.secret ? { isSecret: true } : {}),
+            ...(question.multiSelect ? { multiSelect: true } : {}),
+            ...(question.options.length
+              ? {
+                  options: question.options.map((option) => ({
+                    label: option.label,
+                    ...(option.description
+                      ? { description: option.description }
+                      : {}),
+                  })),
+                }
+              : {}),
+          })),
+        },
+      })
+    }
+    case "elicitation":
+      return mcpRequest({
+        id: request.id,
+        method: ELICITATION_METHOD,
+        params: {
+          message: request.message,
+          ...(request.server ? { serverName: request.server } : {}),
+          mode: request.mode,
+          ...(request.url ? { url: request.url } : {}),
+          ...(request.schema !== undefined
+            ? { requestedSchema: request.schema }
+            : {}),
+        },
+      })
+  }
 }
 
-/** Builds the app-server response for a completed Blitz dynamic tool call. */
+/**
+ * Answers one engine request with the learner's reviewed decision. Approvals
+ * grant only what the composer showed: once, or for the Codex session when
+ * that option was chosen. Malformed answers decline.
+ *
+ * @param request - Request event being answered.
+ * @param spec - Interaction shown to the learner.
+ * @param result - Learner's decision and serialized reply, if any.
+ */
+export async function answerAgentRequest(
+  request: AgentRequest,
+  spec: AgentRequestSpec,
+  result: { accepted: boolean; response?: string }
+): Promise<void> {
+  switch (request.kind) {
+    case "approval": {
+      let optionId: string | undefined
+      try {
+        const parsed = result.response ? JSON.parse(result.response) : undefined
+        optionId =
+          typeof parsed?.optionId === "string" ? parsed.optionId : undefined
+      } catch {
+        optionId = undefined
+      }
+      await request.respond({
+        decision: !result.accepted
+          ? "deny"
+          : optionId === "acceptForSession" &&
+              spec.input?.approvalOptions?.some(
+                (option) => option.value === "acceptForSession"
+              )
+            ? "allow-session"
+            : "allow",
+      })
+      return
+    }
+    case "question": {
+      const { answers } = userInputResponse(
+        spec.input,
+        result.accepted,
+        result.response
+      )
+      await request.respond(
+        Object.fromEntries(
+          Object.entries(answers).map(([id, value]) => [id, value.answers])
+        )
+      )
+      return
+    }
+    case "elicitation": {
+      const answer = mcpElicitationResponse(
+        spec,
+        result.accepted,
+        result.response
+      )
+      await request.respond({
+        action: answer.action as "accept" | "decline" | "cancel",
+        ...(record(answer.content) ? { content: record(answer.content) } : {}),
+      })
+      return
+    }
+  }
+}
+
+/** Refuses one engine request without showing it, using each kind's safe refusal. */
+export async function refuseAgentRequest(request: AgentRequest): Promise<void> {
+  if (request.kind === "approval") await request.respond({ decision: "deny" })
+  else if (request.kind === "question") await request.respond({})
+  else await request.respond({ action: "decline" })
+}
+
+/** Normalizes one Blitz dynamic tool call from Codex into a composer interaction. */
+export function normalizeDynamicToolCall(call: CodexToolCall): AgentRequestSpec {
+  return dynamicToolRequest({
+    id: call.callId,
+    method: DYNAMIC_TOOL_METHOD,
+    params: { tool: call.tool, arguments: call.arguments },
+  })
+}
+
+/** Builds the tool result returned to Codex for a completed Blitz dynamic tool call. */
 export function dynamicToolResponse(
   spec: AgentRequestSpec,
   accepted: boolean,
   serializedResponse?: string
-): { contentItems: Array<{ type: "inputText"; text: string }>; success: true } {
+): { text: string; success: true } {
   const result =
     spec.kind === "question"
       ? {
@@ -552,10 +689,7 @@ export function dynamicToolResponse(
           ...userInputResponse(spec.input, accepted, serializedResponse),
         }
       : { accepted }
-  return {
-    contentItems: [{ type: "inputText", text: JSON.stringify(result) }],
-    success: true,
-  }
+  return { text: JSON.stringify(result), success: true }
 }
 
 /** Returns a string from a response object without accepting oversized values. */
@@ -584,7 +718,7 @@ function questionAnswers(
   return selected as string[]
 }
 
-/** Builds the protocol response for a Codex request_user_input decision. */
+/** Builds the answer map for a structured question decision; empty declines. */
 export function userInputResponse(
   input: AgentRequestInput | undefined,
   accepted: boolean,
@@ -642,7 +776,7 @@ function formValue(
   return value.length <= 4_000 ? value : undefined
 }
 
-/** Builds the protocol response for an MCP form or URL decision. */
+/** Builds the answer for an MCP form or URL decision. */
 export function mcpElicitationResponse(
   spec: AgentRequestSpec,
   accepted: boolean,

@@ -1,50 +1,79 @@
-/** Routes one text turn through the selected provider and normalizes its events. */
-import type { ProviderApprovalHandler } from "./types.ts"
+/**
+ * Routes one text turn through the selected provider and normalizes its events.
+ *
+ * Codex and Claude Code run through agent-engines: this module turns Blitz's
+ * access settings into each runtime's thread options and hands the turn to
+ * `engine-turn.ts`. OpenCode runs through Blitz's own ACP adapter.
+ */
+import type {
+  AgentRequest,
+  ClaudeThreadOptions,
+  CodexEngineOptions,
+  CodexThreadOptions,
+  Engine,
+  ThreadOptions,
+} from "agent-engines"
 
 import {
   CardChatError,
-  runCodexTextTurn,
   type CardChatEvent,
   type CardChatResult,
-  type CardChatTransportFactory,
 } from "../card-chat.ts"
-import type {
-  AiProviderId,
-  AiReasoningEffort,
+import {
+  getSupportedAiReasoningEffortsForProvider,
+  type AiProviderId,
+  type AiReasoningEffort,
 } from "../../ai-model-settings.ts"
 import {
   providerExecutionInstructions,
   resolveProviderExecution,
 } from "../../provider-execution.ts"
-import { projectApprovalResponse } from "../project-agent-approval.ts"
 import {
   runAcpTextTurn,
   AcpProviderError,
   type AcpRequestHandler,
 } from "./acp.ts"
 import {
-  ClaudeCodeProviderError,
-  runClaudeCodeTextTurn,
-} from "./claude-code.ts"
-import {
   checkProviderAvailability,
-  getProviderDefinition,
   providerCommand,
   providerInstanceId,
 } from "./registry.ts"
-import {
-  getCodexModelCatalog,
-  validateCodexModelSelection,
-} from "./codex-models.ts"
+import { validateCodexModelSelection } from "./codex-models.ts"
 import { codexRuntimeInstructionsIfInstalled } from "./codex-runtime.ts"
+import {
+  createClaudeEngine,
+  createCodexEngine,
+  providerModelOptions,
+  type EngineProviderId,
+} from "./engines.ts"
+import { runEngineTurn } from "./engine-turn.ts"
 import type {
+  ProviderApprovalHandler,
   ProviderImageAttachment,
   ProviderModelOption,
   ProviderEvent,
   ProviderSelection,
   ProviderTextTurnRequest,
-  ProviderTextTurnResult,
 } from "./types.ts"
+
+/** Upper bound for reading the Codex catalogue before a turn. */
+const CATALOG_TIMEOUT_MS = 5_000
+
+/**
+ * Codex settings for workspace-write turns: writes stay inside the workspace,
+ * with no network and no shared temporary directories.
+ */
+const WORKSPACE_WRITE_CONFIG = {
+  "sandbox_workspace_write.network_access": false,
+  "sandbox_workspace_write.exclude_slash_tmp": true,
+  "sandbox_workspace_write.exclude_tmpdir_env_var": true,
+} as const
+
+/**
+ * Claude Code settings Blitz applies to every turn: user hooks are not tools,
+ * so they never act on Blitz's turns.
+ */
+const BLITZ_CLAUDE_SETTINGS = { disableAllHooks: true } as const
 
 /** Provider-aware text request accepted by chat and generation callers. */
 export interface RunProviderTextTurnRequest {
@@ -80,46 +109,42 @@ export interface RunProviderTextTurnRequest {
   readonly timeoutMs?: number
 }
 
-/** Optional transport override used by Codex lifecycle tests. */
+/** Codex settings a caller owns outright, such as the chat agent's policy and tools. */
+export interface CodexTurnOverrides {
+  /** Thread settings applied over Blitz's defaults; `config` entries are merged. */
+  readonly thread?: CodexThreadOptions
+  /** Answers the thread's `dynamicTools` calls. */
+  readonly onToolCall?: CodexEngineOptions["onToolCall"]
+}
+
+/** Callbacks and test seams for one provider turn. */
 export type ProviderTextTurnOptions = {
   /** Receives normalized product events. */
   readonly onEvent?: (event: CardChatEvent) => void
-  /** Resolves one interactive native tool request. Omission denies it. */
+  /** Answers one Codex or Claude Code approval, question, or elicitation. Omission refuses it. */
+  readonly onRequest?: (
+    request: AgentRequest,
+    providerId: EngineProviderId
+  ) => Promise<void>
+  /** Resolves one OpenCode tool permission. Omission denies it. */
   readonly approvalHandler?: ProviderApprovalHandler
-  /** Handles verified ACP structured elicitation requests with native results. */
+  /** Handles verified OpenCode structured elicitation requests with native results. */
   readonly requestHandler?: AcpRequestHandler
-  /** Codex-only transport factory retained for existing tests and approval bridges. */
-  readonly createCodexTransport?: CardChatTransportFactory
-  /** Runtime Codex catalog supplied by a caller that owns a custom transport. */
+  /** Codex thread settings and host tools owned by the caller. */
+  readonly codex?: CodexTurnOverrides
+  /** Runtime Codex catalog already read by the caller, so the turn need not read it again. */
   readonly codexModelCatalog?: readonly ProviderModelOption[]
+  /** Creates the engine for a turn; tests pass a fake. */
+  readonly createEngine?: (
+    providerId: EngineProviderId,
+    options: {
+      onToolCall?: CodexEngineOptions["onToolCall"]
+      effortSelected: boolean
+    }
+  ) => Engine
 }
 
-/** Converts one provider-neutral approval into the exact Codex native response. */
-export async function resolveCodexApproval(
-  request: { id: string | number; method: string; params?: unknown },
-  handler: ProviderApprovalHandler
-): Promise<import("../codex-app-server.ts").CodexApprovalResponse> {
-  const response = await handler({
-    requestId: request.id,
-    method: request.method,
-    params: request.params,
-  })
-  const accepted =
-    typeof response === "boolean" ? response : response?.accepted === true
-  const optionId =
-    typeof response === "boolean" ? undefined : response?.optionId
-  return projectApprovalResponse(
-    {
-      id: request.id,
-      method: request.method,
-      params: request.params,
-    },
-    accepted,
-    optionId
-  )
-}
-
-/** Converts provider events into the product event shape used by existing chat code. */
+/** Converts OpenCode adapter events into the product event shape used by chat code. */
 function productEvent(event: ProviderEvent): CardChatEvent | undefined {
   switch (event.type) {
     case "turn-started":
@@ -145,14 +170,10 @@ function productEvent(event: ProviderEvent): CardChatEvent | undefined {
   }
 }
 
-/** Converts a provider runtime error into stable Blitz recovery copy. */
+/** Converts an OpenCode runtime error into stable Blitz recovery copy. */
 function providerError(error: unknown): CardChatError {
   if (error instanceof CardChatError) return error
-  const code =
-    error instanceof AcpProviderError ||
-    error instanceof ClaudeCodeProviderError
-      ? error.code
-      : undefined
+  const code = error instanceof AcpProviderError ? error.code : undefined
   if (code === "aborted")
     return new CardChatError("aborted", "Provider turn was interrupted", error)
   if (code === "timeout")
@@ -167,6 +188,273 @@ function providerError(error: unknown): CardChatError {
     "transport",
     "The selected provider could not finish this turn",
     error
+  )
+}
+
+/** Resolves after `ms`, or rejects with a transport error, for bounded catalogue reads. */
+function withTimeout<T>(operation: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  return Promise.race([
+    operation,
+    new Promise<never>((_, reject) => {
+      timer = setTimeout(
+        () => reject(new Error("The catalogue read timed out")),
+        ms
+      )
+    }),
+  ]).finally(() => clearTimeout(timer))
+}
+
+/**
+ * Codex thread settings for a turn: Blitz's approval policy and sandbox,
+ * hosted search, and the workspace-only write rules, then the caller's
+ * overrides on top.
+ */
+export function codexThreadOptions(
+  request: RunProviderTextTurnRequest,
+  overrides: CodexThreadOptions = {}
+): CodexThreadOptions {
+  const sandbox = request.sandbox ?? "read-only"
+  const approvalPolicy =
+    request.approvalPolicy === "full-access"
+      ? "never"
+      : (request.approvalPolicy ?? "on-request")
+  const effectiveSandbox = overrides.sandbox ?? sandbox
+  return {
+    approvalPolicy,
+    sandbox,
+    ...(request.ephemeral === undefined
+      ? {}
+      : { ephemeral: request.ephemeral }),
+    ...overrides,
+    config: {
+      ...(request.webSearchMode === undefined
+        ? {}
+        : { web_search: request.webSearchMode }),
+      ...(effectiveSandbox === "workspace-write" ? WORKSPACE_WRITE_CONFIG : {}),
+      ...overrides.config,
+    },
+  }
+}
+
+/**
+ * Claude Code thread settings for a turn.
+ *
+ * Background generation runs fully isolated: no settings, skills, plugins,
+ * hooks, MCP servers, or tools. Chat turns load the user's own Claude Code
+ * setup (user-level settings only; project and local settings would come from
+ * workspaces the agent can write to) and map Blitz's access policy onto native
+ * permission modes: full access bypasses prompts, on-request routes prompts to
+ * Blitz, and never or read-only deny anything that would need approval.
+ */
+export function claudeThreadSettings(
+  request: RunProviderTextTurnRequest
+): Pick<ThreadOptions, "access" | "claude"> {
+  const persist = request.ephemeral ? { persistSession: false } : {}
+  const background =
+    request.ephemeral ||
+    !request.approvalPolicy ||
+    request.webSearchMode === "disabled"
+  if (background)
+    return {
+      claude: {
+        settingSources: [],
+        strictMcpConfig: true,
+        skills: [],
+        tools: [],
+        disallowedTools: ["*"],
+        permissionMode: "dontAsk",
+        extra: {
+          settings: BLITZ_CLAUDE_SETTINGS,
+          extraArgs: { "safe-mode": null, restricted: null },
+          ...persist,
+        },
+      },
+    }
+  const claude: ClaudeThreadOptions = {
+    settingSources: ["user"],
+    extra: { settings: BLITZ_CLAUDE_SETTINGS, ...persist },
+  }
+  if (request.approvalPolicy === "full-access")
+    return { access: "full", claude }
+  // Claude Code has no OS sandbox, so read-only also removes the write tools.
+  if (request.sandbox === "read-only") return { access: "read-only", claude }
+  if (request.approvalPolicy === "never")
+    return { claude: { ...claude, permissionMode: "dontAsk" } }
+  return { access: "ask", claude }
+}
+
+/** Creates the real engine for one turn. */
+function defaultEngine(
+  providerId: EngineProviderId,
+  options: {
+    onToolCall?: CodexEngineOptions["onToolCall"]
+    effortSelected: boolean
+  }
+): Engine {
+  return providerId === "codex"
+    ? createCodexEngine(
+        options.onToolCall ? { onToolCall: options.onToolCall } : {}
+      )
+    : createClaudeEngine({ effortSelected: options.effortSelected })
+}
+
+/** Checks the selected Codex model, effort, and image input against the runtime catalogue. */
+async function checkCodexSelection(
+  engine: Engine,
+  selection: ProviderSelection,
+  hasImages: boolean,
+  catalog: readonly ProviderModelOption[] | undefined
+): Promise<void> {
+  let models = catalog
+  if (!models) {
+    try {
+      models = providerModelOptions(
+        await withTimeout(engine.models(), CATALOG_TIMEOUT_MS)
+      )
+    } catch (error) {
+      throw new CardChatError(
+        "transport",
+        "Codex model capabilities could not be checked before this turn",
+        error
+      )
+    }
+  }
+  const selectedModel =
+    selection.model === "default"
+      ? models.find((model) => model.isDefault)
+      : models.find((model) => model.id === selection.model)
+  if (selection.model !== "default" && !selectedModel)
+    throw new CardChatError(
+      "invalid-input",
+      `Codex model is not available: ${selection.model}`
+    )
+  if (!selectedModel) {
+    if (selection.effort || hasImages)
+      throw new CardChatError(
+        "invalid-input",
+        "Codex default model capabilities are unavailable"
+      )
+    return
+  }
+  try {
+    validateCodexModelSelection(
+      models,
+      {
+        model: selectedModel.id,
+        ...(selection.effort === undefined ? {} : { effort: selection.effort }),
+      },
+      hasImages
+    )
+  } catch (error) {
+    throw new CardChatError(
+      "invalid-input",
+      error instanceof Error
+        ? error.message
+        : "Codex model selection is invalid",
+      error
+    )
+  }
+}
+
+/** Runs one Codex or Claude Code turn through agent-engines. */
+async function runEngineProviderTurn(
+  providerId: EngineProviderId,
+  request: RunProviderTextTurnRequest,
+  selection: ProviderSelection,
+  instructions: string,
+  options: ProviderTextTurnOptions
+): Promise<CardChatResult> {
+  let model: string | undefined
+  let effort: string | undefined
+  let settings: Pick<ThreadOptions, "access" | "claude" | "codex">
+  if (providerId === "claude-code") {
+    if (request.approvalPolicy === "untrusted")
+      throw new CardChatError(
+        "invalid-input",
+        "Claude Code supports on-request approvals, not Codex untrusted mode"
+      )
+    if (request.sandbox === "workspace-write")
+      throw new CardChatError(
+        "invalid-input",
+        "Claude Code cannot enforce Blitz's workspace-only OS sandbox. Choose approval mode or full access."
+      )
+    if (selection.model.trim() && selection.model !== "default")
+      model = selection.model.replace(/^claude-(sonnet|opus|haiku)$/, "$1")
+    if (selection.effort && selection.effort !== "default") {
+      const supported = getSupportedAiReasoningEffortsForProvider(
+        "claude-code",
+        selection.model
+      )
+      if (!supported.includes(selection.effort))
+        throw new CardChatError(
+          "invalid-input",
+          "Claude Code reasoning level is unsupported for this model"
+        )
+      effort = selection.effort
+    }
+    settings = claudeThreadSettings(request)
+  } else {
+    if (selection.model !== "default") model = selection.model
+    effort = selection.effort
+    settings = {
+      codex: codexThreadOptions(request, options.codex?.thread),
+    }
+  }
+  const engine = (options.createEngine ?? defaultEngine)(providerId, {
+    ...(options.codex?.onToolCall
+      ? { onToolCall: options.codex.onToolCall }
+      : {}),
+    effortSelected: effort !== undefined,
+  })
+  try {
+    if (providerId === "codex")
+      await checkCodexSelection(
+        engine,
+        selection,
+        Boolean(request.attachments?.length),
+        options.codexModelCatalog
+      )
+  } catch (error) {
+    await engine.close().catch(() => undefined)
+    throw error
+  }
+  return runEngineTurn(
+    {
+      providerId,
+      engine,
+      thread: {
+        cwd: request.workspaceDirectory,
+        ...(model ? { model } : {}),
+        ...(effort ? { effort } : {}),
+        ...(instructions ? { instructions } : {}),
+        ...settings,
+      },
+      ...(request.threadId ? { threadId: request.threadId } : {}),
+      input: request.attachments?.length
+        ? {
+            text: request.prompt,
+            images: request.attachments.map((attachment) => ({
+              type: "base64" as const,
+              mediaType: attachment.mimeType,
+              data: attachment.data,
+            })),
+          }
+        : request.prompt,
+      ...(request.signal === undefined ? {} : { signal: request.signal }),
+      ...(request.timeoutMs === undefined
+        ? {}
+        : { timeoutMs: request.timeoutMs }),
+    },
+    {
+      ...(options.onEvent ? { onEvent: options.onEvent } : {}),
+      ...(options.onRequest
+        ? {
+            onRequest: (agentRequest) =>
+              options.onRequest!(agentRequest, providerId),
+          }
+        : {}),
+    }
   )
 }
 
@@ -185,20 +473,44 @@ export async function runProviderTextTurn(
       ? { effort: request.effort.trim() as AiReasoningEffort }
       : {}),
   }
-  const execution = resolveProviderExecution({
-    providerId: request.providerId,
-    workspaceDirectory: request.workspaceDirectory,
-    sandbox: request.sandbox,
-    approvalPolicy: request.approvalPolicy,
-    ephemeral: request.ephemeral,
-    webSearchMode: request.webSearchMode,
-  })
-  const executionInstructions = providerExecutionInstructions(execution)
+  let execution
+  try {
+    execution = resolveProviderExecution({
+      providerId: request.providerId,
+      workspaceDirectory: request.workspaceDirectory,
+      sandbox: request.sandbox,
+      approvalPolicy: request.approvalPolicy,
+      ephemeral: request.ephemeral,
+      webSearchMode: request.webSearchMode,
+    })
+  } catch (error) {
+    throw new CardChatError(
+      "invalid-input",
+      error instanceof Error ? error.message : "Provider settings are invalid",
+      error
+    )
+  }
   // Codex skills (such as PDF reading) expect the desktop app's bundled tools.
   const runtimeInstructions =
     request.providerId === "codex"
       ? await codexRuntimeInstructionsIfInstalled()
       : undefined
+  const instructions = [
+    request.developerInstructions?.trim(),
+    providerExecutionInstructions(execution),
+    runtimeInstructions,
+  ]
+    .filter(Boolean)
+    .join("\n\n")
+  if (request.providerId === "codex" || request.providerId === "claude-code")
+    return runEngineProviderTurn(
+      request.providerId,
+      request,
+      selection,
+      instructions,
+      options
+    )
+
   const providerRequest: ProviderTextTurnRequest = {
     selection,
     workspaceDirectory: request.workspaceDirectory,
@@ -206,13 +518,7 @@ export async function runProviderTextTurn(
     ...(request.attachments?.length
       ? { attachments: request.attachments }
       : {}),
-    developerInstructions: [
-      request.developerInstructions?.trim(),
-      executionInstructions,
-      runtimeInstructions,
-    ]
-      .filter(Boolean)
-      .join("\n\n"),
+    developerInstructions: instructions,
     ...(request.threadId
       ? {
           session: {
@@ -240,102 +546,6 @@ export async function runProviderTextTurn(
       : { timeoutMs: request.timeoutMs }),
   }
   try {
-    if (request.providerId === "codex") {
-      if (!options.createCodexTransport || options.codexModelCatalog) {
-        let catalog
-        if (options.codexModelCatalog) catalog = options.codexModelCatalog
-        else {
-          try {
-            catalog = await getCodexModelCatalog({
-              workspaceDirectory: request.workspaceDirectory,
-              executable: providerCommand("codex").executable,
-              requestTimeoutMs: Math.min(request.timeoutMs ?? 5_000, 5_000),
-            })
-          } catch (error) {
-            throw new CardChatError(
-              "transport",
-              "Codex model capabilities could not be checked before this turn",
-              error
-            )
-          }
-        }
-        const selectedModel =
-          selection.model === "default"
-            ? catalog.find((model) => model.isDefault)
-            : catalog.find((model) => model.id === selection.model)
-        if (selection.model !== "default" && !selectedModel)
-          throw new CardChatError(
-            "invalid-input",
-            `Codex model is not available: ${selection.model}`
-          )
-        if (selectedModel) {
-          try {
-            validateCodexModelSelection(
-              catalog,
-              {
-                model: selectedModel.id,
-                ...(selection.effort === undefined
-                  ? {}
-                  : { effort: selection.effort }),
-              },
-              Boolean(request.attachments?.length)
-            )
-          } catch (error) {
-            throw new CardChatError(
-              "invalid-input",
-              error instanceof Error
-                ? error.message
-                : "Codex model selection is invalid",
-              error
-            )
-          }
-        } else if (selection.effort || request.attachments?.length) {
-          throw new CardChatError(
-            "invalid-input",
-            "Codex default model capabilities are unavailable"
-          )
-        }
-      }
-      return await runCodexTextTurn(
-        {
-          approvalPolicy:
-            request.approvalPolicy === "full-access"
-              ? "never"
-              : request.approvalPolicy,
-          sandbox: request.sandbox,
-          developerInstructions: providerRequest.developerInstructions,
-          images: request.attachments?.map((attachment) => ({
-            type: "image" as const,
-            url: `data:${attachment.mimeType};base64,${attachment.data}`,
-          })),
-          workspaceDirectory: request.workspaceDirectory,
-          prompt: request.prompt,
-          ...(request.threadId ? { threadId: request.threadId } : {}),
-          ...(request.ephemeral === undefined
-            ? {}
-            : { ephemeral: request.ephemeral }),
-          ...(selection.model === "default" ? {} : { model: selection.model }),
-          ...(selection.effort === undefined
-            ? {}
-            : { effort: selection.effort }),
-          ...(request.webSearchMode === undefined
-            ? {}
-            : { webSearchMode: request.webSearchMode }),
-          ...(request.signal === undefined ? {} : { signal: request.signal }),
-          ...(request.timeoutMs === undefined
-            ? {}
-            : { timeoutMs: request.timeoutMs }),
-        },
-        {
-          createTransport: options.createCodexTransport,
-          onEvent: options.onEvent,
-          approvalHandler: options.approvalHandler
-            ? (serverRequest) =>
-                resolveCodexApproval(serverRequest, options.approvalHandler!)
-            : undefined,
-        }
-      )
-    }
     const availability = await checkProviderAvailability(request.providerId, {
       workspaceDirectory: request.workspaceDirectory,
       providerInstanceId: request.providerInstanceId,
@@ -343,30 +553,17 @@ export async function runProviderTextTurn(
     })
     if (!availability.available || availability.authenticated === false)
       throw new CardChatError("transport", availability.message)
-    getProviderDefinition(request.providerId)
-    const instanceId =
-      request.providerInstanceId ?? providerInstanceId(request.providerId)
-    let result: ProviderTextTurnResult
-    const onEvent = (event: ProviderEvent): void => {
-      const normalized = productEvent(event)
-      if (normalized) options.onEvent?.(normalized)
-    }
-    if (request.providerId === "claude-code") {
-      result = await runClaudeCodeTextTurn(providerRequest, {
-        command: providerCommand(request.providerId),
-        providerInstanceId: instanceId,
-        onEvent,
-        approvalHandler: options.approvalHandler,
-      })
-    } else {
-      result = await runAcpTextTurn(providerRequest, {
-        command: providerCommand(request.providerId),
-        providerInstanceId: instanceId,
-        onEvent,
-        approvalHandler: options.approvalHandler,
-        requestHandler: options.requestHandler,
-      })
-    }
+    const result = await runAcpTextTurn(providerRequest, {
+      command: providerCommand(request.providerId),
+      providerInstanceId:
+        request.providerInstanceId ?? providerInstanceId(request.providerId),
+      onEvent: (event) => {
+        const normalized = productEvent(event)
+        if (normalized) options.onEvent?.(normalized)
+      },
+      approvalHandler: options.approvalHandler,
+      requestHandler: options.requestHandler,
+    })
     return {
       threadId: result.threadId,
       turnId: result.turnId,
@@ -377,7 +574,6 @@ export async function runProviderTextTurn(
         : {}),
     }
   } catch (error) {
-    void getProviderDefinition(request.providerId)
     throw providerError(error)
   }
 }

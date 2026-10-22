@@ -1,16 +1,9 @@
-/** Runs project tasks with explicit autonomy, attached folder instructions, and bounded file scans. */
-import {
-  CodexAppServerClient,
-  type CodexApprovalHandler,
-  type CodexAppServerOptions,
-  type CodexStartThreadOptions,
-  type CodexStartTurnOptions,
-} from "./codex-app-server.ts"
-import {
-  runCodexTextTurn,
-  type CardChatEvent,
-  type CardChatTransport,
-} from "./card-chat.ts"
+/**
+ * Prepares project workspaces for agent turns: explicit autonomy policies,
+ * attached folder instructions, and bounded artifact scans. The turns
+ * themselves run through workspace chat (`app/api/chat/route.ts`).
+ */
+import type { CodexThreadOptions } from "agent-engines"
 import { createHash } from "node:crypto"
 import { TUTOR_REPLY_GUIDANCE } from "../teaching-voice.ts"
 import { promises as fs } from "node:fs"
@@ -48,14 +41,6 @@ export interface ProjectAgentPolicy {
   projectDirectory: string
   network: "disabled" | "research"
   sandbox: "workspace-write"
-}
-
-/** Result of one completed native agent task and its post-run artifact snapshot. */
-export interface ProjectAgentRunResult {
-  threadId: string
-  turnId: string
-  response: string
-  artifacts: ProjectArtifactSnapshot[]
 }
 
 /** Returns the path used by one project agent after creating its safe folders. */
@@ -136,132 +121,36 @@ export function projectAgentInstructions(
   ].join("\n\n")
 }
 
-/** Maps a visible mode to an explicit runtime policy without relying on machine defaults. */
+/**
+ * Maps a visible mode to an explicit Codex policy without relying on machine
+ * defaults. Approvals always come to the learner, never to Codex's own
+ * reviewer. Workspace-write turns are kept inside the project, without network
+ * or shared temporary directories, by the provider router.
+ */
 export function projectAgentRuntimePolicy(
-  autonomy: ProjectAgentAutonomy,
-  directory: string
-): {
-  thread: Pick<
-    CodexStartThreadOptions,
-    "approvalPolicy" | "sandbox" | "approvalsReviewer"
-  >
-  turn: NonNullable<CodexStartTurnOptions["sandboxPolicy"]>
-} {
+  autonomy: ProjectAgentAutonomy
+): Required<
+  Pick<CodexThreadOptions, "approvalPolicy" | "sandbox" | "approvalsReviewer">
+> {
   switch (autonomy) {
     case "approval":
       return {
-        thread: {
-          approvalPolicy: "untrusted",
-          sandbox: "read-only",
-          approvalsReviewer: "user",
-        },
-        turn: { type: "readOnly", networkAccess: false },
+        approvalPolicy: "untrusted",
+        sandbox: "read-only",
+        approvalsReviewer: "user",
       }
     case "project":
       return {
-        thread: {
-          approvalPolicy: "never",
-          sandbox: "workspace-write",
-          approvalsReviewer: "user",
-        },
-        turn: {
-          type: "workspaceWrite",
-          writableRoots: [directory],
-          networkAccess: false,
-          excludeSlashTmp: true,
-          excludeTmpdirEnvVar: true,
-        },
+        approvalPolicy: "never",
+        sandbox: "workspace-write",
+        approvalsReviewer: "user",
       }
     case "full":
       return {
-        thread: {
-          approvalPolicy: "never",
-          sandbox: "danger-full-access",
-          approvalsReviewer: "user",
-        },
-        turn: { type: "dangerFullAccess" },
+        approvalPolicy: "never",
+        sandbox: "danger-full-access",
+        approvalsReviewer: "user",
       }
-  }
-}
-
-/** Runs one bounded task, forwards explicit approvals, and closes the process on completion or cancellation. */
-export async function runProjectAgent(
-  policy: ProjectAgentPolicy,
-  request: string,
-  options: {
-    autonomy?: ProjectAgentAutonomy
-    additionalInstructions?: string
-    model?: string
-    effort?: string
-    executable?: string
-    signal?: AbortSignal
-    onEvent?: (event: CardChatEvent) => void
-    approvalHandler?: CodexApprovalHandler
-    connect?: (options: CodexAppServerOptions) => Promise<CardChatTransport>
-  } = {}
-): Promise<ProjectAgentRunResult> {
-  options.signal?.throwIfAborted()
-  if (!request.trim() || request.length > 20_000)
-    throw new Error("Agent request must be 1 to 20,000 characters.")
-  await assertProjectRoot(policy.projectDirectory, policy.projectId)
-  const autonomy = parseProjectAgentAutonomy(options.autonomy)
-  const runtime = projectAgentRuntimePolicy(autonomy, policy.projectDirectory)
-  const instructions = projectAgentInstructions(
-    policy.projectDirectory,
-    options.additionalInstructions
-  )
-  const result = await runCodexTextTurn(
-    {
-      workspaceDirectory: policy.projectDirectory,
-      prompt: request,
-      model: options.model,
-      effort: options.effort,
-      signal: options.signal,
-      timeoutMs: 10 * 60_000,
-    },
-    {
-      onEvent: options.onEvent,
-      createTransport: async () => {
-        const client = await (options.connect ?? CodexAppServerClient.connect)({
-          workspaceDirectory: policy.projectDirectory,
-          executable: options.executable,
-          webSearchMode: "live",
-          approvalHandler:
-            autonomy === "approval" ? options.approvalHandler : undefined,
-        })
-        // Reuse the tested turn lifecycle while owning all project-specific policy fields.
-        return {
-          startThread: (settings) =>
-            client.startThread({
-              ...settings,
-              ...runtime.thread,
-              developerInstructions: instructions,
-            }),
-          resumeThread: () => {
-            throw new Error(
-              "Project tasks start a fresh thread with the current instructions."
-            )
-          },
-          startTurn: (id, settings) =>
-            client.startTurn(id, {
-              ...settings,
-              approvalPolicy: runtime.thread.approvalPolicy,
-              approvalsReviewer: runtime.thread.approvalsReviewer,
-              sandboxPolicy: runtime.turn,
-            }),
-          interruptTurn: (threadId, turnId) =>
-            client.interruptTurn(threadId, turnId),
-          onEvent: (listener) => client.onEvent(listener),
-          close: () => client.close(),
-        }
-      },
-    }
-  )
-  return {
-    threadId: result.threadId,
-    turnId: result.turnId,
-    response: result.text,
-    artifacts: await scanProjectArtifacts(policy.projectDirectory),
   }
 }
 

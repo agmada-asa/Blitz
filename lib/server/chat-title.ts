@@ -16,7 +16,6 @@ import {
   type AiProviderId,
 } from "../ai-model-settings.ts"
 import { getCodexModelCatalog } from "./providers/codex-models.ts"
-import { providerCommand } from "./providers/registry.ts"
 import { runProviderTextTurn } from "./providers/run-text-turn.ts"
 
 /** Maximum character length allowed for a persisted chat title. */
@@ -119,13 +118,10 @@ export interface GenerateChatTitleOptions {
 export async function generateChatTitle(
   options: GenerateChatTitleOptions
 ): Promise<string> {
-  // The catalog is read from the shared temp directory rather than this
-  // turn's own directory so consecutive titles reuse its short-lived cache.
+  // Consecutive titles reuse the catalogue's short-lived cache.
   const catalog =
     options.providerId === "codex"
       ? await getCodexModelCatalog({
-          workspaceDirectory: tmpdir(),
-          executable: providerCommand("codex").executable,
           requestTimeoutMs: TITLE_CATALOG_TIMEOUT_MS,
         }).catch(() => undefined)
       : undefined

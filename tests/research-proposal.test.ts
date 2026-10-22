@@ -109,14 +109,20 @@ test("research worker validates and completes one leased proposal", async () => 
         turnOptions.onEvent?.({
           type: "activity",
           notification: {
-            method: "item/completed",
+            method: "tool/completed",
             params: {
-              item: {
-                type: "webSearch",
-                action: { query: "synthesis ".repeat(100) },
-                results: "private tool output",
-                reasoning: "private reasoning",
+              type: "tool.completed",
+              itemId: "w1",
+              tool: {
+                kind: "web-search",
+                name: "web_search",
+                input: {
+                  query: null,
+                  action: { query: "synthesis ".repeat(100) },
+                },
               },
+              output: "private tool output",
+              isError: false,
             },
           },
         })

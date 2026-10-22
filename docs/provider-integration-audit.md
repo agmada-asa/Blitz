@@ -30,9 +30,9 @@ The provider catalog conflated JSON validation with native structured output, wo
 
 ## Permissions and provider behavior
 
-Codex receives explicit sandbox policy on thread creation, resume, and turn start. Workspace-write roots and disabled command networking are reasserted on each turn. Full access removes that sandbox; it does not override project instructions. Native developer instructions carry the effective execution description. `untrusted` means that commands outside the trusted set need user approval, not that an application reviewer approves automatically.
+Codex receives explicit approval and sandbox policy on thread creation and resume, through agent-engines. Workspace-write threads also set `sandbox_workspace_write` so writes stay in the workspace with command networking and shared temporary directories off. Full access removes that sandbox; it does not override project instructions. Native developer instructions carry the effective execution description. `untrusted` means that commands outside the trusted set need user approval, not that an application reviewer approves automatically.
 
-Claude Code receives application instructions through its native system-prompt append option. Images use base64 blocks through stream-json input. Its existing tool policies remain distinct from OS isolation. The supported tool set is explicit; hooks and external MCP configuration remain disabled by the adapter. `AskUserQuestion` uses structured question controls and returns answers through the native `updatedInput` response.
+Claude Code runs through the Claude Agent SDK in agent-engines. It receives application instructions through its native system-prompt append option, and images as base64 blocks. Its tool policies remain distinct from OS isolation. Background turns load no tools, hooks, or MCP configuration; chat turns keep hooks off. Permission prompts and `AskUserQuestion` arrive as engine requests; questions use structured controls and answer through the SDK's `updatedInput`.
 
 ACP keeps client filesystem and terminal capabilities false because Blitz does not implement those client RPC services. These capability flags must not be presented as proof that the provider process is sandboxed. Native permission requests preserve option IDs, including provider-offered persistent choices, and decisions are validated against the active session and advertised options. Denied/background policies cannot route around their restrictions through the generic reverse-request handler.
 
@@ -40,7 +40,7 @@ ACP model and mode selection inspect advertised session configuration. Native im
 
 Antigravity `interaction_` permission requests become single-select questions with native option IDs. Cancellation returns a native cancelled outcome. Antigravity does not provide the tool-free background mode that Blitz requires for source generation; the task picker continues to exclude it from that task.
 
-Codex model discovery now reads the authenticated runtime `model/list` catalog, including input modalities and native reasoning levels such as `none` and `minimal`. A short-lived catalog cache supports both the picker and dispatch validation, including chat's custom approval transport. Unsupported models, image inputs, and reasoning levels fail before a native turn begins. Catalog lookup failures do not silently substitute another model.
+Codex model discovery now reads the authenticated runtime `model/list` catalog, including input modalities and native reasoning levels such as `none` and `minimal`. A short-lived catalog cache supports both the picker and dispatch validation. Unsupported models, image inputs, and reasoning levels fail before a native turn begins. Catalog lookup failures do not silently substitute another model.
 
 ## Attachments and conversation continuity
 

@@ -1,15 +1,16 @@
-# Checks Blitz's provider layer against the latest published provider CLIs.
+# Checks Blitz's OpenCode requirement against the latest published OpenCode.
 #
-# Codex, Claude Code, and OpenCode release independently of Blitz. This
-# workflow installs their newest versions each week and runs
-# `npm run check:runtimes -- --ci`, which fails when a CLI drops below
-# Blitz's version gate or the Codex app-server protocol no longer provides a
-# method or value Blitz uses (see lib/server/providers/runtime-compat.ts).
-# GitHub emails the workflow owner when a scheduled run fails.
+# Codex and Claude Code run through agent-engines, whose own weekly workflow
+# checks the latest Codex and Claude Code CLIs against its pinned protocol and
+# version gates. OpenCode runs on Blitz's ACP adapter, so Blitz checks it here:
+# each week this installs the newest OpenCode and runs
+# `npm run check:runtimes -- --ci`, which fails when OpenCode leaves the
+# supported range (see lib/server/providers/runtime-compat.ts). GitHub emails
+# the workflow owner when a scheduled run fails.
 #
-# The runner is not signed in to any provider, so the live model catalog
-# comparison is skipped here. Run `npm run check:runtimes` locally to
-# compare the signed-in Codex catalog with Blitz's fallback model list.
+# The runner is not signed in to any provider, so the live Codex model
+# catalogue comparison is skipped here. Run `npm run check:runtimes` locally
+# to compare it with Blitz's fallback model list.
 
 name: Provider runtimes
 
@@ -20,11 +21,8 @@ on:
   workflow_dispatch:
   pull_request:
     paths:
-      - "lib/server/providers/**"
-      - "lib/server/codex-app-server.ts"
-      - "lib/server/card-chat.ts"
-      - "lib/ai-model-settings.ts"
-      - "lib/provider-capabilities.ts"
+      - "lib/server/providers/runtime-compat.ts"
+      - "lib/server/providers/acp.ts"
       - "scripts/check-provider-runtimes.ts"
       - ".github/workflows/provider-runtimes.yml"
 
@@ -42,16 +40,13 @@ jobs:
         with:
           node-version: 24
 
-      # The check imports only Node built-ins, so the app's dependencies are
-      # not installed. The CLIs are installed at their latest versions on
-      # purpose: the point is to find drift before a local update does.
-      # Claude Code and OpenCode run a postinstall script, and npm warns that
-      # it will only run install scripts for packages listed in allow-scripts.
-      - name: Install the latest provider CLIs
-        run: >-
-          npm install --global
-          --allow-scripts=@anthropic-ai/claude-code,opencode-ai
-          @openai/codex@latest @anthropic-ai/claude-code@latest opencode-ai@latest
+      # The --ci check imports only Node built-ins, so the app's dependencies
+      # are not installed. OpenCode is installed at its latest version on
+      # purpose: the point is to find drift before a local update does. It
+      # runs a postinstall script, which npm only runs for packages listed in
+      # allow-scripts.
+      - name: Install the latest OpenCode
+        run: npm install --global --allow-scripts=opencode-ai opencode-ai@latest
 
       - name: Check provider runtimes
         run: npm run check:runtimes -- --ci

@@ -1,4 +1,10 @@
-/** Registers Blitz's local providers and performs bounded executable checks. */
+/**
+ * Registers Blitz's local providers and checks each one's setup state.
+ *
+ * Codex and Claude Code are checked through agent-engines, which starts the
+ * runtime without a model turn and reads its version, sign-in, and (for Codex)
+ * model catalogue. OpenCode is checked through its own CLI.
+ */
 
 import { spawn } from "node:child_process"
 import { CHAT_PROVIDER_CAPABILITIES } from "../../provider-capabilities.ts"
@@ -15,10 +21,15 @@ import type {
   ProviderHealthOptions,
 } from "./types.ts"
 import { AcpProviderError } from "./acp.ts"
-import { getCodexModelCatalog } from "./codex-models.ts"
 import {
-  checkProviderVersion,
-  providerVersionGuidance,
+  createProviderEngine,
+  providerAvailabilityFromEngine,
+  providerModelOptions,
+  type EngineProviderId,
+} from "./engines.ts"
+import {
+  checkOpenCodeVersion,
+  openCodeVersionGuidance,
 } from "./runtime-compat.ts"
 
 const DEFAULT_INSTANCE_ID = "local"
@@ -54,10 +65,9 @@ export function providerInstanceId(providerId: AiProviderId): string {
   return process.env[environmentName]?.trim() || DEFAULT_INSTANCE_ID
 }
 
-/** Probes whether an executable starts successfully without logging its output. */
-async function probeCommand(
-  command: ProviderCommand,
-  providerId?: AiProviderId
+/** Probes whether OpenCode starts and is a supported version, without logging its output. */
+async function probeOpenCode(
+  command: ProviderCommand
 ): Promise<
   | { available: true }
   | {
@@ -109,10 +119,7 @@ async function probeCommand(
         finish({ available: false, reason: "probe-failed" })
         return
       }
-      if (
-        providerId &&
-        !checkProviderVersion(providerId, versionOutput).supported
-      ) {
+      if (!checkOpenCodeVersion(versionOutput).supported) {
         finish({ available: false, reason: "unsupported" })
         return
       }
@@ -164,68 +171,14 @@ export function parseOpenCodeAccounts(output: string): readonly string[] {
   })
 }
 
-/** Reads credential state through the provider's own local status interface. */
-async function providerAuthentication(
-  providerId: AiProviderId,
-  options: ProviderHealthOptions
-): Promise<
+/** Reads OpenCode's configured accounts through its own status command. */
+async function openCodeAuthentication(): Promise<
   Pick<
     ProviderAvailability,
-    "authenticated" | "authMethods" | "accounts" | "canDisconnect" | "models"
+    "authenticated" | "authMethods" | "accounts" | "canDisconnect"
   >
 > {
-  const command = providerCommand(providerId)
-  if (providerId === "codex") {
-    const status = await readCommand(command.executable, ["login", "status"])
-    const authenticated = status.code === 0 && /logged in/i.test(status.output)
-    let models: ProviderAvailability["models"]
-    if (authenticated) {
-      try {
-        models = await getCodexModelCatalog({
-          workspaceDirectory: options.workspaceDirectory,
-          executable: command.executable,
-          requestTimeoutMs: PROBE_TIMEOUT_MS,
-        })
-      } catch {
-        // Authentication remains useful setup state even if this optional catalog read is unavailable.
-        models = undefined
-      }
-    }
-    return {
-      authenticated,
-      canDisconnect: authenticated,
-      ...(models === undefined ? {} : { models }),
-      authMethods: [
-        {
-          id: "codex-login",
-          name: "Continue with ChatGPT",
-          type: "agent",
-        },
-      ],
-    }
-  }
-  if (providerId === "claude-code") {
-    const status = await readCommand(command.executable, [
-      "auth",
-      "status",
-      "--json",
-    ])
-    const authenticated =
-      status.code === 0 &&
-      (/"loggedIn"\s*:\s*true/i.test(status.output) ||
-        /"authenticated"\s*:\s*true/i.test(status.output))
-    return {
-      authenticated,
-      canDisconnect: authenticated,
-      authMethods: [
-        {
-          id: "claude-login",
-          name: "Sign in to Claude",
-          type: "agent",
-        },
-      ],
-    }
-  }
+  const command = providerCommand("opencode")
   const status = await readCommand(command.executable, ["auth", "list"])
   const accounts = status.code === 0 ? parseOpenCodeAccounts(status.output) : []
   return {
@@ -244,6 +197,50 @@ async function providerAuthentication(
   }
 }
 
+/** Sign-in choice the settings page offers for each engine provider. */
+const ENGINE_AUTH_METHODS: Readonly<
+  Record<EngineProviderId, NonNullable<ProviderAvailability["authMethods"]>>
+> = {
+  codex: [{ id: "codex-login", name: "Continue with ChatGPT", type: "agent" }],
+  "claude-code": [
+    { id: "claude-login", name: "Sign in to Claude", type: "agent" },
+  ],
+}
+
+/**
+ * Checks Codex or Claude Code through agent-engines, adding the signed-in
+ * Codex catalogue when it can be read. Never throws.
+ */
+async function checkEngineAvailability(
+  providerId: EngineProviderId,
+  instanceId: string
+): Promise<ProviderAvailability> {
+  const engine = createProviderEngine(providerId)
+  try {
+    const state = providerAvailabilityFromEngine(
+      providerId,
+      instanceId,
+      await engine.availability()
+    )
+    let models: ProviderAvailability["models"]
+    if (providerId === "codex" && state.authenticated === true) {
+      try {
+        models = providerModelOptions(await engine.models())
+      } catch {
+        // Sign-in state stays useful even if this optional catalogue read fails.
+        models = undefined
+      }
+    }
+    return {
+      ...state,
+      ...(state.available ? { authMethods: ENGINE_AUTH_METHODS[providerId] } : {}),
+      ...(models === undefined ? {} : { models }),
+    }
+  } finally {
+    await engine.close().catch(() => undefined)
+  }
+}
+
 /** Checks one provider's local runtime without starting a model session. */
 export async function checkProviderAvailability(
   providerId: AiProviderId,
@@ -251,8 +248,10 @@ export async function checkProviderAvailability(
 ): Promise<ProviderAvailability> {
   const instanceId =
     options.providerInstanceId ?? providerInstanceId(providerId)
+  if (providerId === "codex" || providerId === "claude-code")
+    return checkEngineAvailability(providerId, instanceId)
   try {
-    const result = await probeCommand(providerCommand(providerId), providerId)
+    const result = await probeOpenCode(providerCommand(providerId))
     if (!result.available)
       return {
         providerId,
@@ -262,11 +261,10 @@ export async function checkProviderAvailability(
         reason: result.reason,
         message:
           result.reason === "unsupported"
-            ? (providerVersionGuidance(providerId) ??
-              "Update this provider to a supported version.")
+            ? openCodeVersionGuidance()
             : "Install this provider before connecting it to Blitz.",
       }
-    const authentication = await providerAuthentication(providerId, options)
+    const authentication = await openCodeAuthentication()
     return {
       providerId,
       providerInstanceId: instanceId,
@@ -276,9 +274,7 @@ export async function checkProviderAvailability(
       message:
         authentication.authenticated === false
           ? "Installed, but not connected to Blitz."
-          : authentication.authenticated === true
-            ? "Connected and ready."
-            : "Installed. Blitz could not verify the account state.",
+          : "Connected and ready.",
     }
   } catch (error) {
     const missingExecutable =

@@ -1,11 +1,9 @@
 /** Exercises provider interaction lifecycles through the real Convex handlers and bridge. */
 import assert from "node:assert/strict"
 import { test } from "node:test"
+import type { AgentRequest } from "agent-engines"
 import { createChatAgentSession } from "../lib/server/chat-agent.ts"
-import {
-  genericApprovalRequest,
-  userInputResponse,
-} from "../lib/server/agent-request.ts"
+import { BLITZ_REQUEST_USER_INPUT_TOOL } from "../lib/server/agent-request.ts"
 
 type Row = { _id: string; table: string; [key: string]: unknown }
 type Handler = (
@@ -138,7 +136,7 @@ async function waitForPending(
 }
 
 /** Creates a bridge backed by production handlers and an active assistant turn. */
-async function setup() {
+async function setup(approvalPolicy: "on-request" | "never" = "on-request") {
   const handlers = await loadHandlers()
   const db = new MemoryDb()
   const ids = activeTurn(db)
@@ -147,65 +145,117 @@ async function setup() {
     client: fake.client as never,
     chatId: ids.chatId as never,
     messageId: ids.messageId as never,
-    workspaceDirectory: "/tmp/blitz-test",
     autonomy: "approval",
-    additionalInstructions: "",
-    approvalPolicy: "on-request",
+    approvalPolicy,
     signal: new AbortController().signal,
     send: () => undefined,
   })
   return { ...ids, db, fake, handlers, bridge }
 }
 
-test("Claude AskUserQuestion preserves single and multi-select normalized UI answers", () => {
-  const details = JSON.stringify({
-    tool_name: "AskUserQuestion",
-    input: {
+test("Claude AskUserQuestion answers reach the runtime through one persisted interaction", async () => {
+  const { bridge, db, messageId, handlers, chatId } = await setup()
+  const answers: unknown[] = []
+  const request: AgentRequest = {
+    kind: "question",
+    id: "toolu_1",
+    raw: {},
+    questions: [
+      {
+        id: "Topics?",
+        header: "Topics",
+        question: "Topics?",
+        options: [
+          { label: "Math", description: "" },
+          { label: "Science", description: "" },
+        ],
+        multiSelect: true,
+        allowOther: true,
+        secret: false,
+      },
+    ],
+    respond: async (answer) => {
+      answers.push(answer)
+    },
+  }
+  const handled = bridge.handleRequest(request, "claude-code")
+  const pending = await waitForPending(db, messageId)
+  assert.equal(pending.kind, "question")
+  await handlers.decideApproval(
+    { db },
+    {
+      chatId,
+      messageId,
+      approvalId: pending.id,
+      decision: "approved",
+      response: JSON.stringify({
+        answers: { "Topics?": { answers: ["Math", "Science"] } },
+      }),
+    }
+  )
+  await handled
+  assert.deepEqual(answers, [{ "Topics?": ["Math", "Science"] }])
+  await bridge.close()
+})
+
+test("Codex approvals are refused unseen when approvals are off, but Blitz's own tools still ask", async () => {
+  const { bridge, db, messageId, handlers, chatId } = await setup("never")
+  const decisions: unknown[] = []
+  await bridge.handleRequest(
+    {
+      kind: "approval",
+      id: "a1",
+      action: "command",
+      title: "Run ls",
+      command: "ls",
+      raw: { command: "ls" },
+      respond: async (decision) => {
+        decisions.push(decision)
+      },
+    },
+    "codex"
+  )
+  assert.deepEqual(decisions, [{ decision: "deny" }])
+  assert.equal((await db.get(messageId))?.agentApproval, undefined)
+  // The chat agent's policy reaches Codex with Blitz's tools and live search.
+  assert.equal(bridge.codex.thread?.approvalsReviewer, "user")
+  assert.equal(bridge.codex.thread?.config?.web_search, "live")
+  const answer = bridge.codex.onToolCall!({
+    threadId: "t",
+    turnId: "u",
+    callId: "call-1",
+    tool: BLITZ_REQUEST_USER_INPUT_TOOL,
+    namespace: null,
+    arguments: {
       questions: [
         {
-          question: "Environment?",
-          header: "Env",
-          options: [{ label: "Dev" }, { label: "Prod" }],
+          id: "label",
+          header: "Label",
+          question: "Which label?",
+          options: [{ label: "Alpha" }, { label: "Beta" }],
         },
       ],
     },
   })
-  const single = genericApprovalRequest("claude/can_use_tool", details)
-  assert.equal(single?.kind, "question")
-  assert.deepEqual(
-    userInputResponse(
-      single?.input,
-      true,
-      JSON.stringify({ answers: { "Environment?": { answers: ["Prod"] } } })
-    ),
-    { answers: { "Environment?": { answers: ["Prod"] } } }
+  const pending = await waitForPending(db, messageId)
+  await handlers.decideApproval(
+    { db },
+    {
+      chatId,
+      messageId,
+      approvalId: pending.id,
+      decision: "approved",
+      response: JSON.stringify({ answers: { label: { answers: ["Beta"] } } }),
+    }
   )
-  const multi = genericApprovalRequest(
-    "claude/can_use_tool",
-    JSON.stringify({
-      tool_name: "AskUserQuestion",
-      input: {
-        questions: [
-          {
-            question: "Topics?",
-            header: "Topics",
-            multiSelect: true,
-            options: [{ label: "Math" }, { label: "Science" }],
-          },
-        ],
-      },
-    })
-  )
-  assert.deepEqual(
-    userInputResponse(
-      multi?.input,
-      true,
-      JSON.stringify({
-        answers: { "Topics?": { answers: ["Math", "Science"] } },
-      })
-    ),
-    { answers: { "Topics?": { answers: ["Math", "Science"] } } }
-  )
+  assert.deepEqual(await answer, {
+    text: JSON.stringify({
+      accepted: true,
+      answers: { label: { answers: ["Beta"] } },
+    }),
+    success: true,
+  })
+  await bridge.close()
 })
 
 test("ACP approvals preserve once, always, and reject IDs through one-time persistence", async () => {

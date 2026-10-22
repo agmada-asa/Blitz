@@ -3,114 +3,85 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 import { normalizeProviderActivity } from "../lib/provider-activity.ts"
 
-test("normalizes Codex started and completed items with native correlation", () => {
-  const started = normalizeProviderActivity({
-    type: "activity",
-    method: "item/started",
-    params: {
-      item: { id: "item-1", type: "commandExecution", command: "ls -la" },
-    },
-  })
-  const completed = normalizeProviderActivity({
-    type: "activity",
-    method: "item/completed",
-    params: {
-      item: {
-        id: "item-1",
-        type: "commandExecution",
-        status: "completed",
-        aggregatedOutput: "private output that must not be retained",
-      },
-    },
-  })
-  assert.equal(started?.id, "item-1")
-  assert.equal(started?.type, "tool")
-  assert.equal(started?.title, "Run command")
-  assert.equal(started?.status, "running")
-  assert.equal(started?.detail, "ls -la")
-  assert.equal(typeof started?.startedAt, "number")
+/** Wraps one engine event the way `providers/engine-turn.ts` forwards it. */
+function frame(method: string, params: Record<string, unknown>) {
+  return { type: "activity", notification: { method, params } }
+}
 
-  assert.equal(completed?.id, "item-1")
-  assert.equal(completed?.type, "tool")
-  assert.equal(completed?.title, "Run command")
-  assert.equal(completed?.status, "completed")
-  assert.equal(typeof completed?.completedAt, "number")
-
-  // Retains detail and startedAt from previous started item when correlated
-  const correlated = normalizeProviderActivity(
-    {
-      type: "activity",
-      method: "item/completed",
-      params: {
-        item: {
-          id: "item-1",
-          type: "commandExecution",
-          status: "completed",
-        },
+test("normalizes engine tool start and completion with item correlation", () => {
+  const started = normalizeProviderActivity(
+    frame("tool/started", {
+      type: "tool.started",
+      itemId: "c1",
+      tool: {
+        kind: "command",
+        name: "shell",
+        input: { command: "ls -la", cwd: "/tmp" },
       },
-    },
-    started ? [started] : []
-  )
-  assert.equal(correlated?.detail, "ls -la")
-  assert.equal(correlated?.startedAt, started?.startedAt)
+    })
+  )!
+  assert.equal(started.id, "c1")
+  assert.equal(started.title, "Run command")
+  assert.equal(started.detail, "ls -la")
+  assert.equal(started.status, "running")
+  assert.equal(typeof started.startedAt, "number")
+  const completed = normalizeProviderActivity(
+    frame("tool/completed", {
+      type: "tool.completed",
+      itemId: "c1",
+      tool: { kind: "command", name: "shell", input: {} },
+      output: "secret output",
+      isError: true,
+    }),
+    [started]
+  )!
+  assert.equal(completed.status, "failed")
+  assert.equal(completed.detail, "ls -la")
+  assert.equal(completed.startedAt, started.startedAt)
+  assert.equal(JSON.stringify(completed).includes("secret output"), false)
 })
 
-test("extracts details for web search and file changes", () => {
-  const search = normalizeProviderActivity({
-    type: "activity",
-    method: "item/started",
-    params: {
-      item: {
-        id: "search-1",
-        type: "webSearch",
-        query: "nextjs app router",
-      },
-    },
-  })
-  assert.equal(search?.title, "Search web")
-  assert.equal(search?.detail, "nextjs app router")
-
-  const fileEdit = normalizeProviderActivity({
-    type: "activity",
-    method: "item/started",
-    params: {
-      item: {
-        id: "edit-1",
-        type: "fileChange",
-        changes: [{ path: "app/page.tsx" }],
-      },
-    },
-  })
-  assert.equal(fileEdit?.title, "Edit file")
-  assert.equal(fileEdit?.detail, "app/page.tsx")
-})
-
-test("normalizes Claude tool use and result frames", () => {
-  assert.equal(
-    normalizeProviderActivity({
-      type: "activity",
-      method: "claude/tool_use",
-      params: {
-        block: {
-          type: "tool_use",
-          id: "tool-2",
-          name: "Bash",
-          input: { command: "pwd" },
+test("extracts details for web search, Claude tools, and file changes", () => {
+  const search = normalizeProviderActivity(
+    frame("tool/completed", {
+      itemId: "w1",
+      tool: {
+        kind: "web-search",
+        name: "web_search",
+        input: {
+          query: null,
+          action: { type: "search", query: "spaced repetition" },
         },
       },
-    })?.status,
-    "running"
-  )
-  assert.equal(
-    normalizeProviderActivity({
-      type: "activity",
-      method: "claude/tool_result",
-      params: {
-        block: { type: "tool_result", tool_use_id: "tool-2", is_error: true },
+      isError: false,
+    })
+  )!
+  assert.equal(search.title, "Search web")
+  assert.equal(search.detail, "spaced repetition")
+  const read = normalizeProviderActivity(
+    frame("tool/started", {
+      itemId: "toolu_1",
+      tool: {
+        kind: "builtin",
+        name: "Read",
+        input: { file_path: "/tmp/notes.md" },
       },
-    })?.status,
-    "failed"
-  )
+    })
+  )!
+  assert.equal(read.title, "Read file")
+  assert.equal(read.detail, "/tmp/notes.md")
+  const files = normalizeProviderActivity(
+    frame("file/changed", {
+      itemId: "f1",
+      changes: [
+        { path: "/tmp/a.md", kind: "add" },
+        { path: "/tmp/b.md", kind: "update", diff: "+x" },
+      ],
+    })
+  )!
+  assert.equal(files.title, "Edit file")
+  assert.equal(files.detail, "/tmp/a.md, /tmp/b.md")
+  assert.equal(files.status, "completed")
 })
 
 test("normalizes ACP tool call updates and bounds metadata", () => {
