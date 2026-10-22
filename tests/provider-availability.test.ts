@@ -1,14 +1,13 @@
-/** Checks local provider probes with temporary executables and no model or account requests. */
+/** Checks local provider probes and setup-state mapping without model or account requests. */
 
-import { mkdtemp, writeFile, chmod, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
 import test from "node:test"
 import assert from "node:assert/strict"
 import {
   checkProviderAvailability,
   parseOpenCodeAccounts,
 } from "../lib/server/providers/registry.ts"
+import { providerAvailabilityFromEngine } from "../lib/server/providers/engines.ts"
 
 /** Extracts only account labels from OpenCode's ANSI-formatted credential list. */
 test("parses configured OpenCode accounts without credential data", () => {
@@ -20,43 +19,55 @@ test("parses configured OpenCode accounts without credential data", () => {
   )
 })
 
-/** Restores the process environment and removes every temporary probe after checking versions. */
-test("reports missing and obsolete Claude runtimes before a turn starts", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "blitz-probe-"))
-  const original = process.env.BLITZ_CLAUDE_CODE_COMMAND
-  const executable = join(directory, "claude")
-  try {
-    process.env.BLITZ_CLAUDE_CODE_COMMAND = executable
-    assert.equal(
-      (
-        await checkProviderAvailability("claude-code", {
-          workspaceDirectory: directory,
-        })
-      ).reason,
-      "missing-executable"
-    )
-    for (const [version, available] of [
-      ["2.1.247", false],
-      ["2.1.248", true],
-    ] as const) {
-      await writeFile(
-        executable,
-        `#!/bin/sh\necho '${version} (Claude Code)'\n`
-      )
-      await chmod(executable, 0o700)
-      assert.equal(
-        (
-          await checkProviderAvailability("claude-code", {
-            workspaceDirectory: directory,
-          })
-        ).available,
-        available
-      )
+/** Engine sign-in states map onto the settings page's setup states. */
+test("maps engine availability onto Blitz setup states", () => {
+  const signedOut = providerAvailabilityFromEngine("codex", "local", {
+    provider: "codex",
+    ready: false,
+    reason: "signed-out",
+    message: "Codex is not signed in.",
+  })
+  assert.equal(signedOut.available, true)
+  assert.equal(signedOut.authenticated, false)
+  assert.equal(signedOut.reason, "missing-auth")
+  const old = providerAvailabilityFromEngine("claude-code", "local", {
+    provider: "claude",
+    ready: false,
+    reason: "unsupported-version",
+    message: "Claude Code 2.1.247 is too old: 2.1.248 or newer is required.",
+  })
+  assert.equal(old.available, false)
+  assert.equal(old.reason, "unsupported")
+  assert.match(old.message, /2\.1\.248/)
+  // Blitz lets the learner run on an API key.
+  const apiKey = providerAvailabilityFromEngine("claude-code", "local", {
+    provider: "claude",
+    ready: true,
+    reason: "ready",
+    message: "Claude is signed in.",
+    account: { kind: "api-key" },
+  })
+  assert.equal(apiKey.available && apiKey.authenticated, true)
+})
+
+/** A missing Codex or Claude Code executable is reported without a model call. */
+test("reports missing engine executables before a turn starts", async () => {
+  for (const [provider, key] of [
+    ["codex", "BLITZ_CODEX_COMMAND"],
+    ["claude-code", "BLITZ_CLAUDE_CODE_COMMAND"],
+  ] as const) {
+    const original = process.env[key]
+    try {
+      process.env[key] = "/nonexistent/blitz/provider"
+      const result = await checkProviderAvailability(provider, {
+        workspaceDirectory: tmpdir(),
+      })
+      assert.equal(result.available, false)
+      assert.equal(result.reason, "missing-executable")
+    } finally {
+      if (original === undefined) delete process.env[key]
+      else process.env[key] = original
     }
-  } finally {
-    if (original === undefined) delete process.env.BLITZ_CLAUDE_CODE_COMMAND
-    else process.env.BLITZ_CLAUDE_CODE_COMMAND = original
-    await rm(directory, { recursive: true, force: true })
   }
 })
 

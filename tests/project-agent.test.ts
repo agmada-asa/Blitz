@@ -16,7 +16,6 @@ import {
   prepareProjectAgentWorkspace,
   resolveWritableArtifactPath,
   scanProjectArtifacts,
-  runProjectAgent,
   parseProjectAgentAutonomy,
   projectAgentInstructions,
   projectAgentRuntimePolicy,
@@ -105,21 +104,21 @@ test("agent cannot write Sources, .blitz, traversal paths, or symlink escapes", 
 test("autonomy settings map to explicit sandbox and approval policies", () => {
   assert.equal(parseProjectAgentAutonomy(undefined), "approval")
   assert.throws(() => parseProjectAgentAutonomy("surprise"), /valid/)
-  const approval = projectAgentRuntimePolicy("approval", "/tmp/project")
-  assert.equal(approval.thread.approvalPolicy, "untrusted")
-  assert.deepEqual(approval.turn, { type: "readOnly", networkAccess: false })
-  const project = projectAgentRuntimePolicy("project", "/tmp/project")
-  assert.equal(project.thread.approvalPolicy, "never")
-  assert.deepEqual(project.turn, {
-    type: "workspaceWrite",
-    writableRoots: ["/tmp/project"],
-    networkAccess: false,
-    excludeSlashTmp: true,
-    excludeTmpdirEnvVar: true,
+  assert.deepEqual(projectAgentRuntimePolicy("approval"), {
+    approvalPolicy: "untrusted",
+    sandbox: "read-only",
+    approvalsReviewer: "user",
   })
-  const full = projectAgentRuntimePolicy("full", "/tmp/project")
-  assert.equal(full.thread.sandbox, "danger-full-access")
-  assert.deepEqual(full.turn, { type: "dangerFullAccess" })
+  assert.deepEqual(projectAgentRuntimePolicy("project"), {
+    approvalPolicy: "never",
+    sandbox: "workspace-write",
+    approvalsReviewer: "user",
+  })
+  assert.deepEqual(projectAgentRuntimePolicy("full"), {
+    approvalPolicy: "never",
+    sandbox: "danger-full-access",
+    approvalsReviewer: "user",
+  })
 })
 
 test("folder instructions include explicit user exceptions without accepting source instructions", () => {
@@ -147,88 +146,5 @@ test("folder instructions include explicit user exceptions without accepting sou
   assert.throws(
     () => projectAgentInstructions("/tmp/project", "x".repeat(4001)),
     /4,000/
-  )
-})
-
-test("project tasks attach developer instructions and selected runtime policy before execution", async (t) => {
-  const root = await mkdtemp(join(tmpdir(), "blitz-agent-run-"))
-  const previous = process.env.BLITZ_DATA_DIR
-  t.after(async () => {
-    if (previous === undefined) delete process.env.BLITZ_DATA_DIR
-    else process.env.BLITZ_DATA_DIR = previous
-    await rm(root, { recursive: true, force: true })
-  })
-  process.env.BLITZ_DATA_DIR = root
-  const workspace = await prepareProjectAgentWorkspace("test-agent")
-  let closed = false
-  let listener:
-    | ((
-        event: import("../lib/server/codex-app-server.ts").CodexAppServerEvent
-      ) => void)
-    | undefined
-  const result = await runProjectAgent(workspace, "Make a study guide", {
-    autonomy: "project",
-    additionalInstructions: "Use British spelling.",
-    connect: async (options) => {
-      assert.equal(options.workspaceDirectory, workspace.projectDirectory)
-      assert.equal(options.webSearchMode, "live")
-      return {
-        startThread: async (options) => {
-          assert.equal(options?.sandbox, "workspace-write")
-          assert.equal(options?.approvalPolicy, "never")
-          assert.match(options?.developerInstructions ?? "", /Sources/)
-          assert.match(options?.developerInstructions ?? "", /British spelling/)
-          return { thread: { id: "thread" } }
-        },
-        resumeThread: async () => {
-          throw new Error("Unexpected resume")
-        },
-        startTurn: async (_id, options) => {
-          assert.equal(options.text, "Make a study guide")
-          assert.equal(options.approvalPolicy, "never")
-          assert.equal(options.approvalsReviewer, "user")
-          assert.equal(options.sandboxPolicy?.type, "workspaceWrite")
-          await writeFile(join(workspace.projectDirectory, "guide.md"), "Guide")
-          listener?.({
-            type: "notification",
-            notification: {
-              method: "item/agentMessage/delta",
-              params: {
-                threadId: "thread",
-                turnId: "turn",
-                delta: "Created guide.md",
-              },
-            },
-          })
-          listener?.({
-            type: "notification",
-            notification: {
-              method: "turn/completed",
-              params: {
-                threadId: "thread",
-                turn: { id: "turn", status: "completed" },
-              },
-            },
-          })
-          return { turn: { id: "turn", status: "inProgress" } }
-        },
-        interruptTurn: async () => {},
-        onEvent: (callback) => {
-          listener = callback
-          return () => {
-            listener = undefined
-          }
-        },
-        close: async () => {
-          closed = true
-        },
-      }
-    },
-  })
-  assert.equal(closed, true)
-  assert.equal(result.response, "Created guide.md")
-  assert.deepEqual(
-    result.artifacts.map((artifact) => artifact.relativeKey),
-    ["guide.md"]
   )
 })

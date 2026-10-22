@@ -16,6 +16,20 @@ import {
   type ResearchProposal,
 } from "./research-proposal.ts"
 
+/** Reads an object-like activity value without trusting its shape. */
+function researchRecord(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined
+}
+
+/** Reads the tool from one forwarded `tool/completed` engine event. */
+function researchTool(
+  params: unknown
+): { kind?: unknown; input?: unknown } | undefined {
+  return researchRecord(researchRecord(params)?.tool)
+}
+
 /**
  * Returns the stable user-owned provider workspace, outside the repository.
  * `BLITZ_CODEX_WORKSPACE` overrides the default under `~/.local/share`.
@@ -229,24 +243,17 @@ export async function runResearchProposalStep(
     let webSearchCount = 0
     /** Records hosted search completion events while preserving caller activity. */
     const handleTurnEvent = (event: CardChatEvent): void => {
-      if (
+      const tool =
         event.type === "activity" &&
         "notification" in event &&
-        event.notification.method === "item/completed" &&
-        typeof event.notification.params === "object" &&
-        event.notification.params !== null &&
-        !Array.isArray(event.notification.params) &&
-        typeof (event.notification.params as { item?: unknown }).item ===
-          "object" &&
-        (event.notification.params as { item?: { type?: unknown } }).item
-          ?.type === "webSearch"
-      ) {
+        event.notification.method === "tool/completed"
+          ? researchTool(event.notification.params)
+          : undefined
+      if (tool?.kind === "web-search") {
         webSearchCount += 1
-        const item = (
-          event.notification.params as { item?: Record<string, unknown> }
-        ).item
-        const action = item?.action as Record<string, unknown> | undefined
-        const rawQuery = action?.query
+        const input = researchRecord(tool.input)
+        const action = researchRecord(input?.action)
+        const rawQuery = input?.query ?? action?.query
         const rawQueries = action?.queries
         const query =
           typeof rawQuery === "string"

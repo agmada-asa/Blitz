@@ -70,8 +70,8 @@ function event(
   }
 }
 
-/** Extracts readable detail from Codex items (commands, searches, file changes). */
-function extractCodexDetail(item: Record<string, unknown>): string | undefined {
+/** Extracts readable detail from tool input (commands, searches, file changes). */
+function extractToolDetail(item: Record<string, unknown>): string | undefined {
   if (typeof item.command === "string" && item.command.trim()) {
     return item.command.trim()
   }
@@ -105,6 +105,9 @@ function extractCodexDetail(item: Record<string, unknown>): string | undefined {
   if (typeof item.path === "string" && item.path.trim()) {
     return item.path.trim()
   }
+  if (typeof item.file_path === "string" && item.file_path.trim()) {
+    return item.file_path.trim()
+  }
   if (typeof item.filePath === "string" && item.filePath.trim()) {
     return item.filePath.trim()
   }
@@ -115,70 +118,18 @@ function extractCodexDetail(item: Record<string, unknown>): string | undefined {
     return item.pattern.trim()
   }
   const nested =
-    record(item.input) ?? record(item.arguments) ?? record(item.params)
+    record(item.input) ??
+    record(item.arguments) ??
+    record(item.params) ??
+    record(item.action)
   if (nested) {
-    return extractCodexDetail(nested)
+    return extractToolDetail(nested)
   }
   return undefined
 }
 
-/** Returns a concise, user-oriented title for a Codex tool event. */
-function extractCodexTitle(
-  kind: string,
-  item: Record<string, unknown>
-): string {
-  const explicitTitle = text(item.title, MAX_PROVIDER_ACTIVITY_TITLE)
-  if (explicitTitle) return explicitTitle
-  const lower = kind.toLowerCase()
-  if (/command|bash|exec|shell|terminal/.test(lower)) return "Run command"
-  if (/web.*search|search.*web/.test(lower)) return "Search web"
-  if (/search/.test(lower)) return "Search"
-  if (/file.*change|file.*edit|patch|edit|write/.test(lower)) return "Edit file"
-  if (/file.*read|read.*file|view/.test(lower)) return "Read file"
-  if (/mcp/.test(lower)) return "Tool"
-  return kind.replace(/([a-z])([A-Z])/g, "$1 $2")
-}
-
-/** Extracts native Codex tool lifecycle metadata without raw output. */
-function codexActivity(
-  method: string,
-  params: Record<string, unknown>,
-  previous: readonly ProviderActivityEvent[] = []
-): ProviderActivityEvent | undefined {
-  if (method !== "item/started" && method !== "item/completed") return undefined
-  const item = record(params.item)
-  if (!item) return undefined
-  const kind = text(item.type, 80)
-  if (
-    !kind ||
-    !/command|tool|search|file|shell|mcp|bash|exec|terminal|web|fetch|browser|patch|edit|write|read|view/i.test(
-      kind
-    )
-  )
-    return undefined
-  const safeId = text(item.id, 200)
-  if (!safeId) return undefined
-  const prev = previous.find((entry) => entry.id === safeId)
-  const detail = extractCodexDetail(item) ?? prev?.detail
-  const title =
-    item.title ??
-    (prev?.title || extractCodexTitle(kind, item))
-  const running = method === "item/started"
-  const now = Date.now()
-  const startedAt = prev?.startedAt ?? (running ? now : undefined)
-  const completedAt = running ? undefined : (prev?.completedAt ?? now)
-  return event(
-    safeId,
-    title,
-    running ? "running" : status(item.status, "completed"),
-    detail,
-    startedAt,
-    completedAt
-  )
-}
-
-/** Maps Claude tool names to concise, user-friendly action titles. */
-function claudeToolTitle(name: string): string {
+/** Maps native tool names to concise, user-friendly action titles. */
+function toolTitle(name: string): string {
   const lower = name.toLowerCase()
   if (/bash|command|terminal|exec/.test(lower)) return "Run command"
   if (/websearch|search.*web/.test(lower)) return "Search web"
@@ -190,39 +141,58 @@ function claudeToolTitle(name: string): string {
   return name.replace(/([a-z])([A-Z])/g, "$1 $2")
 }
 
-/** Extracts Claude tool identity and completion without result content. */
-function claudeActivity(
+/**
+ * Reads one agent-engines tool or file event, as forwarded by
+ * `providers/engine-turn.ts`, without its output.
+ */
+function engineActivity(
   method: string,
   params: Record<string, unknown>,
   previous: readonly ProviderActivityEvent[]
 ): ProviderActivityEvent | undefined {
-  const block = record(params.block) ?? params
+  const id = text(params.itemId, 200)
+  if (!id) return undefined
+  const prev = previous.find((item) => item.id === id)
   const now = Date.now()
-  if (method === "claude/tool_use" && block.type === "tool_use") {
-    const input = record(block.input)
-    const detail =
-      text(input?.command, MAX_PROVIDER_ACTIVITY_DETAIL) ??
-      text(input?.query, MAX_PROVIDER_ACTIVITY_DETAIL) ??
-      text(input?.url, MAX_PROVIDER_ACTIVITY_DETAIL) ??
-      text(input?.file_path ?? input?.path, MAX_PROVIDER_ACTIVITY_DETAIL) ??
-      text(input?.pattern, MAX_PROVIDER_ACTIVITY_DETAIL)
-    const rawName = text(block.name, MAX_PROVIDER_ACTIVITY_TITLE) ?? "Tool"
-    const title = claudeToolTitle(rawName)
-    return event(block.id, title, "running", detail, now)
-  }
-  if (method === "claude/tool_result" && block.type === "tool_result") {
-    const safeId = text(block.tool_use_id, 200)
-    const prev = previous.find((item) => item.id === safeId)
+  if (method === "file/changed") {
+    const paths = Array.isArray(params.changes)
+      ? params.changes
+          .map((change) => text(record(change)?.path, 300))
+          .filter((path): path is string => Boolean(path))
+      : []
     return event(
-      safeId,
-      prev?.title ?? "Tool result",
-      block.is_error === true ? "failed" : "completed",
-      prev?.detail,
+      id,
+      prev?.title ?? "Edit file",
+      "completed",
+      paths.join(", ") || prev?.detail,
       prev?.startedAt,
       now
     )
   }
-  return undefined
+  const tool = record(params.tool)
+  const kind = text(tool?.kind, 40)
+  const name = text(tool?.name, MAX_PROVIDER_ACTIVITY_TITLE) ?? "Tool"
+  const title =
+    prev?.title ??
+    (kind === "command"
+      ? "Run command"
+      : kind === "web-search"
+        ? "Search web"
+        : kind === "mcp"
+          ? "Tool"
+          : toolTitle(name))
+  const input = record(tool?.input)
+  const detail = (input ? extractToolDetail(input) : undefined) ?? prev?.detail
+  if (method === "tool/started")
+    return event(id, title, "running", detail, prev?.startedAt ?? now)
+  return event(
+    id,
+    title,
+    params.isError === true ? "failed" : "completed",
+    detail,
+    prev?.startedAt,
+    prev?.completedAt ?? now
+  )
 }
 
 /** Reads ACP tool updates while retaining the title from earlier partial updates. */
@@ -248,7 +218,7 @@ function acpActivity(
       call.detail ?? call.subtitle ?? call.command,
       MAX_PROVIDER_ACTIVITY_DETAIL
     ) ??
-    (input ? extractCodexDetail(input) : undefined) ??
+    (input ? extractToolDetail(input) : undefined) ??
     prev?.detail
   const title = call.title ?? call.name ?? prev?.title ?? "Tool"
   const now = Date.now()
@@ -270,9 +240,11 @@ export function normalizeProviderActivity(
   const method = text(frame.method ?? notification?.method, 100)
   const params = record(frame.params ?? notification?.params)
   if (!method || !params) return undefined
-  return (
-    codexActivity(method, params, previous) ??
-    claudeActivity(method, params, previous) ??
-    (method === "session/update" ? acpActivity(params, previous) : undefined)
+  if (
+    method === "tool/started" ||
+    method === "tool/completed" ||
+    method === "file/changed"
   )
+    return engineActivity(method, params, previous)
+  return method === "session/update" ? acpActivity(params, previous) : undefined
 }

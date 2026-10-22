@@ -36,7 +36,6 @@ import {
 } from "@/lib/server/workspace-chat-failure"
 import { runProviderTextTurn } from "@/lib/server/providers/run-text-turn"
 import { getCodexModelCatalog } from "@/lib/server/providers/codex-models"
-import { providerCommand } from "@/lib/server/providers/registry"
 import type { ProviderImageAttachment } from "@/lib/server/providers/types"
 import { isTrustedBlitzOrigin } from "@/lib/server/request-origin"
 import { generateChatTitle } from "@/lib/server/chat-title"
@@ -757,9 +756,7 @@ export async function POST(request: Request): Promise<Response> {
             client,
             chatId: turn.chatId,
             messageId: turn.assistantMessageId,
-            workspaceDirectory,
             autonomy: approvalPolicy === "full-access" ? "full" : autonomy,
-            additionalInstructions,
             approvalPolicy,
             signal: turnSignal,
             send,
@@ -864,11 +861,7 @@ export async function POST(request: Request): Promise<Response> {
           turnAccepted = false
           const codexModelCatalog =
             selection.providerId === "codex"
-              ? await getCodexModelCatalog({
-                  workspaceDirectory,
-                  executable: providerCommand("codex").executable,
-                  requestTimeoutMs: 5_000,
-                })
+              ? await getCodexModelCatalog({ requestTimeoutMs: 5_000 })
               : undefined
           return runProviderTextTurn(
             {
@@ -898,15 +891,14 @@ export async function POST(request: Request): Promise<Response> {
               timeoutMs: WORKSPACE_CHAT_TIMEOUT_MS,
             },
             {
-              createCodexTransport:
-                selection.providerId === "codex"
-                  ? agentSession?.createTransport
-                  : undefined,
+              ...(selection.providerId === "codex" && agentSession
+                ? { codex: agentSession.codex }
+                : {}),
               ...(codexModelCatalog ? { codexModelCatalog } : {}),
+              onRequest: agentSession?.handleRequest,
               approvalHandler: agentSession?.approveProvider,
               requestHandler: agentSession?.handleProviderRequest,
               onEvent: (event) => {
-                agentSession?.observe(event)
                 const activity = normalizeProviderActivity(event, providerEvents)
                 if (activity) appendProviderEvent(activity)
                 if (event.type === "turn-started") {
