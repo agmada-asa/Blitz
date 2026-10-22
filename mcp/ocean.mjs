@@ -1,13 +1,13 @@
 /**
- * What the MCP server adds for Ocean, Allen's phone and desktop assistant,
+ * What the MCP server adds for Ocean, the user's phone and desktop assistant,
  * when Ocean loads this repository as its Blitz plug-in (see
  * `ocean.plugin.json` at the root): a Today widget for Ocean's home screen and
  * the JSON tools behind the Blitz mini app in `ocean-app/`.
  *
  * The mini app reaches nothing directly. Every read and answer is a call to one
  * of these tools through Ocean, which runs the server with `BLITZ_OCEAN=1`.
- * The manifest marks them as Allen's own, so Ocean's agents keep the plain text
- * tools in `server.mjs` and never answer review questions on his behalf.
+ * The manifest reserves them for the user, so Ocean's agents keep the plain text
+ * tools in `server.mjs` and never answer review questions on the user's behalf.
  */
 
 import { anyApi } from "convex/server"
@@ -70,7 +70,7 @@ export const APP_TOOLS = [
   {
     name: "app_answer",
     description:
-      "For the Blitz mini app in Ocean: records Allen's answer to a review question; Blitz scores it and returns the feedback.",
+      "For the Blitz mini app in Ocean: records the user's answer to a review question; Blitz scores it and returns the feedback.",
     inputSchema: {
       type: "object",
       properties: {
@@ -79,12 +79,14 @@ export const APP_TOOLS = [
         event: text(
           "A unique id for this answer, so a retry isn't counted twice."
         ),
-        at: { type: "number", description: "When he answered, in ms." },
+        at: { type: "number", description: "When the user answered, in ms." },
         answer: {
           description:
             "An option id, true or false, or a list of option ids, an order or blanks.",
         },
-        confidence: text('"guess" when Allen marked the answer as a guess. Optional.'),
+        confidence: text(
+          '"guess" when the user marked the answer as a guess. Optional.'
+        ),
       },
       required: ["module", "item", "event", "at", "answer"],
     },
@@ -92,7 +94,7 @@ export const APP_TOOLS = [
   {
     name: "app_reveal",
     description:
-      "For the Blitz mini app in Ocean: shows the answer to a single-choice question Allen is answering from memory. Records nothing.",
+      "For the Blitz mini app in Ocean: shows the answer to a single-choice question the user is answering from memory. Records nothing.",
     inputSchema: {
       type: "object",
       properties: {
@@ -105,15 +107,15 @@ export const APP_TOOLS = [
   {
     name: "app_recall",
     description:
-      "For the Blitz mini app in Ocean: records whether Allen knew the answer he recalled from memory, which schedules the question's next review.",
+      "For the Blitz mini app in Ocean: records whether the user knew the answer they recalled from memory, which schedules the question's next review.",
     inputSchema: {
       type: "object",
       properties: {
         module: text("The question's module id."),
         item: text("The question's id."),
         event: text("A unique id for this answer, so a retry isn't counted twice."),
-        at: { type: "number", description: "When he answered, in ms." },
-        knewIt: { type: "boolean", description: "Whether he knew it." },
+        at: { type: "number", description: "When the user answered, in ms." },
+        knewIt: { type: "boolean", description: "Whether the user knew it." },
       },
       required: ["module", "item", "event", "at", "knewIt"],
     },
@@ -121,14 +123,14 @@ export const APP_TOOLS = [
   {
     name: "app_skip",
     description:
-      "For the Blitz mini app in Ocean: records that Allen skipped a review question, without changing when it's due.",
+      "For the Blitz mini app in Ocean: records that the user skipped a review question, without changing when it's due.",
     inputSchema: {
       type: "object",
       properties: {
         module: text("The question's module id."),
         item: text("The question's id."),
         event: text("A unique id for this skip."),
-        at: { type: "number", description: "When he skipped, in ms." },
+        at: { type: "number", description: "When the user skipped, in ms." },
       },
       required: ["module", "item", "event", "at"],
     },

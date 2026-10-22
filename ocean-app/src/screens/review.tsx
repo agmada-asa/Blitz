@@ -38,8 +38,8 @@ function describe(card: FeedCard): string {
 }
 
 /**
- * The Review feed. It keeps loading pages as Allen nears the end, and never reloads on its own,
- * so his place isn't lost when Ocean announces his own answers.
+ * The Review feed. It keeps loading pages as the user nears the end, and never reloads on its own,
+ * so their place isn't lost when Ocean announces their own answers.
  *
  * @param props.module Only this module's material, or every started unit when absent.
  */
@@ -136,11 +136,11 @@ export function Review({ module }: { module?: string }) {
     return result
   }
 
-  /** Shows the answer to a question Allen is answering from memory. */
+  /** Shows the answer to a question the user is answering from memory. */
   const reveal = (card: FeedCard): Promise<RecallReveal> =>
     callTool<RecallReveal>("app_reveal", { module: card.projectId, item: card.id })
 
-  /** Records whether Allen knew a recalled answer, and counts it. */
+  /** Records whether the user knew a recalled answer, and counts it. */
   const recall = async (card: FeedCard, knewIt: boolean): Promise<void> => {
     await callTool("app_recall", {
       module: card.projectId,
@@ -182,7 +182,7 @@ export function Review({ module }: { module?: string }) {
     })
   }
 
-  /** Loads more when Allen scrolls by hand towards the end. */
+  /** Loads more when the user scrolls by hand towards the end. */
   const scrolled = (event: React.UIEvent<HTMLDivElement>) => {
     const element = event.currentTarget
     const index = Math.round(

@@ -37,7 +37,7 @@ const OCEAN = process.env.BLITZ_OCEAN === "1"
 
 /** Read by the agent when it connects: what Blitz is and how its tools fit together. */
 const INSTRUCTIONS =
-  "Blitz is Allen's study app on his Mac. It teaches his course material back in live Teach sessions, drills it and runs mock exams. " +
+  "Blitz is the user's study app on their Mac. It teaches their course material back in live Teach sessions, drills it and runs mock exams. " +
   "A module is a course (e.g. a university module); a unit is a week or a lecture within it. " +
   "To put new material in Blitz: list_modules, read_module to see the existing units, then add_material with an existing unit's title or a new one. " +
   "Downloads that need a sign-in (Canvas, Blackboard) must be saved to a local file first and added as files. " +

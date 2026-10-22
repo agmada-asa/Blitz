@@ -1,7 +1,7 @@
 /**
  * @file ocean-app/src/bridge.ts
  * @description The mini app's only connection to anything: JSON-RPC 2.0 messages to Ocean, the
- * shell it runs in on Allen's phone (an Android WebView) or Mac (a sandboxed iframe).
+ * shell it runs in on the user's phone (an Android WebView) or Mac (a sandboxed iframe).
  * Method names follow MCP Apps (`ui/initialize`, `tools/call`, `ui/message`,
  * `ui/update-model-context`, `ui/open-link`); `ocean/activity` and the `ocean/changed`
  * notification are Ocean's own. Every tool call goes through Ocean to Blitz's MCP server
@@ -18,7 +18,7 @@ export interface HostContext {
   route: string
 }
 
-/** One change made through Ocean, by Allen or an agent. */
+/** One change made through Ocean, by the user or an agent. */
 export interface ActivityItem {
   /** ISO time of the change. */
   at: string
@@ -235,7 +235,7 @@ export async function callTool<T>(name: string, args: object = {}): Promise<T> {
 }
 
 /**
- * Tells Ocean what Allen is looking at, so a question asked next starts with it.
+ * Tells Ocean what the user is looking at, so a question asked next starts with it.
  *
  * @param text A short description with the ids an agent needs.
  */
@@ -249,7 +249,7 @@ export function setContext(text: string): void {
  * Starts an Ocean chat with a request, prefixed with the current context. The answer arrives
  * in Ocean like any other chat; changes the agent makes show up here as they happen.
  *
- * @param text Allen's request.
+ * @param text The user's request.
  */
 export async function askOcean(text: string): Promise<void> {
   await request("ui/message", {
