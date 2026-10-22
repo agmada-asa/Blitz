@@ -109,3 +109,12 @@ test("tolerates incomplete formulas without throwing", () => {
   ])
     assert.equal(typeof spokenMath(source), "string")
 })
+
+test("read aloud preserves normal words while expanding checked abbreviations", () => {
+  assert.equal(
+    spokenMarkdownText(
+      "## Registers and binary\n\nThe processor uses an **interface** for AI and ML."
+    ),
+    "Registers and binary.\nThe processor uses an interface for eigh eye and em ell."
+  )
+})
