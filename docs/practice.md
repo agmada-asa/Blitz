@@ -100,7 +100,7 @@ self-graded answer. **Show options** turns the card back into a normal
 question. Every question, here and in Teach and drills, has an **I'm
 guessing** toggle; a right guess schedules sooner (see
 `docs/learning-core.md`) and the Teach pre-check treats it as not known. The
-Ocean mini app's Review uses the same card through `app_answer`, `app_reveal`,
+plug-in mini app's Review uses the same card through `app_answer`, `app_reveal`,
 and `app_recall`.
 
 ## XP, goals, and streaks

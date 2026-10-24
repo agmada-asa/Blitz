@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 /**
- * Serves Blitz to agents outside the app (Ocean's Codex, Claude and Gemini
+ * Serves Blitz to agents outside the app (Codex, Claude and Gemini
  * agents) over MCP stdio: what's due today, the Library, a module's units,
  * creating modules and adding material to a unit. It needs Blitz running on
  * this Mac and holds no state of its own. Standard output carries newline-
  * delimited JSON-RPC messages only.
  *
- * When Ocean runs it as a plug-in (`BLITZ_OCEAN=1`, set in ocean.plugin.json)
- * it also serves Ocean's Today widget and the mini app's tools (`ocean.mjs`).
+ * When a host runs it as a plug-in (`BLITZ_OCEAN=1`, set by its plug-in manifest)
+ * it also serves that host's widget and the mini app's tools.
  *
  *   node mcp/server.mjs
  */
@@ -22,18 +22,15 @@ import {
   readModule,
   today,
 } from "./blitz.mjs"
-import {
-  APP_TOOL_NAMES,
-  APP_TOOLS,
-  callAppTool,
-  readResource,
-  RESOURCE_DEFINITIONS,
-} from "./ocean.mjs"
 
 const PROTOCOL = "2025-06-18"
 
 /** Whether Ocean started the server as its plug-in, so its widget and mini app tools are on offer. */
 const OCEAN = process.env.BLITZ_OCEAN === "1"
+
+/** The plug-in's tools and widget. The module is local-only, so a fresh clone serves without them. */
+const { APP_TOOL_NAMES = new Set(), APP_TOOLS = [], callAppTool, readResource, RESOURCE_DEFINITIONS = [] } =
+  process.env.BLITZ_OCEAN === "1" ? await import("./host-plugin.mjs").catch(() => ({})) : {}
 
 /** Read by the agent when it connects: what Blitz is and how its tools fit together. */
 const INSTRUCTIONS =
@@ -173,7 +170,7 @@ async function handle(message) {
       })
     case "resources/read":
       try {
-        return write({ id, result: await readResource(params?.uri) })
+        return write({ id, result: await readResource?.(params?.uri) })
       } catch (error) {
         return write({
           id,
