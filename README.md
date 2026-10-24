@@ -43,7 +43,7 @@ Use `Find sources` within a project to ask Blitz for a proposed learning scope a
 
 ## Run locally in detail
 
-Use Node.js 22.13 or newer, with at least one supported local provider installed and signed in. Codex is the default provider. Claude Code 2.1.248 or newer can run replies and card generation with tools disabled. OpenCode v1.18.21 or newer within v1 supports native tool permissions. Development has been verified with Node.js 24 on macOS.
+Use Node.js 22.13 or newer, with at least one supported local provider installed and signed in. Codex is the default provider and needs Codex CLI 0.164.0 or newer within v0. Claude Code 2.1.248 or newer can run replies and card generation with tools disabled. OpenCode v1.18.21 or newer within v1 supports native tool permissions. Development has been verified with Node.js 24 on macOS.
 
 ```bash
 npm ci

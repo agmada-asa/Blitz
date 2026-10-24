@@ -1,6 +1,6 @@
 # Codex and Claude Code through agent-engines
 
-Blitz runs Codex and Claude Code through [agent-engines](https://www.npmjs.com/package/agent-engines), a shared library that puts `codex app-server` and the Claude Agent SDK behind one thread, turn, and event API. The library owns the runtime mechanics: starting and resuming threads, streaming, approvals and questions, interrupts, process lifetime, the pinned Codex protocol, and version gates. Blitz owns the policy around them. OpenCode stays on Blitz's own ACP adapter (`lib/server/providers/acp.ts`) until the library has an ACP engine.
+Blitz runs Codex and Claude Code through [agent-engines](https://www.npmjs.com/package/agent-engines), a shared library that puts `codex app-server` and the Claude Agent SDK behind one thread, turn, and event API. The library owns the runtime mechanics: starting and resuming threads, streaming, approvals and questions, interrupts, process lifetime, the pinned Codex protocol, and version gates. Blitz owns the policy around them. OpenCode stays on Blitz's own ACP adapter (`lib/server/providers/acp.ts`); the library's ACP engine is not used yet.
 
 ## Where things live
 
@@ -23,14 +23,18 @@ Both engines run on the sign-in already on the Mac. Blitz allows an API key as w
 
 ## Access
 
+Blitz never sets the library's neutral `access` level or `mode` on Codex threads, and on Claude Code threads uses only `full`, `ask`, and `read-only`; the `auto` and `accept-edits` levels and plan mode are unused, so every approval still reaches the learner.
+
 Codex threads get an explicit approval policy and sandbox on start and resume. Workspace-write threads also set `sandbox_workspace_write` so writes stay in the workspace, with no network and no shared temporary directories. The chat agent sends `approvalsReviewer: "user"` so approvals always reach the learner.
 
-Claude Code background turns load no settings, skills, plugins, hooks, MCP servers, or tools. Chat turns load the learner's user-level Claude Code setup with hooks off, and map access onto permission modes: full access bypasses prompts, approval mode routes them to Blitz, and read-only or no-approval modes refuse anything that would need one. Claude approvals are always once only; Blitz never writes a permission rule to Claude's settings.
+Claude Code background turns load no settings, skills, plugins, hooks, MCP servers, or tools. Chat turns load the learner's user-level Claude Code setup with hooks off (and the SDK's hook lifecycle events off, which the library otherwise turns on), and map access onto permission modes: full access bypasses prompts, approval mode routes them to Blitz, and read-only or no-approval modes refuse anything that would need one. Claude approvals are always once only; Blitz never writes a permission rule to Claude's settings.
 
 ## Replies
+
+Only text, reasoning, tool, file, request, and lifecycle events shape a turn. Every other event the library sends (hooks, notices, goals, MCP status, realtime, prompt suggestions, and any added in a later minor release) is ignored, and a failed turn whose error kind Blitz does not map, such as `limit`, gets the generic failure copy.
 
 A Codex reply is its answer messages; progress notes between tool calls and reasoning become the thought trace. A Claude Code reply is everything it streamed in the turn. Subagent text stays out of both, though subagent tool steps still show.
 
 ## Checks
 
-The library's own weekly check watches the latest Codex and Claude Code. `npm run check:runtimes` covers the rest: OpenCode's version, and the live Codex catalogue against `CODEX_MODEL_OPTIONS`. Tests use an in-memory engine (`tests/fixtures/fake-engine.ts`) and never start a model turn.
+The library refuses a runtime below its floor when a thread starts: Codex CLI 0.164.0 (within v0) and Claude Code 2.1.248 as of agent-engines 0.4.0. Its own weekly check watches the latest Codex and Claude Code. `npm run check:runtimes` covers the rest: OpenCode's version, and the live Codex catalogue against `CODEX_MODEL_OPTIONS`. Tests use an in-memory engine (`tests/fixtures/fake-engine.ts`) and never start a model turn. It models only the methods Blitz calls; the rest of the engine and thread surface throws `UnsupportedFeatureError`.
