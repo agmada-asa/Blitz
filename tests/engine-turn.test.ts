@@ -140,6 +140,8 @@ test("maps usage limits, capacity, rate limits, and unknown failures to recovery
     [{ kind: "model", message: "Rerouted" }, "invalid-input"],
     [{ kind: "connection", message: "Codex exited" }, "transport"],
     [{ kind: "other", message: "Something odd" }, "turn-failed"],
+    // Blitz sets no turn limits, so a limit stop is an ordinary failed turn.
+    [{ kind: "limit", message: "Turn limit reached" }, "turn-failed"],
   ] as const) {
     const engine = new FakeEngine("codex", (turn) =>
       turn.finish({ status: "failed", error: { ...error } })
@@ -155,6 +157,35 @@ test("maps usage limits, capacity, rate limits, and unknown failures to recovery
       )
       return true
     })
+  }
+})
+
+test("hook, notice, goal, MCP status and realtime events add nothing to the turn", async () => {
+  for (const provider of ["codex", "claude"] as const) {
+    const engine = new FakeEngine(provider, (turn) => {
+      turn.push({ type: "turn.started" })
+      turn.push({ type: "hook.started", hookId: "h1", event: "PreToolUse" })
+      turn.push({
+        type: "hook.completed",
+        hookId: "h1",
+        event: "PreToolUse",
+        status: "completed",
+      })
+      turn.push({ type: "notice", kind: "warning", message: "Heads up" })
+      turn.push({ type: "goal.updated", goal: null })
+      turn.push({ type: "mcp.status", server: "notes", status: "ready" })
+      turn.push({ type: "realtime.transcript.delta", role: "user", delta: "x" })
+      turn.push({ type: "prompt.suggestion", suggestion: "Next?" })
+      turn.push({ type: "text.delta", itemId: "m1", delta: "Answer." })
+      turn.push({ type: "text.done", itemId: "m1", text: "Answer." })
+      turn.finish({ status: "completed", text: "Answer." })
+    })
+    const { events, result } = await run(engine)
+    assert.equal((await result).text, "Answer.")
+    assert.deepEqual(
+      events.map((event) => event.type),
+      ["turn-started", "text-delta", "completed"]
+    )
   }
 })
 
@@ -473,6 +504,7 @@ test("Claude background generation runs isolated, with no tools or user setup", 
   assert.equal(options.claude?.permissionMode, "dontAsk")
   assert.deepEqual(options.claude?.extra, {
     settings: { disableAllHooks: true },
+    includeHookEvents: false,
     extraArgs: { "safe-mode": null, restricted: null },
     persistSession: false,
   })
@@ -496,6 +528,7 @@ test("Claude chat turns map access policies onto permission modes", async () => 
     assert.deepEqual(options.claude?.settingSources, ["user"])
     assert.deepEqual(options.claude?.extra, {
       settings: { disableAllHooks: true },
+      includeHookEvents: false,
     })
   }
 })

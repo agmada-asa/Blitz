@@ -75,6 +75,16 @@ const WORKSPACE_WRITE_CONFIG = {
  */
 const BLITZ_CLAUDE_SETTINGS = { disableAllHooks: true } as const
 
+/**
+ * Claude Agent SDK options Blitz applies to every turn. Hooks are off, and so
+ * are the SDK's hook lifecycle events, which agent-engines turns on by default
+ * from 0.4.0: Blitz shows no hook activity, so the stream stays as it was.
+ */
+const BLITZ_CLAUDE_SDK_OPTIONS = {
+  settings: BLITZ_CLAUDE_SETTINGS,
+  includeHookEvents: false,
+} as const
+
 /** Provider-aware text request accepted by chat and generation callers. */
 export interface RunProviderTextTurnRequest {
   /** Provider integration selected for this turn. */
@@ -265,7 +275,7 @@ export function claudeThreadSettings(
         disallowedTools: ["*"],
         permissionMode: "dontAsk",
         extra: {
-          settings: BLITZ_CLAUDE_SETTINGS,
+          ...BLITZ_CLAUDE_SDK_OPTIONS,
           extraArgs: { "safe-mode": null, restricted: null },
           ...persist,
         },
@@ -273,7 +283,7 @@ export function claudeThreadSettings(
     }
   const claude: ClaudeThreadOptions = {
     settingSources: ["user"],
-    extra: { settings: BLITZ_CLAUDE_SETTINGS, ...persist },
+    extra: { ...BLITZ_CLAUDE_SDK_OPTIONS, ...persist },
   }
   if (request.approvalPolicy === "full-access")
     return { access: "full", claude }
