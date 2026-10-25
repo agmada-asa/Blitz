@@ -13,7 +13,19 @@
  */
 
 import { isChoiceQuiz, parseInteractiveBlock, type QuizOption } from "./interactive-blocks.ts"
-import { extractJsonObject } from "./practice.ts"
+import {
+  anyOf,
+  arrayOf,
+  BOOLEAN,
+  INTEGER,
+  nullable,
+  NUMBER,
+  oneOfStrings,
+  STRING,
+  strictObject,
+  type JsonSchema,
+} from "./json-schema.ts"
+import { replyObject, type ModelReply } from "./practice.ts"
 import { budgetSources } from "./teach.ts"
 import {
   clampMarks,
@@ -341,6 +353,51 @@ export function buildMockExamPrompt(input: MockExamPromptInput): string {
     .join("\n\n")
 }
 
+/**
+ * Schema of one QUESTION in a paper reply, matching `questionShapes`: every
+ * field is present, and those a question type does not use are null.
+ * @param withAnswerSource Whether past paper `answerSource` is part of the shape.
+ */
+function examQuestionSchema(withAnswerSource: boolean): JsonSchema {
+  return strictObject({
+    number: STRING,
+    marks: NUMBER,
+    type: oneOfStrings(["single-choice", "multiple-answer", "true-false", "written"]),
+    prompt: STRING,
+    options: nullable(arrayOf(STRING)),
+    answer: anyOf(INTEGER, BOOLEAN, arrayOf(INTEGER), { type: "null" }),
+    explanation: nullable(STRING),
+    modelAnswer: nullable(STRING),
+    markScheme: nullable(arrayOf(strictObject({ point: STRING, marks: NUMBER }))),
+    ...(withAnswerSource
+      ? { answerSource: nullable(oneOfStrings(["solutions", "inferred"])) }
+      : {}),
+    concept: STRING,
+    unit: nullable(STRING),
+  })
+}
+
+/**
+ * Reply shape a paper turn asks Codex and Claude Code for: the past paper
+ * reply in `buildPastPaperPrompt`, or the mock reply in `buildMockExamPrompt`.
+ * @param kind Which prompt the turn sends.
+ */
+export function examPaperSchema(kind: "past" | "mock"): JsonSchema {
+  return kind === "past"
+    ? strictObject({
+        title: STRING,
+        durationMinutes: nullable(INTEGER),
+        totalMarks: nullable(NUMBER),
+        questions: arrayOf(examQuestionSchema(true)),
+      })
+    : strictObject({ title: STRING, questions: arrayOf(examQuestionSchema(false)) })
+}
+
+/** Reply shape a marking turn asks for, matching `buildExamGradingPrompt`. */
+export const EXAM_GRADING_SCHEMA: JsonSchema = strictObject({
+  grades: arrayOf(strictObject({ id: STRING, marks: NUMBER, feedback: STRING })),
+})
+
 /** Options that decide how a paper reply is validated. */
 export type ExamPaperParseOptions = {
   kind: "past" | "mock"
@@ -500,8 +557,8 @@ function parseExamQuestion(
  *
  * @throws When the reply holds no parsable JSON object with a `questions` array.
  */
-export function parseExamPaper(text: string, options: ExamPaperParseOptions): ParsedExamPaper {
-  const value = extractJsonObject(text) as Record<string, unknown> | null
+export function parseExamPaper(reply: ModelReply, options: ExamPaperParseOptions): ParsedExamPaper {
+  const value = replyObject(reply) as Record<string, unknown> | null
   if (!value || typeof value !== "object" || !Array.isArray(value.questions))
     throw new Error("The reply had no questions list")
   const questions: ExamQuestion[] = []
@@ -606,10 +663,10 @@ export type ParsedExamGrading = {
  * @throws When the reply holds no parsable JSON object with a `grades` array.
  */
 export function parseExamGrading(
-  text: string,
+  reply: ModelReply,
   expected: Array<{ id: string; marks: number }>
 ): ParsedExamGrading {
-  const value = extractJsonObject(text) as Record<string, unknown> | null
+  const value = replyObject(reply) as Record<string, unknown> | null
   if (!value || typeof value !== "object" || !Array.isArray(value.grades))
     throw new Error("The reply had no grades list")
   const maxById = new Map(expected.map((item) => [item.id, item.marks]))

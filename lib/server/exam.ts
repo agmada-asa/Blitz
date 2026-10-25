@@ -20,10 +20,14 @@ import {
   buildExamGradingPrompt,
   buildMockExamPrompt,
   buildPastPaperPrompt,
+  EXAM_GRADING_SCHEMA,
+  examPaperSchema,
   parseExamGrading,
   parseExamPaper,
   type ExamQuestion,
 } from "../exam.ts"
+import type { JsonSchema } from "../json-schema.ts"
+import type { ModelReply } from "../practice.ts"
 import { loadSavedAiModelSettings } from "./ai-model-settings.ts"
 import { serverConvexClient } from "./convex.ts"
 import { runProviderTextTurn } from "./providers/run-text-turn.ts"
@@ -44,10 +48,13 @@ class ExamRunError extends Error {}
 
 /**
  * Sends one prompt to the provider chosen for question writing and returns
- * the reply text. The provider works in an empty temporary directory with a
+ * the reply. The provider works in an empty temporary directory with a
  * read-only sandbox and no web search, so it only sees the prompt.
+ * @param prompt Paper, mock, or marking prompt.
+ * @param outputSchema Reply shape Codex and Claude Code must follow.
+ * @returns The reply text, with the provider's parsed object when it has one.
  */
-async function runExamTurn(prompt: string): Promise<string> {
+async function runExamTurn(prompt: string, outputSchema: JsonSchema): Promise<ModelReply> {
   const client = serverConvexClient()
   const directory = await mkdtemp(join(tmpdir(), "blitz-exam-"))
   try {
@@ -68,8 +75,9 @@ async function runExamTurn(prompt: string): Promise<string> {
       sandbox: "read-only",
       approvalPolicy: "never",
       timeoutMs: TURN_TIMEOUT_MS,
+      outputSchema,
     })
-    return result.text
+    return result
   } finally {
     await rm(directory, { recursive: true, force: true })
   }
@@ -127,7 +135,7 @@ export async function runPaperPreparation(
     kind = context.kind
     const unitIds = new Map(context.units.map((unit) => [unit.key, unit.unitId]))
     const units = context.units.map(({ key, title, concepts }) => ({ key, title, concepts }))
-    let reply: string
+    let reply: ModelReply
     let hasSolutions = false
     if (context.kind === "past") {
       if (!context.paper?.text.trim())
@@ -142,7 +150,8 @@ export async function runPaperPreparation(
           paper: context.paper,
           ...(solutions ? { solutions } : {}),
           units,
-        })
+        }),
+        examPaperSchema("past")
       )
     } else {
       if (!context.sources.length)
@@ -160,7 +169,8 @@ export async function runPaperPreparation(
           sources: context.sources,
           weakConcepts: context.weakConcepts,
           examples: context.examples,
-        })
+        }),
+        examPaperSchema("mock")
       )
     }
     const parsed = parseExamPaper(reply, {
@@ -224,7 +234,8 @@ export async function runExamGrading(
           moduleTitle: context.moduleTitle,
           paperTitle: context.paperTitle,
           items: context.items,
-        })
+        }),
+        EXAM_GRADING_SCHEMA
       )
       const parsed = parseExamGrading(reply, context.items)
       if (parsed.missing.length)

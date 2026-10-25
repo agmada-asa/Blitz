@@ -14,7 +14,12 @@ import { api } from "../../convex/_generated/api.js"
 import type { Id } from "../../convex/_generated/dataModel.js"
 import { resolveAiTaskSelection } from "../ai-model-settings.ts"
 import { quizPayload } from "../interactive-blocks.ts"
-import { buildQuestionBankPrompt, DEFAULT_BANK_BATCH, parseQuestionBank } from "../practice.ts"
+import {
+  buildQuestionBankPrompt,
+  DEFAULT_BANK_BATCH,
+  parseQuestionBank,
+  QUESTION_BANK_SCHEMA,
+} from "../practice.ts"
 import { loadSavedAiModelSettings } from "./ai-model-settings.ts"
 import { serverConvexClient } from "./convex.ts"
 import { runProviderTextTurn } from "./providers/run-text-turn.ts"
@@ -69,8 +74,9 @@ export async function runQuestionBank(
       sandbox: "read-only",
       approvalPolicy: "never",
       timeoutMs: GENERATION_TIMEOUT_MS,
+      outputSchema: QUESTION_BANK_SCHEMA,
     })
-    const { questions, recaps, rejected } = parseQuestionBank(result.text)
+    const { questions, recaps, rejected } = parseQuestionBank(result)
     if (!questions.length) throw new Error("No valid questions in JSON")
     await client.mutation(api.practice.saveGeneratedQuestions, {
       generationId,
