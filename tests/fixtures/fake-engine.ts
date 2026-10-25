@@ -3,16 +3,19 @@
  * and turn options Blitz sends and lets a test script each turn's events. No
  * runtime process, model turn, or network connection is used.
  *
- * Only the methods Blitz calls are modelled. The rest of the engine and thread
- * surface (fork, rewind, history, goals, MCP controls, sign-in and so on)
- * throws `UnsupportedFeatureError`, as a runtime without that feature would,
+ * Only the methods Blitz calls are modelled: start, resume, fork, prewarm,
+ * compact, rewind, and context usage. The rest of the engine and thread
+ * surface (history, goals, MCP controls, sign-in and so on) throws
+ * `UnsupportedFeatureError`, as a runtime without that feature would,
  * so a test fails loudly if Blitz starts relying on one without a fake for it.
  */
 
 import {
   UnsupportedFeatureError,
   type AgentEvent,
+  type ContextUsage,
   type Engine,
+  type ForkOptions,
   type Thread,
   type ThreadOptions,
   type Turn,
@@ -50,6 +53,8 @@ type RefusedThreadMethods = Omit<
   | "lastTurn"
   | "interruptTurn"
   | "mcpStatus"
+  | "rewind"
+  | "contextUsage"
   | "close"
 >
 
@@ -61,10 +66,8 @@ type RefusedThreadMethods = Omit<
 function refusedThreadMethods(provider: string): RefusedThreadMethods {
   const no = (feature: string) => refuse(feature, provider)
   return {
-    rewind: no("rewind a thread"),
     history: no("read thread history"),
     rename: no("rename a thread"),
-    contextUsage: no("report context usage"),
     setGoal: no("set a goal"),
     goal: no("read a goal"),
     clearGoal: no("clear a goal"),
@@ -181,6 +184,26 @@ export class FakeEngine implements Engine {
   threadCloses = 0
   /** Error thrown by `startThread` and `resumeThread`, when set. */
   startError?: unknown
+  /** Source thread and options of each forked thread. */
+  readonly forks: Array<{ id: string; options: ForkOptions }> = []
+  /** Error thrown by `forkThread`, when set. */
+  forkError?: unknown
+  /** Thread options passed to each `prewarm` call. */
+  readonly prewarms: Array<ThreadOptions | undefined> = []
+  /** Thread ID of each `compact` call. */
+  readonly compactions: string[] = []
+  /** How each compaction turn ends; `completed` with a `compacted` event by default. */
+  compactScript: (turn: FakeTurn) => void = (turn) => {
+    turn.push({ type: "turn.started" })
+    turn.push({ type: "compacted", beforeTokens: 900, afterTokens: 100 })
+    turn.finish({ status: "completed" })
+  }
+  /** Turn ID passed to each `rewind` call. */
+  readonly rewinds: string[] = []
+  /** Error thrown by `rewind`, when set. */
+  rewindError?: unknown
+  /** Context usage reported by every thread; unset refuses, as a runtime without it would. */
+  contextReport?: ContextUsage
 
   private readonly script: (turn: FakeTurn) => void
 
@@ -213,9 +236,10 @@ export class FakeEngine implements Engine {
     return this.refuse("report capabilities")
   }
 
-  /** Not modelled; Blitz does not fork threads. */
-  forkThread(): never {
-    return this.refuse("fork a thread")
+  async forkThread(id: string, options: ForkOptions): Promise<Thread> {
+    if (this.forkError) throw this.forkError
+    this.forks.push({ id, options })
+    return this.thread("thr_fork")
   }
 
   /** Not modelled; Blitz does not list saved threads. */
@@ -253,9 +277,8 @@ export class FakeEngine implements Engine {
     return this.refuse("sign out")
   }
 
-  /** Not modelled; Blitz does not prewarm engines. */
-  prewarm(): never {
-    return this.refuse("prewarm")
+  async prewarm(options?: ThreadOptions): Promise<void> {
+    this.prewarms.push(options)
   }
 
   /** Not modelled; Blitz does not search runtime files. */
@@ -328,8 +351,20 @@ export class FakeEngine implements Engine {
         setTimeout(() => this.script(turn), 0)
         return turn
       },
-      compact: () => {
-        throw new Error("not used")
+      compact: (): Turn => {
+        this.compactions.push(id)
+        const turn = new FakeTurn(id, `compact_${this.compactions.length}`)
+        setTimeout(() => this.compactScript(turn), 0)
+        return turn
+      },
+      rewind: async (turnId: string) => {
+        if (this.rewindError) throw this.rewindError
+        this.rewinds.push(turnId)
+        return { droppedTurns: 1 }
+      },
+      contextUsage: async () => {
+        if (!this.contextReport) return this.refuse("report context usage")
+        return this.contextReport
       },
       activeTurn: undefined,
       subscribe: () => () => undefined,

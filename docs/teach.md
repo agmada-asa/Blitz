@@ -108,6 +108,42 @@ The tutor's rules live in `TEACH_RULES` in `lib/teach.ts`:
   `INTERACTIVE_BLOCKS_PROMPT` in `lib/interactive-blocks.ts`. Malformed blocks
   fall back to visible code; outline and section markers are hidden everywhere.
 
+## Redoing a section
+
+When a section's explanation misses, **Try that again** in the dock redoes the
+latest section reply in place: more simply, from a worked example, or shorter
+(`TEACH_REDO_STYLES` in `lib/teach.ts`). The route rewinds the runtime thread
+to before that reply's turn, sends the original request again with the chosen
+steer, and deletes the replaced request and reply once the rewind succeeds
+(`workspaceChats.dropReplacedMessages`); the new reply is marked with how it
+was redone. Quiz answers given in the replaced reply stay in the learner's
+study history. It is offered on Codex and Claude Code only, and never on the
+opening reply, which Claude Code cannot rewind past. If a rewind fails, the
+new reply is added after the old one instead.
+
+## Long sessions
+
+After each turn the route saves the runtime's context usage on the chat
+(`contextUsage`). The header shows it as a meter; its sheet breaks it down
+where the runtime does (Claude Code; Codex reports only the total) and offers
+**Compact now** (`POST /api/teach/compact`).
+
+Once the context passes 80% (`AUTO_COMPACT_PERCENT` in `lib/context-usage.ts`),
+the next turn compacts the thread before it runs, without asking. A compacted
+thread may lose detail of early sections, so the turn after any compaction,
+automatic, requested, or the runtime's own, restates the rules, the unit
+material, the outline, the plan, and the position, but not the dialogue, which
+the runtime's summary covers. A turn that restated is never followed straight
+away by another automatic compaction, so a small context window cannot loop.
+
+A reply that still runs out of room mid-way is finished after compacting: the
+end of what it wrote is quoted back and the tutor carries on from there, with
+"The session ran out of room. Blitz compacted it and is finishing this reply."
+shown meanwhile. Each compaction appears in the lesson as a divider such as
+"Session compacted at 84% · sections 1 to 5 summarised · outline and plan
+kept". If compacting cannot free enough room, the failure says so instead of a
+generic error. OpenCode sessions show no meter and never compact.
+
 ## Measuring speed
 
 ```bash
@@ -120,6 +156,11 @@ first words and to the finished first section. On 10 October 2026, an algorithms
 module's week 1 (three transcripts, three slide PDFs) was ready in 1.8 seconds; the
 first teaching text appeared about 13 seconds after opening the unit, and the
 first section finished within a minute with the configured reply provider.
+
+Opening a new session now prewarms the reply provider (see
+`docs/agent-engines.md`), so part of that wait overlaps with loading the unit.
+The effect has not been measured yet; compare runs with and without
+`--prewarm`, which sends the same prewarm request alongside the turn.
 
 ## Known limits
 

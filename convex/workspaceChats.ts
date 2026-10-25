@@ -4,6 +4,14 @@ import { mutation, query, type MutationCtx } from "./_generated/server"
 import type { Doc, Id } from "./_generated/dataModel"
 import { v } from "convex/values"
 import { AI_PROVIDER_IDS } from "../lib/ai-model-settings"
+import { shouldCompactBeforeTurn } from "../lib/context-usage"
+import { providerThreadFeatures } from "../lib/provider-thread-features"
+import { addTurnNotice } from "../lib/turn-notices"
+import {
+  contextUsageFields,
+  teachRedoStyleField,
+  turnNoticeFields,
+} from "./teachFields"
 
 /** Maximum idle time before a stranded running turn can be replaced. */
 const STALE_TURN_MS = 2 * 60 * 1_000
@@ -21,6 +29,10 @@ const MAX_REPLAY_ATTACHMENT_CHARACTERS = 96_000
 const MAX_BRANCH_MESSAGES = 200
 /** Maximum attachments copied into a user-created chat branch. */
 const MAX_BRANCH_ATTACHMENTS = 100
+/** Compactions kept on one chat; older records are dropped. */
+const MAX_CONTEXT_COMPACTIONS = 20
+/** How long a Compact now request holds the chat before a new turn may start anyway. */
+const COMPACTION_LEASE_MS = 5 * 60 * 1_000
 
 /** Validates a requested provider without trusting the client to name arbitrary commands. */
 function providerSelection(value: string | undefined): string | undefined {
@@ -403,6 +415,7 @@ export const get = query({
     return {
       id: chat._id,
       projectId: chat.projectId,
+      purpose: chat.purpose ?? null,
       title: chat.title,
       providerId: chat.providerId ?? "codex",
       providerInstanceId: chat.providerInstanceId ?? null,
@@ -416,6 +429,9 @@ export const get = query({
       lastError: chat.lastError ?? null,
       lastErrorReason: chat.lastErrorReason ?? null,
       lastErrorDetail: chat.lastErrorDetail ?? null,
+      contextUsage: chat.contextUsage ?? null,
+      contextCompactions: chat.contextCompactions ?? [],
+      compactingSince: chat.compactingSince ?? null,
       messages: messages.map((message) => ({
         id: message._id,
         clientMessageId: message.clientMessageId ?? null,
@@ -430,6 +446,8 @@ export const get = query({
         citations: message.citations ?? [],
         annotations: message.annotations ?? [],
         steeringNotes: message.steeringNotes ?? [],
+        notices: message.notices ?? [],
+        redoStyle: message.redoStyle ?? null,
         createdAt: message.createdAt,
       })),
       attachments: attachments.map((attachment) => ({
@@ -495,6 +513,38 @@ async function recoverStaleTurn(
   })
 }
 
+/**
+ * Decides whether a Teach turn compacts first and whether it restates the
+ * unit material, outline, and plan. Ordinary chats leave both to the runtime.
+ *
+ * @param chat - The chat about to run a turn.
+ * @param provider - The chat's provider.
+ * @param priorMessages - The chat's messages, newest first.
+ */
+function teachContextPlan(
+  chat: Doc<"workspaceChats"> | null,
+  provider: string,
+  priorMessages: Doc<"workspaceChatMessages">[]
+): { compactFirst: boolean; restate: boolean } {
+  if (chat?.purpose !== "teach") return { compactFirst: false, restate: false }
+  const lastReply = priorMessages.find((message) => message.role === "assistant")
+  const hasSession =
+    Boolean(chat.providerSessionId ?? chat.codexThreadId) &&
+    chat.codexContextReady === true
+  const compactFirst =
+    hasSession &&
+    shouldCompactBeforeTurn(chat.contextUsage, {
+      canCompact: providerThreadFeatures(provider).compact,
+      restatedLastTurn: Boolean(
+        lastReply && chat.contextRestatedMessageId === lastReply._id
+      ),
+    })
+  return {
+    compactFirst,
+    restate: compactFirst || chat.contextRestatePending === true,
+  }
+}
+
 /** Creates or resumes a chat and persists the user's message before Codex starts. */
 export const startTurn = mutation({
   args: {
@@ -510,6 +560,13 @@ export const startTurn = mutation({
     message: v.string(),
     attachments: v.array(attachmentInput),
     annotations: v.optional(v.array(annotationInput)),
+    /**
+     * The latest Teach reply to redo in place. The new turn rewinds the
+     * runtime thread before the reply's turn and resends its request with
+     * `redoStyle`'s steer; the message is taken from the replaced request.
+     */
+    redoOf: v.optional(v.id("workspaceChatMessages")),
+    redoStyle: v.optional(teachRedoStyleField),
   },
   handler: async (ctx, args) => {
     const clientMessageId = boundedText(
@@ -519,9 +576,13 @@ export const startTurn = mutation({
     )
     const rawMessage = args.message.trim()
     const hasAnnotations = (args.annotations?.length ?? 0) > 0
-    if (!rawMessage && !hasAnnotations && !args.continuationOf) {
+    if (!rawMessage && !hasAnnotations && !args.continuationOf && !args.redoOf) {
       throw new Error("Message is required")
     }
+    if (args.redoOf && (args.continuationOf || args.attachments.length || hasAnnotations))
+      throw new Error("A redone reply cannot add context")
+    if (args.redoOf && !args.redoStyle)
+      throw new Error("Choose how to explain it again")
     if (rawMessage.length > 4_000) throw new Error("Message is too long")
     const message = rawMessage
     if (args.continuationOf && args.attachments.length)
@@ -565,6 +626,8 @@ export const startTurn = mutation({
       throw new Error("Continuing a response requires a chat")
     if (chat) await recoverStaleTurn(ctx, chat, now)
     if (chat) chat = await ctx.db.get(chat._id)
+    if (chat?.compactingSince && chat.compactingSince > now - COMPACTION_LEASE_MS)
+      throw new Error("Blitz is compacting this session. Try again in a moment.")
     const storedProvider = chat ? persistedChatProvider(chat) : undefined
     if (
       storedProvider &&
@@ -679,6 +742,13 @@ export const startTurn = mutation({
           shouldReplayContext:
             !providerSessionId ||
             chat.codexContextReady !== true,
+          workspaceFolderId: chat.workspaceFolderId ?? null,
+          fork: null,
+          context: {
+            compactFirst: false,
+            restate: chat.purpose === "teach" && chat.contextRestatePending === true,
+          },
+          redo: null,
           replyPrefix: "",
           replayContext: {
             messages: replayMessages([
@@ -737,6 +807,13 @@ export const startTurn = mutation({
         shouldReplayContext:
           !providerSessionId ||
           chat.codexContextReady !== true,
+        workspaceFolderId: chat.workspaceFolderId ?? null,
+        fork: null,
+        context: {
+          compactFirst: false,
+          restate: chat.purpose === "teach" && chat.contextRestatePending === true,
+        },
+        redo: null,
         replyPrefix: continuation.content,
         replayContext: {
           messages: replayMessages(priorMessages),
@@ -744,6 +821,43 @@ export const startTurn = mutation({
         },
       }
     }
+    // A redo replaces the latest finished reply and the request it answered.
+    let redo:
+      | {
+          beforeTurnId: string
+          replacedMessageIds: Id<"workspaceChatMessages">[]
+          originalMessage: string
+        }
+      | undefined
+    if (args.redoOf) {
+      const [latest, request] = priorMessages
+      const beforeTurnId = latest?.providerTurnId ?? latest?.codexTurnId
+      if (!chat || chat.purpose !== "teach")
+        throw new Error("Only Teach replies can be redone")
+      if (
+        !latest ||
+        latest._id !== args.redoOf ||
+        latest.role !== "assistant" ||
+        latest.status !== "completed" ||
+        !request ||
+        request.role !== "user" ||
+        request.clientMessageId !== latest.clientMessageId ||
+        !request.content.trim()
+      )
+        throw new Error("Only the latest finished reply can be redone")
+      if (
+        !beforeTurnId ||
+        !(chat.providerSessionId ?? chat.codexThreadId) ||
+        !providerThreadFeatures(selectedProvider).rewind
+      )
+        throw new Error("This reply can't be redone in place")
+      redo = {
+        beforeTurnId,
+        replacedMessageIds: [request._id, latest._id],
+        originalMessage: request.content,
+      }
+    }
+    const turnMessage = redo?.originalMessage ?? message
     let chatId: Id<"workspaceChats">
     let initialTitle: string | undefined
     if (chat) chatId = chat._id
@@ -844,7 +958,7 @@ export const startTurn = mutation({
       chatId,
       clientMessageId,
       role: "user",
-      content: message,
+      content: turnMessage,
       ...(annotations?.length ? { annotations } : {}),
       status: "completed",
       createdAt: now,
@@ -855,6 +969,7 @@ export const startTurn = mutation({
       clientMessageId,
       role: "assistant",
       content: "",
+      ...(redo && args.redoStyle ? { redoStyle: args.redoStyle } : {}),
       status: "running",
       createdAt: now + 1,
       updatedAt: now,
@@ -891,6 +1006,14 @@ export const startTurn = mutation({
         Boolean(chat) &&
         (!(chat?.providerSessionId ?? chat?.codexThreadId) ||
           chat?.codexContextReady !== true),
+      workspaceFolderId: chat?.workspaceFolderId ?? null,
+      // A branch copies its source's runtime session on its first turn.
+      fork:
+        chat?.forkSource && !(chat.providerSessionId ?? chat.codexThreadId)
+          ? chat.forkSource
+          : null,
+      context: teachContextPlan(chat, selectedProvider, priorMessages),
+      redo: redo ?? null,
       replyPrefix: "",
       replayContext: {
         messages: replayMessages(priorMessages),
@@ -950,6 +1073,27 @@ export const branch = mutation({
     if (sourceAttachments.length > MAX_BRANCH_ATTACHMENTS)
       throw new Error("This chat has too much context to branch")
 
+    // The branch copies the source's runtime session through the last kept
+    // reply when it can, instead of replaying the transcript. Claude Code keeps
+    // sessions per folder, so it forks only where the branch shares the
+    // source's folder; Codex resumes a copied thread from any folder.
+    const provider = persistedChatProvider(chat)
+    const sessionId = chat.providerSessionId ?? chat.codexThreadId
+    const cut = args.includeMessage
+      ? target
+      : selectedMessages.findLast((message) => message.role === "assistant")
+    const throughTurnId = cut?.providerTurnId ?? cut?.codexTurnId
+    const sharesFolder = !chat.workingProjectId && chat.purpose !== "teach"
+    const forkSource =
+      provider &&
+      sessionId &&
+      throughTurnId &&
+      cut?.status === "completed" &&
+      chat.codexContextReady === true &&
+      providerThreadFeatures(provider).fork &&
+      (provider === "codex" || sharesFolder)
+        ? { sessionId, throughTurnId }
+        : undefined
     const now = Date.now()
     const branchId = await ctx.db.insert("workspaceChats", {
       ...(chat.projectId ? { projectId: chat.projectId } : {}),
@@ -968,6 +1112,8 @@ export const branch = mutation({
       ...(chat.providerModel ? { providerModel: chat.providerModel } : {}),
       ...(chat.providerEffort ? { providerEffort: chat.providerEffort } : {}),
       codexContextReady: false,
+      workspaceFolderId: chat.workspaceFolderId ?? chat._id,
+      ...(forkSource ? { forkSource } : {}),
       status: "idle",
       createdAt: now,
       updatedAt: now,
@@ -1114,6 +1260,8 @@ export const bindTurn = mutation({
           }
         : {}),
       codexContextReady: true,
+      // The copied session is now this chat's own.
+      forkSource: undefined,
       updatedAt: now,
     })
   },
@@ -1326,6 +1474,204 @@ export const fail = mutation({
       lastErrorReason: reason,
       lastErrorDetail: detail,
       updatedAt: now,
+    })
+  },
+})
+
+/** Saves one refusal, denied tool, or safety check on the reply it explains. */
+export const addNotice = mutation({
+  args: {
+    chatId: v.id("workspaceChats"),
+    messageId: v.id("workspaceChatMessages"),
+    notice: turnNoticeFields,
+  },
+  handler: async (ctx, args) => {
+    const message = await ctx.db.get(args.messageId)
+    if (!message || message.chatId !== args.chatId || message.role !== "assistant")
+      return
+    const notice = {
+      kind: args.notice.kind,
+      message: args.notice.message.trim().slice(0, 300),
+      ...(args.notice.details?.trim()
+        ? { details: args.notice.details.trim().slice(0, 200) }
+        : {}),
+    }
+    const notices = addTurnNotice(message.notices ?? [], notice)
+    if (notices === message.notices) return
+    await ctx.db.patch(message._id, {
+      notices: [...notices],
+      updatedAt: Date.now(),
+    })
+  },
+})
+
+/**
+ * Deletes the request and reply a redo replaced, once the runtime has dropped
+ * their turn. Quiz answers given in the replaced reply stay in the learner's
+ * study history. Only messages before the active reply can be removed.
+ */
+export const dropReplacedMessages = mutation({
+  args: {
+    chatId: v.id("workspaceChats"),
+    activeMessageId: v.id("workspaceChatMessages"),
+    messageIds: v.array(v.id("workspaceChatMessages")),
+  },
+  handler: async (ctx, args) => {
+    if (args.messageIds.length > 2) throw new Error("A redo replaces one reply")
+    const chat = await ctx.db.get(args.chatId)
+    const active = await ctx.db.get(args.activeMessageId)
+    if (
+      !chat ||
+      chat.purpose !== "teach" ||
+      !active ||
+      chat.activeMessageId !== active._id
+    )
+      throw new Error("Chat turn is no longer active")
+    for (const messageId of args.messageIds) {
+      if (messageId === active._id) continue
+      const message = await ctx.db.get(messageId)
+      if (!message || message.chatId !== chat._id) continue
+      if (message.createdAt >= active.createdAt) continue
+      await ctx.db.delete(message._id)
+    }
+  },
+})
+
+/** Appends one compaction record, keeping the newest `MAX_CONTEXT_COMPACTIONS`. */
+function withCompaction(
+  chat: Doc<"workspaceChats">,
+  compaction: NonNullable<Doc<"workspaceChats">["contextCompactions"]>[number]
+): NonNullable<Doc<"workspaceChats">["contextCompactions"]> {
+  return [...(chat.contextCompactions ?? []), compaction].slice(
+    -MAX_CONTEXT_COMPACTIONS
+  )
+}
+
+/**
+ * Records a compaction that happened during a turn: before it on Blitz's
+ * request (`auto`), after a reply ran out of room (`overflow`), or by the
+ * runtime itself (`runtime`). The next Teach turn restates the context unless
+ * this turn does and finishes.
+ */
+export const recordCompaction = mutation({
+  args: {
+    chatId: v.id("workspaceChats"),
+    messageId: v.id("workspaceChatMessages"),
+    origin: v.union(v.literal("auto"), v.literal("overflow"), v.literal("runtime")),
+    /** Tokens in the context just before compacting, when the runtime said. */
+    beforeTokens: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const chat = await ctx.db.get(args.chatId)
+    const message = await ctx.db.get(args.messageId)
+    if (!chat || !message || message.chatId !== chat._id) return
+    // The runtime's own count is current; the saved usage is from the last
+    // turn, which only describes a compaction made before this one.
+    const maxTokens = chat.contextUsage?.maxTokens
+    const fromPercent =
+      args.beforeTokens !== undefined && maxTokens
+        ? Math.min(100, Math.round((args.beforeTokens / maxTokens) * 1000) / 10)
+        : args.origin === "auto"
+          ? chat.contextUsage?.percent
+          : undefined
+    await ctx.db.patch(chat._id, {
+      contextCompactions: withCompaction(chat, {
+        at: Date.now(),
+        origin: args.origin,
+        ...(fromPercent !== undefined ? { fromPercent } : {}),
+        messageId: message._id,
+      }),
+      contextRestatePending: true,
+    })
+  },
+})
+
+/**
+ * Saves how full the context is after a finished turn, and, when the turn
+ * restated the Teach context after a compaction, that it no longer needs to.
+ */
+export const finishTurnContext = mutation({
+  args: {
+    chatId: v.id("workspaceChats"),
+    messageId: v.id("workspaceChatMessages"),
+    usage: v.optional(contextUsageFields),
+    restated: v.boolean(),
+  },
+  handler: async (ctx, args) => {
+    const chat = await ctx.db.get(args.chatId)
+    const message = await ctx.db.get(args.messageId)
+    if (!chat || !message || message.chatId !== chat._id) return
+    await ctx.db.patch(chat._id, {
+      ...(args.usage ? { contextUsage: args.usage } : {}),
+      ...(args.restated
+        ? { contextRestatePending: false, contextRestatedMessageId: message._id }
+        : {}),
+    })
+  },
+})
+
+/**
+ * Claims an idle Teach session for Compact now, so no turn starts while the
+ * runtime summarises it. Returns what the server needs to resume the thread.
+ *
+ * @throws When the session is writing, already compacting, or has no
+ *   runtime session that can compact.
+ */
+export const beginCompaction = mutation({
+  args: { chatId: v.id("workspaceChats") },
+  handler: async (ctx, { chatId }) => {
+    const chat = await ctx.db.get(chatId)
+    if (!chat || chat.purpose !== "teach" || !chat.projectId)
+      throw new Error("Teach session not found")
+    const now = Date.now()
+    if (chat.status === "running")
+      throw new Error("Wait for the reply to finish, then compact.")
+    if (chat.compactingSince && chat.compactingSince > now - COMPACTION_LEASE_MS)
+      throw new Error("Blitz is already compacting this session.")
+    const providerId = persistedChatProvider(chat)
+    const sessionId = chat.providerSessionId ?? chat.codexThreadId
+    if (
+      !providerId ||
+      !sessionId ||
+      chat.codexContextReady !== true ||
+      !providerThreadFeatures(providerId).compact
+    )
+      throw new Error("This session can't be compacted.")
+    await ctx.db.patch(chat._id, { compactingSince: now })
+    return {
+      projectId: chat.projectId,
+      providerId,
+      providerSessionId: sessionId,
+      providerModel: chat.providerModel ?? null,
+      providerEffort: chat.providerEffort ?? null,
+    }
+  },
+})
+
+/** Ends a Compact now request, recording the compaction when it ran. */
+export const endCompaction = mutation({
+  args: {
+    chatId: v.id("workspaceChats"),
+    compacted: v.boolean(),
+    usage: v.optional(contextUsageFields),
+  },
+  handler: async (ctx, args) => {
+    const chat = await ctx.db.get(args.chatId)
+    if (!chat) return
+    const fromPercent = chat.contextUsage?.percent
+    await ctx.db.patch(chat._id, {
+      compactingSince: undefined,
+      ...(args.compacted
+        ? {
+            contextCompactions: withCompaction(chat, {
+              at: Date.now(),
+              origin: "manual",
+              ...(fromPercent !== undefined ? { fromPercent } : {}),
+            }),
+            contextRestatePending: true,
+            ...(args.usage ? { contextUsage: args.usage } : {}),
+          }
+        : {}),
     })
   },
 })
