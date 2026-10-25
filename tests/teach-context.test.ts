@@ -37,6 +37,11 @@ import {
   teachRedoMessage,
 } from "../lib/teach.ts"
 import {
+  AFTER_LAST_MESSAGE,
+  placeTeachCompactions,
+  teachCompactionText,
+} from "../lib/teach-compactions.ts"
+import {
   addTurnNotice,
   MAX_TURN_NOTICES,
   shownTurnNotice,
@@ -281,4 +286,58 @@ test("compacting a saved thread resumes it, compacts, and reads usage", async ()
   } finally {
     console.warn = warn
   }
+})
+
+test("compaction dividers sit where each compaction happened and say how far the lesson got", () => {
+  const outline = {
+    title: "Triggers",
+    sections: ["s1", "s2", "s3"].map((id) => ({ id, title: id })),
+  }
+  const reply = (id: string, createdAt: number, section: string) => ({
+    id,
+    role: "assistant" as const,
+    createdAt,
+    content: `\`\`\`section\n${section}\n\`\`\`\nText`,
+  })
+  const ask = (id: string, createdAt: number) => ({
+    id,
+    role: "user" as const,
+    createdAt,
+    content: "Next section",
+  })
+  const messages = [
+    reply("r1", 10, "s1"),
+    ask("u2", 20),
+    reply("r2", 21, "s2"),
+    ask("u3", 30),
+    reply("r3", 31, "s3"),
+  ]
+  const placed = placeTeachCompactions(
+    messages,
+    [
+      { at: 32, origin: "auto", fromPercent: 84, messageId: "r3" },
+      { at: 25, origin: "manual", fromPercent: 61.6 },
+      { at: 22, origin: "runtime", messageId: "r2" },
+      { at: 40, origin: "overflow", fromPercent: 95, messageId: "r3" },
+    ],
+    outline
+  )
+  assert.deepEqual([...placed.keys()], ["u3", "r3", AFTER_LAST_MESSAGE])
+  assert.equal(placed.get("u3")?.length, 2)
+  assert.equal(
+    teachCompactionText(placed.get("r3")![0]!),
+    "Session compacted at 84% · sections 1 to 2 summarised · outline and plan kept"
+  )
+  assert.equal(
+    teachCompactionText(placed.get("u3")![1]!),
+    "Session compacted at 62% · sections 1 to 2 summarised · outline and plan kept"
+  )
+  assert.equal(
+    teachCompactionText(placed.get(AFTER_LAST_MESSAGE)![0]!),
+    "Session compacted at 95% to finish the reply above · outline and plan kept"
+  )
+  assert.equal(
+    teachCompactionText({ at: 1, origin: "manual", sectionsBefore: 0 }),
+    "Session compacted · earlier replies summarised · outline and plan kept"
+  )
 })
