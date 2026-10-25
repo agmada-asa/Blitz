@@ -6,7 +6,7 @@ the saved card conversations that older chat links still open.
 
 ## Provider text turns
 
-`runProviderTextTurn` in `lib/server/providers/run-text-turn.ts` runs one bounded text turn on the selected provider. It requires an explicit absolute `workspaceDirectory`, starts or resumes the supplied thread, streams typed `turn-started`, `text-delta`, `thought-delta`, `activity`, `completed`, and `error` events, and returns the thread and turn IDs only after the runtime reports the turn completed. Codex and Claude Code run through agent-engines (see [Codex and Claude Code through agent-engines](agent-engines.md)); OpenCode runs through ACP. The event, result, and `CardChatError` types in `lib/server/card-chat.ts` are shared by every provider, so they keep their original card chat names.
+`runProviderTextTurn` in `lib/server/providers/run-text-turn.ts` runs one bounded text turn on the selected provider. It requires an explicit absolute `workspaceDirectory`, starts or resumes the supplied thread, streams typed `turn-started`, `text-delta`, `thought-delta`, `activity`, `completed`, and `error` events, and returns the thread and turn IDs only after the runtime reports the turn completed. Every provider runs through agent-engines (see [Providers through agent-engines](agent-engines.md)); OpenCode runs on its ACP engine. The event, result, and `CardChatError` types in `lib/server/card-chat.ts` are shared by every provider, so they keep their original card chat names.
 
 Streamed assistant text is capped at 250,000 characters. A completed turn with no assistant text is reported as an error so callers cannot treat an empty response as a successful answer. Abort signals and wall-clock timeouts interrupt the running turn, close the runtime, and emit one typed error.
 

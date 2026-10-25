@@ -113,7 +113,7 @@ npm run check:runtimes
 
 `npm run check:runtimes` reports when OpenCode or the Codex model catalogue no longer matches what Blitz relies on; Codex and Claude Code compatibility is checked by [agent-engines](docs/agent-engines.md). See [AI model settings](docs/ai-model-settings.md).
 
-The [overhaul plan](docs/overhaul-plan.md) records the current direction. Implementation details are in [Teach](docs/teach.md), [source ingestion](docs/source-ingestion.md), [learning API](docs/learning-api.md), [provider text turns and legacy card chat](docs/card-chat.md), and [Codex and Claude Code through agent-engines](docs/agent-engines.md).
+The [overhaul plan](docs/overhaul-plan.md) records the current direction. Implementation details are in [Teach](docs/teach.md), [source ingestion](docs/source-ingestion.md), [learning API](docs/learning-api.md), [provider text turns and legacy card chat](docs/card-chat.md), and [providers through agent-engines](docs/agent-engines.md).
 
 ## Known limits
 
