@@ -260,6 +260,69 @@ test("deleting a chat queues its thread's deletion and drops pending renames", a
   assert.equal(await db.get(chatId), null)
 })
 
+test("a branch's copied thread takes the branch's title in the folder it shares with its source", async () => {
+  const handlers = await loadHandlers()
+  const db = new MemoryDb()
+  const source = await seedChat(db, { providerId: "claude-code" })
+  const branch = await seedChat(db, {
+    title: "Quiz me on pointers (branch)",
+    providerId: "claude-code",
+    workspaceFolderId: source.chatId,
+    forkSource: { sessionId: "sess-source", throughTurnId: "t1" },
+  })
+  await handlers.bindTurn(
+    { db },
+    {
+      chatId: branch.chatId,
+      messageId: branch.messageId,
+      providerId: "claude-code",
+      providerSessionId: "sess-fork",
+      providerTurnId: "t2",
+    }
+  )
+  assert.deepEqual(
+    db.jobs().map(({ kind, threadId, title, chatId }) => ({
+      kind,
+      threadId,
+      title,
+      chatId,
+    })),
+    [
+      {
+        kind: "rename",
+        threadId: "sess-fork",
+        title: "Quiz me on pointers (branch)",
+        chatId: source.chatId,
+      },
+    ]
+  )
+  // Deleting the branch deletes its own copy, never the source's thread.
+  await handlers.remove({ db }, { chatId: branch.chatId })
+  assert.deepEqual(
+    db.jobs().map(({ kind, threadId }) => ({ kind, threadId })),
+    [{ kind: "delete", threadId: "sess-fork" }]
+  )
+})
+
+test("deleting a chat mid-handoff also deletes the thread waiting to be carried over", async () => {
+  const handlers = await loadHandlers()
+  const db = new MemoryDb()
+  const { chatId } = await seedChat(db, {
+    status: "failed",
+    providerId: "claude-code",
+    providerHandoff: { fromProviderId: "codex", fromSessionId: "thr-old" },
+  })
+  await handlers.remove({ db }, { chatId })
+  assert.deepEqual(
+    db.jobs().map(({ kind, providerId, threadId }) => ({
+      kind,
+      providerId,
+      threadId,
+    })),
+    [{ kind: "delete", providerId: "codex", threadId: "thr-old" }]
+  )
+})
+
 test("chats without a Codex or Claude Code thread queue nothing", async () => {
   const handlers = await loadHandlers()
   const db = new MemoryDb()

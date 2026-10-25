@@ -99,13 +99,14 @@ async function queueRuntimeThreadRename(
   const thread = runtimeThreadOf(chat)
   if (!thread || !chat.title.trim()) return
   await clearRuntimeThreadJobs(ctx, thread.threadId, "rename")
-  // A Teach session and a project agent run in the project's folder.
+  // A Teach session and a project agent run in the project's folder, and a
+  // branch in the folder of the chat it was branched from.
   const projectId =
     chat.purpose === "teach" ? chat.projectId : chat.workingProjectId
   await ctx.db.insert("runtimeThreadJobs", {
     kind: "rename",
     ...thread,
-    chatId: chat._id,
+    chatId: chat.workspaceFolderId ?? chat._id,
     ...(projectId ? { projectId } : {}),
     title: chat.title.trim().slice(0, RUNTIME_TITLE_CHARS),
     attempts: 0,
@@ -114,23 +115,32 @@ async function queueRuntimeThreadRename(
 }
 
 /**
- * Queues deleting a removed chat's runtime thread, so its session does not
- * stay behind in the Codex or Claude app. Pending renames are dropped. Shared
- * with project deletion in `convex/projects.ts`.
+ * Queues deleting a removed chat's runtime threads, so its sessions do not
+ * stay behind in the Codex or Claude app: the chat's own thread, and the one a
+ * usage-limit handoff left waiting to be carried over. Pending renames are
+ * dropped. Shared with project deletion in `convex/projects.ts`.
  */
 export async function queueRuntimeThreadDeletion(
   ctx: MutationCtx,
   chat: Doc<"workspaceChats">
 ): Promise<void> {
-  const thread = runtimeThreadOf(chat)
-  if (!thread) return
-  await clearRuntimeThreadJobs(ctx, thread.threadId)
-  await ctx.db.insert("runtimeThreadJobs", {
-    kind: "delete",
-    ...thread,
-    attempts: 0,
-    createdAt: Date.now(),
-  })
+  const handoff = chat.providerHandoff
+  const threads = [
+    runtimeThreadOf(chat),
+    handoff?.fromSessionId && TIDY_PROVIDERS.has(handoff.fromProviderId)
+      ? { providerId: handoff.fromProviderId, threadId: handoff.fromSessionId }
+      : undefined,
+  ]
+  for (const thread of threads) {
+    if (!thread) continue
+    await clearRuntimeThreadJobs(ctx, thread.threadId)
+    await ctx.db.insert("runtimeThreadJobs", {
+      kind: "delete",
+      ...thread,
+      attempts: 0,
+      createdAt: Date.now(),
+    })
+  }
 }
 
 /** Lists the oldest runtime thread jobs for the background worker. */
