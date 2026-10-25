@@ -8,11 +8,18 @@
  * practice and the next unit. N sends the next section from the keyboard
  * while the lesson waits for the learner. "Try that again" redoes the latest
  * section in place, more simply, from an example, or shorter, where the
- * provider can rewind its conversation.
+ * provider can rewind its conversation. The mic beside the question box turns
+ * a spoken question into text to send or edit (`teach-voice.tsx`).
  */
 
 import Link from "next/link"
-import { useEffect, useState, type FormEvent, type KeyboardEvent } from "react"
+import {
+  useCallback,
+  useEffect,
+  useState,
+  type FormEvent,
+  type KeyboardEvent,
+} from "react"
 
 import { Button } from "@/components/ui/button"
 import {
@@ -36,6 +43,11 @@ import {
   TEACH_REDO_STYLES,
   type TeachRedoStyle,
 } from "@/lib/teach"
+import {
+  DictationButton,
+  DictationStatus,
+  useDictation,
+} from "@/components/learn/teach-voice"
 
 /** What the dock should offer for the session's current state. */
 export type TeachDockState =
@@ -92,6 +104,14 @@ export function TeachDock({
 }: TeachDockProps) {
   const [draft, setDraft] = useState("")
   const canAsk = state.kind === "ready" || state.kind === "complete"
+  // A spoken question joins whatever is already typed, ready to edit or send.
+  const dictation = useDictation(
+    useCallback(
+      (text: string) =>
+        setDraft((current) => (current.trim() ? `${current.trim()} ${text}` : text)),
+      []
+    )
+  )
   const ready = state.kind === "ready"
 
   // While the lesson waits for the learner, N sends "Next section" unless they are typing or hold a modifier.
@@ -304,6 +324,7 @@ export function TeachDock({
               disabled={!canAsk}
               className="max-h-40 min-h-11 resize-none rounded-2xl px-4 py-2.5"
             />
+            <DictationButton dictation={dictation} disabled={!canAsk} />
             <Button
               type="submit"
               size="icon"
@@ -314,6 +335,9 @@ export function TeachDock({
               <SendIcon aria-hidden="true" />
             </Button>
           </form>
+        )}
+        {state.kind === "no-material" ? null : (
+          <DictationStatus dictation={dictation} />
         )}
       </div>
     </div>

@@ -63,6 +63,14 @@ class MemoryDb {
         }
         return {
           order: () => ({
+            first: async () => {
+              let matching = this.rows.filter((row) => row.table === table)
+              if (filterField !== null) {
+                matching = matching.filter((row) => row[filterField!] === filterValue)
+              }
+              matching.sort((a, b) => Number(b.createdAt ?? 0) - Number(a.createdAt ?? 0))
+              return matching[0] ?? null
+            },
             take: async (limit: number) => {
               let matching = this.rows.filter((row) => row.table === table)
               if (filterField !== null) {
@@ -145,6 +153,8 @@ async function loadHandlers() {
       remove: { _handler: Handler }
       setGeneratedTitle: { _handler: Handler }
       fail: { _handler: Handler }
+      handOff: { _handler: Handler }
+      bindTurn: { _handler: Handler }
     }
     return {
       list: loaded.list._handler,
@@ -154,6 +164,8 @@ async function loadHandlers() {
       remove: loaded.remove._handler,
       setGeneratedTitle: loaded.setGeneratedTitle._handler,
       fail: loaded.fail._handler,
+      handOff: loaded.handOff._handler,
+      bindTurn: loaded.bindTurn._handler,
     }
   } finally {
     hooks.deregister()
@@ -444,4 +456,66 @@ test("fail records a normalized reason and bounded detail beside the recovery co
   const again = (await get({ db }, { chatId: first.chatId })) as typeof failed
   assert.equal(again.lastErrorReason, "timeout")
   assert.equal(again.lastErrorDetail, null)
+})
+
+test("handOff moves a chat stopped at a usage limit to another provider", async () => {
+  const { fail, get, handOff, bindTurn } = await loadHandlers()
+  const db = new MemoryDb()
+  const turn = seedRunningChat(db)
+  await db.patch(turn.chatId, {
+    providerId: "codex",
+    providerSessionId: "codex-thread",
+    codexThreadId: "codex-thread",
+    providerModel: "gpt-6",
+    providerEffort: "xhigh",
+  })
+  const move = { ...turn, providerId: "claude-code" }
+
+  // Only a usage limit opens the handoff.
+  await fail({ db }, { ...turn, error: "Timed out", reason: "timeout" })
+  await assert.rejects(handOff({ db }, move), /usage limit/)
+  await db.patch(turn.chatId, { status: "running", activeMessageId: turn.messageId })
+  await fail(
+    { db },
+    { ...turn, error: "You've reached the usage limit.", reason: "usage-limit" }
+  )
+  await assert.rejects(
+    handOff({ db }, { ...turn, providerId: "codex" }),
+    /already uses/
+  )
+
+  await handOff({ db }, move)
+  const chat = (await db.get(turn.chatId))!
+  assert.equal(chat.providerId, "claude-code")
+  for (const field of [
+    "providerSessionId",
+    "codexThreadId",
+    "providerModel",
+    "providerEffort",
+  ])
+    assert.equal(chat[field], undefined, field)
+  assert.deepEqual(chat.providerHandoff, {
+    fromProviderId: "codex",
+    fromSessionId: "codex-thread",
+  })
+  const view = (await get({ db }, { chatId: turn.chatId })) as {
+    messages: Array<{ continuedWith: unknown }>
+  }
+  assert.deepEqual(view.messages[0]!.continuedWith, {
+    providerId: "claude-code",
+    fromProviderId: "codex",
+  })
+
+  // The new provider's session takes the conversation over, so the handoff ends.
+  await db.patch(turn.chatId, { status: "running", activeMessageId: turn.messageId })
+  await bindTurn(
+    { db },
+    {
+      ...turn,
+      providerId: "claude-code",
+      providerSessionId: "claude-session",
+      providerTurnId: "claude-turn",
+    }
+  )
+  assert.equal((await db.get(turn.chatId))!.providerHandoff, undefined)
 })

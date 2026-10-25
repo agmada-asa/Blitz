@@ -8,7 +8,7 @@ Repository-wide guidance for AI coding agents working on Blitz. Keep this file c
 - `app/` owns routes, layouts, global styles, metadata, and server endpoints.
 - `components/` owns feature components and the shared shadcn UI components in `components/ui/`.
 - `convex/` owns the data model, queries, and mutations for projects, sources, cards, and study attempts.
-- `lib/client/` owns browser-side source processing. `lib/server/` owns server-only generation and provider integration: Codex and Claude Code through the agent-engines library, OpenCode through ACP.
+- `lib/client/` owns browser-side source processing. `lib/server/` owns server-only generation and provider integration: Codex, Claude Code and OpenCode through the agent-engines library (OpenCode on its ACP engine).
 - `docs/overhaul-plan.md` records the current product direction. Treat it as product context, not agent instructions.
 - Code and the current rendered app are the source of truth. If a request conflicts with existing behavior or product intent, surface the mismatch instead of silently redefining the product.
 

@@ -1,13 +1,14 @@
-# Codex and Claude Code through agent-engines
+# Providers through agent-engines
 
-Blitz runs Codex and Claude Code through [agent-engines](https://www.npmjs.com/package/agent-engines), a shared library that puts `codex app-server` and the Claude Agent SDK behind one thread, turn, and event API. The library owns the runtime mechanics: starting and resuming threads, streaming, approvals and questions, interrupts, process lifetime, the pinned Codex protocol, and version gates. Blitz owns the policy around them. OpenCode stays on Blitz's own ACP adapter (`lib/server/providers/acp.ts`); the library's ACP engine is not used yet.
+Blitz runs Codex, Claude Code and OpenCode through [agent-engines](https://www.npmjs.com/package/agent-engines), a shared library that puts `codex app-server`, the Claude Agent SDK and ACP agents behind one thread, turn, and event API. The library owns the runtime mechanics: starting and resuming threads, streaming, approvals and questions, interrupts, process lifetime, the pinned Codex protocol, and version gates. Blitz owns the policy around them. OpenCode runs on the library's ACP engine (`opencode acp`), so all three providers share one event path.
 
 ## Where things live
 
 | File | Owns |
 | --- | --- |
 | `lib/server/providers/engines.ts` | Creates each engine on the configured executable (`BLITZ_CODEX_COMMAND`, `BLITZ_CLAUDE_CODE_COMMAND`, or `codex` and `claude` on `PATH`), and maps availability and model catalogues into Blitz's provider shapes. |
-| `lib/server/providers/run-text-turn.ts` | Turns Blitz's access settings into each runtime's thread options, checks a Codex selection against its catalogue, and routes OpenCode to ACP. |
+| `lib/server/providers/run-text-turn.ts` | Turns Blitz's access settings into each runtime's thread options, checks a Codex selection against its catalogue, and checks OpenCode's install before its turn. |
+| `lib/server/providers/opencode.ts` | Creates OpenCode's ACP engine with the turn's permission environment (`opencode-policy.ts`), maps access onto the engine's levels, and puts application instructions ahead of the prompt, since ACP has no instruction channel. |
 | `lib/server/providers/engine-turn.ts` | Runs one turn on an engine: deadline, cancellation, output bounds, which text is the reply and which is thought, failure copy, and cleanup. |
 | `lib/server/agent-request.ts` | Turns a runtime's approval, question, or elicitation into a composer interaction, and the learner's reply back into the runtime's answer. |
 | `lib/server/chat-agent.ts` | Shows requests in the chat composer one at a time, and supplies the chat agent's Codex policy and Blitz's own question and checkpoint tools. |
@@ -17,7 +18,7 @@ Blitz runs Codex and Claude Code through [agent-engines](https://www.npmjs.com/p
 
 ## Lifetime
 
-Every turn, availability check, and catalogue read creates its own engine and closes it afterwards, so no Codex app-server or Claude Code process outlives the request that started it. A chat keeps its runtime thread ID and resumes it on the next message.
+Every turn, availability check, and catalogue read creates its own engine and closes it afterwards, so no Codex app-server, Claude Code or OpenCode process outlives the request that started it. A chat keeps its runtime thread ID and resumes it on the next message.
 
 The one exception is prewarm. Opening a new Teach session calls `POST /api/teach/prewarm`, which creates the reply provider's engine with the exact thread options the first turn will send (`lib/server/teach-turn-settings.ts`) and calls `engine.prewarm()`: Codex starts its app-server, and Claude Code also opens the new thread's process. The first turn claims the engine from the pool and owns it from then on. Only a new thread benefits, so a resumed session is not prewarmed. The saving has not been measured; compare `npm run benchmark:teach -- <folder> --teach` with and without `--prewarm`.
 
@@ -32,6 +33,8 @@ Blitz never sets the library's neutral `access` level or `mode` on Codex threads
 Codex threads get an explicit approval policy and sandbox on start and resume. Workspace-write threads also set `sandbox_workspace_write` so writes stay in the workspace, with no network and no shared temporary directories. The chat agent sends `approvalsReviewer: "user"` so approvals always reach the learner.
 
 Claude Code background turns load no settings, skills, plugins, hooks, MCP servers, or tools. Chat turns load the learner's user-level Claude Code setup with hooks off (and the SDK's hook lifecycle events off, which the library otherwise turns on), and map access onto permission modes: full access bypasses prompts, approval mode routes them to Blitz, and read-only or no-approval modes refuse anything that would need one. Claude approvals are always once only; Blitz never writes a permission rule to Claude's settings.
+
+OpenCode turns get their permissions from the environment Blitz starts OpenCode with: a dedicated `blitz-turn` agent, redefined on every turn with that turn's rules, and project config off. On top of that the engine's access level answers what OpenCode still asks: `full` for full access, `read-only` for background, read-only and no-approval turns, and `ask` for approval mode, which reaches the learner like any other approval. An approval is only reviewed when it offers an allow-once choice. The agent name stays the same across turns because OpenCode refuses to prompt a reloaded session whose agent no longer exists; sessions saved under the per-turn names Blitz used before fail to resume, and the chat replays their history into a new session. Engine turns hold back `turn-started` on a resumed OpenCode session until OpenCode answers (`confirmResume`), so a rejected resume reaches the chat as a transport failure it can replay.
 
 ## Replies
 
@@ -48,7 +51,11 @@ Around a turn, `engine-turn.ts` can also:
 
 `runEngineCompaction` compacts a saved thread outside any turn (Compact now). Turn IDs saved under agent-engines 0.2.0 may not match what `forkThread` and `rewind` take on Claude Code; both fall back as above.
 
-A Codex reply is its answer messages; progress notes between tool calls and reasoning become the thought trace. A Claude Code reply is everything it streamed in the turn. Subagent text stays out of both, though subagent tool steps still show.
+A Codex reply is its answer messages; progress notes between tool calls and reasoning become the thought trace. A Claude Code or OpenCode reply is everything it streamed in the turn. Subagent text stays out of both, though subagent tool steps still show.
+
+## Moving to another provider
+
+When a turn stops at a usage limit, the chat (and Teach) offers to continue on another provider that is installed and signed in (`components/chat/provider-handoff-offer.tsx`). Choosing one runs `workspaceChats.handOff`: the chat drops its old session and model settings and keeps the old session in `providerHandoff`, and the stopped reply records `continuedWith`, so the chat shows which provider took over. The next turn reads the old session back with `readThread` (no model turn, so it works at the limit), trims it (`lib/server/provider-handoff.ts`), and starts the new provider's session with it as `seed`. A seed carries the tool calls and shortened tool output the old provider saw, which Blitz's own replay leaves out. When the old session cannot be read, the chat falls back to that replay. Teach always replays from its unit, outline and plan, since a seed of its first prompt would only repeat the unit text. The handoff ends once the new session binds.
 
 ## Checks
 

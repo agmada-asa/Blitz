@@ -1,9 +1,8 @@
 /**
  * Defines the event, result, and error types every provider adapter shares.
  *
- * Codex and Claude Code turns run through agent-engines (see
- * `providers/engine-turn.ts`) and OpenCode through Blitz's ACP adapter; both
- * report in these shapes. The names keep their original card chat prefix;
+ * Every provider's turns run through agent-engines (see
+ * `providers/engine-turn.ts`) and report in these shapes. The names keep their original card chat prefix;
  * workspace chat, Teach, research, and project agents all use them.
  */
 

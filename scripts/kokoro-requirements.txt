@@ -1,4 +1,6 @@
-# Pinned runtime dependencies for the persistent local Kokoro worker.
+# Pinned runtime dependencies for the persistent local Kokoro and speech-to-text workers.
 certifi>=2024.2.2
 kokoro-onnx==0.6.1
 soundfile==0.13.1
+# On-device speech to text for spoken Teach questions; reuses Kokoro's onnxruntime.
+onnx-asr[hub]==0.12.0

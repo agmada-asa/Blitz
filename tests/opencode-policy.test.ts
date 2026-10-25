@@ -42,12 +42,7 @@ test("OpenCode read-only chats allow read tools and protect env files", () => {
   ]) {
     const permission = JSON.parse(
       openCodeEnvironment(
-        {
-          selection: { providerId: "opencode" as const, model: "default" },
-          workspaceDirectory: "/tmp/blitz-test",
-          prompt: "Question",
-          ...extra,
-        },
+        { ...extra },
         "blitz-fixture"
       ).OPENCODE_PERMISSION!
     )

@@ -571,6 +571,7 @@ export const get = query({
         steeringNotes: message.steeringNotes ?? [],
         notices: message.notices ?? [],
         redoStyle: message.redoStyle ?? null,
+        continuedWith: message.continuedWith ?? null,
         createdAt: message.createdAt,
       })),
       attachments: attachments.map((attachment) => ({
@@ -872,6 +873,7 @@ export const startTurn = mutation({
             restate: chat.purpose === "teach" && chat.contextRestatePending === true,
           },
           redo: null,
+          providerHandoff: chat.providerHandoff ?? null,
           replyPrefix: "",
           replayContext: {
             messages: replayMessages([
@@ -937,6 +939,7 @@ export const startTurn = mutation({
           restate: chat.purpose === "teach" && chat.contextRestatePending === true,
         },
         redo: null,
+        providerHandoff: chat.providerHandoff ?? null,
         replyPrefix: continuation.content,
         replayContext: {
           messages: replayMessages(priorMessages),
@@ -1137,6 +1140,7 @@ export const startTurn = mutation({
           : null,
       context: teachContextPlan(chat, selectedProvider, priorMessages),
       redo: redo ?? null,
+      providerHandoff: chat?.providerHandoff ?? null,
       replyPrefix: "",
       replayContext: {
         messages: replayMessages(priorMessages),
@@ -1385,6 +1389,8 @@ export const bindTurn = mutation({
       codexContextReady: true,
       // The copied session is now this chat's own.
       forkSource: undefined,
+      // The new session now holds the carried-over conversation.
+      providerHandoff: undefined,
       updatedAt: now,
     })
     // A new runtime thread takes the chat's title; a resumed one already has it.
@@ -1559,6 +1565,7 @@ export const complete = mutation({
           }
         : {}),
       codexContextReady: true,
+      providerHandoff: undefined,
       status: "idle",
       isUnread: true,
       activeMessageId: undefined,
@@ -1802,6 +1809,70 @@ export const endCompaction = mutation({
             ...(args.usage ? { contextUsage: args.usage } : {}),
           }
         : {}),
+    })
+  },
+})
+
+/**
+ * Moves a chat whose provider hit its usage limit onto another provider, so
+ * the learner can continue the stopped reply on the same chat.
+ *
+ * The chat forgets its old session and model settings and keeps the old
+ * session in `providerHandoff`, which the next turn exports and seeds into
+ * the new provider's session. The stopped reply records the provider that
+ * takes it over, so the chat can say so.
+ *
+ * @throws When the chat is not stopped at a usage limit on its latest reply,
+ *   or the provider is unsupported or already the chat's own.
+ */
+export const handOff = mutation({
+  args: {
+    chatId: v.id("workspaceChats"),
+    messageId: v.id("workspaceChatMessages"),
+    providerId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const chat = await ctx.db.get(args.chatId)
+    const message = await ctx.db.get(args.messageId)
+    if (!chat || !message || message.chatId !== chat._id)
+      throw new Error("Chat not found")
+    const latest = await ctx.db
+      .query("workspaceChatMessages")
+      .withIndex("by_chat_createdAt", (index) => index.eq("chatId", chat._id))
+      .order("desc")
+      .first()
+    if (
+      chat.status !== "failed" ||
+      chat.lastErrorReason !== "usage-limit" ||
+      message.role !== "assistant" ||
+      message.status !== "failed" ||
+      latest?._id !== message._id
+    )
+      throw new Error("Only a reply stopped at a usage limit can move provider")
+    const providerId = providerSelection(args.providerId)!
+    const fromProviderId = persistedChatProvider(chat) ?? "codex"
+    if (providerId === fromProviderId)
+      throw new Error("This chat already uses that provider")
+    const fromSessionId = chat.providerSessionId ?? chat.codexThreadId
+    const now = Date.now()
+    await ctx.db.patch(chat._id, {
+      providerId,
+      providerInstanceId: undefined,
+      providerSessionId: undefined,
+      providerModel: undefined,
+      providerEffort: undefined,
+      codexThreadId: undefined,
+      codexContextReady: false,
+      // A second move keeps the session that still holds the conversation.
+      providerHandoff: chat.providerHandoff ?? {
+        fromProviderId,
+        ...(fromSessionId ? { fromSessionId } : {}),
+      },
+      updatedAt: now,
+    })
+    await ctx.db.patch(message._id, {
+      continuedWith: { providerId, fromProviderId },
+      updatedAt: now,
     })
   },
 })

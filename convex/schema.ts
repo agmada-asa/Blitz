@@ -904,6 +904,17 @@ export default defineSchema({
     providerEffort: v.optional(v.string()),
     codexThreadId: v.optional(v.string()),
     codexContextReady: v.optional(v.boolean()),
+    /**
+     * Provider and session the chat moved away from, set when the learner
+     * continues on another provider after a usage limit. The next turn seeds
+     * its new session with that session's transcript, then this is cleared.
+     */
+    providerHandoff: v.optional(
+      v.object({
+        fromProviderId: v.string(),
+        fromSessionId: v.optional(v.string()),
+      })
+    ),
     status: v.union(
       v.literal("idle"),
       v.literal("running"),
@@ -962,6 +973,13 @@ export default defineSchema({
     ),
     providerTurnId: v.optional(v.string()),
     codexTurnId: v.optional(v.string()),
+    /** Provider that took this reply over from another at a usage limit, shown above it. */
+    continuedWith: v.optional(
+      v.object({
+        providerId: v.string(),
+        fromProviderId: v.string(),
+      })
+    ),
     /** Pending or decided agent request attached to this assistant turn. */
     agentApproval: v.optional(
       v.object({

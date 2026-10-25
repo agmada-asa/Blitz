@@ -2,11 +2,10 @@
  * Attaches folder instructions and bridges interactive runtime requests into a
  * persisted chat.
  *
- * Codex and Claude Code requests arrive as agent-engines request events; this
- * session shows each one in the chat composer, waits for the learner, and
- * answers it. Codex also gets Blitz's own question and checkpoint tools, and
- * the policy for the selected autonomy. OpenCode requests come through the ACP
- * handlers.
+ * Codex, Claude Code and OpenCode requests arrive as agent-engines request
+ * events; this session shows each one in the chat composer, waits for the
+ * learner, and answers it. Codex also gets Blitz's own question and checkpoint
+ * tools, and the policy for the selected autonomy.
  */
 import type { AiApprovalPolicy } from "../ai-model-settings.ts"
 import { randomUUID } from "node:crypto"
@@ -19,7 +18,6 @@ import {
   answerAgentRequest,
   codexAgentRequestTools,
   dynamicToolResponse,
-  genericApprovalRequest,
   normalizeAgentRequest,
   normalizeDynamicToolCall,
   refuseAgentRequest,
@@ -30,9 +28,7 @@ import {
   type ProjectAgentAutonomy,
 } from "./project-agent.ts"
 import type { CodexTurnOverrides } from "./providers/run-text-turn.ts"
-import type { EngineProviderId } from "./providers/engines.ts"
-import type { ProviderApprovalDecision } from "./providers/types.ts"
-import type { AcpRequestHandler } from "./providers/acp.ts"
+import type { TurnProviderId } from "./providers/engine-turn.ts"
 
 /** Builds a turn-scoped approval bridge and Codex policy; callers close it on every exit path. */
 export function createChatAgentSession(options: {
@@ -64,12 +60,12 @@ export function createChatAgentSession(options: {
   }
 
   /**
-   * Shows one Codex or Claude Code request and answers it; grants never carry
-   * into later turns. With approvals off, approvals are refused unseen.
+   * Shows one provider request and answers it; grants never carry into later
+   * turns. With approvals off, approvals are refused unseen.
    */
   function handleRequest(
     request: AgentRequest,
-    providerId: EngineProviderId
+    providerId: TurnProviderId
   ): Promise<void> {
     return serialize(async () => {
       signal.throwIfAborted()
@@ -83,7 +79,7 @@ export function createChatAgentSession(options: {
           ? undefined
           : normalizeAgentRequest(
               request,
-              providerId === "codex" ? "codex" : "claude"
+              providerId === "claude-code" ? "claude" : providerId
             )
       if (!spec) return refuseAgentRequest(request)
       const result = await review({ ...spec, providerRequestId: request.id })
@@ -176,66 +172,6 @@ export function createChatAgentSession(options: {
     }
   }
 
-  /** Serializes native provider requests through the same single-use chat approval panel. */
-  function approveProvider(request: {
-    requestId?: string | number
-    method: string
-    params: unknown
-    signal?: AbortSignal
-  }): Promise<ProviderApprovalDecision> {
-    const operation = queue.then(async () => {
-      if (
-        signal.aborted ||
-        request.signal?.aborted ||
-        options.approvalPolicy === "never"
-      )
-        return false
-      const details = JSON.stringify(request.params, null, 2)
-      if (!details || details.length > 20_000) return false
-      return review(
-        {
-          ...genericApprovalRequest(request.method, details),
-          ...(request.requestId === undefined ? {} : { providerRequestId: String(request.requestId) }),
-        },
-        request.signal ? AbortSignal.any([signal, request.signal]) : signal
-      )
-    })
-    queue = operation.catch(() => undefined)
-    return operation.catch(() => false)
-  }
-
-  /** Bridges verified ACP reverse requests through durable composer interactions. */
-  const handleProviderRequest: AcpRequestHandler = async (request) => {
-    const operation = queue.then(async () => {
-      if (request.signal?.aborted || signal.aborted)
-        return { outcome: { outcome: "cancelled" } }
-      const details = JSON.stringify(request.params, null, 2)
-      if (!details || details.length > 20_000)
-        return { outcome: { outcome: "cancelled" } }
-      const spec = genericApprovalRequest(request.method, details)
-      const result = await review(
-        { ...spec, providerRequestId: String(request.requestId) },
-        request.signal ? AbortSignal.any([signal, request.signal]) : signal
-      )
-      if (!result.accepted) return { outcome: { outcome: "cancelled" } }
-      let optionId: string | undefined
-      try {
-        const parsed = result.response ? JSON.parse(result.response) : undefined
-        optionId =
-          parsed && typeof parsed.optionId === "string"
-            ? parsed.optionId
-            : undefined
-      } catch {
-        optionId = undefined
-      }
-      return optionId
-        ? { outcome: { outcome: "selected", optionId } }
-        : { outcome: { outcome: "cancelled" } }
-    })
-    queue = operation.catch(() => undefined)
-    return operation.catch(() => ({ outcome: { outcome: "cancelled" } }))
-  }
-
   /** Codex thread policy and Blitz's own tools for this chat's autonomy. */
   const codex: CodexTurnOverrides = {
     thread: {
@@ -257,8 +193,6 @@ export function createChatAgentSession(options: {
   return {
     codex,
     handleRequest,
-    approveProvider,
-    handleProviderRequest,
     close,
   }
 }

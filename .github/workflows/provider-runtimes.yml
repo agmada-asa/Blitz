@@ -2,7 +2,7 @@
 #
 # Codex and Claude Code run through agent-engines, whose own weekly workflow
 # checks the latest Codex and Claude Code CLIs against its pinned protocol and
-# version gates. OpenCode runs on Blitz's ACP adapter, so Blitz checks it here:
+# version gates. Blitz keeps its own OpenCode version gate, so it checks it here:
 # each week this installs the newest OpenCode and runs
 # `npm run check:runtimes -- --ci`, which fails when OpenCode leaves the
 # supported range (see lib/server/providers/runtime-compat.ts). GitHub emails
@@ -22,7 +22,7 @@ on:
   pull_request:
     paths:
       - "lib/server/providers/runtime-compat.ts"
-      - "lib/server/providers/acp.ts"
+      - "lib/server/providers/opencode.ts"
       - "scripts/check-provider-runtimes.ts"
       - ".github/workflows/provider-runtimes.yml"
 

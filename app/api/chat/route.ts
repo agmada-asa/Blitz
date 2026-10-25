@@ -46,6 +46,12 @@ import {
   workspaceChatFailureDetail,
 } from "@/lib/server/workspace-chat-failure"
 import { runProviderTextTurn } from "@/lib/server/providers/run-text-turn"
+import {
+  handoffPrompt,
+  readHandoffTranscript,
+} from "@/lib/server/provider-handoff"
+import { providerLabel } from "@/lib/provider-handoff"
+import type { PortableTranscript } from "agent-engines"
 import { getCodexModelCatalog } from "@/lib/server/providers/codex-models"
 import type { ProviderImageAttachment } from "@/lib/server/providers/types"
 import { isTrustedBlitzOrigin } from "@/lib/server/request-origin"
@@ -167,6 +173,8 @@ const startWorkspaceTurn = makeFunctionReference<
       replacedMessageIds: Id<"workspaceChatMessages">[]
       originalMessage: string
     } | null
+    /** Provider and session to carry over after a usage-limit handoff. */
+    providerHandoff: { fromProviderId: string; fromSessionId?: string } | null
     replyPrefix: string
     replayContext: WorkspaceChatReplayContext
   }
@@ -819,10 +827,18 @@ export async function POST(request: Request): Promise<Response> {
             }
           )
         }
+        // The configured model only applies to the provider it was chosen
+        // for; a chat on another provider (after a handoff) uses its default.
+        const configuredForProvider =
+          configuredSelection.providerId === turn.providerId
         const selection = {
           providerId: turn.providerId,
-          model: turn.providerModel ?? configuredSelection.model,
-          effort: turn.providerEffort ?? configuredSelection.effort,
+          model:
+            turn.providerModel ??
+            (configuredForProvider ? configuredSelection.model : "default"),
+          effort:
+            turn.providerEffort ??
+            (configuredForProvider ? configuredSelection.effort : undefined),
         }
         // Teach reads untrusted course files, so it never inherits the global
         // access setting: no approvals to wait on, and a read-only sandbox.
@@ -983,6 +999,8 @@ export async function POST(request: Request): Promise<Response> {
             compactFirst?: boolean
             compactedPrompt?: string
             rewindBeforeTurnId?: string
+            /** Another provider's conversation, carried into a new session after a handoff. */
+            seed?: PortableTranscript
           } = {}
         ): ReturnType<typeof runProviderTextTurn> => {
           turnAccepted = false
@@ -999,6 +1017,7 @@ export async function POST(request: Request): Promise<Response> {
               prompt,
               ...(attachments.length ? { attachments } : {}),
               ...(threadId ? { threadId } : {}),
+              ...(around.seed ? { seed: around.seed } : {}),
               model: selection.model,
               effort: selection.effort,
               sandbox: teach
@@ -1048,8 +1067,6 @@ export async function POST(request: Request): Promise<Response> {
                 : {}),
               ...(codexModelCatalog ? { codexModelCatalog } : {}),
               onRequest: agentSession?.handleRequest,
-              approvalHandler: agentSession?.approveProvider,
-              requestHandler: agentSession?.handleProviderRequest,
               onEvent: (event) => {
                 const activity = normalizeProviderActivity(event, providerEvents)
                 if (activity) appendProviderEvent(activity)
@@ -1163,8 +1180,17 @@ export async function POST(request: Request): Promise<Response> {
         // A branch copies its source's runtime session when it can; a reset
         // or a provider without forks replays the transcript instead.
         const forkSource = !resetContext && features.fork ? turn.fork : null
+        // After a usage-limit handoff the new provider's session is seeded
+        // with the old session's transcript, so the prompt needs no replay.
+        // Teach rebuilds from its unit and plan instead, which a seed of its
+        // first prompt (the whole unit) would only duplicate.
+        const handoffSeed =
+          turn.providerHandoff && !teach && !resetContext
+            ? await readHandoffTranscript(turn.providerHandoff, workspaceDirectory)
+            : undefined
         const replay =
-          (turn.shouldReplayContext && !forkSource) || resetContext
+          !handoffSeed &&
+          ((turn.shouldReplayContext && !forkSource) || resetContext)
         // A long Teach session compacts before the turn, then restates the
         // unit material, outline, and plan the summary may have lost.
         const compactFirst =
@@ -1175,11 +1201,17 @@ export async function POST(request: Request): Promise<Response> {
           turn.redo && !replay && features.rewind
             ? turn.redo.beforeTurnId
             : undefined
-        const initialPrompt = teach
-          ? teachPrompt(replay || restate, { afterCompaction: restate })
-          : replay
-            ? await promptWithReplay()
-            : buildWorkspaceChatPrompt(input, projects, card)
+        const initialPrompt = handoffSeed
+          ? handoffPrompt(
+              buildWorkspaceChatPrompt(input, projects, card),
+              providerLabel(turn.providerHandoff!.fromProviderId),
+              turn.replyPrefix
+            )
+          : teach
+            ? teachPrompt(replay || restate, { afterCompaction: restate })
+            : replay
+              ? await promptWithReplay()
+              : buildWorkspaceChatPrompt(input, projects, card)
         const citationProjectIds = [
           ...new Set(
             [
@@ -1229,6 +1261,7 @@ export async function POST(request: Request): Promise<Response> {
                     }
                   : {}),
                 ...(rewindBeforeTurnId ? { rewindBeforeTurnId } : {}),
+                ...(handoffSeed ? { seed: handoffSeed } : {}),
               }
             )
           } catch (error) {

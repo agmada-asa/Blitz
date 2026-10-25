@@ -12,6 +12,7 @@ import type { FunctionReturnType } from "convex/server"
 import { memo, useMemo } from "react"
 
 import { ReadAloudButton } from "@/components/chat/read-aloud-button"
+import { ContinuedWithNote } from "@/components/chat/provider-handoff-offer"
 import { TurnNotices } from "@/components/chat/turn-notices"
 import { ElapsedTime } from "@/components/ui/elapsed-time"
 import { LoadingIcon, SparklesIcon } from "@/components/ui/icon"
@@ -295,6 +296,9 @@ const TutorReply = memo(function TutorReply({
             </div>
           ) : null}
         </header>
+      ) : null}
+      {message.continuedWith ? (
+        <ContinuedWithNote providerId={message.continuedWith.providerId} />
       ) : null}
       <TurnNotices notices={message.notices} context="teach" />
       {body.trim() ? (

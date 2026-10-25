@@ -260,6 +260,23 @@ export function genericApprovalRequest(
   }
 }
 
+/** Runtime a request came from, which decides the grants Blitz may offer. */
+export type AgentRequestProvider = "codex" | "claude" | "opencode"
+
+/**
+ * Returns whether an ACP permission request offers one kind of choice.
+ *
+ * @param raw - The request's native `session/request_permission` params.
+ * @param kind - ACP option kind, such as `allow_once` or `allow_always`.
+ */
+function offersChoice(raw: unknown, kind: string): boolean {
+  const options = record(raw)?.options
+  return (
+    Array.isArray(options) &&
+    options.some((option) => record(option)?.kind === kind)
+  )
+}
+
 /** Converts an optional runtime reason into short approval guidance. */
 function approvalPrompt(
   request: Extract<AgentRequest, { kind: "approval" }>
@@ -324,13 +341,17 @@ export const PLAN_STOPPED_MESSAGE =
  */
 function approvalRequest(
   request: Extract<AgentRequest, { kind: "approval" }>,
-  provider: "codex" | "claude"
+  provider: AgentRequestProvider
 ): AgentRequestSpec | undefined {
   if (
     provider === "codex" &&
     request.action === "file-change" &&
     !request.changes?.length
   )
+    return undefined
+  // Allowing must never fall through to an "always" grant, so OpenCode
+  // requests without an allow-once choice are refused unseen.
+  if (provider === "opencode" && !offersChoice(request.raw, "allow_once"))
     return undefined
   const method = APPROVAL_METHODS[request.action] ?? "approval/tool"
   if (method === PLAN_METHOD) return planRequest(request.plan ?? "")
@@ -346,10 +367,12 @@ function approvalRequest(
         : {}),
     }),
     prompt: approvalPrompt(request),
-    // A session grant stays inside Codex's own session. Claude would write it to
-    // a settings file, which Blitz never does on the learner's behalf.
-    ...(provider === "codex" &&
-    (request.action === "command" || request.action === "file-change")
+    // A session grant stays inside Codex's own session. OpenCode keeps the
+    // allow-always choice Blitz has always offered it. Claude would write a
+    // grant to a settings file, which Blitz never does on the learner's behalf.
+    ...((provider === "codex" &&
+      (request.action === "command" || request.action === "file-change")) ||
+    (provider === "opencode" && offersChoice(request.raw, "allow_always"))
       ? {
           input: {
             approvalOptions: [
@@ -594,17 +617,19 @@ function mcpRequest(request: NativeRequest): AgentRequestSpec {
 }
 
 /**
- * Normalizes one Codex or Claude Code request from agent-engines into a
+ * Normalizes one Codex, Claude Code or OpenCode request from agent-engines into a
  * composer interaction.
  *
  * @param request - Request event from the running turn.
- * @param provider - Runtime that raised it; session grants are Codex-only.
+ * @param provider - Runtime that raised it; session grants are offered on
+ *   Codex and OpenCode only, and an OpenCode approval with no allow-once
+ *   choice is refused unseen.
  * @returns The interaction, or undefined when Blitz refuses it unseen (an
  *   unreviewable file change). Throws when the request is too large or malformed.
  */
 export function normalizeAgentRequest(
   request: AgentRequest,
-  provider: "codex" | "claude"
+  provider: AgentRequestProvider
 ): AgentRequestSpec | undefined {
   switch (request.kind) {
     case "approval":
