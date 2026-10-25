@@ -264,6 +264,7 @@ const recordCompaction = makeFunctionReference<
     chatId: Id<"workspaceChats">
     messageId: Id<"workspaceChatMessages">
     origin: "auto" | "overflow" | "runtime"
+    beforeTokens?: number
   },
   null
 >("workspaceChats:recordCompaction")
@@ -1067,6 +1068,9 @@ export async function POST(request: Request): Promise<Response> {
                           event.origin === "requested"
                             ? compactionOrigin
                             : "runtime",
+                        ...(event.beforeTokens !== undefined
+                          ? { beforeTokens: event.beforeTokens }
+                          : {}),
                       }),
                       "Teach could not record a compaction"
                     )

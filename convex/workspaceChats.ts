@@ -1558,12 +1558,22 @@ export const recordCompaction = mutation({
     chatId: v.id("workspaceChats"),
     messageId: v.id("workspaceChatMessages"),
     origin: v.union(v.literal("auto"), v.literal("overflow"), v.literal("runtime")),
+    /** Tokens in the context just before compacting, when the runtime said. */
+    beforeTokens: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const chat = await ctx.db.get(args.chatId)
     const message = await ctx.db.get(args.messageId)
     if (!chat || !message || message.chatId !== chat._id) return
-    const fromPercent = chat.contextUsage?.percent
+    // The runtime's own count is current; the saved usage is from the last
+    // turn, which only describes a compaction made before this one.
+    const maxTokens = chat.contextUsage?.maxTokens
+    const fromPercent =
+      args.beforeTokens !== undefined && maxTokens
+        ? Math.min(100, Math.round((args.beforeTokens / maxTokens) * 1000) / 10)
+        : args.origin === "auto"
+          ? chat.contextUsage?.percent
+          : undefined
     await ctx.db.patch(chat._id, {
       contextCompactions: withCompaction(chat, {
         at: Date.now(),
