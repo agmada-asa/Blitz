@@ -14,7 +14,8 @@ Blitz runs Codex, Claude Code and OpenCode through [agent-engines](https://www.n
 | `lib/server/chat-agent.ts` | Shows requests in the chat composer one at a time, and supplies the chat agent's Codex policy and Blitz's own question and checkpoint tools. |
 | `lib/provider-activity.ts` | Turns tool, tool progress, and file events into the bounded steps shown beside a reply. A running tool's progress message (Codex MCP tools) replaces its detail until it ends. |
 | `lib/server/providers/engine-pool.ts` | Holds an engine prewarmed for a new Teach session's first turn until that turn claims it, closing it after three minutes otherwise. |
-| `lib/provider-thread-features.ts` | Which providers fork, rewind, compact, report context usage, and prewarm: Codex and Claude Code; OpenCode none. |
+| `lib/provider-thread-features.ts` | Which providers fork, rewind, compact, report context usage, prewarm, take a reply schema, spending caps, plan mode and document files: Codex and Claude Code (caps on Claude Code only); OpenCode none. `supportedTurnRequest` in `run-text-turn.ts` drops whatever a provider lacks before its turn, since the engines throw `UnsupportedFeatureError` rather than ignore an option. |
+| `lib/server/runtime-threads.ts` | Carries out the renames and deletions Convex queues for chats' Codex and Claude Code threads (`runtimeThreadJobs`), from the background worker. |
 
 ## Lifetime
 
@@ -28,7 +29,9 @@ Both engines run on the sign-in already on the Mac. Blitz allows an API key as w
 
 ## Access
 
-Blitz never sets the library's neutral `access` level or `mode` on Codex threads, and on Claude Code threads uses only `full`, `ask`, and `read-only`; the `auto` and `accept-edits` levels and plan mode are unused, so every approval still reaches the learner.
+Blitz never sets the library's neutral `access` level on Codex threads, and on Claude Code threads uses `full`, `ask`, and `read-only`, plus `accept-edits` for a Plan first turn in approval mode, so that an approved plan's edits go ahead. The `auto` level is unused, so every other approval still reaches the learner.
+
+Plan first (project agents only) runs the turn with `mode: "plan"`. Claude Code asks to leave plan mode with a `plan` approval; Codex ends the turn with its proposal, which `engine-turn.ts` turns into the same `plan` approval and, once approved, carries out as a second turn in default mode. The reply is saved under that second turn, so a branch forked through it keeps the work. OpenCode turns ignore Plan first; the chat keeps the choice for when it is back on a provider with plan mode.
 
 Codex threads get an explicit approval policy and sandbox on start and resume. Workspace-write threads also set `sandbox_workspace_write` so writes stay in the workspace, with no network and no shared temporary directories. The chat agent sends `approvalsReviewer: "user"` so approvals always reach the learner.
 
@@ -38,7 +41,11 @@ OpenCode turns get their permissions from the environment Blitz starts OpenCode 
 
 ## Replies
 
-Only text, reasoning, tool, file, request, notice, compaction, and lifecycle events shape a turn. Of the notices, `refusal`, `permission-denied`, and `moderation` are saved on the reply and shown beside it; `warning`, `config`, `deprecation`, and `info` are logged on the server. Every other event the library sends (hooks, goals, MCP status, realtime, prompt suggestions, and any added in a later minor release) is ignored. A `context-window` failure says the conversation ran out of room, an `auth` one that the provider is signed out, and a failed turn whose error kind Blitz does not map, such as `limit`, gets the generic failure copy.
+Only text, reasoning, tool, file, request, notice, compaction, and lifecycle events shape a turn. Of the notices, `refusal`, `permission-denied`, and `moderation` are saved on the reply and shown beside it; `warning`, `config`, `deprecation`, and `info` are logged on the server. Every other event the library sends (hooks, goals, MCP status, realtime, prompt suggestions, and any added in a later minor release) is ignored. A `context-window` failure says the conversation ran out of room, an `auth` one that the provider is signed out, a `limit` one which spending cap stopped it, and a failed turn whose error kind Blitz does not map gets the generic failure copy.
+
+## Background work
+
+Past papers, mock exams, marking, question banks, podcast and audiobook scripts send a JSON Schema with the turn (`outputSchema`, written with `lib/json-schema.ts` for Codex's strict mode). Blitz's own parsers still validate every reply, reading the text first and the provider's parsed object as the fallback. A Claude Code background turn with a schema allows only its StructuredOutput tool. When Claude Code is signed in with an API key, background turns also run with `maxBudgetUsd` and `maxTurns` (`lib/server/spending-limits.ts`, $3.00 and 10 steps by default, changed in Settings). Claude Code reads a past paper as a PDF or text document; Codex gets the extracted text, or a copy of a scan in its folder. OpenCode gets none of these and parses text as before.
 
 ## Thread operations
 
@@ -49,13 +56,15 @@ Around a turn, `engine-turn.ts` can also:
 - compact before the turn, sending a different prompt only when compaction ran;
 - read context usage after a completed turn, for the Teach context meter.
 
-`runEngineCompaction` compacts a saved thread outside any turn (Compact now). Turn IDs saved under agent-engines 0.2.0 may not match what `forkThread` and `rewind` take on Claude Code; both fall back as above.
+`runEngineCompaction` compacts a saved thread outside any turn (Compact now). Turn IDs saved under agent-engines 0.2.0 may not match what `forkThread` and `rewind` take on Claude Code; both fall back as above. OpenCode supports none of these, so its branches replay and its Teach sessions have no meter, compaction or redo in place.
+
+Each chat's Codex or Claude Code thread takes the chat's title, and is deleted with the chat. A branch's copied thread is its own, named after the branch, and runs in its source chat's folder. Deleting a chat whose handoff has not run yet also deletes the old provider's thread.
 
 A Codex reply is its answer messages; progress notes between tool calls and reasoning become the thought trace. A Claude Code or OpenCode reply is everything it streamed in the turn. Subagent text stays out of both, though subagent tool steps still show.
 
 ## Moving to another provider
 
-When a turn stops at a usage limit, the chat (and Teach) offers to continue on another provider that is installed and signed in (`components/chat/provider-handoff-offer.tsx`). Choosing one runs `workspaceChats.handOff`: the chat drops its old session and model settings and keeps the old session in `providerHandoff`, and the stopped reply records `continuedWith`, so the chat shows which provider took over. The next turn reads the old session back with `readThread` (no model turn, so it works at the limit), trims it (`lib/server/provider-handoff.ts`), and starts the new provider's session with it as `seed`. A seed carries the tool calls and shortened tool output the old provider saw, which Blitz's own replay leaves out. When the old session cannot be read, the chat falls back to that replay. Teach always replays from its unit, outline and plan, since a seed of its first prompt would only repeat the unit text. The handoff ends once the new session binds.
+When a turn stops at a usage limit, the chat (and Teach) offers to continue on another provider that is installed and signed in (`components/chat/provider-handoff-offer.tsx`). Choosing one runs `workspaceChats.handOff`: the chat drops its old session and model settings and keeps the old session in `providerHandoff`, and the stopped reply records `continuedWith`, so the chat shows which provider took over. The next turn reads the old session back with `readThread` (no model turn, so it works at the limit), trims it (`lib/server/provider-handoff.ts`), and starts the new provider's session with it as `seed`. A seed carries the tool calls and shortened tool output the old provider saw, which Blitz's own replay leaves out. When the old session cannot be read, the chat falls back to that replay. Teach always replays from its unit, outline and plan, since a seed of its first prompt would only repeat the unit text. The handoff ends once the new session binds. A branch that has not run yet drops its pending fork, since the new provider cannot copy the old one's session. Agent settings such as Plan first stay with the chat and apply where the new provider supports them.
 
 ## Checks
 
