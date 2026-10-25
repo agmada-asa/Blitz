@@ -4,12 +4,14 @@
  * Provides compact, accessible working project selection for chat submissions.
  *
  * This component manages project workspace targeting in the chat composer bar,
- * while access levels and approval policies are governed directly by the model picker.
+ * and whether a project agent plans first, while access levels and approval
+ * policies are governed directly by the model picker.
  */
 
 import * as React from "react"
 
 import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
 import {
   Popover,
   PopoverContent,
@@ -64,6 +66,10 @@ export type ChatAgentControlsProps = {
   onInstructionsChange?: (value: string) => void
   /** Receives changes to the working project workspace. */
   onWorkingProjectChange?: (value?: Id<"projects">) => void
+  /** Whether the agent proposes a plan for approval before changing files. */
+  planFirst?: boolean
+  /** Receives Plan first changes; omitted hides the option. */
+  onPlanFirstChange?: (value: boolean) => void
 }
 
 /**
@@ -77,7 +83,10 @@ export function ChatAgentControls({
   workingProjectId,
   projects = [],
   onWorkingProjectChange,
+  planFirst = false,
+  onPlanFirstChange,
 }: ChatAgentControlsProps) {
+  const planFirstId = React.useId()
   const [mobileOpen, setMobileOpen] = React.useState(false)
   const currentProject = projects.find(
     (project) => project._id === workingProjectId
@@ -234,6 +243,30 @@ export function ChatAgentControls({
             </SelectContent>
           </Select>
         </div>
+      ) : null}
+
+      {/* Plan first only means something when the agent can edit a project. */}
+      {workingProjectId && onPlanFirstChange ? (
+        <label
+          htmlFor={planFirstId}
+          className="flex cursor-pointer items-start gap-2 rounded-lg px-2 py-1.5 text-xs hover:bg-muted/60"
+        >
+          <Checkbox
+            id={planFirstId}
+            checked={planFirst}
+            disabled={disabled}
+            className="mt-0.5"
+            onCheckedChange={(checked) => onPlanFirstChange(checked === true)}
+          />
+          <span className="min-w-0">
+            <span className="block font-medium text-foreground">
+              Plan first
+            </span>
+            <span className="block text-muted-foreground">
+              See the whole plan and approve it before any file changes
+            </span>
+          </span>
+        </label>
       ) : null}
     </>
   )

@@ -642,6 +642,7 @@ export function ChatWorkspace({
     ChatAgentAutonomy | undefined
   >(undefined)
   const [agentInstructions, setAgentInstructions] = useState("")
+  const [agentPlanFirst, setAgentPlanFirst] = useState(false)
   const [workingProjectId, setWorkingProjectId] = useState<
     Id<"projects"> | undefined
   >(initialCard?.projectId ?? initialPassage?.projectId ?? initialProject?._id)
@@ -973,6 +974,7 @@ export function ChatWorkspace({
         agentAutonomy?: ChatAgentAutonomy
         agentInstructions?: string
         workingProjectId?: Id<"projects">
+        agentPlanFirst?: boolean
       })
     | null
     | undefined
@@ -987,6 +989,9 @@ export function ChatWorkspace({
   const effectiveWorkingProjectId = agentSettingsTouched
     ? workingProjectId
     : (persistedAgentSettings?.workingProjectId ?? workingProjectId)
+  const effectivePlanFirst = agentSettingsTouched
+    ? agentPlanFirst
+    : (persistedAgentSettings?.agentPlanFirst ?? agentPlanFirst)
 
   /**
    * Files the chat under a newly chosen working project so history groups it there.
@@ -1138,6 +1143,7 @@ export function ChatWorkspace({
     setStreamAgentRequests({})
     setStreamProviderEvents([])
     setAgentAutonomy(undefined)
+    setAgentPlanFirst(false)
     setAgentSettingsTouched(false)
     setHistoryOpen(false)
     if (!embedded)
@@ -1170,6 +1176,7 @@ export function ChatWorkspace({
     setEditDraft("")
     setAgentAutonomy(readCachedAgentAutonomy())
     setAgentInstructions("")
+    setAgentPlanFirst(false)
     setWorkingProjectId(undefined)
     setNewChatProjectId(undefined)
     draftProjectFromWorkingRef.current = false
@@ -1204,6 +1211,7 @@ export function ChatWorkspace({
     setEditDraft("")
     setAgentAutonomy(readCachedAgentAutonomy())
     setAgentInstructions("")
+    setAgentPlanFirst(false)
     setWorkingProjectId(project._id)
     setNewChatProjectId(project._id)
     draftProjectFromWorkingRef.current = false
@@ -1659,7 +1667,10 @@ export function ChatWorkspace({
             autonomy: effectiveAgentAutonomy,
             additionalInstructions: effectiveAgentInstructions,
             ...(effectiveWorkingProjectId
-              ? { workingProjectId: effectiveWorkingProjectId }
+              ? {
+                  workingProjectId: effectiveWorkingProjectId,
+                  planFirst: effectivePlanFirst,
+                }
               : {}),
           }),
         })
@@ -2936,6 +2947,18 @@ export function ChatWorkspace({
                           autonomy={effectiveAgentAutonomy}
                           additionalInstructions={effectiveAgentInstructions}
                           workingProjectId={effectiveWorkingProjectId}
+                          planFirst={effectivePlanFirst}
+                          onPlanFirstChange={(value) => {
+                            // The first change keeps the chat's saved
+                            // settings rather than this draft's defaults.
+                            if (!agentSettingsTouched) {
+                              setAgentAutonomy(effectiveAgentAutonomy)
+                              setAgentInstructions(effectiveAgentInstructions)
+                              setWorkingProjectId(effectiveWorkingProjectId)
+                            }
+                            setAgentSettingsTouched(true)
+                            setAgentPlanFirst(value)
+                          }}
                           projects={projects}
                           disabled={Boolean(continuableMessage)}
                           onAutonomyChange={(value) => {
