@@ -5,7 +5,14 @@ import { v } from "convex/values"
 import { citationFields } from "./citationFields"
 import { examAnswerFields, examQuestionFields, examResultFields } from "./examFields"
 import { reviewMemoryFields } from "./reviewFields"
-import { teachOutlineFields, teachSectionPlanFields } from "./teachFields"
+import {
+  contextCompactionFields,
+  contextUsageFields,
+  teachOutlineFields,
+  teachRedoStyleField,
+  teachSectionPlanFields,
+  turnNoticeFields,
+} from "./teachFields"
 
 /** Validator shared by the cards table's supported learning formats. */
 const cardType = v.union(
@@ -821,6 +828,33 @@ export default defineSchema({
     archivedAt: v.optional(v.number()),
     branchedFromChatId: v.optional(v.id("workspaceChats")),
     branchedFromMessageId: v.optional(v.id("workspaceChatMessages")),
+    /**
+     * Chat whose local folder this chat's agent works in. A branch shares its
+     * source's folder, so a copied Claude Code session (kept per folder) can
+     * be resumed. Absent means the chat's own folder.
+     */
+    workspaceFolderId: v.optional(v.string()),
+    /**
+     * Runtime session a branch copies on its first turn, through the turn it
+     * was branched at, instead of replaying the transcript. Cleared once the
+     * copy is bound; a failed copy falls back to replay.
+     */
+    forkSource: v.optional(
+      v.object({ sessionId: v.string(), throughTurnId: v.string() })
+    ),
+    /** Context usage after the last turn, for the Teach context meter. */
+    contextUsage: v.optional(contextUsageFields),
+    /** Compactions of this chat's context, newest last, bounded. */
+    contextCompactions: v.optional(v.array(contextCompactionFields)),
+    /**
+     * Set by a compaction; the next Teach turn restates the unit material,
+     * outline, and plan, then clears it.
+     */
+    contextRestatePending: v.optional(v.boolean()),
+    /** The reply whose turn last restated the context after a compaction. */
+    contextRestatedMessageId: v.optional(v.id("workspaceChatMessages")),
+    /** When a Compact now request started; new turns wait while it is recent. */
+    compactingSince: v.optional(v.number()),
     /** Provider snapshot for new sessions; absent on legacy Codex chats. */
     providerId: v.optional(v.string()),
     providerInstanceId: v.optional(v.string()),
@@ -969,6 +1003,10 @@ export default defineSchema({
         })
       )
     ),
+    /** Refusals, denied tools, and safety checks that explain a short reply. */
+    notices: v.optional(v.array(turnNoticeFields)),
+    /** For a Teach reply redone in place, the style it was asked for. */
+    redoStyle: v.optional(teachRedoStyleField),
     /** Bounded steering notes provided by the user to guide an interrupted continuation. */
     steeringNotes: v.optional(
       v.array(

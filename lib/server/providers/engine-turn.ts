@@ -522,9 +522,10 @@ async function runTurn(
           : startFailure(error))
       )
     }
-    if (request.compactFirst) await compact(thread)
+    // Rewind first: rewinding to before a compaction would undo it.
     if (request.rewindBeforeTurnId)
       await rewind(thread, request.rewindBeforeTurnId)
+    if (request.compactFirst) await compact(thread)
     const running = thread.run(request.input, request.turnOptions)
     turn = running
     void running.id.then(started, () => undefined)
