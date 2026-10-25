@@ -112,14 +112,14 @@ test("compaction runs past the threshold, never twice in a row, and only where s
 })
 
 test("only Codex and Claude Code fork, rewind, compact, report context, and prewarm", () => {
-  for (const provider of ["codex", "claude-code"])
-    assert.deepEqual(providerThreadFeatures(provider), {
-      fork: true,
-      rewind: true,
-      compact: true,
-      contextUsage: true,
-      prewarm: true,
-    })
+  for (const provider of ["codex", "claude-code"]) {
+    const { fork, rewind, compact, contextUsage, prewarm } =
+      providerThreadFeatures(provider)
+    assert.deepEqual(
+      { fork, rewind, compact, contextUsage, prewarm },
+      { fork: true, rewind: true, compact: true, contextUsage: true, prewarm: true }
+    )
+  }
   for (const provider of ["opencode", "unknown", undefined])
     assert.equal(Object.values(providerThreadFeatures(provider)).some(Boolean), false)
 })

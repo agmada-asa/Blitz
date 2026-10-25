@@ -9,7 +9,10 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 
 import { providerThreadFeatures } from "../lib/provider-thread-features.ts"
-import { supportedTurnRequest } from "../lib/server/providers/run-text-turn.ts"
+import {
+  supportedTurnRequest,
+  type RunProviderTextTurnRequest,
+} from "../lib/server/providers/run-text-turn.ts"
 
 /** A turn that asks for every optional runtime feature. */
 const EVERYTHING = {
@@ -58,8 +61,10 @@ test("an OpenCode turn keeps only the options its ACP engine takes", () => {
 })
 
 test("a compacted prompt is dropped with the compaction it belongs to", () => {
-  const { compactFirst: _compactFirst, ...rest } = EVERYTHING
-  const request = supportedTurnRequest({ ...rest, providerId: "codex" })
-  assert.equal(request.compactFirst, undefined)
-  assert.equal(request.compactedPrompt, undefined)
+  const request: RunProviderTextTurnRequest = {
+    ...EVERYTHING,
+    providerId: "codex",
+    compactFirst: false,
+  }
+  assert.equal(supportedTurnRequest(request).compactedPrompt, undefined)
 })
