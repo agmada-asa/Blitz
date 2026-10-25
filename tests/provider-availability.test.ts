@@ -48,6 +48,18 @@ test("maps engine availability onto Blitz setup states", () => {
     account: { kind: "api-key" },
   })
   assert.equal(apiKey.available && apiKey.authenticated, true)
+  // An API key is reported, so Settings can offer spending limits.
+  assert.equal(apiKey.billing, "api-key")
+  assert.match(apiKey.message, /API key, billed per token/)
+  const subscription = providerAvailabilityFromEngine("codex", "local", {
+    provider: "codex",
+    ready: true,
+    reason: "ready",
+    message: "Codex is signed in with ChatGPT.",
+    account: { kind: "subscription", plan: "plus" },
+  })
+  assert.equal(subscription.billing, "subscription")
+  assert.equal(subscription.message, "Connected and ready.")
 })
 
 /** A missing Codex or Claude Code executable is reported without a model call. */
