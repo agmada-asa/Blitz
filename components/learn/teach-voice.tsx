@@ -255,7 +255,7 @@ export function ReadRepliesToggle({
           if (enabled) reader.stop()
           onChange(!enabled)
         }}
-        title={reader.state === "error" ? reader.error : undefined}
+        title={reader.state === "error" ? reader.error : "Read replies aloud"}
         className="min-h-10 gap-2 rounded-full px-3"
       >
         <span
@@ -272,8 +272,8 @@ export function ReadRepliesToggle({
             )}
           />
         </span>
-        <span className="hidden sm:inline">Read replies aloud</span>
-        <span className="sm:hidden">Read aloud</span>
+        {/* Narrow headers keep the switch alone so the unit title stays readable. */}
+        <span className="sr-only sm:not-sr-only">Read replies aloud</span>
       </Button>
     </div>
   )
