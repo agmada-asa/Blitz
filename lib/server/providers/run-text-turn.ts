@@ -105,6 +105,20 @@ export interface RunProviderTextTurnRequest {
   readonly developerInstructions?: string
   /** Existing provider session to resume. */
   readonly threadId?: string
+  /**
+   * Saved Codex or Claude Code session to copy into a new one instead of
+   * resuming `threadId`, through `throughTurnId` when given. OpenCode ignores it.
+   */
+  readonly fork?: { readonly threadId: string; readonly throughTurnId?: string }
+  /** Compacts the Codex or Claude Code thread before the turn. OpenCode ignores it. */
+  readonly compactFirst?: boolean
+  /**
+   * Drops this Codex or Claude Code turn and the ones after it before the new
+   * turn runs, so a reply is redone in place. OpenCode ignores it.
+   */
+  readonly rewindBeforeTurnId?: string
+  /** Reports Codex or Claude Code context usage on the result. OpenCode ignores it. */
+  readonly readContextUsage?: boolean
   /** Whether this turn should use a disposable session. */
   readonly ephemeral?: boolean
   /** Hosted search mode for providers that support it. */
@@ -441,6 +455,12 @@ async function runEngineProviderTurn(
         ...settings,
       },
       ...(request.threadId ? { threadId: request.threadId } : {}),
+      ...(request.fork ? { fork: request.fork } : {}),
+      ...(request.compactFirst ? { compactFirst: true } : {}),
+      ...(request.rewindBeforeTurnId
+        ? { rewindBeforeTurnId: request.rewindBeforeTurnId }
+        : {}),
+      ...(request.readContextUsage ? { readContextUsage: true } : {}),
       input: request.attachments?.length
         ? {
             text: request.prompt,

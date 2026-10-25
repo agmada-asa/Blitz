@@ -563,3 +563,205 @@ test("Claude normalizes saved aliases, checks effort, and rejects Codex-only pol
     "invalid-input"
   )
 })
+
+test("shows refusals, denied tools, and safety checks, and only logs other notices", async () => {
+  const engine = new FakeEngine("claude", (turn) => {
+    turn.push({ type: "turn.started" })
+    turn.push({ type: "notice", kind: "warning", message: "Config file is old" })
+    turn.push({
+      type: "notice",
+      kind: "permission-denied",
+      message: "WebFetch was not allowed.",
+      details: "dontAsk mode",
+    })
+    turn.push({ type: "notice", kind: "refusal", message: "The model declined." })
+    turn.answer("Partial answer.")
+  })
+  const logged: unknown[] = []
+  const info = console.info
+  console.info = (...args: unknown[]) => void logged.push(args)
+  try {
+    const { events, result } = await run(engine)
+    await result
+    const notices = events.flatMap((event) =>
+      event.type === "notice" ? [event.notice] : []
+    )
+    assert.deepEqual(notices, [
+      {
+        kind: "permission-denied",
+        message: "WebFetch was not allowed.",
+        details: "dontAsk mode",
+      },
+      { kind: "refusal", message: "The model declined." },
+    ])
+    assert.equal(logged.length, 1)
+  } finally {
+    console.info = info
+  }
+})
+
+test("a context-window failure names the cause instead of a generic failure", async () => {
+  const engine = new FakeEngine("codex", (turn) => {
+    turn.push({ type: "turn.started" })
+    turn.finish({
+      status: "failed",
+      error: { kind: "context-window", message: "contextWindowExceeded" },
+    })
+  })
+  const { result } = await run(engine)
+  await assert.rejects(
+    result,
+    (error: unknown) =>
+      error instanceof CardChatError &&
+      error.reason === "context-window" &&
+      /ran out of room/.test(error.message)
+  )
+})
+
+test("compacts before the turn without treating the compaction as the reply's turn", async () => {
+  const engine = new FakeEngine("codex")
+  const { events, result } = await run(engine, {
+    threadId: "thr_saved",
+    compactFirst: true,
+  })
+  const value = await result
+  assert.deepEqual(engine.compactions, ["thr_saved"])
+  assert.equal(value.turnId, "turn_1")
+  assert.deepEqual(
+    events.filter((event) => event.type === "compacted"),
+    [{ type: "compacted", origin: "requested", beforeTokens: 900, afterTokens: 100 }]
+  )
+  const started = events.filter((event) => event.type === "turn-started")
+  assert.deepEqual(
+    started.map((event) => (event.type === "turn-started" ? event.turnId : "")),
+    ["turn_1"]
+  )
+  assert.ok(
+    events.findIndex((event) => event.type === "compacted") <
+      events.findIndex((event) => event.type === "turn-started")
+  )
+})
+
+test("a failed compaction is logged and the turn still runs", async () => {
+  const engine = new FakeEngine("claude")
+  engine.compactScript = (turn) =>
+    turn.finish({ status: "failed", error: { kind: "other", message: "no" } })
+  const warn = console.warn
+  console.warn = () => undefined
+  try {
+    const { events, result } = await run(engine, {
+      threadId: "thr_saved",
+      compactFirst: true,
+    })
+    assert.equal((await result).text, "A clear answer.")
+    assert.equal(events.some((event) => event.type === "compacted"), false)
+  } finally {
+    console.warn = warn
+  }
+})
+
+test("reports a compaction the runtime makes by itself mid-turn", async () => {
+  const engine = new FakeEngine("claude", (turn) => {
+    turn.push({ type: "turn.started" })
+    turn.push({ type: "compacted", beforeTokens: 190_000 })
+    turn.answer("Still here.")
+  })
+  const { events, result } = await run(engine, { threadId: "thr_saved" })
+  await result
+  assert.deepEqual(
+    events.filter((event) => event.type === "compacted"),
+    [{ type: "compacted", origin: "runtime", beforeTokens: 190_000 }]
+  )
+})
+
+test("rewinds before the turn and reports it; a failed rewind still runs the turn", async () => {
+  const engine = new FakeEngine("codex")
+  const { events, result } = await run(engine, {
+    threadId: "thr_saved",
+    rewindBeforeTurnId: "turn_old",
+  })
+  await result
+  assert.deepEqual(engine.rewinds, ["turn_old"])
+  assert.deepEqual(
+    events.filter((event) => event.type === "rewound"),
+    [{ type: "rewound", droppedTurns: 1 }]
+  )
+
+  const refusing = new FakeEngine("claude")
+  refusing.rewindError = new Error("There is nothing before the first turn")
+  const warn = console.warn
+  console.warn = () => undefined
+  try {
+    const second = await run(refusing, {
+      threadId: "thr_saved",
+      rewindBeforeTurnId: "turn_first",
+    })
+    assert.equal((await second.result).text, "A clear answer.")
+    assert.equal(
+      second.events.some((event) => event.type === "rewound"),
+      false
+    )
+  } finally {
+    console.warn = warn
+  }
+})
+
+test("forks a saved thread through a turn instead of resuming it", async () => {
+  const engine = new FakeEngine("codex")
+  const { result } = await run(engine, {
+    threadId: "thr_ignored",
+    fork: { threadId: "thr_source", throughTurnId: "turn_7" },
+  })
+  const value = await result
+  assert.equal(value.threadId, "thr_fork")
+  assert.equal(engine.resumed.length, 0)
+  assert.equal(engine.started.length, 0)
+  assert.deepEqual(engine.forks, [
+    {
+      id: "thr_source",
+      options: { cwd: WORKSPACE, throughTurnId: "turn_7" },
+    },
+  ])
+})
+
+test("a failed fork fails before any turn so the caller can replay instead", async () => {
+  const engine = new FakeEngine("claude")
+  engine.forkError = new Error("No turn turn_7 on this thread.")
+  const { events, result } = await run(engine, {
+    fork: { threadId: "thr_source", throughTurnId: "turn_7" },
+  })
+  await rejectsWith(result, "transport")
+  assert.equal(engine.runs.length, 0)
+  assert.equal(events.some((event) => event.type === "turn-started"), false)
+  assert.equal(engine.closed, true)
+})
+
+test("reads context usage after a completed turn when asked, and tolerates a runtime without it", async () => {
+  const engine = new FakeEngine("claude")
+  engine.contextReport = {
+    usedTokens: 78_000,
+    maxTokens: 200_000,
+    percent: 39,
+    categories: [
+      { name: "System prompt", tokens: 6_000, kind: "used" },
+      { name: "Messages", tokens: 72_000, kind: "used" },
+      { name: "Free space", tokens: 122_000, kind: "free" },
+    ],
+  }
+  const { result } = await run(engine, { readContextUsage: true })
+  assert.deepEqual((await result).contextUsage, {
+    usedTokens: 78_000,
+    maxTokens: 200_000,
+    percent: 39,
+    categories: [
+      { label: "instructions", tokens: 6_000 },
+      { label: "conversation", tokens: 72_000 },
+    ],
+  })
+
+  const without = new FakeEngine("codex")
+  const second = await run(without, { readContextUsage: true })
+  const value = await second.result
+  assert.equal(value.text, "A clear answer.")
+  assert.equal(value.contextUsage, undefined)
+})
