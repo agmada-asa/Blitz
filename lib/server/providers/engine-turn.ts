@@ -15,6 +15,7 @@
  * as notices; every other runtime notice is logged on the server only.
  */
 
+import { randomUUID } from "node:crypto"
 import { isAbsolute } from "node:path"
 import {
   RuntimeAuthError,
@@ -23,12 +24,14 @@ import {
   RuntimeModelUnavailableError,
   type AgentEvent,
   type AgentRequest,
+  type ApprovalRequest,
   type Engine,
   type Thread,
   type ThreadOptions,
   type Turn,
   type TurnError,
   type TurnInput,
+  type TurnLimits,
   type TurnOptions,
   type TurnResult,
 } from "agent-engines"
@@ -40,11 +43,12 @@ import {
   type CardChatEvent,
   type CardChatResult,
 } from "../card-chat.ts"
-import { refuseAgentRequest } from "../agent-request.ts"
+import { PLAN_STOPPED_MESSAGE, refuseAgentRequest } from "../agent-request.ts"
 import {
   normalizeContextUsage,
   type TurnContextUsage,
 } from "../../context-usage.ts"
+import { formatUsd } from "../../spending-limits.ts"
 import { shownTurnNotice } from "../../turn-notices.ts"
 import type { EngineProviderId } from "./engines.ts"
 
@@ -56,6 +60,16 @@ const CONTEXT_USAGE_TIMEOUT_MS = 2_000
 
 /** Longest runtime notice text written to the server log. */
 const MAX_LOGGED_NOTICE_LENGTH = 300
+
+/**
+ * Plan reviews one Codex turn may go through: a first plan and revisions
+ * after the learner sends it back with a note.
+ */
+const MAX_PLAN_ROUNDS = 4
+
+/** What Codex is told once the learner approves its plan. */
+const PLAN_APPROVED_PROMPT =
+  "The learner approved the plan. Carry it out now, exactly as proposed."
 
 /** One turn to run on a freshly created engine, which this adapter closes. */
 export interface EngineTurnRequest {
@@ -118,9 +132,31 @@ function inputText(input: TurnInput): string {
   return typeof input === "string" ? input : input.text
 }
 
-/** Maps a failed turn's classified error to Blitz's recovery reasons and copy. */
-export function turnFailure(error: TurnError | undefined): CardChatError {
+/**
+ * Maps a failed turn's classified error to the app's recovery reasons and copy.
+ * @param error Classified failure from the runtime.
+ * @param limits The thread's own caps, so a `limit` failure can name the one it hit.
+ */
+export function turnFailure(
+  error: TurnError | undefined,
+  limits?: TurnLimits
+): CardChatError {
   switch (error?.kind) {
+    case "limit": {
+      // Claude Code reports which cap ended the turn; budget is the usual one.
+      const steps = /turn/i.test(error.message) && !/budget/i.test(error.message)
+      const which =
+        steps && limits?.maxTurns
+          ? `Stopped after ${limits.maxTurns} steps, your limit for one task.`
+          : limits?.maxBudgetUsd
+            ? `Stopped at your ${formatUsd(limits.maxBudgetUsd)} limit for one task.`
+            : "Stopped at your spending limit for one task."
+      return new CardChatError(
+        "spend-limit",
+        `${which} Nothing was saved. Raise the limit in Settings, or try again with less material.`,
+        error
+      )
+    }
     case "usage-limit":
       return new CardChatError(
         "usage-limit",
@@ -295,6 +331,9 @@ async function runTurn(
   let thought = ""
   const answers: string[] = []
   const thoughts: string[] = []
+  // The latest plan proposed in plan mode, and whether it still awaits review.
+  let lastPlan: string | undefined
+  let pendingPlan: string | undefined
   let finished = false
   let cancelReason: CardChatError | undefined
   let rejectCancellation: ((error: CardChatError) => void) | undefined
@@ -421,6 +460,9 @@ async function runTurn(
             : {}),
         })
         return
+      case "plan.proposal.done":
+        if (event.text.trim()) lastPlan = pendingPlan = event.text.trim()
+        return
     }
   }
 
@@ -487,6 +529,70 @@ async function runTurn(
     }
   }
 
+  /** Runs one turn on the open thread and waits for it and its events. */
+  const runOnce = async (
+    input: TurnInput,
+    turnOptions?: TurnOptions
+  ): Promise<TurnResult> => {
+    const running = thread!.run(input, turnOptions)
+    turn = running
+    void running.id.then(started, () => undefined)
+    const consumed = (async () => {
+      for await (const event of running) handle(event)
+    })()
+    const result: TurnResult = await race(running.result)
+    await race(consumed)
+    return result
+  }
+
+  /**
+   * Shows a Codex plan for review the way Claude Code asks for one: as a
+   * `plan` approval through `onRequest`, so both providers use one card.
+   * Resolves with the learner's decision; a failed or missing handler declines.
+   */
+  const reviewPlan = (
+    plan: string
+  ): Promise<{ decision: string; message?: string }> =>
+    new Promise((resolve) => {
+      const review: ApprovalRequest = {
+        kind: "approval",
+        id: `plan-${randomUUID()}`,
+        action: "plan",
+        plan,
+        title: "Approve the plan",
+        raw: { plan },
+        respond: async (decision) => resolve(decision),
+      }
+      const answer = options.onRequest
+        ? options.onRequest(review)
+        : refuseAgentRequest(review)
+      void answer.catch(() => resolve({ decision: "deny" }))
+    })
+
+  /**
+   * Codex ends a plan-mode turn with its proposal instead of asking. Each
+   * proposal goes to review: approval runs the plan as a new turn in default
+   * mode, a note runs another planning turn with it, and a plain decline ends
+   * here with the plan as the reply.
+   */
+  const followPlans = async (first: TurnResult): Promise<TurnResult> => {
+    let current = first
+    for (let round = 0; round < MAX_PLAN_ROUNDS; round += 1) {
+      const plan = pendingPlan
+      if (current.status !== "completed" || !plan) return current
+      pendingPlan = undefined
+      const decision = await race(reviewPlan(plan))
+      if (decision.decision === "allow" || decision.decision === "allow-session") {
+        lastPlan = undefined
+        return runOnce(PLAN_APPROVED_PROMPT, { mode: "default" })
+      }
+      if (!decision.message?.trim() || decision.message === PLAN_STOPPED_MESSAGE)
+        return current
+      current = await runOnce(decision.message, { mode: "plan" })
+    }
+    return current
+  }
+
   const timer = setTimeout(
     () =>
       cancel(
@@ -533,17 +639,12 @@ async function runTurn(
     if (request.rewindBeforeTurnId)
       await rewind(thread, request.rewindBeforeTurnId)
     const compacted = request.compactFirst ? await compact(thread) : false
-    const running = thread.run(
+    let result = await runOnce(
       compacted && request.compactedInput ? request.compactedInput : request.input,
       request.turnOptions
     )
-    turn = running
-    void running.id.then(started, () => undefined)
-    const consumed = (async () => {
-      for await (const event of running) handle(event)
-    })()
-    const result: TurnResult = await race(running.result)
-    await race(consumed)
+    if (request.providerId === "codex" && request.turnOptions?.mode === "plan")
+      result = await followPlans(result)
     if (cancelReason) throw cancelReason
     const contextUsage =
       request.readContextUsage && result.status === "completed"
@@ -576,13 +677,19 @@ async function runTurn(
     result: TurnResult,
     contextUsage: TurnContextUsage | undefined
   ): CardChatResult {
-    if (result.status === "failed") throw turnFailure(result.error)
+    if (result.status === "failed")
+      throw turnFailure(result.error, request.thread.limits)
     if (result.status === "interrupted")
       throw new CardChatError("turn-interrupted", "Blitz turn interrupted")
+    // A schema-checked reply may arrive only as parsed output (Claude Code
+    // returns it through a tool call), so its JSON stands in as the text.
     const reply =
-      request.providerId === "codex"
+      (request.providerId === "codex"
         ? answers.join("\n") || text || result.text
-        : text || result.text
+        : text || result.text) ||
+      (result.output === undefined ? "" : JSON.stringify(result.output)) ||
+      // A plan that was not approved is the whole reply.
+      (lastPlan ?? "")
     if (reply.length > MAX_CARD_CHAT_STREAM_TEXT_LENGTH)
       throw new CardChatError(
         "transport",
@@ -601,6 +708,7 @@ async function runTurn(
       ...(finalThought ? { thought: finalThought } : {}),
       durationMs: Math.max(0, Date.now() - startedAt),
       ...(contextUsage ? { contextUsage } : {}),
+      ...(result.output === undefined ? {} : { output: result.output }),
     }
     finished = true
     emit({ ...value, type: "completed", status: "completed" })

@@ -130,6 +130,12 @@ export interface CardChatCompletionEvent {
   readonly thought?: string
   /** Elapsed turn duration in milliseconds. */
   readonly durationMs?: number
+  /**
+   * The reply as the provider parsed it against the turn's `outputSchema`.
+   * Absent without a schema, on providers that cannot take one, or when the
+   * reply was not valid JSON. Callers still validate it before saving.
+   */
+  readonly output?: unknown
 }
 
 /** Reasons a text turn can fail before producing a completion. */
@@ -140,6 +146,7 @@ export type CardChatFailureReason =
   | "transport"
   | "provider-overloaded"
   | "usage-limit"
+  | "spend-limit"
   | "rate-limit"
   | "turn-failed"
   | "turn-interrupted"
@@ -180,6 +187,8 @@ export interface CardChatResult {
   readonly durationMs?: number
   /** How full the thread's context window was when the turn ended, when asked for and known. */
   readonly contextUsage?: TurnContextUsage
+  /** Parsed schema reply; see `CardChatCompletionEvent.output`. */
+  readonly output?: unknown
 }
 
 /** Stable error for invalid input, cancellation, timeout, provider limits, or turn failure. */

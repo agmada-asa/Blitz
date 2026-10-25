@@ -2,9 +2,10 @@
 
 /** Lets people inspect, connect, refresh, and disconnect every local AI provider. */
 
-import { useCallback, useEffect, useState } from "react"
+import { Fragment, useCallback, useEffect, useState } from "react"
 
 import { ProviderIcon } from "@/components/ai/provider-icons"
+import { SpendingLimitSettings } from "@/components/settings/spending-limit-settings"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -222,7 +223,7 @@ export function ProviderConnections() {
                 const badge = connectionBadge(provider)
                 const methods = provider.authMethods ?? []
                 const busy = busyProvider === provider.providerId
-                return (
+                const row = (
                   <div
                     key={provider.providerId}
                     className="grid gap-4 px-4 py-5 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center"
@@ -299,6 +300,17 @@ export function ProviderConnections() {
                       ) : null}
                     </div>
                   </div>
+                )
+                // Only a per-token Claude Code sign-in can be capped.
+                return provider.providerId === "claude-code" &&
+                  provider.authenticated === true &&
+                  provider.billing === "api-key" ? (
+                  <Fragment key={provider.providerId}>
+                    {row}
+                    <SpendingLimitSettings />
+                  </Fragment>
+                ) : (
+                  row
                 )
               })}
         </CardContent>

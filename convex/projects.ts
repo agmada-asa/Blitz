@@ -3,6 +3,7 @@
 import { mutation, query } from "./_generated/server"
 import { ConvexError, v } from "convex/values"
 import type { Id, TableNames } from "./_generated/dataModel"
+import { queueRuntimeThreadDeletion } from "./workspaceChats"
 
 /** Lists project metadata newest first without scanning related collections. */
 export const listProjects = query({
@@ -189,6 +190,7 @@ export const deleteProject = mutation({
       .take(2001)
     add(workspaceChats)
     for (const chat of workspaceChats) {
+      await queueRuntimeThreadDeletion(ctx, chat)
       add(
         await ctx.db
           .query("workspaceChatMessages")

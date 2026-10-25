@@ -75,6 +75,8 @@ export interface WorkspaceChatRequest {
   additionalInstructions?: string
   /** Single writable project, independent of projects attached for reference. */
   workingProjectId?: Id<"projects">
+  /** Whether a project agent proposes a plan for approval before editing. */
+  planFirst?: boolean
   chatId?: Id<"workspaceChats">
   /** Failed assistant message whose output should continue in place. */
   continuationOf?: Id<"workspaceChatMessages">
@@ -198,6 +200,9 @@ export function parseWorkspaceChatRequest(
     autonomy !== "full"
   )
     throw new Error("Choose a valid access level")
+  const planFirst = input.planFirst
+  if (planFirst !== undefined && typeof planFirst !== "boolean")
+    throw new Error("Plan first must be on or off")
   const additionalInstructions = input.additionalInstructions
   if (
     additionalInstructions !== undefined &&
@@ -434,6 +439,7 @@ export function parseWorkspaceChatRequest(
     ...(autonomy === undefined ? {} : { autonomy }),
     ...(additionalInstructions === undefined ? {} : { additionalInstructions }),
     ...(workingProjectId === undefined ? {} : { workingProjectId }),
+    ...(planFirst === undefined ? {} : { planFirst }),
     message,
     ...(projectId ? { projectId } : {}),
     clientMessageId,

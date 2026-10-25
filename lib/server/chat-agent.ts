@@ -77,8 +77,9 @@ export function createChatAgentSession(options: {
         providerId === "codex"
           ? runtime.approvalPolicy === "never"
           : options.approvalPolicy === "never"
+      // A plan is always shown: the learner asked for it with Plan first.
       const spec =
-        request.kind === "approval" && neverAsk
+        request.kind === "approval" && request.action !== "plan" && neverAsk
           ? undefined
           : normalizeAgentRequest(
               request,

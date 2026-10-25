@@ -12,6 +12,9 @@ import {
   mcpElicitationResponse,
   answerAgentRequest,
   normalizeAgentRequest,
+  PLAN_METHOD,
+  PLAN_STOPPED_MESSAGE,
+  planRequest,
   normalizeDynamicToolCall,
   refuseAgentRequest,
   userInputResponse,
@@ -404,3 +407,31 @@ test("extractApprovalCommand extracts clean command from various approval detail
   assert.equal(extractApprovalCommand(undefined), undefined)
 })
 
+
+test("a plan becomes one plan card, and its answer approves, revises, or stops", async () => {
+  const { request, answers } = approval({
+    action: "plan",
+    plan: "## Plan: build the Revision folder\n\n1. Create `Revision/`.\n2. Move the notes.",
+    title: "Approve the plan",
+  })
+  const spec = normalizeAgentRequest(request, "claude")!
+  assert.equal(spec.method, PLAN_METHOD)
+  assert.equal(spec.title, "Plan: build the Revision folder")
+  assert.match(spec.details, /Move the notes/)
+  assert.doesNotMatch(spec.details, /build the Revision folder/)
+  assert.equal(spec.input, undefined)
+  await answerAgentRequest(request, spec, { accepted: true })
+  await answerAgentRequest(request, spec, {
+    accepted: false,
+    response: JSON.stringify({ feedback: "Keep week 1 where it is." }),
+  })
+  await answerAgentRequest(request, spec, { accepted: false })
+  assert.deepEqual(answers[0], { decision: "allow" })
+  assert.equal((answers[1] as { decision: string }).decision, "deny")
+  assert.match((answers[1] as { message: string }).message, /Revise the plan[\s\S]*Keep week 1 where it is\./)
+  assert.deepEqual(answers[2], { decision: "deny", message: PLAN_STOPPED_MESSAGE })
+  // A plan with no heading gets the generic title, and a huge one is cut.
+  const plain = planRequest("x".repeat(30_000))
+  assert.equal(plain.title, "Review the plan")
+  assert.ok(plain.details.length < 20_000)
+})

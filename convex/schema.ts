@@ -355,6 +355,8 @@ export default defineSchema({
     questions: v.array(examQuestionFields),
     /** Questions dropped by validation. */
     rejectedCount: v.optional(v.number()),
+    /** Past papers: the paper had no text layer and was read from its pages as a document. */
+    readFromScan: v.optional(v.boolean()),
     runStartedAt: v.number(),
     finishedAt: v.optional(v.number()),
     createdAt: v.number(),
@@ -781,6 +783,20 @@ export default defineSchema({
     updatedAt: v.number(),
   }).index("by_scope", ["scope"]),
 
+  /**
+   * One global record for the spending caps on background tasks while a
+   * provider is signed in with an API key (`lib/spending-limits.ts`). Absent
+   * until the learner saves limits; the defaults apply until then.
+   */
+  spendingLimits: defineTable({
+    scope: v.literal("global"),
+    /** Most one background turn may spend, in US dollars. */
+    maxTaskUsd: v.number(),
+    /** Most model round trips one background turn may take. */
+    maxTaskSteps: v.number(),
+    updatedAt: v.number(),
+  }).index("by_scope", ["scope"]),
+
   /** One global record for the ordered Kokoro voices used as podcast hosts. */
   audioVoiceSettings: defineTable({
     scope: v.literal("global"),
@@ -795,6 +811,29 @@ export default defineSchema({
     ),
     updatedAt: v.number(),
   }).index("by_scope", ["scope"]),
+
+  /**
+   * Work on the Codex and Claude Code threads behind chats, done by the
+   * background worker (`lib/server/runtime-threads.ts`): give a thread its
+   * chat's title, or delete it once its chat is gone. A job stays here until
+   * it succeeds or has failed three times.
+   */
+  runtimeThreadJobs: defineTable({
+    kind: v.union(v.literal("rename"), v.literal("delete")),
+    /** `codex` or `claude-code`. */
+    providerId: v.string(),
+    threadId: v.string(),
+    /** Chat whose folder the thread runs in, for a rename. */
+    chatId: v.optional(v.string()),
+    /** Project whose folder the thread runs in, when it is not the chat's own. */
+    projectId: v.optional(v.string()),
+    /** Title for a rename. */
+    title: v.optional(v.string()),
+    attempts: v.number(),
+    createdAt: v.number(),
+  })
+    .index("by_createdAt", ["createdAt"])
+    .index("by_thread", ["threadId"]),
 
   /** General Blitz sessions opened from the top-level Chat tab. */
   workspaceChats: defineTable({
@@ -819,6 +858,8 @@ export default defineSchema({
     ),
     agentInstructions: v.optional(v.string()),
     workingProjectId: v.optional(v.id("projects")),
+    /** Project agent turns propose a plan for approval before changing files. */
+    agentPlanFirst: v.optional(v.boolean()),
     /** Version of the app-owned interactive tool set attached to the provider session. */
     agentRequestToolsVersion: v.optional(v.number()),
     /** Manual history state. Optional keeps chats created before this feature readable. */

@@ -8,6 +8,8 @@
  */
 
 import type { AgentRequest, CodexToolCall } from "agent-engines"
+
+import { PLAN_REQUEST_METHOD } from "../agent-request.ts"
 import type {
   AgentRequestField,
   AgentRequestInput,
@@ -173,11 +175,21 @@ function titleForKey(value: string): string {
 }
 
 /** Method label persisted for an engine approval, by what the agent wants to do. */
+/**
+ * Method label persisted for a plan waiting for approval: Claude Code's
+ * request to leave plan mode, or the proposal Codex ends a plan turn with.
+ */
+export const PLAN_METHOD = PLAN_REQUEST_METHOD
+
+/** Longest plan shown for review; longer plans are cut with a note. */
+const MAX_PLAN_CHARS = 19_000
+
 const APPROVAL_METHODS: Readonly<Record<string, string>> = {
   command: "approval/command",
   "file-change": "approval/file-change",
   tool: "approval/tool",
   permissions: "approval/permissions",
+  plan: PLAN_METHOD,
 }
 
 /** Method label persisted for an engine question. */
@@ -199,6 +211,8 @@ export function agentRequestTitle(method: string): string {
     case "approval/tool":
     case "session/request_permission":
       return "Blitz wants to use a tool"
+    case PLAN_METHOD:
+      return "Review the plan"
     case QUESTION_METHOD:
       return "Blitz needs your input"
     case ELICITATION_METHOD:
@@ -261,6 +275,49 @@ function approvalPrompt(
 }
 
 /**
+ * Builds the plan card: the plan as Markdown in `details`, titled after its
+ * first heading so the card names what it will do. A heading that opens the
+ * plan moves into the title rather than repeating in the body.
+ * @param plan The proposed plan.
+ */
+export function planRequest(plan: string): AgentRequestSpec {
+  const full = plan.trim() || "The agent proposed a plan without details."
+  const match = /^#{1,3}\s+(.+)$/m.exec(full)
+  const heading = match?.[1]?.replace(/^plan:\s*/i, "").trim()
+  // The heading becomes the card's title, so the body does not repeat it.
+  const text =
+    heading && match && full.indexOf(match[0]) === 0
+      ? full.slice(match[0].length).trim() || full
+      : full
+  return {
+    method: PLAN_METHOD,
+    kind: "approval",
+    title: heading ? `Plan: ${heading}`.slice(0, 120) : agentRequestTitle(PLAN_METHOD),
+    details:
+      text.length > MAX_PLAN_CHARS
+        ? `${text.slice(0, MAX_PLAN_CHARS)}\n\n(The rest of the plan was cut for length.)`
+        : text,
+    prompt: "Approve to make these changes, or send it back with what to change.",
+  }
+}
+
+/**
+ * What the agent is told when its plan is not approved. With a note it
+ * revises the plan; without one (Send back left empty, or the card expired)
+ * it stops, so it does not keep proposing to nobody.
+ * @param feedback The learner's note, if any.
+ */
+export function planDeclinedMessage(feedback?: string): string {
+  return feedback?.trim()
+    ? `The learner sent the plan back with this note. Revise the plan and propose it again; do not change any files yet.\n\n${feedback.trim().slice(0, 4_000)}`
+    : PLAN_STOPPED_MESSAGE
+}
+
+/** Told to the agent when a plan is declined without a note: stop, do not revise. */
+export const PLAN_STOPPED_MESSAGE =
+  "The learner did not approve the plan. Do not change any files. Stop here and wait for their next message."
+
+/**
  * Normalizes one engine approval into one composer card. Codex file changes
  * must arrive with their proposed diff; an approval without one is refused,
  * since an opaque grant cannot be reviewed.
@@ -276,6 +333,7 @@ function approvalRequest(
   )
     return undefined
   const method = APPROVAL_METHODS[request.action] ?? "approval/tool"
+  if (method === PLAN_METHOD) return planRequest(request.plan ?? "")
   return {
     method,
     kind: "approval",
@@ -613,12 +671,24 @@ export async function answerAgentRequest(
   switch (request.kind) {
     case "approval": {
       let optionId: string | undefined
+      let feedback: string | undefined
       try {
         const parsed = result.response ? JSON.parse(result.response) : undefined
         optionId =
           typeof parsed?.optionId === "string" ? parsed.optionId : undefined
+        feedback =
+          typeof parsed?.feedback === "string" ? parsed.feedback : undefined
       } catch {
         optionId = undefined
+      }
+      // A plan sent back carries the learner's note, so the agent can revise it.
+      if (spec.method === PLAN_METHOD) {
+        await request.respond(
+          result.accepted
+            ? { decision: "allow" }
+            : { decision: "deny", message: planDeclinedMessage(feedback) }
+        )
+        return
       }
       await request.respond({
         decision: !result.accepted

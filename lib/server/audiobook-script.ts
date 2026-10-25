@@ -10,6 +10,8 @@ import {
   splitAudiobookSource,
   type AudiobookSection,
 } from "../audiobook-text"
+import { arrayOf, STRING, strictObject, type JsonSchema } from "../json-schema"
+import { replyObject } from "../practice"
 import { SPOKEN_AUDIO_GUIDANCE, spokenAudioText } from "../spoken-audio"
 import { runProviderTextTurn } from "./providers/run-text-turn"
 import type { ProviderSelection } from "./providers/types"
@@ -26,6 +28,14 @@ const narrationSchema = z.object({
       text: z.string(),
     })
   ),
+})
+
+/**
+ * Reply shape Codex and Claude Code are held to, the strict-mode form of
+ * `narrationSchema`, which still checks the reply afterwards.
+ */
+const NARRATION_REPLY_SCHEMA: JsonSchema = strictObject({
+  sections: arrayOf(strictObject({ text: STRING })),
 })
 
 /** Groups adjacent page slices into bounded model calls without losing boundaries. */
@@ -50,18 +60,21 @@ function batchSections(sections: AudiobookSection[]): AudiobookSection[][] {
   return batches
 }
 
-/** Parses one bounded model result and rejects unreasonably expanded narration. */
+/**
+ * Parses one bounded model result and rejects unreasonably expanded narration.
+ * @param response Reply text, with the provider's parsed object for a schema reply.
+ */
 function parseNarration(
-  response: string,
+  response: { text: string; output?: unknown },
   sourceSections: AudiobookSection[]
 ): NarratedAudiobookSection[] {
-  const start = response.indexOf("{")
-  const end = response.lastIndexOf("}")
-  if (start < 0 || end <= start)
+  let value: unknown
+  try {
+    value = replyObject(response)
+  } catch {
     throw new Error("The narration editor returned no script")
-  const parsed = narrationSchema.parse(
-    JSON.parse(response.slice(start, end + 1)) as unknown
-  )
+  }
+  const parsed = narrationSchema.parse(value)
   if (parsed.sections.length !== sourceSections.length)
     throw new Error(
       "The narration editor changed the number of source sections"
@@ -109,9 +122,10 @@ export async function createAudiobookScript(input: {
         sandbox: "read-only",
         approvalPolicy: "never",
         timeoutMs: 180_000,
+        outputSchema: NARRATION_REPLY_SCHEMA,
       })
       try {
-        const edited = parseNarration(result.text.trim(), batch)
+        const edited = parseNarration(result, batch)
         narration.push(...edited.filter((entry) => entry.text))
       } catch (error) {
         throw new Error(

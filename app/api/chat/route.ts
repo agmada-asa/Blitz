@@ -773,6 +773,11 @@ export async function POST(request: Request): Promise<Response> {
           : input.autonomy === undefined
             ? savedAgentSettings.workingProjectId
             : input.workingProjectId
+        // Plan first applies to project agents, never to Teach.
+        const planFirst =
+          !teach &&
+          Boolean(workingProjectId) &&
+          (input.planFirst ?? savedAgentSettings.planFirst)
         const { resetContext } = await client.mutation(
           api.chatAgents.configure,
           {
@@ -780,6 +785,9 @@ export async function POST(request: Request): Promise<Response> {
             autonomy,
             additionalInstructions,
             ...(workingProjectId ? { workingProjectId } : {}),
+            ...(input.planFirst === undefined
+              ? {}
+              : { planFirst: input.planFirst }),
           }
         )
         const workspaceDirectory = teach
@@ -1012,6 +1020,7 @@ export async function POST(request: Request): Promise<Response> {
                     ),
                     approvalPolicy,
                   }),
+              ...(planFirst ? { mode: "plan" as const } : {}),
               signal: turnSignal,
               timeoutMs: WORKSPACE_CHAT_TIMEOUT_MS,
               ...(around.fork

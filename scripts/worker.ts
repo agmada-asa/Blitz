@@ -1,13 +1,15 @@
 /**
  * Starts Blitz's single background worker process.
  *
- * One Node process runs two independent polling loops that used to be
- * separate workers:
+ * One Node process runs independent polling loops, the first two of which
+ * used to be separate workers:
  *
  * - `ingestion` replays queued original-file ingestion jobs after restarts by
  *   calling the canonical `/api/sources/retry` route.
  * - `research` imports approved Deep Research sources and prepares
  *   approval-first research proposals.
+ * - `threads` gives the Codex and Claude Code threads behind chats their
+ *   chat titles, and deletes the threads of deleted chats.
  *
  * Each loop runs through `runWorkerLoop`, so a failing step is logged and
  * retried with backoff without stopping the other loop. The supervisor in
@@ -15,9 +17,10 @@
  * and the desktop app, and restarts it if it exits. The Kokoro speech worker
  * is a separate Python process and is not part of this one.
  *
- *   npm run worker [-- --only ingestion|research] [--once]
+ *   npm run worker [-- --only ingestion|research|threads] [--once]
  */
 
+import { join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { randomUUID } from "node:crypto"
 import type { ConvexHttpClient } from "convex/browser"
@@ -38,13 +41,15 @@ import {
   type ResearchImportFailureCategory,
 } from "../lib/server/research-import-worker.ts"
 import { loadSavedAiModelSettings } from "../lib/server/ai-model-settings.ts"
+import { getProjectDirectory } from "../lib/server/project-files.ts"
+import { runRuntimeThreadStep } from "../lib/server/runtime-threads.ts"
 import {
   isAiProviderId,
   resolveAiTaskSelection,
 } from "../lib/ai-model-settings.ts"
 
 /** Names of the loops this process can run. */
-const LOOP_NAMES = ["ingestion", "research"] as const
+const LOOP_NAMES = ["ingestion", "research", "threads"] as const
 
 /** One loop hosted by the worker process. */
 type LoopName = (typeof LOOP_NAMES)[number]
@@ -53,13 +58,14 @@ type LoopName = (typeof LOOP_NAMES)[number]
 type WorkerOptions = { loops: LoopName[]; once: boolean }
 
 /** Usage text printed for `--help` and invalid arguments. */
-const USAGE = `Usage: npm run worker [-- --only ingestion|research] [--once]
+const USAGE = `Usage: npm run worker [-- --only ingestion|research|threads] [--once]
 
 Runs Blitz's background loops in one process:
   ingestion  replays queued source ingestion after restarts
   research   imports approved research sources and prepares proposals
+  threads    names chats' runtime threads and deletes deleted chats' threads
 
-  --only <loop>  run one loop instead of both
+  --only <loop>  run one loop instead of all of them
   --once         run one step of each loop, then exit (exit code 1 on failure)
   --help         show this message`
 
@@ -284,6 +290,30 @@ function researchStep(
   }
 }
 
+/**
+ * Builds one runtime thread step over the Convex queue. A chat's folder is
+ * resolved the way the chat route resolves it: the project's folder for a
+ * Teach session or project agent, else the chat's own workspace folder.
+ */
+function threadsStep(client: ConvexHttpClient): () => Promise<number> {
+  return () =>
+    runRuntimeThreadStep(
+      {
+        next: (limit) => client.query(api.workspaceChats.runtimeThreadJobs, { limit }),
+        finish: async (jobId, failed) => {
+          await client.mutation(api.workspaceChats.finishRuntimeThreadJob, {
+            jobId: jobId as Id<"runtimeThreadJobs">,
+            failed,
+          })
+        },
+      },
+      {
+        project: (projectId) => getProjectDirectory(projectId),
+        chat: (chatId) => join(defaultChatWorkspaceDirectory(), chatId),
+      }
+    )
+}
+
 /** Connects to Convex and runs the selected loops until the process is stopped. */
 async function main(): Promise<void> {
   const options = parseOptions(process.argv.slice(2))
@@ -323,6 +353,16 @@ async function main(): Promise<void> {
         onFailure: (_error, retryInMs) =>
           console.error(
             `A research step failed. Saved requests remain available for retry.${retryNote(retryInMs)}`
+          ),
+      }),
+    threads: () =>
+      runWorkerLoop({
+        signal: controller.signal,
+        once: options.once,
+        step: threadsStep(client),
+        onFailure: (error, retryInMs) =>
+          console.error(
+            `Runtime thread tidying paused: ${safeWorkerError(error)}.${retryNote(retryInMs)}`
           ),
       }),
   }

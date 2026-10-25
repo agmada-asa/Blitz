@@ -17,6 +17,8 @@ import type {
   CodexThreadOptions,
   Engine,
   ThreadOptions,
+  TurnInput,
+  TurnLimits,
 } from "agent-engines"
 
 import {
@@ -24,6 +26,7 @@ import {
   type CardChatEvent,
   type CardChatResult,
 } from "../card-chat.ts"
+import { claudeBackgroundLimits } from "../spending-limits.ts"
 import {
   getSupportedAiReasoningEffortsForProvider,
   type AiProviderId,
@@ -101,6 +104,9 @@ const BLITZ_CLAUDE_SDK_OPTIONS = {
   includeHookEvents: false,
 } as const
 
+/** Claude Code's built-in tool that carries a schema-checked reply. */
+const STRUCTURED_OUTPUT_TOOL = "StructuredOutput"
+
 /** Provider-aware text request accepted by chat and generation callers. */
 export interface RunProviderTextTurnRequest {
   /** Provider integration selected for this turn. */
@@ -117,6 +123,13 @@ export interface RunProviderTextTurnRequest {
   readonly prompt: string
   /** Optional bounded native image attachments for multimodal providers. */
   readonly attachments?: readonly ProviderImageAttachment[]
+  /**
+   * Files the model reads as documents, by absolute path. Claude Code sends
+   * PDFs and text files as document content; Codex is told their paths.
+   * OpenCode turns ignore them, so callers only pass files to a provider that
+   * reads them and keep the extracted text for the others.
+   */
+  readonly files?: readonly { path: string; name?: string; mediaType?: string }[]
   /** Application-owned instructions sent through a provider instruction channel. */
   readonly developerInstructions?: string
   /** Existing provider session to resume. */
@@ -145,10 +158,24 @@ export interface RunProviderTextTurnRequest {
   readonly sandbox?: "read-only" | "workspace-write" | "danger-full-access"
   /** Provider approval policy. */
   readonly approvalPolicy?: "untrusted" | "on-request" | "never" | "full-access"
+  /**
+   * `plan` proposes a plan for approval before changing anything (Codex and
+   * Claude Code). Once it is approved the agent carries it out, with edits
+   * allowed where the access level would otherwise ask about each one.
+   * OpenCode turns ignore it.
+   */
+  readonly mode?: "plan"
   /** Caller cancellation signal. */
   readonly signal?: AbortSignal
   /** Wall-clock turn deadline. */
   readonly timeoutMs?: number
+  /**
+   * JSON Schema the reply must match, for background generation. Codex and
+   * Claude Code enforce it and return the parsed reply as `output`; OpenCode
+   * cannot, so its turns run without it and the caller parses the text as
+   * before. Write it with `lib/json-schema.ts` so Codex's strict mode accepts it.
+   */
+  readonly outputSchema?: Record<string, unknown>
 }
 
 /** Codex settings a caller owns outright, such as the chat agent's policy and tools. */
@@ -174,6 +201,12 @@ export type ProviderTextTurnOptions = {
   readonly requestHandler?: AcpRequestHandler
   /** Codex thread settings and host tools owned by the caller. */
   readonly codex?: CodexTurnOverrides
+  /**
+   * Spending caps for a background Claude Code turn; undefined runs it
+   * uncapped. Defaults to `claudeBackgroundLimits`, which caps only an
+   * API-key sign-in. Tests pass a fixed answer.
+   */
+  readonly backgroundLimits?: () => Promise<TurnLimits | undefined>
   /** Runtime Codex catalog already read by the caller, so the turn need not read it again. */
   readonly codexModelCatalog?: readonly ProviderModelOption[]
   /** Creates the engine for a turn; tests pass a fake. */
@@ -283,7 +316,9 @@ export function codexThreadOptions(
  * Claude Code thread settings for a turn.
  *
  * Background generation runs fully isolated: no settings, skills, plugins,
- * hooks, MCP servers, or tools. Chat turns load the user's own Claude Code
+ * hooks, MCP servers, or tools. A turn with an `outputSchema` keeps exactly
+ * one tool, Claude Code's own StructuredOutput, which is how the SDK returns a
+ * schema-checked reply; every other tool is still refused. Chat turns load the user's own Claude Code
  * setup (user-level settings only; project and local settings would come from
  * workspaces the agent can write to) and map Blitz's access policy onto native
  * permission modes: full access bypasses prompts, on-request routes prompts to
@@ -304,7 +339,12 @@ export function claudeThreadSettings(
         strictMcpConfig: true,
         skills: [],
         tools: [],
-        disallowedTools: ["*"],
+        // A blanket deny would also refuse StructuredOutput; with no built-in
+        // tools and no MCP servers it is the only tool left, and "dontAsk"
+        // refuses anything that is not explicitly allowed.
+        ...(request.outputSchema
+          ? { allowedTools: [STRUCTURED_OUTPUT_TOOL] }
+          : { disallowedTools: ["*"] }),
         permissionMode: "dontAsk",
         extra: {
           ...BLITZ_CLAUDE_SDK_OPTIONS,
@@ -413,16 +453,16 @@ type EngineThreadSetup = {
  *
  * @throws CardChatError for a policy or effort the provider cannot honour.
  */
-function engineThreadSetup(
+async function engineThreadSetup(
   providerId: EngineProviderId,
   request: RunProviderTextTurnRequest,
   selection: ProviderSelection,
   instructions: string,
-  codexThread: CodexThreadOptions | undefined
-): EngineThreadSetup {
+  options: Pick<ProviderTextTurnOptions, "backgroundLimits" | "codex">
+): Promise<EngineThreadSetup> {
   let model: string | undefined
   let effort: string | undefined
-  let settings: Pick<ThreadOptions, "access" | "claude" | "codex">
+  let settings: Pick<ThreadOptions, "access" | "claude" | "codex" | "limits">
   if (providerId === "claude-code") {
     if (request.approvalPolicy === "untrusted")
       throw new CardChatError(
@@ -449,11 +489,21 @@ function engineThreadSetup(
       effort = selection.effort
     }
     settings = claudeThreadSettings(request)
+    // An approved plan is the learner's go-ahead for its edits, so the turn
+    // continues with edits allowed instead of asking about each one.
+    if (request.mode === "plan" && settings.access === "ask")
+      settings = { ...settings, access: "accept-edits" }
+    // Background work on a per-token sign-in gets Claude Code's own caps.
+    // Chats and Teach are never capped, and Codex and OpenCode cannot be.
+    if (request.ephemeral) {
+      const limits = await (options.backgroundLimits ?? claudeBackgroundLimits)()
+      if (limits) settings = { ...settings, limits }
+    }
   } else {
     if (selection.model !== "default") model = selection.model
     effort = selection.effort
     settings = {
-      codex: codexThreadOptions(request, codexThread),
+      codex: codexThreadOptions(request, options.codex?.thread),
     }
   }
   return {
@@ -462,6 +512,7 @@ function engineThreadSetup(
       ...(model ? { model } : {}),
       ...(effort ? { effort } : {}),
       ...(instructions ? { instructions } : {}),
+      ...(request.outputSchema ? { outputSchema: request.outputSchema } : {}),
       ...settings,
     },
     effortSelected: effort !== undefined,
@@ -508,6 +559,34 @@ function claimEngine(
   return pooled?.engine
 }
 
+/**
+ * Builds a turn's input from its text and the request's images and files.
+ * Plain text when there is neither, so a text-only turn stays a string.
+ */
+function turnInput(text: string, request: RunProviderTextTurnRequest): TurnInput {
+  if (!request.attachments?.length && !request.files?.length) return text
+  return {
+    text,
+    ...(request.attachments?.length
+      ? {
+          images: request.attachments.map((attachment) => ({
+            type: "base64" as const,
+            mediaType: attachment.mimeType,
+            data: attachment.data,
+          })),
+        }
+      : {}),
+    ...(request.files?.length
+      ? {
+          files: request.files.map((file) => ({
+            type: "path" as const,
+            ...file,
+          })),
+        }
+      : {}),
+  }
+}
+
 /** Runs one Codex or Claude Code turn through agent-engines. */
 async function runEngineProviderTurn(
   providerId: EngineProviderId,
@@ -516,12 +595,12 @@ async function runEngineProviderTurn(
   instructions: string,
   options: ProviderTextTurnOptions
 ): Promise<CardChatResult> {
-  const setup = engineThreadSetup(
+  const setup = await engineThreadSetup(
     providerId,
     request,
     selection,
     instructions,
-    options.codex?.thread
+    options
   )
   const engine =
     claimEngine(providerId, request, setup, options) ??
@@ -550,35 +629,16 @@ async function runEngineProviderTurn(
       thread: setup.thread,
       ...(request.threadId ? { threadId: request.threadId } : {}),
       ...(request.fork ? { fork: request.fork } : {}),
+      ...(request.mode ? { turnOptions: { mode: request.mode } } : {}),
       ...(request.compactFirst ? { compactFirst: true } : {}),
       ...(request.compactFirst && request.compactedPrompt
-        ? {
-            compactedInput: request.attachments?.length
-              ? {
-                  text: request.compactedPrompt,
-                  images: request.attachments.map((attachment) => ({
-                    type: "base64" as const,
-                    mediaType: attachment.mimeType,
-                    data: attachment.data,
-                  })),
-                }
-              : request.compactedPrompt,
-          }
+        ? { compactedInput: turnInput(request.compactedPrompt, request) }
         : {}),
       ...(request.rewindBeforeTurnId
         ? { rewindBeforeTurnId: request.rewindBeforeTurnId }
         : {}),
       ...(request.readContextUsage ? { readContextUsage: true } : {}),
-      input: request.attachments?.length
-        ? {
-            text: request.prompt,
-            images: request.attachments.map((attachment) => ({
-              type: "base64" as const,
-              mediaType: attachment.mimeType,
-              data: attachment.data,
-            })),
-          }
-        : request.prompt,
+      input: turnInput(request.prompt, request),
       ...(request.signal === undefined ? {} : { signal: request.signal }),
       ...(request.timeoutMs === undefined
         ? {}
@@ -668,7 +728,7 @@ export async function prewarmProviderTextTurn(
   try {
     const turn = { ...request, prompt: "" }
     const { selection, instructions } = await turnBasics(turn)
-    const setup = engineThreadSetup(providerId, turn, selection, instructions, undefined)
+    const setup = await engineThreadSetup(providerId, turn, selection, instructions, {})
     key = prewarmedEngineKey(providerId, request.workspaceDirectory, setup.effortSelected)
     let bindToolCalls: ((handler: ToolCallHandler | undefined) => void) | undefined
     if (providerId === "codex") {
@@ -707,7 +767,7 @@ export async function compactProviderThread(
   try {
     const turn = { ...request, prompt: "" }
     const { selection, instructions } = await turnBasics(turn)
-    const setup = engineThreadSetup(providerId, turn, selection, instructions, undefined)
+    const setup = await engineThreadSetup(providerId, turn, selection, instructions, {})
     const engine = (options.createEngine ?? defaultEngine)(providerId, {
       effortSelected: setup.effortSelected,
     })

@@ -56,6 +56,11 @@ export interface ProviderAvailability {
     | "probe-failed"
   /** User-safe setup detail without command output or credentials. */
   readonly message: string
+  /**
+   * How a connected runtime is billed, when it says: `api-key` bills every
+   * token, so Settings offers spending limits for it.
+   */
+  readonly billing?: "subscription" | "api-key"
 }
 
 /** One provider-owned model choice, including reasoning encoded in its native ID. */

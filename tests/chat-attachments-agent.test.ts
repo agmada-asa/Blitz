@@ -209,3 +209,10 @@ test("buildWorkspaceChatPrompt points the agent at full text when only a preview
     /Full extracted text: attachments\/doc-textbook\.pdf\.pages\.txt \(pages begin with \[Page N\] markers/
   )
 })
+
+test("Plan first is read from the request only as on or off", () => {
+  const base = { message: "Sort my notes", clientMessageId: "msg-2", projectIds: [], attachments: [] }
+  assert.equal(parseWorkspaceChatRequest({ ...base, planFirst: true }).planFirst, true)
+  assert.equal(parseWorkspaceChatRequest(base).planFirst, undefined)
+  assert.throws(() => parseWorkspaceChatRequest({ ...base, planFirst: "yes" }), /Plan first/)
+})

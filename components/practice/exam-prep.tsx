@@ -131,6 +131,11 @@ function PaperRow({ paper, base }: { paper: PaperSummary; base: string }) {
         <div className="min-w-0">
           <h3 className="font-medium break-words">{paper.title}</h3>
           <p className="mt-0.5 text-xs text-muted-foreground">{details.join(" · ")}</p>
+          {paper.status === "ready" && paper.readFromScan ? (
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              Scanned PDF · read as a document
+            </p>
+          ) : null}
         </div>
         <div className="flex shrink-0 flex-wrap gap-2">
           {paper.status === "ready" ? (
