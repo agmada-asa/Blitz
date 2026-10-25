@@ -6,17 +6,29 @@
  * the tutor is writing. After the opening pre-check it offers to plan the
  * lesson around the answers or skip the check; after the recap it offers
  * practice and the next unit. N sends the next section from the keyboard
- * while the lesson waits for the learner.
+ * while the lesson waits for the learner. The mic beside the question box
+ * turns a spoken question into text to send or edit (`teach-voice.tsx`).
  */
 
 import Link from "next/link"
-import { useEffect, useState, type FormEvent, type KeyboardEvent } from "react"
+import {
+  useCallback,
+  useEffect,
+  useState,
+  type FormEvent,
+  type KeyboardEvent,
+} from "react"
 
 import { Button } from "@/components/ui/button"
 import { ArrowRightIcon, SendIcon } from "@/components/ui/icon"
 import { Textarea } from "@/components/ui/textarea"
 import { isTypingTarget } from "@/hooks/use-quiz-shortcuts"
 import { TEACH_QUICK_REPLIES } from "@/lib/teach"
+import {
+  DictationButton,
+  DictationStatus,
+  useDictation,
+} from "@/components/learn/teach-voice"
 
 /** What the dock should offer for the session's current state. */
 export type TeachDockState =
@@ -62,6 +74,14 @@ export function TeachDock({
 }: TeachDockProps) {
   const [draft, setDraft] = useState("")
   const canAsk = state.kind === "ready" || state.kind === "complete"
+  // A spoken question joins whatever is already typed, ready to edit or send.
+  const dictation = useDictation(
+    useCallback(
+      (text: string) =>
+        setDraft((current) => (current.trim() ? `${current.trim()} ${text}` : text)),
+      []
+    )
+  )
   const ready = state.kind === "ready"
 
   // While the lesson waits for the learner, N sends "Next section" unless they are typing or hold a modifier.
@@ -238,6 +258,7 @@ export function TeachDock({
               disabled={!canAsk}
               className="max-h-40 min-h-11 resize-none rounded-2xl px-4 py-2.5"
             />
+            <DictationButton dictation={dictation} disabled={!canAsk} />
             <Button
               type="submit"
               size="icon"
@@ -248,6 +269,9 @@ export function TeachDock({
               <SendIcon aria-hidden="true" />
             </Button>
           </form>
+        )}
+        {state.kind === "no-material" ? null : (
+          <DictationStatus dictation={dictation} />
         )}
       </div>
     </div>

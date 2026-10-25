@@ -13,6 +13,11 @@ import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
 import { useMutation, useQuery } from "convex/react"
 import { ProviderHandoffOffer } from "@/components/chat/provider-handoff-offer"
+import {
+  ReadRepliesToggle,
+  useReadRepliesSetting,
+  useReplyReader,
+} from "@/components/learn/teach-voice"
 import type { FunctionReturnType } from "convex/server"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useMinuteClock } from "@/hooks/use-minute-clock"
@@ -195,6 +200,9 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
     const first = messages.find((message) => message.role === "assistant")
     return first ? (parseTeachOutline(first.content) ?? null) : null
   }, [unit.outline, messages])
+  // Hands-free: new replies are read aloud while the learner has it on.
+  const [readReplies, setReadReplies] = useReadRepliesSetting()
+  const replyReader = useReplyReader(readReplies, messages, outline)
 
   // The latest section marker is the current section; every marker seen is a
   // taught section. Reading them from messages keeps progress live while a
@@ -582,6 +590,13 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
               >
                 +{sitting.xp} XP
               </p>
+            ) : null}
+            {chat ? (
+              <ReadRepliesToggle
+                enabled={readReplies}
+                onChange={setReadReplies}
+                reader={replyReader}
+              />
             ) : null}
             {chat && messages.length ? (
               <Button
