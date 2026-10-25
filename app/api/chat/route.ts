@@ -35,6 +35,12 @@ import {
   workspaceChatFailureDetail,
 } from "@/lib/server/workspace-chat-failure"
 import { runProviderTextTurn } from "@/lib/server/providers/run-text-turn"
+import {
+  handoffPrompt,
+  readHandoffTranscript,
+} from "@/lib/server/provider-handoff"
+import { providerLabel } from "@/lib/provider-handoff"
+import type { PortableTranscript } from "agent-engines"
 import { getCodexModelCatalog } from "@/lib/server/providers/codex-models"
 import type { ProviderImageAttachment } from "@/lib/server/providers/types"
 import { isTrustedBlitzOrigin } from "@/lib/server/request-origin"
@@ -136,6 +142,8 @@ const startWorkspaceTurn = makeFunctionReference<
     providerSessionId: string | null
     codexThreadId: string | null
     shouldReplayContext: boolean
+    /** Provider and session to carry over after a usage-limit handoff. */
+    providerHandoff: { fromProviderId: string; fromSessionId?: string } | null
     replyPrefix: string
     replayContext: WorkspaceChatReplayContext
   }
@@ -737,10 +745,18 @@ export async function POST(request: Request): Promise<Response> {
             }
           )
         }
+        // The configured model only applies to the provider it was chosen
+        // for; a chat on another provider (after a handoff) uses its default.
+        const configuredForProvider =
+          configuredSelection.providerId === turn.providerId
         const selection = {
           providerId: turn.providerId,
-          model: turn.providerModel ?? configuredSelection.model,
-          effort: turn.providerEffort ?? configuredSelection.effort,
+          model:
+            turn.providerModel ??
+            (configuredForProvider ? configuredSelection.model : "default"),
+          effort:
+            turn.providerEffort ??
+            (configuredForProvider ? configuredSelection.effort : undefined),
         }
         // Teach reads untrusted course files, so it never inherits the global
         // access setting: no approvals to wait on, and a read-only sandbox.
@@ -856,7 +872,8 @@ export async function POST(request: Request): Promise<Response> {
         const runTurn = async (
           prompt: string,
           threadId?: string,
-          attachments: readonly ProviderImageAttachment[] = nativeImageAttachments
+          attachments: readonly ProviderImageAttachment[] = nativeImageAttachments,
+          seed?: PortableTranscript
         ): ReturnType<typeof runProviderTextTurn> => {
           turnAccepted = false
           const codexModelCatalog =
@@ -870,6 +887,7 @@ export async function POST(request: Request): Promise<Response> {
               prompt,
               ...(attachments.length ? { attachments } : {}),
               ...(threadId ? { threadId } : {}),
+              ...(seed ? { seed } : {}),
               model: selection.model,
               effort: selection.effort,
               sandbox: teach
@@ -959,11 +977,25 @@ export async function POST(request: Request): Promise<Response> {
             // A removed historical project does not invalidate the conversation.
           }
         }
-        const initialPrompt = teach
-          ? teachPrompt(turn.shouldReplayContext || resetContext)
-          : turn.shouldReplayContext || resetContext
-            ? await promptWithReplay()
-            : buildWorkspaceChatPrompt(input, projects, card)
+        // After a usage-limit handoff the new provider's session is seeded
+        // with the old session's transcript, so the prompt needs no replay.
+        // Teach rebuilds from its unit and plan instead, which a seed of its
+        // first prompt (the whole unit) would only duplicate.
+        const handoffSeed =
+          turn.providerHandoff && !teach && !resetContext
+            ? await readHandoffTranscript(turn.providerHandoff, workspaceDirectory)
+            : undefined
+        const initialPrompt = handoffSeed
+          ? handoffPrompt(
+              buildWorkspaceChatPrompt(input, projects, card),
+              providerLabel(turn.providerHandoff!.fromProviderId),
+              turn.replyPrefix
+            )
+          : teach
+            ? teachPrompt(turn.shouldReplayContext || resetContext)
+            : turn.shouldReplayContext || resetContext
+              ? await promptWithReplay()
+              : buildWorkspaceChatPrompt(input, projects, card)
         const citationProjectIds = [
           ...new Set(
             [
@@ -1001,7 +1033,9 @@ export async function POST(request: Request): Promise<Response> {
         try {
           result = await runTurn(
             `${initialPrompt}\n\n${citationContext}`,
-            resetContext ? undefined : (turn.providerSessionId ?? undefined)
+            resetContext ? undefined : (turn.providerSessionId ?? undefined),
+            nativeImageAttachments,
+            handoffSeed
           )
         } catch (error) {
           if (

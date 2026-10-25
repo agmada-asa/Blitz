@@ -12,6 +12,7 @@ import type {
   CodexEngineOptions,
   CodexThreadOptions,
   Engine,
+  PortableTranscript,
   ThreadOptions,
 } from "agent-engines"
 
@@ -100,6 +101,11 @@ export interface RunProviderTextTurnRequest {
   readonly developerInstructions?: string
   /** Existing provider session to resume. */
   readonly threadId?: string
+  /**
+   * Conversation from another provider's session, carried into a new session.
+   * Ignored when resuming, since the session already holds its history.
+   */
+  readonly seed?: PortableTranscript
   /** Whether this turn should use a disposable session. */
   readonly ephemeral?: boolean
   /** Hosted search mode for providers that support it. */
@@ -429,6 +435,7 @@ async function runEngineProviderTurn(
         // OpenCode has no instruction channel; its prompt carries them instead.
         ...(instructions && providerId !== "opencode" ? { instructions } : {}),
         ...settings,
+        ...(request.seed && !request.threadId ? { seed: request.seed } : {}),
       },
       ...(request.threadId ? { threadId: request.threadId } : {}),
       ...(providerId === "opencode" ? { confirmResume: true } : {}),
