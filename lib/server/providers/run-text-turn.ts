@@ -12,6 +12,7 @@ import type {
   CodexThreadOptions,
   Engine,
   ThreadOptions,
+  TurnLimits,
 } from "agent-engines"
 
 import {
@@ -19,6 +20,7 @@ import {
   type CardChatEvent,
   type CardChatResult,
 } from "../card-chat.ts"
+import { claudeBackgroundLimits } from "../spending-limits.ts"
 import {
   getSupportedAiReasoningEffortsForProvider,
   type AiProviderId,
@@ -152,6 +154,12 @@ export type ProviderTextTurnOptions = {
   readonly requestHandler?: AcpRequestHandler
   /** Codex thread settings and host tools owned by the caller. */
   readonly codex?: CodexTurnOverrides
+  /**
+   * Spending caps for a background Claude Code turn; undefined runs it
+   * uncapped. Defaults to `claudeBackgroundLimits`, which caps only an
+   * API-key sign-in. Tests pass a fixed answer.
+   */
+  readonly backgroundLimits?: () => Promise<TurnLimits | undefined>
   /** Runtime Codex catalog already read by the caller, so the turn need not read it again. */
   readonly codexModelCatalog?: readonly ProviderModelOption[]
   /** Creates the engine for a turn; tests pass a fake. */
@@ -394,7 +402,7 @@ async function runEngineProviderTurn(
 ): Promise<CardChatResult> {
   let model: string | undefined
   let effort: string | undefined
-  let settings: Pick<ThreadOptions, "access" | "claude" | "codex">
+  let settings: Pick<ThreadOptions, "access" | "claude" | "codex" | "limits">
   if (providerId === "claude-code") {
     if (request.approvalPolicy === "untrusted")
       throw new CardChatError(
@@ -421,6 +429,12 @@ async function runEngineProviderTurn(
       effort = selection.effort
     }
     settings = claudeThreadSettings(request)
+    // Background work on a per-token sign-in gets Claude Code's own caps.
+    // Chats and Teach are never capped, and Codex and OpenCode cannot be.
+    if (request.ephemeral) {
+      const limits = await (options.backgroundLimits ?? claudeBackgroundLimits)()
+      if (limits) settings = { ...settings, limits }
+    }
   } else {
     if (selection.model !== "default") model = selection.model
     effort = selection.effort

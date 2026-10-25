@@ -29,6 +29,7 @@ import {
 import type { JsonSchema } from "../json-schema.ts"
 import type { ModelReply } from "../practice.ts"
 import { loadSavedAiModelSettings } from "./ai-model-settings.ts"
+import { CardChatError } from "./card-chat.ts"
 import { serverConvexClient } from "./convex.ts"
 import { runProviderTextTurn } from "./providers/run-text-turn.ts"
 
@@ -86,6 +87,7 @@ async function runExamTurn(prompt: string, outputSchema: JsonSchema): Promise<Mo
 /** Returns a short learner-facing reason for a failed run. */
 function failureMessage(error: unknown, fallback: string): string {
   if (error instanceof ExamRunError) return error.message
+  if (error instanceof CardChatError && error.reason === "spend-limit") return error.message
   const message = error instanceof Error ? error.message : ""
   if (/usage limit|rate limit|quota/i.test(message))
     return "Your AI subscription's usage limit was reached. Try again later."

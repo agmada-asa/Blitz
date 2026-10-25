@@ -23,6 +23,7 @@ import {
   type Turn,
   type TurnError,
   type TurnInput,
+  type TurnLimits,
   type TurnOptions,
   type TurnResult,
 } from "agent-engines"
@@ -35,6 +36,7 @@ import {
   type CardChatResult,
 } from "../card-chat.ts"
 import { refuseAgentRequest } from "../agent-request.ts"
+import { formatUsd } from "../../spending-limits.ts"
 import type { EngineProviderId } from "./engines.ts"
 
 /** How long cleanup waits for an interrupt or engine shutdown before moving on. */
@@ -76,9 +78,31 @@ function inputText(input: TurnInput): string {
   return typeof input === "string" ? input : input.text
 }
 
-/** Maps a failed turn's classified error to Blitz's recovery reasons and copy. */
-export function turnFailure(error: TurnError | undefined): CardChatError {
+/**
+ * Maps a failed turn's classified error to the app's recovery reasons and copy.
+ * @param error Classified failure from the runtime.
+ * @param limits The thread's own caps, so a `limit` failure can name the one it hit.
+ */
+export function turnFailure(
+  error: TurnError | undefined,
+  limits?: TurnLimits
+): CardChatError {
   switch (error?.kind) {
+    case "limit": {
+      // Claude Code reports which cap ended the turn; budget is the usual one.
+      const steps = /turn/i.test(error.message) && !/budget/i.test(error.message)
+      const which =
+        steps && limits?.maxTurns
+          ? `Stopped after ${limits.maxTurns} steps, your limit for one task.`
+          : limits?.maxBudgetUsd
+            ? `Stopped at your ${formatUsd(limits.maxBudgetUsd)} limit for one task.`
+            : "Stopped at your spending limit for one task."
+      return new CardChatError(
+        "spend-limit",
+        `${which} Nothing was saved. Raise the limit in Settings, or try again with less material.`,
+        error
+      )
+    }
     case "usage-limit":
       return new CardChatError(
         "usage-limit",
@@ -381,7 +405,8 @@ async function runTurn(
 
   /** Builds the result of a settled turn, or throws its mapped failure. */
   function complete(result: TurnResult): CardChatResult {
-    if (result.status === "failed") throw turnFailure(result.error)
+    if (result.status === "failed")
+      throw turnFailure(result.error, request.thread.limits)
     if (result.status === "interrupted")
       throw new CardChatError("turn-interrupted", "Blitz turn interrupted")
     // A schema-checked reply may arrive only as parsed output (Claude Code

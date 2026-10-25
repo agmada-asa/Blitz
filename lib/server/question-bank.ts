@@ -21,6 +21,7 @@ import {
   QUESTION_BANK_SCHEMA,
 } from "../practice.ts"
 import { loadSavedAiModelSettings } from "./ai-model-settings.ts"
+import { CardChatError } from "./card-chat.ts"
 import { serverConvexClient } from "./convex.ts"
 import { runProviderTextTurn } from "./providers/run-text-turn.ts"
 
@@ -29,6 +30,7 @@ const GENERATION_TIMEOUT_MS = 540_000
 
 /** Returns a short learner-facing reason for a failed run. */
 function failureMessage(error: unknown): string {
+  if (error instanceof CardChatError && error.reason === "spend-limit") return error.message
   const message = error instanceof Error ? error.message : ""
   if (/usage limit|rate limit|quota/i.test(message))
     return "Your AI subscription's usage limit was reached. Try again later."

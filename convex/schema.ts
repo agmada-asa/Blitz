@@ -774,6 +774,20 @@ export default defineSchema({
     updatedAt: v.number(),
   }).index("by_scope", ["scope"]),
 
+  /**
+   * One global record for the spending caps on background tasks while a
+   * provider is signed in with an API key (`lib/spending-limits.ts`). Absent
+   * until the learner saves limits; the defaults apply until then.
+   */
+  spendingLimits: defineTable({
+    scope: v.literal("global"),
+    /** Most one background turn may spend, in US dollars. */
+    maxTaskUsd: v.number(),
+    /** Most model round trips one background turn may take. */
+    maxTaskSteps: v.number(),
+    updatedAt: v.number(),
+  }).index("by_scope", ["scope"]),
+
   /** One global record for the ordered Kokoro voices used as podcast hosts. */
   audioVoiceSettings: defineTable({
     scope: v.literal("global"),

@@ -112,6 +112,7 @@ export type CardChatFailureReason =
   | "transport"
   | "provider-overloaded"
   | "usage-limit"
+  | "spend-limit"
   | "rate-limit"
   | "turn-failed"
   | "turn-interrupted"

@@ -140,8 +140,8 @@ test("maps usage limits, capacity, rate limits, and unknown failures to recovery
     [{ kind: "model", message: "Rerouted" }, "invalid-input"],
     [{ kind: "connection", message: "Codex exited" }, "transport"],
     [{ kind: "other", message: "Something odd" }, "turn-failed"],
-    // Blitz sets no turn limits, so a limit stop is an ordinary failed turn.
-    [{ kind: "limit", message: "Turn limit reached" }, "turn-failed"],
+    // A cap the thread set is a spending stop with its own recovery copy.
+    [{ kind: "limit", message: "Turn limit reached" }, "spend-limit"],
   ] as const) {
     const engine = new FakeEngine("codex", (turn) =>
       turn.finish({ status: "failed", error: { ...error } })
@@ -387,7 +387,13 @@ async function route(
       prompt: "Question",
       ...request,
     },
-    { codexModelCatalog: CATALOG, createEngine: () => engine, ...options }
+    {
+      codexModelCatalog: CATALOG,
+      createEngine: () => engine,
+      // Never probe the real Claude Code sign-in from a test.
+      backgroundLimits: async () => undefined,
+      ...options,
+    }
   )
   return engine
 }
@@ -594,4 +600,57 @@ test("a schema reply that arrives only as parsed output becomes the text and is 
   const value = await result
   assert.deepEqual(value.output, output)
   assert.equal(value.text, JSON.stringify(output))
+})
+
+test("background Claude turns carry the spending caps; chats, subscriptions and Codex do not", async () => {
+  const caps = { maxBudgetUsd: 3, maxTurns: 10 }
+  const background = {
+    ephemeral: true,
+    webSearchMode: "disabled",
+    sandbox: "read-only",
+    approvalPolicy: "never",
+  } as const
+  let asked = 0
+  const capped = await route("claude", background, {
+    backgroundLimits: async () => {
+      asked += 1
+      return caps
+    },
+  })
+  assert.deepEqual(capped.started[0].limits, caps)
+  const uncapped = await route("claude", background)
+  assert.equal(uncapped.started[0].limits, undefined)
+  // A chat turn never asks for caps, and Codex cannot take them.
+  const chat = await route(
+    "claude",
+    { approvalPolicy: "on-request" },
+    { backgroundLimits: async () => ((asked += 1), caps) }
+  )
+  assert.equal(chat.started[0].limits, undefined)
+  const codex = await route("codex", background, {
+    backgroundLimits: async () => ((asked += 1), caps),
+  })
+  assert.equal(codex.started[0].limits, undefined)
+  assert.equal(asked, 1)
+})
+
+test("a spending stop names the cap it hit", async () => {
+  for (const [message, expected] of [
+    ["error_max_budget_usd", /Stopped at your \$2\.50 limit for one task\. Nothing was saved\./],
+    ["error_max_turns", /Stopped after 6 steps, your limit for one task\./],
+  ] as const) {
+    const engine = new FakeEngine("claude", (turn) =>
+      turn.finish({ status: "failed", error: { kind: "limit", message } })
+    )
+    const { result } = await run(engine, {
+      thread: { cwd: WORKSPACE, limits: { maxBudgetUsd: 2.5, maxTurns: 6 } },
+    })
+    await assert.rejects(result, (failure: unknown) => {
+      assert.ok(failure instanceof CardChatError)
+      assert.equal(failure.reason, "spend-limit")
+      assert.match(failure.message, expected)
+      assert.match(failure.message, /Raise the limit in Settings/)
+      return true
+    })
+  }
 })
