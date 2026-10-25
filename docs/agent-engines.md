@@ -12,10 +12,14 @@ Blitz runs Codex and Claude Code through [agent-engines](https://www.npmjs.com/p
 | `lib/server/agent-request.ts` | Turns a runtime's approval, question, or elicitation into a composer interaction, and the learner's reply back into the runtime's answer. |
 | `lib/server/chat-agent.ts` | Shows requests in the chat composer one at a time, and supplies the chat agent's Codex policy and Blitz's own question and checkpoint tools. |
 | `lib/provider-activity.ts` | Turns tool, tool progress, and file events into the bounded steps shown beside a reply. A running tool's progress message (Codex MCP tools) replaces its detail until it ends. |
+| `lib/server/providers/engine-pool.ts` | Holds an engine prewarmed for a new Teach session's first turn until that turn claims it, closing it after three minutes otherwise. |
+| `lib/provider-thread-features.ts` | Which providers fork, rewind, compact, report context usage, and prewarm: Codex and Claude Code; OpenCode none. |
 
 ## Lifetime
 
 Every turn, availability check, and catalogue read creates its own engine and closes it afterwards, so no Codex app-server or Claude Code process outlives the request that started it. A chat keeps its runtime thread ID and resumes it on the next message.
+
+The one exception is prewarm. Opening a new Teach session calls `POST /api/teach/prewarm`, which creates the reply provider's engine with the exact thread options the first turn will send (`lib/server/teach-turn-settings.ts`) and calls `engine.prewarm()`: Codex starts its app-server, and Claude Code also opens the new thread's process. The first turn claims the engine from the pool and owns it from then on. Only a new thread benefits, so a resumed session is not prewarmed. The saving has not been measured; compare with `npm run benchmark:teach -- --teach`.
 
 ## Sign-in
 
@@ -31,7 +35,18 @@ Claude Code background turns load no settings, skills, plugins, hooks, MCP serve
 
 ## Replies
 
-Only text, reasoning, tool, file, request, and lifecycle events shape a turn. Every other event the library sends (hooks, notices, goals, MCP status, realtime, prompt suggestions, and any added in a later minor release) is ignored, and a failed turn whose error kind Blitz does not map, such as `limit`, gets the generic failure copy.
+Only text, reasoning, tool, file, request, notice, compaction, and lifecycle events shape a turn. Of the notices, `refusal`, `permission-denied`, and `moderation` are saved on the reply and shown beside it; `warning`, `config`, `deprecation`, and `info` are logged on the server. Every other event the library sends (hooks, goals, MCP status, realtime, prompt suggestions, and any added in a later minor release) is ignored. A `context-window` failure says the conversation ran out of room, an `auth` one that the provider is signed out, and a failed turn whose error kind Blitz does not map, such as `limit`, gets the generic failure copy.
+
+## Thread operations
+
+Around a turn, `engine-turn.ts` can also:
+
+- fork a saved thread through a turn instead of starting or resuming one (branched and edited chats); a failed fork throws before any turn, and the route replays instead;
+- rewind before a turn, so a Teach reply is redone in place (Try that again); a failed rewind runs the turn on top of the conversation;
+- compact before the turn, sending a different prompt only when compaction ran;
+- read context usage after a completed turn, for the Teach context meter.
+
+`runEngineCompaction` compacts a saved thread outside any turn (Compact now). Turn IDs saved under agent-engines 0.2.0 may not match what `forkThread` and `rewind` take on Claude Code; both fall back as above.
 
 A Codex reply is its answer messages; progress notes between tool calls and reasoning become the thought trace. A Claude Code reply is everything it streamed in the turn. Subagent text stays out of both, though subagent tool steps still show.
 
