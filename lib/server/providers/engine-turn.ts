@@ -7,6 +7,12 @@
  * Blitz's turn policy around it: the wall-clock deadline, caller cancellation,
  * output bounds, which text counts as the reply and which as thought, how
  * failures map to recovery copy, and that the engine is closed on every exit.
+ *
+ * Around the turn itself it can also fork the thread from a saved one (a
+ * branched or edited chat), compact the context before the turn, rewind the
+ * latest turn so a reply is redone in place, and read how full the context is
+ * once the turn ends. Refusals, denied tools, and safety checks are forwarded
+ * as notices; every other runtime notice is logged on the server only.
  */
 
 import { isAbsolute } from "node:path"
@@ -35,10 +41,21 @@ import {
   type CardChatResult,
 } from "../card-chat.ts"
 import { refuseAgentRequest } from "../agent-request.ts"
+import {
+  normalizeContextUsage,
+  type TurnContextUsage,
+} from "../../context-usage.ts"
+import { shownTurnNotice } from "../../turn-notices.ts"
 import type { EngineProviderId } from "./engines.ts"
 
 /** How long cleanup waits for an interrupt or engine shutdown before moving on. */
 const CLEANUP_TIMEOUT_MS = 1_000
+
+/** How long reading context usage may take before the turn completes without it. */
+const CONTEXT_USAGE_TIMEOUT_MS = 2_000
+
+/** Longest runtime notice text written to the server log. */
+const MAX_LOGGED_NOTICE_LENGTH = 300
 
 /** One turn to run on a freshly created engine, which this adapter closes. */
 export interface EngineTurnRequest {
@@ -50,6 +67,26 @@ export interface EngineTurnRequest {
   readonly thread: ThreadOptions
   /** Saved thread to resume; omitted starts a new one. */
   readonly threadId?: string
+  /**
+   * Saved thread to copy instead of starting or resuming one: the new thread
+   * carries the original's conversation through `throughTurnId` (inclusive),
+   * or all of it. Takes precedence over `threadId`. A failed copy throws a
+   * `transport` error before the turn is accepted, so callers can fall back.
+   */
+  readonly fork?: { readonly threadId: string; readonly throughTurnId?: string }
+  /**
+   * Compacts the thread before the turn runs. A compaction that fails is
+   * logged and the turn runs anyway, since the runtime may still have room.
+   */
+  readonly compactFirst?: boolean
+  /**
+   * Drops this turn and every later one before the new turn runs, so the reply
+   * is redone in place. Reported with a `rewound` event; a rewind that fails is
+   * logged and the turn runs on top of the existing conversation instead.
+   */
+  readonly rewindBeforeTurnId?: string
+  /** Reads how full the context window is after a completed turn. */
+  readonly readContextUsage?: boolean
   /** Prompt text and native images. */
   readonly input: TurnInput
   /** Per-turn model and effort, when they differ from the thread's. */
@@ -110,6 +147,18 @@ export function turnFailure(error: TurnError | undefined): CardChatError {
         "The provider stopped before finishing this turn",
         error
       )
+    case "context-window":
+      return new CardChatError(
+        "context-window",
+        "This conversation ran out of room for the reply.",
+        error
+      )
+    case "auth":
+      return new CardChatError(
+        "transport",
+        "The selected provider is signed out. Connect it in Settings.",
+        error
+      )
     default:
       return new CardChatError("turn-failed", "Blitz turn failed", error)
   }
@@ -146,6 +195,34 @@ function startFailure(error: unknown): CardChatError {
     "The selected provider could not start this turn",
     error
   )
+}
+
+/** Writes a runtime notice Blitz does not show to the server log, bounded. */
+function logNotice(kind: string, message: string): void {
+  console.info("Provider notice", {
+    kind,
+    message: message.replace(/\s+/g, " ").slice(0, MAX_LOGGED_NOTICE_LENGTH),
+  })
+}
+
+/** Reads a thread's context usage within a short bound; undefined when unknown. */
+async function readContextUsage(
+  thread: Thread
+): Promise<TurnContextUsage | undefined> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    const usage = await Promise.race([
+      thread.contextUsage(),
+      new Promise<undefined>((resolve) => {
+        timer = setTimeout(() => resolve(undefined), CONTEXT_USAGE_TIMEOUT_MS)
+      }),
+    ])
+    return usage ? normalizeContextUsage(usage) : undefined
+  } catch {
+    return undefined
+  } finally {
+    clearTimeout(timer)
+  }
 }
 
 /** Resolves after a bounded wait, so cleanup never hangs on a stuck runtime. */
@@ -274,6 +351,13 @@ async function runTurn(
 
   /** Routes one engine event into Blitz's event shapes. */
   const handle = (event: AgentEvent): void => {
+    if (event.type === "notice") {
+      // A subagent's denied tool still explains a short reply, so it is kept.
+      const notice = shownTurnNotice(event.kind, event.message, event.details)
+      if (notice) emit({ type: "notice", notice })
+      else logNotice(event.kind, event.message)
+      return
+    }
     if (event.type === "request") {
       const answer = options.onRequest
         ? options.onRequest(event.request)
@@ -319,6 +403,80 @@ async function runTurn(
       case "reasoning.done":
         if (event.text.trim()) thoughts.push(event.text.trim())
         return
+      case "compacted":
+        // The runtime compacted by itself mid-turn.
+        emit({
+          type: "compacted",
+          origin: "runtime",
+          ...(event.beforeTokens !== undefined
+            ? { beforeTokens: event.beforeTokens }
+            : {}),
+          ...(event.afterTokens !== undefined
+            ? { afterTokens: event.afterTokens }
+            : {}),
+        })
+        return
+    }
+  }
+
+  /**
+   * Compacts the opened thread as a turn of its own. Its events stay out of
+   * the reply: only the compaction itself is reported. A failed or refused
+   * compaction is logged and left for the runtime's own handling.
+   */
+  const compact = async (opened: Thread): Promise<void> => {
+    let compacted = false
+    try {
+      const compaction = opened.compact()
+      turn = compaction
+      const consumed = (async () => {
+        for await (const event of compaction) {
+          if (event.type !== "compacted" || event.agentId || compacted) continue
+          compacted = true
+          emit({
+            type: "compacted",
+            origin: "requested",
+            ...(event.beforeTokens !== undefined
+              ? { beforeTokens: event.beforeTokens }
+              : {}),
+            ...(event.afterTokens !== undefined
+              ? { afterTokens: event.afterTokens }
+              : {}),
+          })
+        }
+      })()
+      const result = await race(compaction.result)
+      await race(consumed)
+      if (result.status === "completed" && !compacted) {
+        compacted = true
+        emit({ type: "compacted", origin: "requested" })
+      }
+      if (result.status !== "completed")
+        console.warn("Provider could not compact the thread", {
+          status: result.status,
+          kind: result.error?.kind ?? "unknown",
+        })
+      turn = undefined
+    } catch (error) {
+      // A cancelled compaction stays the active turn, so cleanup interrupts it.
+      if (cancelReason) throw cancelReason
+      turn = undefined
+      console.warn("Provider could not compact the thread", {
+        message: error instanceof Error ? error.message : "Unknown error",
+      })
+    }
+  }
+
+  /** Rewinds the opened thread before `turnId`, reporting how many turns went. */
+  const rewind = async (opened: Thread, turnId: string): Promise<void> => {
+    try {
+      const result = await race(opened.rewind(turnId))
+      emit({ type: "rewound", droppedTurns: result.droppedTurns })
+    } catch (error) {
+      if (cancelReason) throw cancelReason
+      console.warn("Provider could not rewind the thread", {
+        message: error instanceof Error ? error.message : "Unknown error",
+      })
     }
   }
 
@@ -341,13 +499,32 @@ async function runTurn(
     if (cancelReason) throw cancelReason
     try {
       thread = await race(
-        request.threadId
-          ? request.engine.resumeThread(request.threadId, request.thread)
-          : request.engine.startThread(request.thread)
+        request.fork
+          ? request.engine.forkThread(request.fork.threadId, {
+              ...request.thread,
+              ...(request.fork.throughTurnId
+                ? { throughTurnId: request.fork.throughTurnId }
+                : {}),
+            })
+          : request.threadId
+            ? request.engine.resumeThread(request.threadId, request.thread)
+            : request.engine.startThread(request.thread)
       )
     } catch (error) {
-      throw cancelReason ?? startFailure(error)
+      throw (
+        cancelReason ??
+        (request.fork
+          ? new CardChatError(
+              "transport",
+              "The saved conversation could not be copied",
+              error
+            )
+          : startFailure(error))
+      )
     }
+    if (request.compactFirst) await compact(thread)
+    if (request.rewindBeforeTurnId)
+      await rewind(thread, request.rewindBeforeTurnId)
     const running = thread.run(request.input, request.turnOptions)
     turn = running
     void running.id.then(started, () => undefined)
@@ -357,7 +534,11 @@ async function runTurn(
     const result: TurnResult = await race(running.result)
     await race(consumed)
     if (cancelReason) throw cancelReason
-    return complete(result)
+    const contextUsage =
+      request.readContextUsage && result.status === "completed"
+        ? await readContextUsage(thread)
+        : undefined
+    return complete(result, contextUsage)
   } catch (error) {
     const failure =
       cancelReason ??
@@ -380,7 +561,10 @@ async function runTurn(
   }
 
   /** Builds the result of a settled turn, or throws its mapped failure. */
-  function complete(result: TurnResult): CardChatResult {
+  function complete(
+    result: TurnResult,
+    contextUsage: TurnContextUsage | undefined
+  ): CardChatResult {
     if (result.status === "failed") throw turnFailure(result.error)
     if (result.status === "interrupted")
       throw new CardChatError("turn-interrupted", "Blitz turn interrupted")
@@ -405,6 +589,7 @@ async function runTurn(
       text: reply,
       ...(finalThought ? { thought: finalThought } : {}),
       durationMs: Math.max(0, Date.now() - startedAt),
+      ...(contextUsage ? { contextUsage } : {}),
     }
     finished = true
     emit({ ...value, type: "completed", status: "completed" })
