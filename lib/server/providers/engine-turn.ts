@@ -365,6 +365,8 @@ async function runTurn(
   // The latest plan proposed in plan mode, and whether it still awaits review.
   let lastPlan: string | undefined
   let pendingPlan: string | undefined
+  // Runtime turns this reply took: more than one after a reviewed Codex plan.
+  let rounds = 0
   let finished = false
   let cancelReason: CardChatError | undefined
   let rejectCancellation: ((error: CardChatError) => void) | undefined
@@ -584,6 +586,7 @@ async function runTurn(
   ): Promise<TurnResult> => {
     const running = thread!.run(input, turnOptions)
     turn = running
+    rounds += 1
     void running.id.then(started, () => undefined)
     const consumed = (async () => {
       for await (const event of running) handle(event)
@@ -759,7 +762,9 @@ async function runTurn(
     const finalThought = thoughts.join("\n\n") || thought.trim() || undefined
     const value: CardChatResult = {
       threadId: thread!.id,
-      turnId: turnId ?? result.turnId,
+      // A reply that carried out an approved plan ends on the runtime turn
+      // that did the work, so a branch forked through it keeps that work.
+      turnId: (rounds > 1 ? result.turnId : turnId) || result.turnId,
       text: reply,
       ...(finalThought ? { thought: finalThought } : {}),
       durationMs: Math.max(0, Date.now() - startedAt),

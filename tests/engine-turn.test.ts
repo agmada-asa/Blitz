@@ -908,7 +908,9 @@ test("a Codex plan goes to review, and approval runs it as the next turn", async
   assert.deepEqual(engine.runs[1].options, { mode: "default" })
   assert.match(String(engine.runs[1].input), /approved the plan/)
   assert.equal(value.text, "Done: folders created.")
-  assert.equal(value.turnId, "turn_1")
+  // The reply is saved under the turn that carried the plan out, so a branch
+  // forked through it keeps the work.
+  assert.equal(value.turnId, "turn_2")
 })
 
 test("a Codex plan sent back is revised, and one declined without a note is the reply", async () => {
