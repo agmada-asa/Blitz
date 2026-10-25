@@ -256,7 +256,7 @@ export function ReadRepliesToggle({
           onChange(!enabled)
         }}
         title={reader.state === "error" ? reader.error : "Read replies aloud"}
-        className="min-h-10 gap-2 rounded-full px-3"
+        className="min-h-10 gap-2 rounded-full px-2 sm:px-3"
       >
         <span
           aria-hidden="true"

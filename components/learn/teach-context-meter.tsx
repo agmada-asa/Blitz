@@ -100,14 +100,15 @@ export function TeachContextMeter({
               ? `Session context ${percent}% full. Show details`
               : `Session context uses ${label}. Show details`
           }
-          className="inline-flex min-h-8 shrink-0 items-center gap-1.5 rounded-full bg-muted px-2.5 text-xs text-muted-foreground tabular-nums hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+          className="inline-flex size-10 shrink-0 items-center justify-center gap-1.5 rounded-full bg-muted text-xs text-muted-foreground tabular-nums hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none sm:h-8 sm:w-auto sm:px-2.5"
         >
           {compacting ? (
             <LoadingIcon aria-hidden="true" className="size-4 motion-safe:animate-spin" />
           ) : (
             <UsageRing percent={percent ?? 0} />
           )}
-          {label}
+          {/* Narrow headers show the ring alone so the unit title stays readable. */}
+          <span className="hidden sm:inline">{label}</span>
         </button>
       </PopoverTrigger>
       <PopoverContent align="end" className="w-[min(21rem,calc(100vw-2rem))] p-4">

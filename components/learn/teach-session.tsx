@@ -627,12 +627,12 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
 
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="border-b border-border/70 px-4 pt-3 pb-3 sm:px-6">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5 sm:gap-2">
             <Button
               asChild
               variant="ghost"
               size="icon"
-              className={cn("size-10", source ? "2xl:hidden" : "lg:hidden")}
+              className={cn("size-10 shrink-0", source ? "2xl:hidden" : "lg:hidden")}
             >
               <Link
                 href={projectHref}
@@ -681,7 +681,7 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
                 type="button"
                 variant="outline"
                 onClick={() => setSummaryOpen(true)}
-                className="min-h-10 shrink-0 rounded-full px-4"
+                className="min-h-10 shrink-0 rounded-full px-3 sm:px-4"
               >
                 Finish<span className="hidden sm:inline">&nbsp;for now</span>
               </Button>
@@ -690,7 +690,7 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
               <DropdownMenuTrigger asChild>
                 <Button
                   variant="ghost"
-                  className="min-h-10 rounded-full px-3"
+                  className="min-h-10 shrink-0 rounded-full px-2 sm:px-3"
                   aria-label="Unit options"
                 >
                   ⋯
