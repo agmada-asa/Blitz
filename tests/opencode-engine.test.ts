@@ -101,12 +101,18 @@ class FakeOpenCode extends EventEmitter {
         return reply({})
       case "session/prompt": {
         const sessionId = String(message.params?.sessionId)
-        if (this.failPrompt)
+        if (this.failPrompt) {
+          // OpenCode sends its command list after a reload, even when the prompt then fails.
+          this.update(sessionId, {
+            sessionUpdate: "available_commands_update",
+            availableCommands: [{ name: "compact", description: "Compact" }],
+          })
           return this.send({
             jsonrpc: "2.0",
             id: message.id,
             error: { code: -32603, message: "Internal error" },
           })
+        }
         if (this.askPermission) {
           this.promptId = message.id
           return this.send({

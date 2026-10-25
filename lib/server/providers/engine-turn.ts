@@ -43,6 +43,19 @@ const CLEANUP_TIMEOUT_MS = 1_000
 /** Blitz providers whose turns run on an agent-engines engine. */
 export type TurnProviderId = EngineProviderId | "opencode"
 
+/** Events that are the runtime's own output for a turn, confirming a resumed session. */
+const CONFIRMING_EVENTS: ReadonlySet<AgentEvent["type"]> = new Set([
+  "text.delta",
+  "text.done",
+  "reasoning.delta",
+  "reasoning.done",
+  "tool.started",
+  "tool.progress",
+  "tool.completed",
+  "file.changed",
+  "request",
+])
+
 /** One turn to run on a freshly created engine, which this adapter closes. */
 export interface EngineTurnRequest {
   /** Blitz provider the engine belongs to; decides which text is the reply. */
@@ -306,8 +319,9 @@ async function runTurn(
 
   /** Routes one engine event into Blitz's event shapes. */
   const handle = (event: AgentEvent): void => {
-    // Anything the runtime sends for the turn shows the resumed session works.
-    if (event.type !== "turn.started" && event.type !== "turn.failed") confirm()
+    // Output for the turn shows the resumed session works; housekeeping
+    // updates an agent sends after a reload (its command list) do not.
+    if (CONFIRMING_EVENTS.has(event.type)) confirm()
     if (event.type === "request") {
       const answer = options.onRequest
         ? options.onRequest(event.request)
