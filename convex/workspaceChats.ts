@@ -559,6 +559,8 @@ export const get = query({
       agentAutonomy: chat.agentAutonomy ?? "approval",
       agentInstructions: chat.agentInstructions ?? "",
       workingProjectId: chat.workingProjectId,
+      // The composer sends this back with every message, so it must be the saved choice.
+      agentPlanFirst: chat.agentPlanFirst === true,
       lastError: chat.lastError ?? null,
       lastErrorReason: chat.lastErrorReason ?? null,
       lastErrorDetail: chat.lastErrorDetail ?? null,

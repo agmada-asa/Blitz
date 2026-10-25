@@ -512,8 +512,11 @@ test("handOff moves a chat stopped at a usage limit to another provider", async 
     fromSessionId: "codex-thread",
   })
   const view = (await get({ db }, { chatId: turn.chatId })) as {
+    agentPlanFirst: boolean
     messages: Array<{ continuedWith: unknown }>
   }
+  // The composer sends the saved Plan first back with the next message.
+  assert.equal(view.agentPlanFirst, true)
   assert.deepEqual(view.messages[0]!.continuedWith, {
     providerId: "claude-code",
     fromProviderId: "codex",
