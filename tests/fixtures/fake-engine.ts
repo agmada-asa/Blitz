@@ -2,18 +2,87 @@
  * In-memory agent-engines `Engine` for provider tests. It records the thread
  * and turn options Blitz sends and lets a test script each turn's events. No
  * runtime process, model turn, or network connection is used.
+ *
+ * Only the methods Blitz calls are modelled. The rest of the engine and thread
+ * surface (fork, rewind, history, goals, MCP controls, sign-in and so on)
+ * throws `UnsupportedFeatureError`, as a runtime without that feature would,
+ * so a test fails loudly if Blitz starts relying on one without a fake for it.
  */
 
-import type {
-  AgentEvent,
-  Engine,
-  Thread,
-  ThreadOptions,
-  Turn,
-  TurnInput,
-  TurnOptions,
-  TurnResult,
+import {
+  UnsupportedFeatureError,
+  type AgentEvent,
+  type Engine,
+  type Thread,
+  type ThreadOptions,
+  type Turn,
+  type TurnInput,
+  type TurnOptions,
+  type TurnResult,
 } from "agent-engines"
+
+/**
+ * Returns a method that throws `UnsupportedFeatureError` for one feature the
+ * fake does not model.
+ *
+ * @param feature - What the method does, as the error message names it.
+ * @param provider - Provider reported in the error.
+ */
+function refuse(
+  feature: string,
+  provider: string
+): (...args: unknown[]) => never {
+  return () => {
+    throw new UnsupportedFeatureError(feature, provider, "not in the test fake")
+  }
+}
+
+/** Thread methods Blitz does not call, each refusing as unsupported. */
+type RefusedThreadMethods = Omit<
+  Thread,
+  | "id"
+  | "provider"
+  | "run"
+  | "compact"
+  | "activeTurn"
+  | "subscribe"
+  | "subagentTranscript"
+  | "lastTurn"
+  | "interruptTurn"
+  | "mcpStatus"
+  | "close"
+>
+
+/**
+ * Builds the refused part of a fake thread.
+ *
+ * @param provider - Provider reported in each error.
+ */
+function refusedThreadMethods(provider: string): RefusedThreadMethods {
+  const no = (feature: string) => refuse(feature, provider)
+  return {
+    rewind: no("rewind a thread"),
+    history: no("read thread history"),
+    rename: no("rename a thread"),
+    contextUsage: no("report context usage"),
+    setGoal: no("set a goal"),
+    goal: no("read a goal"),
+    clearGoal: no("clear a goal"),
+    review: no("run a review"),
+    shell: no("run a shell command"),
+    tasks: no("list tasks"),
+    stopTask: no("stop a task"),
+    setMcpServers: no("replace MCP servers"),
+    reconnectMcp: no("reconnect an MCP server"),
+    toggleMcp: no("toggle an MCP server"),
+    mcpLogin: no("sign in to an MCP server"),
+    readMcpResource: no("read an MCP resource"),
+    reloadSkills: no("reload skills"),
+    reloadPlugins: no("reload plugins"),
+    export: no("export a thread"),
+    realtime: no("open a realtime session"),
+  }
+}
 
 /** A scripted turn: push events, then finish it. */
 export class FakeTurn implements Turn {
@@ -139,6 +208,91 @@ export class FakeEngine implements Engine {
     return []
   }
 
+  /** Not modelled; Blitz does not read capabilities. */
+  capabilities(): never {
+    return this.refuse("report capabilities")
+  }
+
+  /** Not modelled; Blitz does not fork threads. */
+  forkThread(): never {
+    return this.refuse("fork a thread")
+  }
+
+  /** Not modelled; Blitz does not list saved threads. */
+  listThreads(): never {
+    return this.refuse("list threads")
+  }
+
+  /** Not modelled; Blitz does not read saved threads back. */
+  readThread(): never {
+    return this.refuse("read a thread")
+  }
+
+  /** Not modelled; Blitz names chats itself. */
+  renameThread(): never {
+    return this.refuse("rename a thread")
+  }
+
+  /** Not modelled; Blitz does not archive runtime threads. */
+  archiveThread(): never {
+    return this.refuse("archive a thread")
+  }
+
+  /** Not modelled; Blitz does not archive runtime threads. */
+  unarchiveThread(): never {
+    return this.refuse("unarchive a thread")
+  }
+
+  /** Not modelled; sign-in runs through the CLIs' own login commands. */
+  login(): never {
+    return this.refuse("sign in")
+  }
+
+  /** Not modelled; sign-out runs through the CLIs' own logout commands. */
+  logout(): never {
+    return this.refuse("sign out")
+  }
+
+  /** Not modelled; Blitz does not prewarm engines. */
+  prewarm(): never {
+    return this.refuse("prewarm")
+  }
+
+  /** Not modelled; Blitz does not search runtime files. */
+  searchFiles(): never {
+    return this.refuse("search files")
+  }
+
+  /** Not modelled; Blitz does not read runtime config. */
+  config(): never {
+    return this.refuse("read config")
+  }
+
+  /** Not modelled; Blitz does not manage plugins. */
+  plugins(): never {
+    return this.refuse("list plugins")
+  }
+
+  /** Not modelled; Blitz does not manage plugins. */
+  installPlugin(): never {
+    return this.refuse("install a plugin")
+  }
+
+  /** Not modelled; Blitz does not manage plugins. */
+  uninstallPlugin(): never {
+    return this.refuse("uninstall a plugin")
+  }
+
+  /** Not modelled; Blitz does not manage skills. */
+  setSkillEnabled(): never {
+    return this.refuse("toggle a skill")
+  }
+
+  /** Engine-wide events are not used; nothing is ever delivered. */
+  subscribe(): () => void {
+    return () => undefined
+  }
+
   async startThread(options: ThreadOptions): Promise<Thread> {
     if (this.startError) throw this.startError
     this.started.push(options)
@@ -155,6 +309,11 @@ export class FakeEngine implements Engine {
 
   async close(): Promise<void> {
     this.closed = true
+  }
+
+  /** Throws the error a runtime without `feature` would. */
+  private refuse(feature: string): never {
+    return refuse(feature, this.provider)()
   }
 
   /** A thread that hands each run to the script. */
@@ -178,6 +337,7 @@ export class FakeEngine implements Engine {
       lastTurn: async () => undefined,
       interruptTurn: async () => undefined,
       mcpStatus: async () => [],
+      ...refusedThreadMethods(this.provider),
       close: async () => {
         this.threadCloses += 1
       },
