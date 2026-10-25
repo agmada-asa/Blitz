@@ -30,6 +30,7 @@ import {
   type CardChatResult,
 } from "../card-chat.ts"
 import { claudeBackgroundLimits } from "../spending-limits.ts"
+import { providerThreadFeatures } from "../../provider-thread-features.ts"
 import {
   getSupportedAiReasoningEffortsForProvider,
   type AiProviderId,
@@ -483,7 +484,7 @@ async function engineThreadSetup(
       settings = { ...settings, access: "accept-edits" }
     // Background work on a per-token sign-in gets Claude Code's own caps.
     // Chats and Teach are never capped, and Codex and OpenCode cannot be.
-    if (request.ephemeral) {
+    if (request.ephemeral && providerThreadFeatures(providerId).spendingCaps) {
       const limits = await (options.backgroundLimits ?? claudeBackgroundLimits)()
       if (limits) settings = { ...settings, limits }
     }
@@ -501,10 +502,7 @@ async function engineThreadSetup(
       ...(effort ? { effort } : {}),
       // OpenCode has no instruction channel; its prompt carries them instead.
       ...(instructions && providerId !== "opencode" ? { instructions } : {}),
-      // ACP has no schema-checked replies; OpenCode's text is parsed as before.
-      ...(request.outputSchema && providerId !== "opencode"
-        ? { outputSchema: request.outputSchema }
-        : {}),
+      ...(request.outputSchema ? { outputSchema: request.outputSchema } : {}),
       ...settings,
       // A resumed or copied session already holds its own history.
       ...(request.seed && !request.threadId && !request.fork
@@ -583,14 +581,56 @@ function turnInput(text: string, request: RunProviderTextTurnRequest): TurnInput
   }
 }
 
+/**
+ * Leaves out the options a provider's runtime does not support, as
+ * `lib/provider-thread-features.ts` lists them, so a turn never sends one.
+ * The engines throw `UnsupportedFeatureError` for an unsupported option rather
+ * than dropping it, and callers such as background generation pass the same
+ * request to every provider: OpenCode's ACP engine gets no reply schema, plan
+ * mode, files, fork, compaction, rewind, or context usage read, and its text is
+ * parsed as before.
+ *
+ * @param request - The turn as the caller asked for it.
+ * @returns The same turn without the unsupported options.
+ */
+export function supportedTurnRequest<T extends Omit<RunProviderTextTurnRequest, "prompt">>(
+  request: T
+): T {
+  const features = providerThreadFeatures(request.providerId)
+  const {
+    outputSchema,
+    mode,
+    files,
+    fork,
+    compactFirst,
+    compactedPrompt,
+    rewindBeforeTurnId,
+    readContextUsage,
+    ...rest
+  } = request
+  return {
+    ...rest,
+    ...(outputSchema && features.outputSchema ? { outputSchema } : {}),
+    ...(mode && features.planMode ? { mode } : {}),
+    ...(files?.length && features.documents ? { files } : {}),
+    ...(fork && features.fork ? { fork } : {}),
+    ...(compactFirst && features.compact
+      ? { compactFirst, ...(compactedPrompt ? { compactedPrompt } : {}) }
+      : {}),
+    ...(rewindBeforeTurnId && features.rewind ? { rewindBeforeTurnId } : {}),
+    ...(readContextUsage && features.contextUsage ? { readContextUsage } : {}),
+  } as T
+}
+
 /** Runs one turn of any provider through agent-engines. */
 async function runEngineProviderTurn(
   providerId: TurnProviderId,
-  request: RunProviderTextTurnRequest,
+  requested: RunProviderTextTurnRequest,
   selection: ProviderSelection,
   instructions: string,
   options: ProviderTextTurnOptions
 ): Promise<CardChatResult> {
+  const request = supportedTurnRequest(requested)
   const setup = await engineThreadSetup(
     providerId,
     request,
@@ -633,27 +673,25 @@ async function runEngineProviderTurn(
       engine,
       thread: setup.thread,
       ...(request.threadId ? { threadId: request.threadId } : {}),
-      ...(providerId === "opencode"
-        ? { confirmResume: true }
-        : {
-            ...(request.fork ? { fork: request.fork } : {}),
-            ...(request.mode ? { turnOptions: { mode: request.mode } } : {}),
-            ...(request.compactFirst ? { compactFirst: true } : {}),
-            ...(request.compactFirst && request.compactedPrompt
-              ? { compactedInput: turnInput(request.compactedPrompt, request) }
-              : {}),
-            ...(request.rewindBeforeTurnId
-              ? { rewindBeforeTurnId: request.rewindBeforeTurnId }
-              : {}),
-            ...(request.readContextUsage ? { readContextUsage: true } : {}),
-          }),
-      input:
+      // An ACP agent reports a turn as started before it checks a reloaded session.
+      ...(providerId === "opencode" ? { confirmResume: true } : {}),
+      ...(request.fork ? { fork: request.fork } : {}),
+      ...(request.mode ? { turnOptions: { mode: request.mode } } : {}),
+      ...(request.compactFirst ? { compactFirst: true } : {}),
+      ...(request.compactFirst && request.compactedPrompt
+        ? { compactedInput: turnInput(request.compactedPrompt, request) }
+        : {}),
+      ...(request.rewindBeforeTurnId
+        ? { rewindBeforeTurnId: request.rewindBeforeTurnId }
+        : {}),
+      ...(request.readContextUsage ? { readContextUsage: true } : {}),
+      input: turnInput(
+        // OpenCode has no instruction channel, so its prompt carries them.
         providerId === "opencode"
-          ? turnInput(openCodePrompt(request.prompt, instructions), {
-              ...request,
-              files: undefined,
-            })
-          : turnInput(request.prompt, request),
+          ? openCodePrompt(request.prompt, instructions)
+          : request.prompt,
+        request
+      ),
       ...(request.signal === undefined ? {} : { signal: request.signal }),
       ...(request.timeoutMs === undefined
         ? {}
@@ -734,14 +772,17 @@ async function turnBasics(
 export async function prewarmProviderTextTurn(
   request: Omit<RunProviderTextTurnRequest, "prompt">
 ): Promise<boolean> {
-  if (request.providerId !== "codex" && request.providerId !== "claude-code")
+  if (
+    (request.providerId !== "codex" && request.providerId !== "claude-code") ||
+    !providerThreadFeatures(request.providerId).prewarm
+  )
     return false
   if (request.threadId) return false
   const providerId = request.providerId
   let key: string | undefined
   let engine: Engine | undefined
   try {
-    const turn = { ...request, prompt: "" }
+    const turn = supportedTurnRequest({ ...request, prompt: "" })
     const { selection, instructions } = await turnBasics(turn)
     const setup = await engineThreadSetup(providerId, turn, selection, instructions, {})
     key = prewarmedEngineKey(providerId, request.workspaceDirectory, setup.effortSelected)
@@ -776,11 +817,14 @@ export async function compactProviderThread(
   request: Omit<RunProviderTextTurnRequest, "prompt"> & { threadId: string },
   options: Pick<ProviderTextTurnOptions, "createEngine"> = {}
 ): Promise<EngineCompactionResult> {
-  if (request.providerId !== "codex" && request.providerId !== "claude-code")
+  if (
+    (request.providerId !== "codex" && request.providerId !== "claude-code") ||
+    !providerThreadFeatures(request.providerId).compact
+  )
     return { compacted: false }
   const providerId = request.providerId
   try {
-    const turn = { ...request, prompt: "" }
+    const turn = supportedTurnRequest({ ...request, prompt: "" })
     const { selection, instructions } = await turnBasics(turn)
     const setup = await engineThreadSetup(providerId, turn, selection, instructions, {})
     const engine = (options.createEngine ?? defaultEngine)(providerId, {

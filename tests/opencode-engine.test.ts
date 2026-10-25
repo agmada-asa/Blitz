@@ -357,3 +357,60 @@ test("OpenCode refuses a workspace-only sandbox and oversized instructions befor
     assert.equal(peer.received.length, 0)
   }
 })
+
+test("an OpenCode turn leaves out every option its ACP engine cannot take", async () => {
+  const peer = new FakeOpenCode()
+  let capsRead = false
+  const events: CardChatEvent[] = []
+  const reply = await runProviderTextTurn(
+    {
+      providerId: "opencode",
+      workspaceDirectory: WORKSPACE,
+      prompt: "Question",
+      approvalPolicy: "on-request",
+      // Background work and chat options that only Codex and Claude Code take.
+      ephemeral: true,
+      outputSchema: { type: "object", properties: {}, required: [] },
+      mode: "plan",
+      files: [{ path: `${WORKSPACE}/paper.pdf`, name: "paper.pdf" }],
+      fork: { threadId: "session-old", throughTurnId: "turn-1" },
+      compactFirst: true,
+      compactedPrompt: "Restated question",
+      rewindBeforeTurnId: "turn-1",
+      readContextUsage: true,
+    },
+    {
+      onEvent: (event) => events.push(event),
+      backgroundLimits: async () => {
+        capsRead = true
+        return { maxBudgetUsd: 1 }
+      },
+      spawnOpenCode: (_command, _args, options) => {
+        peer.spawnedWith = options
+        return peer
+      },
+    }
+  )
+  assert.equal(reply.text, "OpenCode answer")
+  assert.equal(reply.output, undefined)
+  assert.equal(reply.contextUsage, undefined)
+  assert.equal(capsRead, false)
+  // A new session, not a fork, and no plan mode switch.
+  assert.equal(peer.sent("session/new").length, 1)
+  assert.equal(peer.sent("session/fork").length, 0)
+  assert.equal(peer.sent("session/set_config_option").length, 0)
+  assert.equal(
+    events.some((event) => event.type === "compacted" || event.type === "rewound"),
+    false
+  )
+  const prompt = peer.sent("session/prompt")[0]!.params!.prompt as Array<{
+    type: string
+    text?: string
+  }>
+  // The ordinary prompt, with no document attached.
+  assert.deepEqual(
+    prompt.map((block) => block.type),
+    ["text"]
+  )
+  assert.match(prompt[0]!.text!, /Question$/)
+})
