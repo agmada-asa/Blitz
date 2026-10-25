@@ -87,20 +87,24 @@ export async function transcribeSpeech(
 ): Promise<string> {
   validateSpeechWav(recording)
   await warmSpeechToText()
-  const directory = await mkdtemp(join(tmpdir(), "blitz-speech-"))
-  try {
-    const inputPath = join(directory, `${randomUUID()}.wav`)
-    const outputPath = join(directory, `${randomUUID()}.txt`)
-    await writeFile(inputPath, recording, { mode: 0o600 })
-    await state.queue.enqueue(
-      `transcribe:${inputPath}`,
-      () => worker.synthesize({ inputPath, outputPath }),
-      { priority: "playback", ...(signal ? { signal } : {}) }
-    )
-    const text = (await readFile(outputPath, "utf8")).replace(/\s+/g, " ").trim()
-    return text.slice(0, MAX_TRANSCRIPT_LENGTH)
-  } finally {
-    // Recordings and transcripts are never kept.
-    await rm(directory, { recursive: true, force: true })
-  }
+  return state.queue.enqueue(
+    `transcribe:${randomUUID()}`,
+    async () => {
+      // The queue lets active inference finish after its consumer cancels.
+      // Keep its files until then; a cancelled pending task creates none.
+      const directory = await mkdtemp(join(tmpdir(), "blitz-speech-"))
+      try {
+        const inputPath = join(directory, `${randomUUID()}.wav`)
+        const outputPath = join(directory, `${randomUUID()}.txt`)
+        await writeFile(inputPath, recording, { mode: 0o600 })
+        await worker.synthesize({ inputPath, outputPath })
+        const text = (await readFile(outputPath, "utf8")).replace(/\s+/g, " ").trim()
+        return text.slice(0, MAX_TRANSCRIPT_LENGTH)
+      } finally {
+        // Also remove late output from an inference whose caller cancelled.
+        await rm(directory, { recursive: true, force: true })
+      }
+    },
+    { priority: "playback", ...(signal ? { signal } : {}) }
+  )
 }
