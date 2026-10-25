@@ -18,9 +18,9 @@ import { dirname, join } from "node:path"
 import { dataDirectory, pythonExecutable } from "./kokoro"
 import { KokoroUnavailableError, KokoroWorker } from "./kokoro-worker"
 import { SpeechQueue } from "./speech-queue"
+import { validateSpeechWav } from "../speech-wav"
 
-/** Longest recording accepted: two minutes of 16 kHz mono 16-bit audio, plus header. */
-export const MAX_SPEECH_RECORDING_BYTES = 2 * 60 * 16_000 * 2 + 44
+export { MAX_SPEECH_RECORDING_BYTES, SpeechRecordingError } from "../speech-wav"
 
 /** Longest transcript returned; a two-minute question is far shorter. */
 const MAX_TRANSCRIPT_LENGTH = 4_000
@@ -63,47 +63,6 @@ if (!state.exitHandlerInstalled) {
   process.once("exit", () => worker.killNow())
 }
 
-/** A recording Blitz cannot accept, with copy the learner can act on. */
-export class SpeechRecordingError extends Error {
-  /** Creates one recording error with its recovery copy. */
-  constructor(message: string) {
-    super(message)
-    this.name = "SpeechRecordingError"
-  }
-}
-
-/** Reads an ASCII tag from a byte buffer. */
-function tag(bytes: Uint8Array, offset: number): string {
-  return String.fromCharCode(...bytes.subarray(offset, offset + 4))
-}
-
-/**
- * Checks that a recording is a WAV file the worker can read: RIFF/WAVE with
- * 16-bit PCM, mono, at 16 kHz, within the size bound.
- *
- * @throws SpeechRecordingError with recovery copy when it is not.
- */
-export function validateSpeechRecording(bytes: Uint8Array): void {
-  if (bytes.byteLength > MAX_SPEECH_RECORDING_BYTES)
-    throw new SpeechRecordingError("That recording is too long. Keep questions under two minutes.")
-  if (bytes.byteLength <= 44 || tag(bytes, 0) !== "RIFF" || tag(bytes, 8) !== "WAVE")
-    throw new SpeechRecordingError("That recording could not be read. Try again.")
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
-  // The browser writes the canonical 44-byte header: fmt chunk first.
-  const format = view.getUint16(20, true)
-  const channels = view.getUint16(22, true)
-  const sampleRate = view.getUint32(24, true)
-  const bitsPerSample = view.getUint16(34, true)
-  if (
-    tag(bytes, 12) !== "fmt " ||
-    format !== 1 ||
-    channels !== 1 ||
-    sampleRate !== 16_000 ||
-    bitsPerSample !== 16
-  )
-    throw new SpeechRecordingError("That recording could not be read. Try again.")
-}
-
 /** Starts the worker ahead of the first question, downloading the model if needed. */
 export async function warmSpeechToText(): Promise<void> {
   if (process.platform !== "darwin")
@@ -126,7 +85,7 @@ export async function transcribeSpeech(
   recording: Uint8Array,
   signal?: AbortSignal
 ): Promise<string> {
-  validateSpeechRecording(recording)
+  validateSpeechWav(recording)
   await warmSpeechToText()
   const directory = await mkdtemp(join(tmpdir(), "blitz-speech-"))
   try {

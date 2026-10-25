@@ -8,49 +8,11 @@
  * audio decoder.
  */
 
-/** Sample rate the speech-to-text model expects. */
-export const SPEECH_SAMPLE_RATE = 16_000
-
-/** Longest recording, matching the server's bound. */
-export const MAX_RECORDING_SECONDS = 120
-
-/**
- * Encodes mono samples in [-1, 1] as a 16-bit PCM WAV file.
- *
- * @param samples - Mono samples at `sampleRate`; values outside [-1, 1] are clipped.
- * @param sampleRate - Samples per second.
- * @returns The WAV bytes, with the canonical 44-byte header.
- */
-export function encodePcm16Wav(
-  samples: Float32Array,
-  sampleRate = SPEECH_SAMPLE_RATE
-): Uint8Array {
-  const bytes = new Uint8Array(44 + samples.length * 2)
-  const view = new DataView(bytes.buffer)
-  /** Writes a four-letter chunk tag. */
-  const tag = (offset: number, value: string) => {
-    for (let index = 0; index < 4; index += 1)
-      view.setUint8(offset + index, value.charCodeAt(index))
-  }
-  tag(0, "RIFF")
-  view.setUint32(4, 36 + samples.length * 2, true)
-  tag(8, "WAVE")
-  tag(12, "fmt ")
-  view.setUint32(16, 16, true)
-  view.setUint16(20, 1, true) // PCM
-  view.setUint16(22, 1, true) // mono
-  view.setUint32(24, sampleRate, true)
-  view.setUint32(28, sampleRate * 2, true)
-  view.setUint16(32, 2, true)
-  view.setUint16(34, 16, true)
-  tag(36, "data")
-  view.setUint32(40, samples.length * 2, true)
-  for (let index = 0; index < samples.length; index += 1) {
-    const sample = Math.max(-1, Math.min(1, samples[index]!))
-    view.setInt16(44 + index * 2, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true)
-  }
-  return bytes
-}
+import {
+  encodePcm16Wav,
+  MAX_RECORDING_SECONDS,
+  SPEECH_SAMPLE_RATE,
+} from "../speech-wav.ts"
 
 /**
  * Decodes a recorded clip and renders it as 16 kHz mono samples.
