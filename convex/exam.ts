@@ -244,6 +244,7 @@ export const listPapers = query({
         ...questionCounts(paper.questions),
         totalMarks: paper.totalMarks ?? null,
         durationMinutes: paper.durationMinutes ?? null,
+        readFromScan: paper.readFromScan === true,
         bestPercentage: percentages.length ? Math.max(...percentages) : null,
         inProgressAttemptId:
           attempts.find((attempt) => attempt.status === "in_progress")?._id ?? null,
@@ -408,6 +409,28 @@ async function reviewsByConcept(ctx: Pick<QueryCtx, "db">, projectId: Id<"projec
 }
 
 /**
+ * A past paper or solutions source as the server run needs it: its text, and
+ * where its original file is stored, so a provider that reads documents can
+ * read the file itself (scans included) instead of the extracted text.
+ */
+function pastPaperDocument(source: Doc<"sources">) {
+  return {
+    filename: source.filename,
+    text: source.extractedText.slice(0, MAX_CONTEXT_SOURCE_TEXT),
+    ...(source.relativeKey
+      ? {
+          file: {
+            relativeKey: source.relativeKey,
+            kind: source.kind,
+            ...(source.mimeType ? { mimeType: source.mimeType } : {}),
+            ...(source.sizeBytes !== undefined ? { sizeBytes: source.sizeBytes } : {}),
+          },
+        }
+      : {}),
+  }
+}
+
+/**
  * Supplies the server run with what its prompt needs. For a past paper: the
  * paper and solutions text and the module's units with their concept names.
  * For a mock: the selected units' material and concepts, weak concepts,
@@ -455,18 +478,9 @@ export const paperContext = query({
       return {
         ...base,
         kind: "past" as const,
-        paper: source
-          ? {
-              filename: source.filename,
-              text: source.extractedText.slice(0, MAX_CONTEXT_SOURCE_TEXT),
-            }
-          : null,
-        solutions: solutions
-          ? {
-              filename: solutions.filename,
-              text: solutions.extractedText.slice(0, MAX_CONTEXT_SOURCE_TEXT),
-            }
-          : null,
+        projectId: paper.projectId,
+        paper: source ? pastPaperDocument(source) : null,
+        solutions: solutions ? pastPaperDocument(solutions) : null,
         minutes: null,
         sources: [],
         weakConcepts: [],
@@ -652,6 +666,8 @@ export const savePaper = mutation({
     statedTotalMarks: v.optional(v.number()),
     questions: v.array(examQuestionFields),
     rejectedCount: v.number(),
+    /** The paper had no text layer and was read from its pages. */
+    readFromScan: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const paper = await ctx.db.get(args.paperId)
@@ -745,6 +761,7 @@ export const savePaper = mutation({
       totalMarks: questions.reduce((sum, question) => sum + question.marks, 0),
       questions,
       rejectedCount: Math.max(0, Math.round(args.rejectedCount)),
+      readFromScan: paper.kind === "past" && args.readFromScan === true ? true : undefined,
       finishedAt: now,
     })
     return { saved: true }

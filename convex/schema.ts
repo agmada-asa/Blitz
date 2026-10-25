@@ -348,6 +348,8 @@ export default defineSchema({
     questions: v.array(examQuestionFields),
     /** Questions dropped by validation. */
     rejectedCount: v.optional(v.number()),
+    /** Past papers: the paper had no text layer and was read from its pages as a document. */
+    readFromScan: v.optional(v.boolean()),
     runStartedAt: v.number(),
     finishedAt: v.optional(v.number()),
     createdAt: v.number(),

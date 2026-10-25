@@ -106,6 +106,13 @@ export interface RunProviderTextTurnRequest {
   readonly prompt: string
   /** Optional bounded native image attachments for multimodal providers. */
   readonly attachments?: readonly ProviderImageAttachment[]
+  /**
+   * Files the model reads as documents, by absolute path. Claude Code sends
+   * PDFs and text files as document content; Codex is told their paths.
+   * OpenCode turns ignore them, so callers only pass files to a provider that
+   * reads them and keep the extracted text for the others.
+   */
+  readonly files?: readonly { path: string; name?: string; mediaType?: string }[]
   /** Application-owned instructions sent through a provider instruction channel. */
   readonly developerInstructions?: string
   /** Existing provider session to resume. */
@@ -473,16 +480,29 @@ async function runEngineProviderTurn(
         ...settings,
       },
       ...(request.threadId ? { threadId: request.threadId } : {}),
-      input: request.attachments?.length
-        ? {
-            text: request.prompt,
-            images: request.attachments.map((attachment) => ({
-              type: "base64" as const,
-              mediaType: attachment.mimeType,
-              data: attachment.data,
-            })),
-          }
-        : request.prompt,
+      input:
+        request.attachments?.length || request.files?.length
+          ? {
+              text: request.prompt,
+              ...(request.attachments?.length
+                ? {
+                    images: request.attachments.map((attachment) => ({
+                      type: "base64" as const,
+                      mediaType: attachment.mimeType,
+                      data: attachment.data,
+                    })),
+                  }
+                : {}),
+              ...(request.files?.length
+                ? {
+                    files: request.files.map((file) => ({
+                      type: "path" as const,
+                      ...file,
+                    })),
+                  }
+                : {}),
+            }
+          : request.prompt,
       ...(request.signal === undefined ? {} : { signal: request.signal }),
       ...(request.timeoutMs === undefined
         ? {}
