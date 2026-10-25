@@ -418,6 +418,7 @@ test("a plan becomes one plan card, and its answer approves, revises, or stops",
   assert.equal(spec.method, PLAN_METHOD)
   assert.equal(spec.title, "Plan: build the Revision folder")
   assert.match(spec.details, /Move the notes/)
+  assert.doesNotMatch(spec.details, /build the Revision folder/)
   assert.equal(spec.input, undefined)
   await answerAgentRequest(request, spec, { accepted: true })
   await answerAgentRequest(request, spec, {

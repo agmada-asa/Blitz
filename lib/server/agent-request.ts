@@ -276,12 +276,19 @@ function approvalPrompt(
 
 /**
  * Builds the plan card: the plan as Markdown in `details`, titled after its
- * first heading so the card names what it will do.
+ * first heading so the card names what it will do. A heading that opens the
+ * plan moves into the title rather than repeating in the body.
  * @param plan The proposed plan.
  */
 export function planRequest(plan: string): AgentRequestSpec {
-  const text = plan.trim() || "The agent proposed a plan without details."
-  const heading = /^#{1,3}\s+(.+)$/m.exec(text)?.[1]?.replace(/^plan:\s*/i, "").trim()
+  const full = plan.trim() || "The agent proposed a plan without details."
+  const match = /^#{1,3}\s+(.+)$/m.exec(full)
+  const heading = match?.[1]?.replace(/^plan:\s*/i, "").trim()
+  // The heading becomes the card's title, so the body does not repeat it.
+  const text =
+    heading && match && full.indexOf(match[0]) === 0
+      ? full.slice(match[0].length).trim() || full
+      : full
   return {
     method: PLAN_METHOD,
     kind: "approval",
