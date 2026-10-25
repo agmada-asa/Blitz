@@ -35,7 +35,6 @@ import {
 import { chatStorageId, safeSourceFilename } from "@/lib/server/source-files"
 import type { Id } from "@/convex/_generated/dataModel"
 import {
-  resolveAiTaskSelection,
   resolveProviderApprovalPolicy,
   type AiProviderId,
 } from "@/lib/ai-model-settings"
@@ -51,6 +50,10 @@ import { getCodexModelCatalog } from "@/lib/server/providers/codex-models"
 import type { ProviderImageAttachment } from "@/lib/server/providers/types"
 import { isTrustedBlitzOrigin } from "@/lib/server/request-origin"
 import { generateChatTitle } from "@/lib/server/chat-title"
+import {
+  chatReplySelection,
+  teachTurnSettings,
+} from "@/lib/server/teach-turn-settings"
 import { startFirstQuestionBank } from "@/lib/server/question-bank"
 import { registerChatRun } from "@/lib/server/chat-run-registry"
 import {
@@ -569,15 +572,7 @@ export async function POST(request: Request): Promise<Response> {
           ...input.attachments,
         ]
         const modelSettings = await loadSavedAiModelSettings(client)
-        const configuredSelection = resolveAiTaskSelection(
-          modelSettings,
-          "reply",
-          {
-            providerEnvironmentFallback: process.env.BLITZ_REPLY_PROVIDER,
-            modelEnvironmentFallback: process.env.BLITZ_CODEX_MODEL,
-            effortEnvironmentFallback: process.env.BLITZ_CODEX_EFFORT,
-          }
-        )
+        const configuredSelection = chatReplySelection(modelSettings)
         const turn = await client.mutation(startWorkspaceTurn, {
           ...(input.chatId ? { chatId: input.chatId } : {}),
           ...(input.projectId ? { projectId: input.projectId } : {}),
@@ -1006,12 +1001,16 @@ export async function POST(request: Request): Promise<Response> {
                       ? "workspace-write"
                       : "read-only"
                   : undefined,
-              developerInstructions: projectAgentInstructions(
-                workspaceDirectory,
-                additionalInstructions,
-                selection.providerId === "codex"
-              ),
-              approvalPolicy,
+              ...(teach
+                ? teachTurnSettings(selection.providerId, workspaceDirectory)
+                : {
+                    developerInstructions: projectAgentInstructions(
+                      workspaceDirectory,
+                      additionalInstructions,
+                      selection.providerId === "codex"
+                    ),
+                    approvalPolicy,
+                  }),
               signal: turnSignal,
               timeoutMs: WORKSPACE_CHAT_TIMEOUT_MS,
               ...(around.fork

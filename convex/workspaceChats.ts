@@ -415,6 +415,7 @@ export const get = query({
     return {
       id: chat._id,
       projectId: chat.projectId,
+      purpose: chat.purpose ?? null,
       title: chat.title,
       providerId: chat.providerId ?? "codex",
       providerInstanceId: chat.providerInstanceId ?? null,
