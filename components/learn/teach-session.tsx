@@ -7,6 +7,10 @@
  *
  * The session itself is a workspace chat (`purpose: "teach"`), so replies
  * stream through `/api/chat` and render from Convex as they are saved.
+ *
+ * Opening a new session prewarms the reply provider. Where the provider
+ * supports it, the header shows how full the session's context is (with
+ * Compact now in its sheet), and the latest section can be redone in place.
  */
 
 import Link from "next/link"
@@ -21,6 +25,7 @@ import {
   type LearningSourceSelection,
   type SourceSelection,
 } from "@/components/chat/source-pane"
+import { TeachContextMeter } from "@/components/learn/teach-context-meter"
 import { TeachDock, type TeachDockState } from "@/components/learn/teach-dock"
 import { TeachLesson } from "@/components/learn/teach-lesson"
 import {
@@ -56,7 +61,13 @@ import type { Id } from "@/convex/_generated/dataModel"
 import type { ChatCitation } from "@/lib/citations"
 import { consumeRelearn } from "@/lib/client/relearn"
 import { restartSitting, sittingStart } from "@/lib/client/teach-sitting"
-import { createClientMessageId, sendTeachTurn } from "@/lib/client/teach-turn"
+import {
+  compactTeachSession,
+  createClientMessageId,
+  prewarmTeachSession,
+  sendTeachTurn,
+} from "@/lib/client/teach-turn"
+import { providerThreadFeatures } from "@/lib/provider-thread-features"
 import type { QuizBlock } from "@/lib/interactive-blocks"
 import {
   isTeachPrecheck,
@@ -66,8 +77,12 @@ import {
   TEACH_QUICK_REPLIES,
   teachJumpMessage,
   type TeachOutline,
+  type TeachRedoStyle,
   type TeachSectionPlan,
 } from "@/lib/teach"
+
+/** How long a Compact now request holds a session, matching the server's lease. */
+const COMPACTION_LEASE_MS = 5 * 60 * 1_000
 
 /** Scrolls an element into view, respecting the reduced-motion preference. */
 function reveal(
@@ -160,6 +175,9 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
   const restoredRef = useRef(false)
   const abortRef = useRef<AbortController | undefined>(undefined)
   const askSentRef = useRef(false)
+  const prewarmedRef = useRef<string | undefined>(undefined)
+  const [compactRequested, setCompactRequested] = useState(false)
+  const [compactError, setCompactError] = useState("")
 
   // Opens the unit's session, creating it on first visit or after a restart.
   const sessionChatId = unit.teach?.chatId
@@ -187,6 +205,20 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
   const messages = useMemo(() => chat?.messages ?? [], [chat?.messages])
   const lastMessage = messages.at(-1)
   const running = chat?.status === "running" || sending
+  const features = providerThreadFeatures(chat?.providerId)
+  const compacting =
+    compactRequested ||
+    Boolean(chat?.compactingSince && chat.compactingSince > now - COMPACTION_LEASE_MS)
+  const hasReadableMaterial = unit.sources.some((source) => source.hasText)
+
+  // Starts the reply provider while the session opens, so the first reply
+  // comes sooner. The server prewarms only a session with no thread yet.
+  useEffect(() => {
+    if (!activeChatId || !hasReadableMaterial) return
+    if (prewarmedRef.current === activeChatId) return
+    prewarmedRef.current = activeChatId
+    prewarmTeachSession(activeChatId)
+  }, [activeChatId, hasReadableMaterial])
 
   // The saved outline wins; until the first reply finishes, read it live.
   const outline: TeachOutline | null = useMemo(() => {
@@ -258,9 +290,13 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
     ? Object.keys(answered?.[lastMessage.id] ?? {}).length
     : 0
 
-  /** Sends a learner message or quick reply, or resumes a paused reply. */
+  /** Sends a learner message or quick reply, resumes a paused reply, or redoes the latest section. */
   const send = useCallback(
-    async (message: string, continuationOf?: string) => {
+    async (
+      message: string,
+      continuationOf?: string,
+      redo?: { messageId: string; style: TeachRedoStyle }
+    ) => {
       if (!activeChatId || sending || chat?.status === "running") return
       setSending(true)
       setError("")
@@ -271,6 +307,7 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
         chatId: activeChatId,
         message,
         ...(continuationOf ? { continuationOf } : {}),
+        ...(redo ? { redo } : {}),
         signal: controller.signal,
       })
       abortRef.current = undefined
@@ -354,6 +391,16 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
     if (!response?.ok) setError("The reply could not be paused. Try again.")
   }, [activeChatId, messages])
 
+  /** Compacts the session's context now, from the context sheet. */
+  const compactNow = useCallback(async () => {
+    if (!activeChatId || compacting) return
+    setCompactRequested(true)
+    setCompactError("")
+    const failure = await compactTeachSession(activeChatId)
+    setCompactRequested(false)
+    if (failure) setCompactError(failure)
+  }, [activeChatId, compacting])
+
   /** Scores a lesson quiz on the server and records it as study evidence. */
   const answerQuiz = useCallback(
     async (
@@ -433,14 +480,36 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
     )
   }, [])
 
+  // The latest reply can be redone in place when it taught a section, it is
+  // not the opening reply (Claude Code cannot rewind past its first turn),
+  // and the provider rewinds.
+  const firstReplyId = messages.find((message) => message.role === "assistant")?.id
+  const lastMarker =
+    lastMessage?.role === "assistant" ? parseTeachSectionMarker(lastMessage.content) : undefined
+  const redoSectionIndex =
+    outline && lastMarker?.kind === "section"
+      ? outline.sections.findIndex((section) => section.id === lastMarker.id)
+      : -1
+  const redoMessageId =
+    features.rewind &&
+    chat?.providerSessionId &&
+    lastMessage?.role === "assistant" &&
+    lastMessage.status === "completed" &&
+    lastMessage.id !== firstReplyId &&
+    redoSectionIndex >= 0
+      ? lastMessage.id
+      : undefined
+
   const projectHref = `/projects/${encodeURIComponent(String(unit.projectId))}`
-  const hasMaterial = unit.sources.some((source) => source.hasText)
+  const hasMaterial = hasReadableMaterial
   const dockState: TeachDockState = !chat
     ? { kind: "starting" }
     : !hasMaterial && !messages.length
       ? { kind: "no-material" }
       : running
         ? { kind: outline ? "writing" : "starting" }
+        : compacting
+          ? { kind: "compacting" }
         : lastMessage?.role === "assistant" && lastMessage.status === "failed"
           ? { kind: "paused", hasText: Boolean(lastMessage.content.trim()) }
           : awaitingPlan
@@ -574,6 +643,15 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
                 </p>
               ) : null}
             </div>
+            {features.contextUsage && chat?.contextUsage ? (
+              <TeachContextMeter
+                usage={chat.contextUsage}
+                compacting={compacting}
+                canCompact={features.compact && !running}
+                onCompact={() => void compactNow()}
+                error={compactError}
+              />
+            ) : null}
             {sitting?.xp ? (
               <p
                 className="hidden shrink-0 rounded-full bg-brand/10 px-3 py-1 text-xs font-medium text-brand tabular-nums sm:block"
@@ -669,8 +747,9 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
                   onCitation={openCitation}
                   onQuizAnswer={answerQuiz}
                   onFollowUp={(text) => void send(text)}
-                  busy={running}
+                  busy={running || compacting}
                   sourceOpen={Boolean(source)}
+                  compactions={chat.contextCompactions}
                 />
               ) : (
                 <div className="space-y-3" aria-hidden="true">
@@ -733,6 +812,12 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
           error={error}
           onSend={(message) => void send(message)}
           onPause={() => void pause()}
+          {...(redoMessageId ? { redoSection: redoSectionIndex + 1 } : {})}
+          onRedo={(style: TeachRedoStyle) =>
+            redoMessageId
+              ? void send("", undefined, { messageId: redoMessageId, style })
+              : undefined
+          }
           onResume={() =>
             lastMessage?.role === "assistant"
               ? void send("", lastMessage.id)
