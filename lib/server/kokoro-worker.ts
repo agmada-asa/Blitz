@@ -1,4 +1,8 @@
-/** Owns the speech subprocess, bounded inference, idle shutdown, and recovery after failure. */
+/**
+ * Owns a local speech subprocess, bounded inference, idle shutdown, and
+ * recovery after failure. Kokoro read-aloud and on-device speech to text each
+ * run one, over the same newline-delimited JSON protocol.
+ */
 
 import type { ChildProcessWithoutNullStreams } from "node:child_process"
 import { createInterface } from "node:readline"
@@ -53,8 +57,13 @@ function operation(): Operation {
   return { promise, resolve, reject }
 }
 
-/** Shares one model process and waits for failed processes to exit before starting replacements. */
-export class KokoroWorker {
+/**
+ * Shares one model process and waits for failed processes to exit before
+ * starting replacements.
+ *
+ * @typeParam TRequest - The JSON request one inference takes; Kokoro's by default.
+ */
+export class KokoroWorker<TRequest extends object = KokoroRequest> {
   private session?: Session
   private stopping?: Promise<void>
   private sessions = new Set<Session>()
@@ -63,20 +72,28 @@ export class KokoroWorker {
   private requestTimeoutMs: number
   private idleTimeoutMs: number
   private shutdownGraceMs: number
+  private timeoutMessage: string
 
-  /** Accepts a process factory and bounded deadlines, overridable for lifecycle tests. */
+  /**
+   * Accepts a process factory and bounded deadlines, overridable for lifecycle
+   * tests, and the copy shown when one inference runs out of time.
+   */
   constructor(options: {
     spawnWorker: () => ChildProcessWithoutNullStreams
     startupTimeoutMs?: number
     requestTimeoutMs?: number
     idleTimeoutMs?: number
     shutdownGraceMs?: number
+    timeoutMessage?: string
   }) {
     this.spawnWorker = options.spawnWorker
     this.startupTimeoutMs = options.startupTimeoutMs ?? 180_000
     this.requestTimeoutMs = options.requestTimeoutMs ?? 120_000
     this.idleTimeoutMs = options.idleTimeoutMs ?? 60_000
     this.shutdownGraceMs = options.shutdownGraceMs ?? 1_000
+    this.timeoutMessage =
+      options.timeoutMessage ??
+      "Speech generation took too long. Try a shorter section."
   }
 
   /** Starts or joins model startup; failed startup always finishes cleanup before returning. */
@@ -92,7 +109,7 @@ export class KokoroWorker {
   }
 
   /** Runs one request with a wall-clock deadline; callers serialize requests through SpeechQueue. */
-  async synthesize(request: KokoroRequest): Promise<void> {
+  async synthesize(request: TRequest): Promise<void> {
     await this.start()
     const session = this.session
     if (!session || session.finished) {
@@ -105,11 +122,7 @@ export class KokoroWorker {
     const reply = operation()
     session.reply = reply
     session.requestTimer = setTimeout(() => {
-      reply.reject(
-        new KokoroUnavailableError(
-          "Speech generation took too long. Try a shorter section."
-        )
-      )
+      reply.reject(new KokoroUnavailableError(this.timeoutMessage))
     }, this.requestTimeoutMs)
     try {
       try {

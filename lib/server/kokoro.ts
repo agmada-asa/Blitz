@@ -26,7 +26,8 @@ export { KokoroUnavailableError } from "./kokoro-worker"
 /** Maximum text accepted by a single inference request; callers can submit multiple chunks. */
 export const KOKORO_MAX_TEXT_LENGTH = 12_000
 
-const dataDirectory = resolve(
+/** Private folder for Kokoro's model, voices, cache and Python environment. */
+export const dataDirectory = resolve(
   /* turbopackIgnore: true */
   process.env.BLITZ_KOKORO_DIR ??
     join(homedir(), "Library", "Application Support", "Blitz", "kokoro")
@@ -40,7 +41,8 @@ const READ_ALOUD_CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1_000
 /** Removes abandoned atomic-write files after one hour. */
 const READ_ALOUD_TEMP_MAX_AGE_MS = 60 * 60 * 1_000
 const workerScript = join(process.cwd(), "scripts", "kokoro-worker.py")
-const pythonExecutable =
+/** Python that runs the local speech workers, Kokoro's and speech to text. */
+export const pythonExecutable =
   process.env.BLITZ_KOKORO_PYTHON?.trim() ||
   join(dataDirectory, "venv", "bin", "python3")
 
