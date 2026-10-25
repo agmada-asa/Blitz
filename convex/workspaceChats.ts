@@ -41,6 +41,126 @@ function persistedChatProvider(
   )
 }
 
+/** Runtimes whose threads can be renamed and deleted from here. OpenCode cannot. */
+const TIDY_PROVIDERS = new Set(["codex", "claude-code"])
+
+/** Longest title given to a runtime thread. */
+const RUNTIME_TITLE_CHARS = 120
+
+/** Failed attempts after which a runtime thread job is dropped. */
+const MAX_RUNTIME_JOB_ATTEMPTS = 3
+
+/** Returns the Codex or Claude Code thread a chat runs on, if it has one. */
+function runtimeThreadOf(
+  chat: Doc<"workspaceChats">
+): { providerId: string; threadId: string } | undefined {
+  const providerId = persistedChatProvider(chat)
+  const threadId = chat.providerSessionId || chat.codexThreadId
+  return providerId && threadId && TIDY_PROVIDERS.has(providerId)
+    ? { providerId, threadId }
+    : undefined
+}
+
+/** Removes every queued job for one runtime thread. */
+async function clearRuntimeThreadJobs(
+  ctx: MutationCtx,
+  threadId: string,
+  kind?: "rename" | "delete"
+): Promise<void> {
+  const jobs = await ctx.db
+    .query("runtimeThreadJobs")
+    .withIndex("by_thread", (index) => index.eq("threadId", threadId))
+    .take(50)
+  for (const job of jobs)
+    if (!kind || job.kind === kind) await ctx.db.delete(job._id)
+}
+
+/**
+ * Queues giving a chat's runtime thread the chat's title, so the Codex and
+ * Claude apps show it instead of the first prompt. A newer title replaces a
+ * queued one. Does nothing for a chat without a Codex or Claude Code thread.
+ */
+async function queueRuntimeThreadRename(
+  ctx: MutationCtx,
+  chat: Doc<"workspaceChats">
+): Promise<void> {
+  const thread = runtimeThreadOf(chat)
+  if (!thread || !chat.title.trim()) return
+  await clearRuntimeThreadJobs(ctx, thread.threadId, "rename")
+  // A Teach session and a project agent run in the project's folder.
+  const projectId =
+    chat.purpose === "teach" ? chat.projectId : chat.workingProjectId
+  await ctx.db.insert("runtimeThreadJobs", {
+    kind: "rename",
+    ...thread,
+    chatId: chat._id,
+    ...(projectId ? { projectId } : {}),
+    title: chat.title.trim().slice(0, RUNTIME_TITLE_CHARS),
+    attempts: 0,
+    createdAt: Date.now(),
+  })
+}
+
+/**
+ * Queues deleting a removed chat's runtime thread, so its session does not
+ * stay behind in the Codex or Claude app. Pending renames are dropped. Shared
+ * with project deletion in `convex/projects.ts`.
+ */
+export async function queueRuntimeThreadDeletion(
+  ctx: MutationCtx,
+  chat: Doc<"workspaceChats">
+): Promise<void> {
+  const thread = runtimeThreadOf(chat)
+  if (!thread) return
+  await clearRuntimeThreadJobs(ctx, thread.threadId)
+  await ctx.db.insert("runtimeThreadJobs", {
+    kind: "delete",
+    ...thread,
+    attempts: 0,
+    createdAt: Date.now(),
+  })
+}
+
+/** Lists the oldest runtime thread jobs for the background worker. */
+export const runtimeThreadJobs = query({
+  args: { limit: v.optional(v.number()) },
+  handler: async (ctx, { limit }) => {
+    const jobs = await ctx.db
+      .query("runtimeThreadJobs")
+      .withIndex("by_createdAt")
+      .take(Math.min(Math.max(1, Math.round(limit ?? 10)), 50))
+    return jobs.map((job) => ({
+      jobId: job._id,
+      kind: job.kind,
+      providerId: job.providerId,
+      threadId: job.threadId,
+      ...(job.chatId ? { chatId: job.chatId } : {}),
+      ...(job.projectId ? { projectId: job.projectId } : {}),
+      ...(job.title ? { title: job.title } : {}),
+    }))
+  },
+})
+
+/**
+ * Records the outcome of one runtime thread job: done jobs are removed, and a
+ * failed one is retried later until it has failed three times.
+ */
+export const finishRuntimeThreadJob = mutation({
+  args: { jobId: v.id("runtimeThreadJobs"), failed: v.optional(v.boolean()) },
+  handler: async (ctx, { jobId, failed }) => {
+    const job = await ctx.db.get(jobId)
+    if (!job) return
+    if (!failed || job.attempts + 1 >= MAX_RUNTIME_JOB_ATTEMPTS)
+      await ctx.db.delete(jobId)
+    // Moving it to the back of the queue lets other jobs go first.
+    else
+      await ctx.db.patch(jobId, {
+        attempts: job.attempts + 1,
+        createdAt: Date.now(),
+      })
+  },
+})
+
 /** Validator shared by card, file, link, and project context records. */
 const attachmentInput = v.object({
   documentId: v.optional(v.id("chatDocuments")),
@@ -281,6 +401,7 @@ export const rename = mutation({
     const chat = await ctx.db.get(args.chatId)
     if (!chat) throw new Error("Chat not found")
     await ctx.db.patch(chat._id, { title })
+    await queueRuntimeThreadRename(ctx, { ...chat, title })
   },
 })
 
@@ -302,6 +423,7 @@ export const setGeneratedTitle = mutation({
       return
     }
     await ctx.db.patch(chat._id, { title })
+    await queueRuntimeThreadRename(ctx, { ...chat, title })
   },
 })
 
@@ -380,6 +502,7 @@ export const remove = mutation({
       .take(2001)
     for (const message of messages) await ctx.db.delete(message._id)
     for (const attachment of attachments) await ctx.db.delete(attachment._id)
+    await queueRuntimeThreadDeletion(ctx, chat)
     await ctx.db.delete(chat._id)
   },
 })
@@ -1116,6 +1239,13 @@ export const bindTurn = mutation({
       codexContextReady: true,
       updatedAt: now,
     })
+    // A new runtime thread takes the chat's title; a resumed one already has it.
+    if (providerSessionId && providerSessionId !== chat.providerSessionId)
+      await queueRuntimeThreadRename(ctx, {
+        ...chat,
+        providerId,
+        providerSessionId,
+      })
   },
 })
 

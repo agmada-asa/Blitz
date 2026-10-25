@@ -803,6 +803,29 @@ export default defineSchema({
     updatedAt: v.number(),
   }).index("by_scope", ["scope"]),
 
+  /**
+   * Work on the Codex and Claude Code threads behind chats, done by the
+   * background worker (`lib/server/runtime-threads.ts`): give a thread its
+   * chat's title, or delete it once its chat is gone. A job stays here until
+   * it succeeds or has failed three times.
+   */
+  runtimeThreadJobs: defineTable({
+    kind: v.union(v.literal("rename"), v.literal("delete")),
+    /** `codex` or `claude-code`. */
+    providerId: v.string(),
+    threadId: v.string(),
+    /** Chat whose folder the thread runs in, for a rename. */
+    chatId: v.optional(v.string()),
+    /** Project whose folder the thread runs in, when it is not the chat's own. */
+    projectId: v.optional(v.string()),
+    /** Title for a rename. */
+    title: v.optional(v.string()),
+    attempts: v.number(),
+    createdAt: v.number(),
+  })
+    .index("by_createdAt", ["createdAt"])
+    .index("by_thread", ["threadId"]),
+
   /** General Blitz sessions opened from the top-level Chat tab. */
   workspaceChats: defineTable({
     /** Optional owning project. Chats can exist independently of projects. */
