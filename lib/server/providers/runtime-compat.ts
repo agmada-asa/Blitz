@@ -5,8 +5,9 @@
  * Codex and Claude Code compatibility belongs to agent-engines: it pins the
  * Codex protocol it was generated from, refuses older runtimes when a thread
  * starts, and its own `check:runtimes` watches both CLIs weekly. OpenCode runs
- * on Blitz's ACP adapter, so Blitz keeps its gate here, and the provider
- * registry and `npm run check:runtimes` read the same requirement. It imports
+ * on the library's generic ACP engine, which has no OpenCode floor, so Blitz
+ * keeps its gate here, and the provider registry and `npm run check:runtimes`
+ * read the same requirement. It imports
  * nothing, so the weekly workflow can run it without installing the app.
  */
 

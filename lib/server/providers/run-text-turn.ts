@@ -1,9 +1,10 @@
 /**
  * Routes one text turn through the selected provider and normalizes its events.
  *
- * Codex and Claude Code run through agent-engines: this module turns Blitz's
- * access settings into each runtime's thread options and hands the turn to
- * `engine-turn.ts`. OpenCode runs through Blitz's own ACP adapter.
+ * Every provider runs through agent-engines: this module turns Blitz's access
+ * settings into each runtime's thread options and hands the turn to
+ * `engine-turn.ts`. Codex and Claude Code have their own engines; OpenCode
+ * runs on the library's ACP engine (`opencode.ts`).
  */
 import type {
   AgentRequest,
@@ -28,16 +29,7 @@ import {
   providerExecutionInstructions,
   resolveProviderExecution,
 } from "../../provider-execution.ts"
-import {
-  runAcpTextTurn,
-  AcpProviderError,
-  type AcpRequestHandler,
-} from "./acp.ts"
-import {
-  checkProviderAvailability,
-  providerCommand,
-  providerInstanceId,
-} from "./registry.ts"
+import { checkProviderAvailability } from "./registry.ts"
 import { validateCodexModelSelection } from "./codex-models.ts"
 import { codexRuntimeInstructionsIfInstalled } from "./codex-runtime.ts"
 import {
@@ -46,14 +38,17 @@ import {
   providerModelOptions,
   type EngineProviderId,
 } from "./engines.ts"
-import { runEngineTurn } from "./engine-turn.ts"
+import { runEngineTurn, type TurnProviderId } from "./engine-turn.ts"
+import {
+  createOpenCodeEngine,
+  openCodeAccess,
+  openCodePrompt,
+  type OpenCodeSpawn,
+} from "./opencode.ts"
 import type {
-  ProviderApprovalHandler,
   ProviderImageAttachment,
   ProviderModelOption,
-  ProviderEvent,
   ProviderSelection,
-  ProviderTextTurnRequest,
 } from "./types.ts"
 
 /** Upper bound for reading the Codex catalogue before a turn. */
@@ -131,20 +126,18 @@ export interface CodexTurnOverrides {
 export type ProviderTextTurnOptions = {
   /** Receives normalized product events. */
   readonly onEvent?: (event: CardChatEvent) => void
-  /** Answers one Codex or Claude Code approval, question, or elicitation. Omission refuses it. */
+  /** Answers one approval, question, or elicitation from any provider. Omission refuses it. */
   readonly onRequest?: (
     request: AgentRequest,
-    providerId: EngineProviderId
+    providerId: TurnProviderId
   ) => Promise<void>
-  /** Resolves one OpenCode tool permission. Omission denies it. */
-  readonly approvalHandler?: ProviderApprovalHandler
-  /** Handles verified OpenCode structured elicitation requests with native results. */
-  readonly requestHandler?: AcpRequestHandler
   /** Codex thread settings and host tools owned by the caller. */
   readonly codex?: CodexTurnOverrides
   /** Runtime Codex catalog already read by the caller, so the turn need not read it again. */
   readonly codexModelCatalog?: readonly ProviderModelOption[]
-  /** Creates the engine for a turn; tests pass a fake. */
+  /** Starts the OpenCode process for a turn; tests pass a fake ACP peer. */
+  readonly spawnOpenCode?: OpenCodeSpawn
+  /** Creates the Codex or Claude Code engine for a turn; tests pass a fake. */
   readonly createEngine?: (
     providerId: EngineProviderId,
     options: {
@@ -152,53 +145,6 @@ export type ProviderTextTurnOptions = {
       effortSelected: boolean
     }
   ) => Engine
-}
-
-/** Converts OpenCode adapter events into the product event shape used by chat code. */
-function productEvent(event: ProviderEvent): CardChatEvent | undefined {
-  switch (event.type) {
-    case "turn-started":
-      return event
-    case "text-delta":
-      return event
-    case "thought-delta":
-      return event
-    case "activity":
-      return {
-        type: "activity",
-        notification: { method: event.method, params: event.params },
-      }
-    case "request":
-      return {
-        type: "activity",
-        serverRequest: {
-          id: event.requestId,
-          method: event.method,
-          params: event.params,
-        },
-      }
-  }
-}
-
-/** Converts an OpenCode runtime error into stable Blitz recovery copy. */
-function providerError(error: unknown): CardChatError {
-  if (error instanceof CardChatError) return error
-  const code = error instanceof AcpProviderError ? error.code : undefined
-  if (code === "aborted")
-    return new CardChatError("aborted", "Provider turn was interrupted", error)
-  if (code === "timeout")
-    return new CardChatError("timeout", "Provider turn timed out", error)
-  if (code === "invalid-input")
-    return new CardChatError(
-      "invalid-input",
-      error instanceof Error ? error.message : "Provider turn input is invalid",
-      error
-    )
-  return new CardChatError(
-    "transport",
-    "The selected provider could not finish this turn",
-    error
-  )
 }
 
 /** Resolves after `ms`, or rejects with a transport error, for bounded catalogue reads. */
@@ -367,9 +313,25 @@ async function checkCodexSelection(
   }
 }
 
-/** Runs one Codex or Claude Code turn through agent-engines. */
+/**
+ * Checks that the installed OpenCode is a supported, signed-in release before
+ * its turn starts, since its ACP engine only finds out once a session opens.
+ */
+async function checkOpenCodeReady(
+  request: RunProviderTextTurnRequest
+): Promise<void> {
+  const availability = await checkProviderAvailability("opencode", {
+    workspaceDirectory: request.workspaceDirectory,
+    providerInstanceId: request.providerInstanceId,
+    signal: request.signal,
+  })
+  if (!availability.available || availability.authenticated === false)
+    throw new CardChatError("transport", availability.message)
+}
+
+/** Runs one turn of any provider through agent-engines. */
 async function runEngineProviderTurn(
-  providerId: EngineProviderId,
+  providerId: TurnProviderId,
   request: RunProviderTextTurnRequest,
   selection: ProviderSelection,
   instructions: string,
@@ -377,8 +339,25 @@ async function runEngineProviderTurn(
 ): Promise<CardChatResult> {
   let model: string | undefined
   let effort: string | undefined
-  let settings: Pick<ThreadOptions, "access" | "claude" | "codex">
-  if (providerId === "claude-code") {
+  let settings: Pick<ThreadOptions, "access" | "claude" | "codex" | "mode">
+  let prompt = request.prompt
+  if (providerId === "opencode") {
+    if (request.sandbox === "workspace-write")
+      throw new CardChatError(
+        "invalid-input",
+        "This provider cannot enforce a workspace-only OS sandbox. Choose approval mode or full access."
+      )
+    if (selection.model.trim() && selection.model !== "default")
+      model = selection.model
+    if (selection.effort && selection.effort !== "default")
+      throw new CardChatError(
+        "invalid-input",
+        "OpenCode reasoning level is unsupported for this model"
+      )
+    prompt = openCodePrompt(request.prompt, instructions)
+    // `default` reasserts the session's own mode: the Blitz agent this turn defines.
+    settings = { access: openCodeAccess(request), mode: "default" }
+  } else if (providerId === "claude-code") {
     if (request.approvalPolicy === "untrusted")
       throw new CardChatError(
         "invalid-input",
@@ -411,12 +390,22 @@ async function runEngineProviderTurn(
       codex: codexThreadOptions(request, options.codex?.thread),
     }
   }
-  const engine = (options.createEngine ?? defaultEngine)(providerId, {
-    ...(options.codex?.onToolCall
-      ? { onToolCall: options.codex.onToolCall }
-      : {}),
-    effortSelected: effort !== undefined,
-  })
+  // A fake OpenCode peer in tests stands in for the installed CLI as well.
+  if (providerId === "opencode" && !options.spawnOpenCode)
+    await checkOpenCodeReady(request)
+  const engine =
+    providerId === "opencode"
+      ? createOpenCodeEngine(
+          request,
+          request.workspaceDirectory,
+          options.spawnOpenCode
+        )
+      : (options.createEngine ?? defaultEngine)(providerId, {
+          ...(options.codex?.onToolCall
+            ? { onToolCall: options.codex.onToolCall }
+            : {}),
+          effortSelected: effort !== undefined,
+        })
   try {
     if (providerId === "codex")
       await checkCodexSelection(
@@ -437,20 +426,22 @@ async function runEngineProviderTurn(
         cwd: request.workspaceDirectory,
         ...(model ? { model } : {}),
         ...(effort ? { effort } : {}),
-        ...(instructions ? { instructions } : {}),
+        // OpenCode has no instruction channel; its prompt carries them instead.
+        ...(instructions && providerId !== "opencode" ? { instructions } : {}),
         ...settings,
       },
       ...(request.threadId ? { threadId: request.threadId } : {}),
+      ...(providerId === "opencode" ? { confirmResume: true } : {}),
       input: request.attachments?.length
         ? {
-            text: request.prompt,
+            text: prompt,
             images: request.attachments.map((attachment) => ({
               type: "base64" as const,
               mediaType: attachment.mimeType,
               data: attachment.data,
             })),
           }
-        : request.prompt,
+        : prompt,
       ...(request.signal === undefined ? {} : { signal: request.signal }),
       ...(request.timeoutMs === undefined
         ? {}
@@ -512,78 +503,11 @@ export async function runProviderTextTurn(
   ]
     .filter(Boolean)
     .join("\n\n")
-  if (request.providerId === "codex" || request.providerId === "claude-code")
-    return runEngineProviderTurn(
-      request.providerId,
-      request,
-      selection,
-      instructions,
-      options
-    )
-
-  const providerRequest: ProviderTextTurnRequest = {
+  return runEngineProviderTurn(
+    request.providerId,
+    request,
     selection,
-    workspaceDirectory: request.workspaceDirectory,
-    prompt: request.prompt,
-    ...(request.attachments?.length
-      ? { attachments: request.attachments }
-      : {}),
-    developerInstructions: instructions,
-    ...(request.threadId
-      ? {
-          session: {
-            providerId: request.providerId,
-            ...(request.providerInstanceId
-              ? { providerInstanceId: request.providerInstanceId }
-              : {}),
-            providerSessionId: request.threadId,
-          },
-        }
-      : {}),
-    ...(request.ephemeral === undefined
-      ? {}
-      : { ephemeral: request.ephemeral }),
-    ...(request.webSearchMode === undefined
-      ? {}
-      : { webSearchMode: request.webSearchMode }),
-    ...(request.sandbox === undefined ? {} : { sandbox: request.sandbox }),
-    ...(request.approvalPolicy === undefined
-      ? {}
-      : { approvalPolicy: request.approvalPolicy }),
-    ...(request.signal === undefined ? {} : { signal: request.signal }),
-    ...(request.timeoutMs === undefined
-      ? {}
-      : { timeoutMs: request.timeoutMs }),
-  }
-  try {
-    const availability = await checkProviderAvailability(request.providerId, {
-      workspaceDirectory: request.workspaceDirectory,
-      providerInstanceId: request.providerInstanceId,
-      signal: request.signal,
-    })
-    if (!availability.available || availability.authenticated === false)
-      throw new CardChatError("transport", availability.message)
-    const result = await runAcpTextTurn(providerRequest, {
-      command: providerCommand(request.providerId),
-      providerInstanceId:
-        request.providerInstanceId ?? providerInstanceId(request.providerId),
-      onEvent: (event) => {
-        const normalized = productEvent(event)
-        if (normalized) options.onEvent?.(normalized)
-      },
-      approvalHandler: options.approvalHandler,
-      requestHandler: options.requestHandler,
-    })
-    return {
-      threadId: result.threadId,
-      turnId: result.turnId,
-      text: result.text,
-      ...(result.thought ? { thought: result.thought } : {}),
-      ...(result.durationMs !== undefined
-        ? { durationMs: result.durationMs }
-        : {}),
-    }
-  } catch (error) {
-    throw providerError(error)
-  }
+    instructions,
+    options
+  )
 }

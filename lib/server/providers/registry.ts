@@ -20,7 +20,6 @@ import type {
   ProviderCommand,
   ProviderHealthOptions,
 } from "./types.ts"
-import { AcpProviderError } from "./acp.ts"
 import {
   createProviderEngine,
   providerAvailabilityFromEngine,
@@ -277,12 +276,7 @@ export async function checkProviderAvailability(
           : "Connected and ready.",
     }
   } catch (error) {
-    const missingExecutable =
-      error instanceof AcpProviderError &&
-      typeof error.cause === "object" &&
-      error.cause !== null &&
-      "code" in error.cause &&
-      error.cause.code === "ENOENT"
+    const missingExecutable = isMissingExecutable(error)
     return {
       providerId,
       providerInstanceId: instanceId,
@@ -293,6 +287,19 @@ export async function checkProviderAvailability(
         `${providerId} did not pass its local runtime check.`,
     }
   }
+}
+
+/** Returns whether a spawn failure, or the error it caused, means the CLI is not installed. */
+function isMissingExecutable(error: unknown): boolean {
+  for (const value of [error, (error as { cause?: unknown } | null)?.cause])
+    if (
+      typeof value === "object" &&
+      value !== null &&
+      "code" in value &&
+      value.code === "ENOENT"
+    )
+      return true
+  return false
 }
 
 /** Returns one provider definition with its stable capability snapshot. */

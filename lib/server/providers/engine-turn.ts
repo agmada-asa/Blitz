@@ -1,6 +1,6 @@
 /**
- * Runs one bounded Codex or Claude Code turn through agent-engines and reports
- * it in Blitz's card-chat event and result shapes.
+ * Runs one bounded Codex, Claude Code or OpenCode turn through agent-engines
+ * and reports it in Blitz's card-chat event and result shapes.
  *
  * The library owns the runtime mechanics: starting or resuming the thread,
  * streaming, approvals, interrupts, and process lifetime. This adapter owns
@@ -40,10 +40,13 @@ import type { EngineProviderId } from "./engines.ts"
 /** How long cleanup waits for an interrupt or engine shutdown before moving on. */
 const CLEANUP_TIMEOUT_MS = 1_000
 
+/** Blitz providers whose turns run on an agent-engines engine. */
+export type TurnProviderId = EngineProviderId | "opencode"
+
 /** One turn to run on a freshly created engine, which this adapter closes. */
 export interface EngineTurnRequest {
   /** Blitz provider the engine belongs to; decides which text is the reply. */
-  readonly providerId: EngineProviderId
+  readonly providerId: TurnProviderId
   /** Engine created for this turn alone. It is closed when the turn ends. */
   readonly engine: Engine
   /** Thread settings, applied on start and again on resume. */
@@ -58,6 +61,15 @@ export interface EngineTurnRequest {
   readonly signal?: AbortSignal
   /** Wall-clock deadline for the whole turn, thread start included. */
   readonly timeoutMs?: number
+  /**
+   * Holds back `turn-started` on a resumed thread until the runtime sends
+   * something for the turn. ACP agents report a turn as started before they
+   * have checked the reloaded session, so a resume they reject would otherwise
+   * look like an accepted turn. A resumed turn that fails before any output
+   * becomes a `transport` failure with no `turn-started`, which is how the
+   * chat knows to replay its history into a new session.
+   */
+  readonly confirmResume?: boolean
 }
 
 /** Callbacks for one engine turn. */
@@ -209,6 +221,12 @@ async function runTurn(
   let thread: Thread | undefined
   let turn: Turn | undefined
   let turnId: string | undefined
+  /** A turn ID held back until the runtime confirms a resumed session. */
+  let pendingTurnId: string | undefined
+  const awaitingConfirmation = Boolean(
+    request.confirmResume && request.threadId
+  )
+  let confirmed = !awaitingConfirmation
   let text = ""
   let thought = ""
   const answers: string[] = []
@@ -241,11 +259,25 @@ async function runTurn(
   const race = <T>(operation: Promise<T>): Promise<T> =>
     Promise.race([operation, cancellation])
 
-  /** Reports the thread and turn IDs once, as soon as either source knows them. */
+  /**
+   * Reports the thread and turn IDs once, as soon as either source knows them,
+   * or holds them until {@link confirm} when the resume is unconfirmed.
+   */
   const started = (id: string): void => {
     if (turnId || !thread || !id) return
+    if (!confirmed) {
+      pendingTurnId ??= id
+      return
+    }
     turnId = id
     emit({ type: "turn-started", threadId: thread.id, turnId: id })
+  }
+
+  /** Marks a resumed session as working and reports any held-back start. */
+  const confirm = (): void => {
+    if (confirmed) return
+    confirmed = true
+    if (pendingTurnId) started(pendingTurnId)
   }
 
   /** Appends streamed reply or thought text within the output bound. */
@@ -274,6 +306,8 @@ async function runTurn(
 
   /** Routes one engine event into Blitz's event shapes. */
   const handle = (event: AgentEvent): void => {
+    // Anything the runtime sends for the turn shows the resumed session works.
+    if (event.type !== "turn.started" && event.type !== "turn.failed") confirm()
     if (event.type === "request") {
       const answer = options.onRequest
         ? options.onRequest(event.request)
@@ -381,7 +415,16 @@ async function runTurn(
 
   /** Builds the result of a settled turn, or throws its mapped failure. */
   function complete(result: TurnResult): CardChatResult {
-    if (result.status === "failed") throw turnFailure(result.error)
+    if (result.status === "failed") {
+      if (!confirmed)
+        throw new CardChatError(
+          "transport",
+          "The provider could not resume this session",
+          result.error
+        )
+      throw turnFailure(result.error)
+    }
+    confirm()
     if (result.status === "interrupted")
       throw new CardChatError("turn-interrupted", "Blitz turn interrupted")
     const reply =

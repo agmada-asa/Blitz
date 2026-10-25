@@ -23,7 +23,7 @@ import type { AiReasoningEffort } from "../../ai-model-settings.ts"
 import { providerCommand } from "./registry.ts"
 import type { ProviderAvailability, ProviderModelOption } from "./types.ts"
 
-/** Providers Blitz runs through agent-engines. OpenCode stays on Blitz's ACP adapter. */
+/** Providers with their own agent-engines engine. OpenCode's ACP engine is in `opencode.ts`. */
 export type EngineProviderId = "codex" | "claude-code"
 
 /** Reasoning tokens a provider may report; unknown future values are kept when well formed. */

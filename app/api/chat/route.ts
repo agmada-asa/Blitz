@@ -896,8 +896,6 @@ export async function POST(request: Request): Promise<Response> {
                 : {}),
               ...(codexModelCatalog ? { codexModelCatalog } : {}),
               onRequest: agentSession?.handleRequest,
-              approvalHandler: agentSession?.approveProvider,
-              requestHandler: agentSession?.handleProviderRequest,
               onEvent: (event) => {
                 const activity = normalizeProviderActivity(event, providerEvents)
                 if (activity) appendProviderEvent(activity)

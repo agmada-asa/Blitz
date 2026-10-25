@@ -1,6 +1,12 @@
 /** Applies OpenCode v1 native tool rules in a dedicated agent without changing user settings. */
 import type { ProviderTextTurnRequest } from "./types.ts"
 
+/** The access settings of one turn that decide OpenCode's native permissions. */
+export type OpenCodePolicyRequest = Pick<
+  ProviderTextTurnRequest,
+  "ephemeral" | "webSearchMode" | "approvalPolicy" | "sandbox"
+>
+
 /**
  * Built-in OpenCode tools that only read or search, allowed in read-only and
  * no-approval chat turns. Editing, shell, and MCP tools still need approval
@@ -33,7 +39,7 @@ const READ_ONLY_TOOLS = [
  * @returns Environment variables for the spawned OpenCode process.
  */
 export function openCodeEnvironment(
-  request: ProviderTextTurnRequest,
+  request: OpenCodePolicyRequest,
   agentName: string
 ): NodeJS.ProcessEnv {
   // Background generation reads untrusted source text and needs no tools.

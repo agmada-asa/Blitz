@@ -258,60 +258,91 @@ test("Codex approvals are refused unseen when approvals are off, but Blitz's own
   await bridge.close()
 })
 
-test("ACP approvals preserve once, always, and reject IDs through one-time persistence", async () => {
-  for (const [decision, expected] of [
-    ["once", "once"],
-    ["always", "always"],
-    ["reject", undefined],
+/** Builds one OpenCode permission request as the ACP engine raises it. */
+function openCodeApproval(
+  id: string,
+  decisions: unknown[],
+  kinds: readonly string[] = ["allow_once", "allow_always", "reject_once"]
+): AgentRequest {
+  return {
+    kind: "approval",
+    id,
+    action: "command",
+    title: "bash",
+    command: "ls",
+    raw: {
+      sessionId: "session-1",
+      toolCall: { toolCallId: id, title: "bash", kind: "execute" },
+      options: kinds.map((kind) => ({ optionId: kind, name: kind, kind })),
+    },
+    respond: async (decision) => {
+      decisions.push(decision)
+    },
+  }
+}
+
+test("OpenCode approvals allow once, allow for the session, or deny through one-time persistence", async () => {
+  for (const [choice, expected] of [
+    ["accept", "allow"],
+    ["acceptForSession", "allow-session"],
+    ["deny", "deny"],
   ] as const) {
     const { bridge, db, messageId, handlers, chatId } = await setup()
-    const result = bridge.handleProviderRequest({
-      requestId: decision,
-      method: "session/request_permission",
-      params: {
-        options: [
-          { optionId: "once", name: "Allow once", kind: "allow_once" },
-          { optionId: "always", name: "Allow always", kind: "allow_always" },
-          { optionId: "reject", name: "Reject", kind: "reject_once" },
-        ],
-      },
-    })
+    const decisions: unknown[] = []
+    const handled = bridge.handleRequest(
+      openCodeApproval(choice, decisions),
+      "opencode"
+    )
     const approval = await waitForPending(db, messageId)
+    assert.deepEqual(
+      (JSON.parse(String(approval.input)) as { approvalOptions: unknown })
+        .approvalOptions,
+      [
+        { value: "accept", label: "Allow once" },
+        { value: "acceptForSession", label: "Allow for this session" },
+      ]
+    )
     await handlers.decideApproval(
       { db },
       {
         chatId,
         messageId,
         approvalId: approval.id,
-        decision: decision === "reject" ? "denied" : "approved",
+        decision: choice === "deny" ? "denied" : "approved",
         response:
-          decision === "reject"
-            ? undefined
-            : JSON.stringify({ optionId: decision }),
+          choice === "deny" ? undefined : JSON.stringify({ optionId: choice }),
       }
     )
-    assert.deepEqual(
-      await result,
-      expected
-        ? { outcome: { outcome: "selected", optionId: expected } }
-        : { outcome: { outcome: "cancelled" } }
-    )
+    await handled
+    assert.deepEqual(decisions, [{ decision: expected }])
     await bridge.close()
   }
 })
 
+test("OpenCode approvals with no allow-once choice are refused unseen", async () => {
+  const { bridge, db, messageId } = await setup()
+  const decisions: unknown[] = []
+  await bridge.handleRequest(
+    openCodeApproval("always-only", decisions, ["allow_always", "reject_once"]),
+    "opencode"
+  )
+  assert.deepEqual(decisions, [{ decision: "deny" }])
+  assert.equal((await db.get(messageId))?.agentApproval, undefined)
+  await bridge.close()
+})
+
 test("disconnect cancels pending interaction and records terminal history", async () => {
   const { bridge, db, messageId } = await setup()
-  const result = bridge.handleProviderRequest({
-    requestId: 9,
-    method: "session/request_permission",
-    params: {
-      options: [{ optionId: "once", name: "Allow", kind: "allow_once" }],
-    },
-  })
+  const decisions: unknown[] = []
+  const handled = bridge.handleRequest(
+    openCodeApproval("pending", decisions),
+    "opencode"
+  )
   await waitForPending(db, messageId)
   await bridge.close()
-  assert.deepEqual(await result, { outcome: { outcome: "cancelled" } })
+  // The turn refuses an unanswered request itself once the wait ends.
+  await handled.catch(() => undefined)
+  assert.deepEqual(decisions, [])
   const message = await db.get(messageId)
   assert.equal(
     (message?.agentApproval as Record<string, unknown>)?.status,
@@ -325,14 +356,17 @@ test("disconnect cancels pending interaction and records terminal history", asyn
 
 test("queued provider requests are serialized and each receives its own decision", async () => {
   const { bridge, db, messageId, handlers, chatId, fake } = await setup()
-  const first = bridge.handleProviderRequest({
-    requestId: "first",
-    method: "session/request_permission",
-    params: {
-      options: [{ optionId: "once", name: "Once", kind: "allow_once" }],
-    },
-  })
+  const decisions: unknown[] = []
+  const first = bridge.handleRequest(
+    openCodeApproval("first", decisions),
+    "opencode"
+  )
+  const second = bridge.handleRequest(
+    openCodeApproval("second", decisions),
+    "opencode"
+  )
   const firstApproval = await waitForPending(db, messageId)
+  assert.equal(firstApproval.providerRequestId, "first")
   await handlers.decideApproval(
     { db },
     {
@@ -340,31 +374,23 @@ test("queued provider requests are serialized and each receives its own decision
       messageId,
       approvalId: firstApproval.id,
       decision: "approved",
-      response: JSON.stringify({ optionId: "once" }),
+      response: JSON.stringify({ optionId: "accept" }),
     }
   )
-  const second = bridge.handleProviderRequest({
-    requestId: "second",
-    method: "session/request_permission",
-    params: {
-      options: [{ optionId: "always", name: "Always", kind: "allow_always" }],
-    },
-  })
+  await first
   const secondApproval = await waitForPending(db, messageId)
+  assert.equal(secondApproval.providerRequestId, "second")
   await handlers.decideApproval(
     { db },
     {
       chatId,
       messageId,
       approvalId: secondApproval.id,
-      decision: "approved",
-      response: JSON.stringify({ optionId: "always" }),
+      decision: "denied",
     }
   )
-  assert.deepEqual(await Promise.all([first, second]), [
-    { outcome: { outcome: "selected", optionId: "once" } },
-    { outcome: { outcome: "selected", optionId: "always" } },
-  ])
+  await second
+  assert.deepEqual(decisions, [{ decision: "allow" }, { decision: "deny" }])
   assert.equal(fake.mutations.filter((entry) => entry.approval).length, 2)
   await bridge.close()
 })
