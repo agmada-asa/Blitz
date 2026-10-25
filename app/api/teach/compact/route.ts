@@ -19,6 +19,7 @@ import { compactProviderThread } from "@/lib/server/providers/run-text-turn"
 import { isTrustedBlitzOrigin } from "@/lib/server/request-origin"
 import {
   chatReplySelection,
+  savedChatReplySelection,
   teachTurnSettings,
 } from "@/lib/server/teach-turn-settings"
 
@@ -63,14 +64,15 @@ export async function POST(request: Request): Promise<Response> {
   try {
     const configured = chatReplySelection(await loadSavedAiModelSettings(client))
     const providerId = session.providerId as AiProviderId
+    const selection = savedChatReplySelection(configured, session)
     const workspaceDirectory = (
       await prepareProjectAgentWorkspace(session.projectId)
     ).projectDirectory
     result = await compactProviderThread({
       providerId,
       workspaceDirectory,
-      model: session.providerModel ?? configured.model,
-      effort: session.providerEffort ?? configured.effort,
+      model: selection.model,
+      effort: selection.effort,
       threadId: session.providerSessionId,
       timeoutMs: COMPACTION_TIMEOUT_MS,
       ...teachTurnSettings(providerId, workspaceDirectory),

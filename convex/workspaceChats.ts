@@ -529,6 +529,20 @@ export const remove = mutation({
   },
 })
 
+/** Reads the saved reply selection before a turn, without loading its transcript. */
+export const replySelection = query({
+  args: { chatId: v.id("workspaceChats") },
+  handler: async (ctx, { chatId }) => {
+    const chat = await ctx.db.get(chatId)
+    if (!chat) throw new Error("Chat not found")
+    return {
+      providerId: persistedChatProvider(chat) ?? null,
+      providerModel: chat.providerModel ?? null,
+      providerEffort: chat.providerEffort ?? null,
+    }
+  },
+})
+
 /** Loads one saved transcript and attachment metadata without returning source text. */
 export const get = query({
   args: { chatId: v.id("workspaceChats") },

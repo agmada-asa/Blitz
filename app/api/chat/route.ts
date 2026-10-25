@@ -58,6 +58,7 @@ import { isTrustedBlitzOrigin } from "@/lib/server/request-origin"
 import { generateChatTitle } from "@/lib/server/chat-title"
 import {
   chatReplySelection,
+  savedChatReplySelection,
   teachTurnSettings,
 } from "@/lib/server/teach-turn-settings"
 import { startFirstQuestionBank } from "@/lib/server/question-bank"
@@ -582,12 +583,18 @@ export async function POST(request: Request): Promise<Response> {
         ]
         const modelSettings = await loadSavedAiModelSettings(client)
         const configuredSelection = chatReplySelection(modelSettings)
+        const requestedSelection = savedChatReplySelection(
+          configuredSelection,
+          input.chatId
+            ? await client.query(api.workspaceChats.replySelection, { chatId: input.chatId })
+            : null
+        )
         const turn = await client.mutation(startWorkspaceTurn, {
           ...(input.chatId ? { chatId: input.chatId } : {}),
           ...(input.projectId ? { projectId: input.projectId } : {}),
-          providerId: configuredSelection.providerId,
-          providerModel: configuredSelection.model,
-          providerEffort: configuredSelection.effort,
+          providerId: requestedSelection.providerId,
+          providerModel: requestedSelection.model,
+          providerEffort: requestedSelection.effort,
           ...(input.continuationOf
             ? { continuationOf: input.continuationOf }
             : {}),
@@ -827,19 +834,7 @@ export async function POST(request: Request): Promise<Response> {
             }
           )
         }
-        // The configured model only applies to the provider it was chosen
-        // for; a chat on another provider (after a handoff) uses its default.
-        const configuredForProvider =
-          configuredSelection.providerId === turn.providerId
-        const selection = {
-          providerId: turn.providerId,
-          model:
-            turn.providerModel ??
-            (configuredForProvider ? configuredSelection.model : "default"),
-          effort:
-            turn.providerEffort ??
-            (configuredForProvider ? configuredSelection.effort : undefined),
-        }
+        const selection = savedChatReplySelection(configuredSelection, turn)
         // Teach reads untrusted course files, so it never inherits the global
         // access setting: no approvals to wait on, and a read-only sandbox.
         const approvalPolicy = teach

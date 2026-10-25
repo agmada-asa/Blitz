@@ -5,6 +5,7 @@
  */
 import assert from "node:assert/strict"
 import test from "node:test"
+import { savedChatReplySelection } from "../lib/server/teach-turn-settings.ts"
 
 /** Minimal document representation used by the handler test double. */
 type Row = { _id: string; table: string; [key: string]: unknown }
@@ -210,6 +211,78 @@ test("a branch copies the runtime session through its reply and shares the folde
     }
   )
   assert.equal((await db.get(branch.chatId))?.forkSource, undefined)
+})
+
+test("a handed-off chat continues on its saved provider despite different global defaults", async () => {
+  const api = await handlers()
+  const db = new MemoryDb()
+  const { chatId, ids } = seedChat(
+    db,
+    {
+      status: "failed",
+      lastErrorReason: "usage-limit",
+      providerId: "codex",
+      providerSessionId: "old_session",
+      providerModel: "gpt-6",
+      providerEffort: "xhigh",
+    },
+    [{ request: "Explain heaps", reply: "A heap", turnId: "turn_1" }]
+  )
+  await db.patch(ids[1]!, { status: "failed" })
+  await api.handOff!({ db }, { chatId, messageId: ids[1], providerId: "claude-code" })
+  const configured = { providerId: "codex" as const, model: "gpt-6", effort: "xhigh" as const }
+  // The route used to send these global defaults after every handoff.
+  await assert.rejects(api.startTurn!({ db }, {
+    chatId,
+    clientMessageId: "wrong-provider",
+    message: "",
+    continuationOf: ids[1],
+    attachments: [],
+    providerId: configured.providerId,
+    providerModel: configured.model,
+    providerEffort: configured.effort,
+  }), /Start a new chat to change its provider/)
+  const saved = (await api.replySelection!({ db }, { chatId })) as {
+    providerId: string
+    providerModel: null
+    providerEffort: null
+  }
+  const selection = savedChatReplySelection(configured, saved)
+  assert.deepEqual(selection, { providerId: "claude-code", model: "default", effort: undefined })
+  const resumed = (await api.startTurn!({ db }, {
+    chatId,
+    clientMessageId: "continue",
+    message: "",
+    continuationOf: ids[1],
+    attachments: [],
+    providerId: selection.providerId,
+    providerModel: selection.model,
+    providerEffort: selection.effort,
+  })) as { providerId: string; providerModel: string; providerEffort?: string; providerHandoff: unknown }
+  assert.equal(resumed.providerId, "claude-code")
+  assert.equal(resumed.providerModel, "default")
+  assert.equal(resumed.providerEffort, undefined)
+  assert.deepEqual(resumed.providerHandoff, { fromProviderId: "codex", fromSessionId: "old_session" })
+  await db.patch(chatId, { status: "idle" })
+  const next = (await api.startTurn!({ db }, {
+    chatId,
+    clientMessageId: "followup",
+    message: "Give an example",
+    attachments: [],
+    providerId: selection.providerId,
+    providerModel: selection.model,
+  })) as { providerId: string }
+  assert.equal(next.providerId, "claude-code")
+})
+
+test("saved model choices survive global changes and new chats still use the global selection", () => {
+  const configured = { providerId: "codex" as const, model: "gpt-6", effort: "high" as const }
+  assert.deepEqual(savedChatReplySelection(configured), configured)
+  assert.deepEqual(savedChatReplySelection(configured, { providerId: null }), configured)
+  assert.deepEqual(savedChatReplySelection(configured, {
+    providerId: "claude-code", providerModel: "sonnet", providerEffort: "medium",
+  }), { providerId: "claude-code", model: "sonnet", effort: "medium" })
+  assert.deepEqual(savedChatReplySelection(configured, { providerId: "codex" }), configured)
 })
 
 test("branches replay instead where a copy would not resume", async () => {

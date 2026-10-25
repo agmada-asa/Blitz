@@ -11,7 +11,7 @@
  */
 
 import type { AiProviderId } from "../ai-model-settings.ts"
-import { resolveAiTaskSelection } from "../ai-model-settings.ts"
+import { isAiProviderId, resolveAiTaskSelection } from "../ai-model-settings.ts"
 import { projectAgentInstructions } from "./project-agent.ts"
 import type { RunProviderTextTurnRequest } from "./providers/run-text-turn.ts"
 
@@ -53,4 +53,32 @@ export function chatReplySelection(
     modelEnvironmentFallback: process.env.BLITZ_CODEX_MODEL,
     effortEnvironmentFallback: process.env.BLITZ_CODEX_EFFORT,
   })
+}
+
+/** Saved provider choices, without loading a chat's transcript or attachments. */
+export type SavedChatReplySelection = {
+  providerId?: string | null
+  providerModel?: string | null
+  providerEffort?: string | null
+}
+
+/**
+ * Keeps an existing chat on its saved provider. Global model and effort
+ * defaults apply only to the provider they belong to; a handoff starts with
+ * the new provider's default until that chat saves a selection of its own.
+ */
+export function savedChatReplySelection(
+  configured: ReturnType<typeof chatReplySelection>,
+  saved?: SavedChatReplySelection | null
+): { providerId: AiProviderId; model: string; effort?: string } {
+  const savedProvider = saved?.providerId ?? undefined
+  const providerId = isAiProviderId(savedProvider)
+    ? savedProvider
+    : configured.providerId
+  const matches = providerId === configured.providerId
+  return {
+    providerId,
+    model: saved?.providerModel ?? (matches ? configured.model : "default"),
+    effort: saved?.providerEffort ?? (matches ? configured.effort : undefined),
+  }
 }
