@@ -5,8 +5,11 @@
  * same upload route the app uses, and reports how long each file took to
  * extract. With `--teach`, it also starts the unit's Teach session and
  * reports time to the first streamed words and to the finished first section.
+ * `--prewarm` asks the server to prewarm the provider just before the turn,
+ * as the Teach screen does when a session opens, so runs with and without it
+ * can be compared.
  *
- *   npm run benchmark:teach -- <folder> [--match text]... [--title name] [--teach]
+ *   npm run benchmark:teach -- <folder> [--match text]... [--title name] [--teach] [--prewarm]
  *
  * Requires a running Blitz (`npm run dev:lan`). `--teach` runs one real tutor
  * turn on the configured provider. Course material is never copied into the
@@ -25,20 +28,21 @@ import { findQuizBlocks } from "../lib/interactive-blocks.ts"
 import { parseTeachOutline, suggestUnitTitle, TEACH_QUICK_REPLIES } from "../lib/teach.ts"
 
 /** Parsed command-line options. */
-type Options = { folder: string; match: string[]; title?: string; teach: boolean }
+type Options = { folder: string; match: string[]; title?: string; teach: boolean; prewarm: boolean }
 
 /** Reads arguments, exiting with usage on invalid input. */
 function parseArgs(argv: string[]): Options {
-  const options: Options = { folder: "", match: [], teach: false }
+  const options: Options = { folder: "", match: [], teach: false, prewarm: false }
   for (let index = 0; index < argv.length; index++) {
     const value = argv[index]
     if (value === "--match") options.match.push(argv[++index] ?? "")
     else if (value === "--title") options.title = argv[++index]
     else if (value === "--teach") options.teach = true
+    else if (value === "--prewarm") options.prewarm = true
     else if (!options.folder) options.folder = value
   }
   if (!options.folder) {
-    console.error("Usage: npm run benchmark:teach -- <folder> [--match text]... [--title name] [--teach]")
+    console.error("Usage: npm run benchmark:teach -- <folder> [--match text]... [--title name] [--teach] [--prewarm]")
     process.exit(1)
   }
   return options
@@ -126,6 +130,13 @@ async function main(): Promise<void> {
     const started = Date.now()
     let firstDelta: number | undefined
     let failure: string | undefined
+    // Sent alongside the turn, not awaited, matching the Teach screen.
+    if (options.prewarm)
+      void fetch(`${serverUrl}/api/teach/prewarm`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ chatId }),
+      }).catch(() => undefined)
     const response = await fetch(`${serverUrl}/api/chat`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -151,6 +162,7 @@ async function main(): Promise<void> {
     const reply = chat?.messages.findLast((message) => message.role === "assistant")
     const outline = reply ? parseTeachOutline(reply.content) : undefined
     teach = {
+      prewarm: options.prewarm,
       firstWordsMs: firstDelta ?? null,
       firstSectionMs: totalMs,
       failure: failure ?? null,

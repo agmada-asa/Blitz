@@ -19,7 +19,7 @@ Blitz runs Codex and Claude Code through [agent-engines](https://www.npmjs.com/p
 
 Every turn, availability check, and catalogue read creates its own engine and closes it afterwards, so no Codex app-server or Claude Code process outlives the request that started it. A chat keeps its runtime thread ID and resumes it on the next message.
 
-The one exception is prewarm. Opening a new Teach session calls `POST /api/teach/prewarm`, which creates the reply provider's engine with the exact thread options the first turn will send (`lib/server/teach-turn-settings.ts`) and calls `engine.prewarm()`: Codex starts its app-server, and Claude Code also opens the new thread's process. The first turn claims the engine from the pool and owns it from then on. Only a new thread benefits, so a resumed session is not prewarmed. The saving has not been measured; compare with `npm run benchmark:teach -- --teach`.
+The one exception is prewarm. Opening a new Teach session calls `POST /api/teach/prewarm`, which creates the reply provider's engine with the exact thread options the first turn will send (`lib/server/teach-turn-settings.ts`) and calls `engine.prewarm()`: Codex starts its app-server, and Claude Code also opens the new thread's process. The first turn claims the engine from the pool and owns it from then on. Only a new thread benefits, so a resumed session is not prewarmed. The saving has not been measured; compare `npm run benchmark:teach -- <folder> --teach` with and without `--prewarm`.
 
 ## Sign-in
 

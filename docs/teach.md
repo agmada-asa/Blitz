@@ -159,7 +159,8 @@ first section finished within a minute with the configured reply provider.
 
 Opening a new session now prewarms the reply provider (see
 `docs/agent-engines.md`), so part of that wait overlaps with loading the unit.
-The effect has not been measured yet; rerun the benchmark to compare.
+The effect has not been measured yet; compare runs with and without
+`--prewarm`, which sends the same prewarm request alongside the turn.
 
 ## Known limits
 
