@@ -654,3 +654,64 @@ test("a spending stop names the cap it hit", async () => {
     })
   }
 })
+
+/** A Codex plan-mode turn: a proposal and no answer text, as Codex ends one. */
+function proposePlan(turn: FakeTurn, plan: string) {
+  turn.push({ type: "turn.started" })
+  turn.push({ type: "plan.proposal.done", itemId: "p1", text: plan })
+  turn.finish({ status: "completed", text: "" })
+}
+
+test("a Codex plan goes to review, and approval runs it as the next turn", async () => {
+  const engine = new FakeEngine("codex", (turn) =>
+    engine.turns.length === 1 ? proposePlan(turn, "1. Create Revision/") : turn.answer("Done: folders created.")
+  )
+  const reviewed: AgentRequest[] = []
+  const { result } = await run(engine, { turnOptions: { mode: "plan" } }, async (request) => {
+    reviewed.push(request)
+    await (request as Extract<AgentRequest, { kind: "approval" }>).respond({ decision: "allow" })
+  })
+  const value = await result
+  assert.equal(reviewed.length, 1)
+  const plan = reviewed[0] as Extract<AgentRequest, { kind: "approval" }>
+  assert.equal(plan.action, "plan")
+  assert.equal(plan.plan, "1. Create Revision/")
+  assert.deepEqual(engine.runs[1].options, { mode: "default" })
+  assert.match(String(engine.runs[1].input), /approved the plan/)
+  assert.equal(value.text, "Done: folders created.")
+  assert.equal(value.turnId, "turn_1")
+})
+
+test("a Codex plan sent back is revised, and one declined without a note is the reply", async () => {
+  const engine = new FakeEngine("codex", (turn) =>
+    proposePlan(turn, engine.turns.length === 1 ? "Plan A" : "Plan B")
+  )
+  let reviews = 0
+  const { result } = await run(engine, { turnOptions: { mode: "plan" } }, async (request) => {
+    reviews += 1
+    const approval = request as Extract<AgentRequest, { kind: "approval" }>
+    await approval.respond(
+      reviews === 1 ? { decision: "deny", message: "Use fewer folders." } : { decision: "deny" }
+    )
+  })
+  const value = await result
+  assert.equal(reviews, 2)
+  assert.deepEqual(engine.runs[1], { input: "Use fewer folders.", options: { mode: "plan" } })
+  assert.equal(value.text, "Plan B")
+  // Without a handler the plan is refused and still becomes the reply.
+  const unattended = new FakeEngine("codex", (turn) => proposePlan(turn, "Plan C"))
+  const { result: refused } = await run(unattended, { turnOptions: { mode: "plan" } })
+  assert.equal((await refused).text, "Plan C")
+  assert.equal(unattended.runs.length, 1)
+})
+
+test("plan mode reaches the turn, and Claude allows edits once a plan is approved", async () => {
+  const codex = await route("codex", { approvalPolicy: "on-request", mode: "plan" })
+  assert.deepEqual(codex.runs[0].options, { mode: "plan" })
+  const claude = await route("claude", { approvalPolicy: "on-request", mode: "plan" })
+  assert.equal(claude.started[0].access, "accept-edits")
+  assert.deepEqual(claude.runs[0].options, { mode: "plan" })
+  // Full access stays full; without plan mode, approval mode still asks.
+  assert.equal((await route("claude", { approvalPolicy: "full-access", mode: "plan" })).started[0].access, "full")
+  assert.equal((await route("claude", { approvalPolicy: "on-request" })).started[0].access, "ask")
+})

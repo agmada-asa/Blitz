@@ -125,6 +125,13 @@ export interface RunProviderTextTurnRequest {
   readonly sandbox?: "read-only" | "workspace-write" | "danger-full-access"
   /** Provider approval policy. */
   readonly approvalPolicy?: "untrusted" | "on-request" | "never" | "full-access"
+  /**
+   * `plan` proposes a plan for approval before changing anything (Codex and
+   * Claude Code). Once it is approved the agent carries it out, with edits
+   * allowed where the access level would otherwise ask about each one.
+   * OpenCode turns ignore it.
+   */
+  readonly mode?: "plan"
   /** Caller cancellation signal. */
   readonly signal?: AbortSignal
   /** Wall-clock turn deadline. */
@@ -436,6 +443,10 @@ async function runEngineProviderTurn(
       effort = selection.effort
     }
     settings = claudeThreadSettings(request)
+    // An approved plan is the learner's go-ahead for its edits, so the turn
+    // continues with edits allowed instead of asking about each one.
+    if (request.mode === "plan" && settings.access === "ask")
+      settings = { ...settings, access: "accept-edits" }
     // Background work on a per-token sign-in gets Claude Code's own caps.
     // Chats and Teach are never capped, and Codex and OpenCode cannot be.
     if (request.ephemeral) {
@@ -480,6 +491,7 @@ async function runEngineProviderTurn(
         ...settings,
       },
       ...(request.threadId ? { threadId: request.threadId } : {}),
+      ...(request.mode ? { turnOptions: { mode: request.mode } } : {}),
       input:
         request.attachments?.length || request.files?.length
           ? {

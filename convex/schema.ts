@@ -851,6 +851,8 @@ export default defineSchema({
     ),
     agentInstructions: v.optional(v.string()),
     workingProjectId: v.optional(v.id("projects")),
+    /** Project agent turns propose a plan for approval before changing files. */
+    agentPlanFirst: v.optional(v.boolean()),
     /** Version of the app-owned interactive tool set attached to the provider session. */
     agentRequestToolsVersion: v.optional(v.number()),
     /** Manual history state. Optional keeps chats created before this feature readable. */

@@ -438,3 +438,30 @@ test("clear marks pending requests cancelled and keeps bounded completed history
   await handlers.clearApproval({ db }, { chatId, messageId })
   assert.equal((await handlers.getApproval({ db }, { chatId, messageId }) as { approval: Record<string, unknown> }).approval.status, "approved")
 })
+
+test("a plan review is allowed at every access level, and Plan first is saved without a context reset", async () => {
+  const handlers = await loadHandlers()
+  const db = new MemoryDb()
+  const chatId = db.seed("workspaceChats", { status: "running", agentAutonomy: "full" })
+  const messageId = db.seed("workspaceChatMessages", { chatId, role: "assistant", status: "running" })
+  await db.patch(chatId, { activeMessageId: messageId })
+  const plan = { ...approval(), method: "approval/plan", title: "Plan: tidy", details: "1. Move notes" }
+  await handlers.requestApproval({ db }, { chatId, messageId, approval: plan })
+  const decided = await handlers.decideApproval(
+    { db },
+    { chatId, messageId, approvalId: plan.id, decision: "denied", response: JSON.stringify({ feedback: "Fewer folders" }) }
+  )
+  assert.equal((decided as { success: boolean }).success, true)
+  // Other approvals still need approval access.
+  const other = db.seed("workspaceChatMessages", { chatId, role: "assistant", status: "running" })
+  await db.patch(chatId, { activeMessageId: other })
+  await assert.rejects(
+    handlers.requestApproval({ db }, { chatId, messageId: other, approval: approval() }),
+    /cannot request approval/
+  )
+  const settings = { chatId, autonomy: "full", additionalInstructions: "", workingProjectId: undefined }
+  await handlers.configure({ db }, settings)
+  const toggled = await handlers.configure({ db }, { ...settings, planFirst: true })
+  assert.deepEqual(toggled, { resetContext: false })
+  assert.equal(((await handlers.getSettings({ db }, { chatId })) as { planFirst: boolean }).planFirst, true)
+})

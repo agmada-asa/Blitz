@@ -9,6 +9,7 @@
  * failures map to recovery copy, and that the engine is closed on every exit.
  */
 
+import { randomUUID } from "node:crypto"
 import { isAbsolute } from "node:path"
 import {
   RuntimeAuthError,
@@ -17,6 +18,7 @@ import {
   RuntimeModelUnavailableError,
   type AgentEvent,
   type AgentRequest,
+  type ApprovalRequest,
   type Engine,
   type Thread,
   type ThreadOptions,
@@ -35,12 +37,22 @@ import {
   type CardChatEvent,
   type CardChatResult,
 } from "../card-chat.ts"
-import { refuseAgentRequest } from "../agent-request.ts"
+import { PLAN_STOPPED_MESSAGE, refuseAgentRequest } from "../agent-request.ts"
 import { formatUsd } from "../../spending-limits.ts"
 import type { EngineProviderId } from "./engines.ts"
 
 /** How long cleanup waits for an interrupt or engine shutdown before moving on. */
 const CLEANUP_TIMEOUT_MS = 1_000
+
+/**
+ * Plan reviews one Codex turn may go through: a first plan and revisions
+ * after the learner sends it back with a note.
+ */
+const MAX_PLAN_ROUNDS = 4
+
+/** What Codex is told once the learner approves its plan. */
+const PLAN_APPROVED_PROMPT =
+  "The learner approved the plan. Carry it out now, exactly as proposed."
 
 /** One turn to run on a freshly created engine, which this adapter closes. */
 export interface EngineTurnRequest {
@@ -237,6 +249,9 @@ async function runTurn(
   let thought = ""
   const answers: string[] = []
   const thoughts: string[] = []
+  // The latest plan proposed in plan mode, and whether it still awaits review.
+  let lastPlan: string | undefined
+  let pendingPlan: string | undefined
   let finished = false
   let cancelReason: CardChatError | undefined
   let rejectCancellation: ((error: CardChatError) => void) | undefined
@@ -343,7 +358,74 @@ async function runTurn(
       case "reasoning.done":
         if (event.text.trim()) thoughts.push(event.text.trim())
         return
+      case "plan.proposal.done":
+        if (event.text.trim()) lastPlan = pendingPlan = event.text.trim()
+        return
     }
+  }
+
+  /** Runs one turn on the open thread and waits for it and its events. */
+  const runOnce = async (
+    input: TurnInput,
+    turnOptions?: TurnOptions
+  ): Promise<TurnResult> => {
+    const running = thread!.run(input, turnOptions)
+    turn = running
+    void running.id.then(started, () => undefined)
+    const consumed = (async () => {
+      for await (const event of running) handle(event)
+    })()
+    const result: TurnResult = await race(running.result)
+    await race(consumed)
+    return result
+  }
+
+  /**
+   * Shows a Codex plan for review the way Claude Code asks for one: as a
+   * `plan` approval through `onRequest`, so both providers use one card.
+   * Resolves with the learner's decision; a failed or missing handler declines.
+   */
+  const reviewPlan = (
+    plan: string
+  ): Promise<{ decision: string; message?: string }> =>
+    new Promise((resolve) => {
+      const review: ApprovalRequest = {
+        kind: "approval",
+        id: `plan-${randomUUID()}`,
+        action: "plan",
+        plan,
+        title: "Approve the plan",
+        raw: { plan },
+        respond: async (decision) => resolve(decision),
+      }
+      const answer = options.onRequest
+        ? options.onRequest(review)
+        : refuseAgentRequest(review)
+      void answer.catch(() => resolve({ decision: "deny" }))
+    })
+
+  /**
+   * Codex ends a plan-mode turn with its proposal instead of asking. Each
+   * proposal goes to review: approval runs the plan as a new turn in default
+   * mode, a note runs another planning turn with it, and a plain decline ends
+   * here with the plan as the reply.
+   */
+  const followPlans = async (first: TurnResult): Promise<TurnResult> => {
+    let current = first
+    for (let round = 0; round < MAX_PLAN_ROUNDS; round += 1) {
+      const plan = pendingPlan
+      if (current.status !== "completed" || !plan) return current
+      pendingPlan = undefined
+      const decision = await race(reviewPlan(plan))
+      if (decision.decision === "allow" || decision.decision === "allow-session") {
+        lastPlan = undefined
+        return runOnce(PLAN_APPROVED_PROMPT, { mode: "default" })
+      }
+      if (!decision.message?.trim() || decision.message === PLAN_STOPPED_MESSAGE)
+        return current
+      current = await runOnce(decision.message, { mode: "plan" })
+    }
+    return current
   }
 
   const timer = setTimeout(
@@ -372,14 +454,9 @@ async function runTurn(
     } catch (error) {
       throw cancelReason ?? startFailure(error)
     }
-    const running = thread.run(request.input, request.turnOptions)
-    turn = running
-    void running.id.then(started, () => undefined)
-    const consumed = (async () => {
-      for await (const event of running) handle(event)
-    })()
-    const result: TurnResult = await race(running.result)
-    await race(consumed)
+    let result = await runOnce(request.input, request.turnOptions)
+    if (request.providerId === "codex" && request.turnOptions?.mode === "plan")
+      result = await followPlans(result)
     if (cancelReason) throw cancelReason
     return complete(result)
   } catch (error) {
@@ -415,7 +492,9 @@ async function runTurn(
       (request.providerId === "codex"
         ? answers.join("\n") || text || result.text
         : text || result.text) ||
-      (result.output === undefined ? "" : JSON.stringify(result.output))
+      (result.output === undefined ? "" : JSON.stringify(result.output)) ||
+      // A plan that was not approved is the whole reply.
+      (lastPlan ?? "")
     if (reply.length > MAX_CARD_CHAT_STREAM_TEXT_LENGTH)
       throw new CardChatError(
         "transport",
