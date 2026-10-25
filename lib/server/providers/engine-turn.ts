@@ -607,3 +607,77 @@ async function runTurn(
     return value
   }
 }
+
+/** A compaction of a saved thread, outside any turn (Compact now). */
+export interface EngineCompactionRequest {
+  /** Engine created for this compaction alone. It is closed when it ends. */
+  readonly engine: Engine
+  /** Thread settings, as the thread's turns use them. */
+  readonly thread: ThreadOptions
+  /** Saved thread to compact. */
+  readonly threadId: string
+  /** Wall-clock deadline for resuming and compacting. */
+  readonly timeoutMs: number
+}
+
+/** How a compaction outside a turn went. */
+export interface EngineCompactionResult {
+  /** Whether the runtime compacted the thread. */
+  readonly compacted: boolean
+  /** How full the context is afterwards, when the runtime says. */
+  readonly contextUsage?: TurnContextUsage
+}
+
+/**
+ * Resumes a saved thread, compacts it, and reads its context usage, then
+ * closes the thread and engine. Never throws: a thread that cannot be resumed
+ * or compacted reports `compacted: false`, and a stuck runtime is abandoned
+ * at the deadline.
+ */
+export async function runEngineCompaction(
+  request: EngineCompactionRequest
+): Promise<EngineCompactionResult> {
+  let thread: Thread | undefined
+  let compaction: Turn | undefined
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const deadline = new Promise<"timeout">((resolve) => {
+    timer = setTimeout(() => resolve("timeout"), request.timeoutMs)
+  })
+  try {
+    const opened = await Promise.race([
+      request.engine.resumeThread(request.threadId, request.thread),
+      deadline,
+    ])
+    if (opened === "timeout") return { compacted: false }
+    thread = opened
+    compaction = opened.compact()
+    const running = compaction
+    // Drain events so the turn can settle; only its result matters here.
+    const drained = (async () => {
+      for await (const event of running) void event
+    })()
+    const result = await Promise.race([running.result, deadline])
+    if (result === "timeout") return { compacted: false }
+    await Promise.race([drained, deadline])
+    if (result.status !== "completed") {
+      console.warn("Provider could not compact the thread", {
+        status: result.status,
+        kind: result.error?.kind ?? "unknown",
+      })
+      return { compacted: false }
+    }
+    compaction = undefined
+    const contextUsage = await readContextUsage(opened)
+    return { compacted: true, ...(contextUsage ? { contextUsage } : {}) }
+  } catch (error) {
+    console.warn("Provider could not compact the thread", {
+      message: error instanceof Error ? error.message : "Unknown error",
+    })
+    return { compacted: false }
+  } finally {
+    clearTimeout(timer)
+    if (compaction) await bounded(compaction.interrupt())
+    if (thread) await bounded(thread.close())
+    await bounded(request.engine.close())
+  }
+}

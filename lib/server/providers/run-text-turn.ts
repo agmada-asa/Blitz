@@ -4,6 +4,11 @@
  * Codex and Claude Code run through agent-engines: this module turns Blitz's
  * access settings into each runtime's thread options and hands the turn to
  * `engine-turn.ts`. OpenCode runs through Blitz's own ACP adapter.
+ *
+ * The same thread settings also prewarm an engine before a Teach session's
+ * first turn (`prewarmProviderTextTurn`, claimed from `engine-pool.ts`) and
+ * compact a saved thread on request (`compactProviderThread`), so neither can
+ * drift from what a real turn sends.
  */
 import type {
   AgentRequest,
@@ -46,7 +51,18 @@ import {
   providerModelOptions,
   type EngineProviderId,
 } from "./engines.ts"
-import { runEngineTurn } from "./engine-turn.ts"
+import {
+  runEngineCompaction,
+  runEngineTurn,
+  type EngineCompactionResult,
+} from "./engine-turn.ts"
+import {
+  claimPrewarmedEngine,
+  offerPrewarmedEngine,
+  prewarmedEngineKey,
+  withdrawPrewarmedEngine,
+  type ToolCallHandler,
+} from "./engine-pool.ts"
 import type {
   ProviderApprovalHandler,
   ProviderImageAttachment,
@@ -383,14 +399,27 @@ async function checkCodexSelection(
   }
 }
 
-/** Runs one Codex or Claude Code turn through agent-engines. */
-async function runEngineProviderTurn(
+/** Thread settings for one Codex or Claude Code turn, before an engine exists. */
+type EngineThreadSetup = {
+  /** Thread options the turn starts or resumes with. */
+  readonly thread: ThreadOptions
+  /** Whether an effort is set, which changes the Claude Code launch environment. */
+  readonly effortSelected: boolean
+}
+
+/**
+ * Builds the thread options for a Codex or Claude Code turn from Blitz's
+ * selection and access settings.
+ *
+ * @throws CardChatError for a policy or effort the provider cannot honour.
+ */
+function engineThreadSetup(
   providerId: EngineProviderId,
   request: RunProviderTextTurnRequest,
   selection: ProviderSelection,
   instructions: string,
-  options: ProviderTextTurnOptions
-): Promise<CardChatResult> {
+  codexThread: CodexThreadOptions | undefined
+): EngineThreadSetup {
   let model: string | undefined
   let effort: string | undefined
   let settings: Pick<ThreadOptions, "access" | "claude" | "codex">
@@ -424,15 +453,84 @@ async function runEngineProviderTurn(
     if (selection.model !== "default") model = selection.model
     effort = selection.effort
     settings = {
-      codex: codexThreadOptions(request, options.codex?.thread),
+      codex: codexThreadOptions(request, codexThread),
     }
   }
-  const engine = (options.createEngine ?? defaultEngine)(providerId, {
-    ...(options.codex?.onToolCall
-      ? { onToolCall: options.codex.onToolCall }
-      : {}),
+  return {
+    thread: {
+      cwd: request.workspaceDirectory,
+      ...(model ? { model } : {}),
+      ...(effort ? { effort } : {}),
+      ...(instructions ? { instructions } : {}),
+      ...settings,
+    },
     effortSelected: effort !== undefined,
+  }
+}
+
+/**
+ * Creates a Codex engine whose host tool handler can be pointed at a turn
+ * later, so a prewarmed engine serves whichever turn claims it.
+ */
+function rebindableCodexEngine(): {
+  engine: Engine
+  bindToolCalls: (handler: ToolCallHandler | undefined) => void
+} {
+  let current: ToolCallHandler | undefined
+  const engine = createCodexEngine({
+    onToolCall: (call) =>
+      current
+        ? current(call)
+        : Promise.resolve({ text: "This tool is not available.", success: false }),
   })
+  return { engine, bindToolCalls: (handler) => void (current = handler) }
+}
+
+/**
+ * Takes a prewarmed engine for this turn when one is waiting. Claude Code's
+ * prewarm opens a new thread's process, so only a new thread claims it;
+ * Codex's starts the app-server, which any of its turns can use. Tests that
+ * pass their own engine factory never use the pool.
+ */
+function claimEngine(
+  providerId: EngineProviderId,
+  request: RunProviderTextTurnRequest,
+  setup: EngineThreadSetup,
+  options: ProviderTextTurnOptions
+): Engine | undefined {
+  if (options.createEngine) return undefined
+  if (providerId === "claude-code" && (request.threadId || request.fork))
+    return undefined
+  const pooled = claimPrewarmedEngine(
+    prewarmedEngineKey(providerId, request.workspaceDirectory, setup.effortSelected)
+  )
+  pooled?.bindToolCalls?.(options.codex?.onToolCall)
+  return pooled?.engine
+}
+
+/** Runs one Codex or Claude Code turn through agent-engines. */
+async function runEngineProviderTurn(
+  providerId: EngineProviderId,
+  request: RunProviderTextTurnRequest,
+  selection: ProviderSelection,
+  instructions: string,
+  options: ProviderTextTurnOptions
+): Promise<CardChatResult> {
+  const setup = engineThreadSetup(
+    providerId,
+    request,
+    selection,
+    instructions,
+    options.codex?.thread
+  )
+  const engine =
+    claimEngine(providerId, request, setup, options) ??
+    (options.createEngine ?? defaultEngine)(providerId, {
+      ...(options.codex?.onToolCall
+        ? { onToolCall: options.codex.onToolCall }
+        : {}),
+      effortSelected: setup.effortSelected,
+    })
   try {
     if (providerId === "codex")
       await checkCodexSelection(
@@ -449,13 +547,7 @@ async function runEngineProviderTurn(
     {
       providerId,
       engine,
-      thread: {
-        cwd: request.workspaceDirectory,
-        ...(model ? { model } : {}),
-        ...(effort ? { effort } : {}),
-        ...(instructions ? { instructions } : {}),
-        ...settings,
-      },
+      thread: setup.thread,
       ...(request.threadId ? { threadId: request.threadId } : {}),
       ...(request.fork ? { fork: request.fork } : {}),
       ...(request.compactFirst ? { compactFirst: true } : {}),
@@ -504,11 +596,15 @@ async function runEngineProviderTurn(
   )
 }
 
-/** Runs the selected provider and returns the result shape expected by Blitz features. */
-export async function runProviderTextTurn(
-  request: RunProviderTextTurnRequest,
-  options: ProviderTextTurnOptions = {}
-): Promise<CardChatResult> {
+/**
+ * Resolves a turn's provider selection and the instructions it sends: the
+ * caller's, the execution policy's, and Codex's runtime notes.
+ *
+ * @throws CardChatError when the execution settings are invalid.
+ */
+async function turnBasics(
+  request: RunProviderTextTurnRequest
+): Promise<{ selection: ProviderSelection; instructions: string }> {
   const selection: ProviderSelection = {
     providerId: request.providerId,
     ...(request.providerInstanceId
@@ -548,6 +644,93 @@ export async function runProviderTextTurn(
   ]
     .filter(Boolean)
     .join("\n\n")
+  return { selection, instructions }
+}
+
+/**
+ * Starts the runtime for a turn that has not been sent yet, and leaves the
+ * engine in the pool for that turn to claim. On Claude Code it also opens the
+ * new thread's process with the exact options the turn will use. Only new
+ * Codex or Claude Code threads are worth prewarming; anything else is a no-op.
+ *
+ * @param request - The turn as it will be sent, minus its prompt.
+ * @returns Whether an engine was offered. Never throws.
+ */
+export async function prewarmProviderTextTurn(
+  request: Omit<RunProviderTextTurnRequest, "prompt">
+): Promise<boolean> {
+  if (request.providerId !== "codex" && request.providerId !== "claude-code")
+    return false
+  if (request.threadId) return false
+  const providerId = request.providerId
+  let key: string | undefined
+  let engine: Engine | undefined
+  try {
+    const turn = { ...request, prompt: "" }
+    const { selection, instructions } = await turnBasics(turn)
+    const setup = engineThreadSetup(providerId, turn, selection, instructions, undefined)
+    key = prewarmedEngineKey(providerId, request.workspaceDirectory, setup.effortSelected)
+    let bindToolCalls: ((handler: ToolCallHandler | undefined) => void) | undefined
+    if (providerId === "codex") {
+      const codex = rebindableCodexEngine()
+      engine = codex.engine
+      bindToolCalls = codex.bindToolCalls
+    } else engine = createClaudeEngine({ effortSelected: setup.effortSelected })
+    // Offered before it is ready, so a turn arriving meanwhile still claims it.
+    offerPrewarmedEngine(key, engine, bindToolCalls)
+    await engine.prewarm(providerId === "claude-code" ? setup.thread : undefined)
+    return true
+  } catch (error) {
+    if (key && engine) withdrawPrewarmedEngine(key, engine)
+    console.warn("Provider could not be prewarmed", {
+      message: error instanceof Error ? error.message : "Unknown error",
+    })
+    return false
+  }
+}
+
+/**
+ * Compacts a saved Codex or Claude Code thread outside a turn, with the same
+ * thread settings its turns use, and reads its context usage afterwards.
+ *
+ * @param request - The thread's turn settings; `threadId` names the thread.
+ * @param options.createEngine - Test seam for the engine.
+ * @returns Whether it compacted. Never throws.
+ */
+export async function compactProviderThread(
+  request: Omit<RunProviderTextTurnRequest, "prompt"> & { threadId: string },
+  options: Pick<ProviderTextTurnOptions, "createEngine"> = {}
+): Promise<EngineCompactionResult> {
+  if (request.providerId !== "codex" && request.providerId !== "claude-code")
+    return { compacted: false }
+  const providerId = request.providerId
+  try {
+    const turn = { ...request, prompt: "" }
+    const { selection, instructions } = await turnBasics(turn)
+    const setup = engineThreadSetup(providerId, turn, selection, instructions, undefined)
+    const engine = (options.createEngine ?? defaultEngine)(providerId, {
+      effortSelected: setup.effortSelected,
+    })
+    return await runEngineCompaction({
+      engine,
+      thread: setup.thread,
+      threadId: request.threadId,
+      timeoutMs: request.timeoutMs ?? 5 * 60_000,
+    })
+  } catch (error) {
+    console.warn("Provider thread could not be compacted", {
+      message: error instanceof Error ? error.message : "Unknown error",
+    })
+    return { compacted: false }
+  }
+}
+
+/** Runs the selected provider and returns the result shape expected by Blitz features. */
+export async function runProviderTextTurn(
+  request: RunProviderTextTurnRequest,
+  options: ProviderTextTurnOptions = {}
+): Promise<CardChatResult> {
+  const { selection, instructions } = await turnBasics(request)
   if (request.providerId === "codex" || request.providerId === "claude-code")
     return runEngineProviderTurn(
       request.providerId,
