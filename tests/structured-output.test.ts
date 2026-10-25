@@ -8,11 +8,27 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 
-import { EXAM_GRADING_SCHEMA, examPaperSchema, parseExamGrading, parseExamPaper } from "../lib/exam.ts"
-import { parseQuestionBank, QUESTION_BANK_SCHEMA, replyObject } from "../lib/practice.ts"
+import {
+  EXAM_GRADING_SCHEMA,
+  examPaperSchema,
+  parseExamGrading,
+  parseExamPaper,
+} from "../lib/exam.ts"
+import {
+  parseQuestionBank,
+  QUESTION_BANK_SCHEMA,
+  replyObject,
+} from "../lib/practice.ts"
 
 /** Keywords Codex's strict mode rejects, so no generation schema may use them. */
-const STRICT_UNSUPPORTED = ["minLength", "maxLength", "$schema", "default", "oneOf", "allOf"]
+const STRICT_UNSUPPORTED = [
+  "minLength",
+  "maxLength",
+  "$schema",
+  "default",
+  "oneOf",
+  "allOf",
+]
 
 /**
  * Walks a schema and returns where it breaks Codex's strict-mode rules: an
@@ -22,19 +38,26 @@ const STRICT_UNSUPPORTED = ["minLength", "maxLength", "$schema", "default", "one
 function strictProblems(schema: unknown, path = "$"): string[] {
   if (!schema || typeof schema !== "object") return []
   const node = schema as Record<string, unknown>
-  const problems = STRICT_UNSUPPORTED.filter((key) => key in node).map((key) => `${path}: ${key}`)
+  const problems = STRICT_UNSUPPORTED.filter((key) => key in node).map(
+    (key) => `${path}: ${key}`
+  )
   if (node.type === "object") {
     const keys = Object.keys((node.properties as object) ?? {})
     const required = (node.required as string[]) ?? []
-    if (keys.some((key) => !required.includes(key)) || required.length !== keys.length)
+    if (
+      keys.some((key) => !required.includes(key)) ||
+      required.length !== keys.length
+    )
       problems.push(`${path}: not every property is required`)
-    if (node.additionalProperties !== false) problems.push(`${path}: allows extra properties`)
+    if (node.additionalProperties !== false)
+      problems.push(`${path}: allows extra properties`)
   }
   for (const [key, value] of Object.entries(node)) {
     if (key === "properties")
       for (const [name, child] of Object.entries(value as object))
         problems.push(...strictProblems(child, `${path}.${name}`))
-    else if (key === "items") problems.push(...strictProblems(value, `${path}[]`))
+    else if (key === "items")
+      problems.push(...strictProblems(value, `${path}[]`))
     else if (key === "anyOf")
       (value as unknown[]).forEach((child, index) =>
         problems.push(...strictProblems(child, `${path}|${index}`))
@@ -68,7 +91,8 @@ test("a past paper reply with every unused field null parses like the free-text 
         prompt: "Which structure is LIFO?",
         options: ["Queue", "Stack", "Heap"],
         answer: 1,
-        explanation: "A stack pops the newest item first; a queue serves the oldest.",
+        explanation:
+          "A stack pops the newest item first; a queue serves the oldest.",
         modelAnswer: null,
         markScheme: null,
         answerSource: "inferred",
@@ -126,7 +150,15 @@ test("grading and question bank replies with null fields still validate", () => 
   const grades = parseExamGrading(
     {
       text: "",
-      output: { grades: [{ id: "q1", marks: 3, feedback: "Clear definition, but no example of a sequence." }] },
+      output: {
+        grades: [
+          {
+            id: "q1",
+            marks: 3,
+            feedback: "Clear definition, but no example of a sequence.",
+          },
+        ],
+      },
     },
     [{ id: "q1", marks: 4 }]
   )
@@ -135,7 +167,13 @@ test("grading and question bank replies with null fields still validate", () => 
 
   const bank = parseQuestionBank({
     text: JSON.stringify({
-      recaps: [{ concept: "Stacks", title: "Stacks", body: "A stack adds and removes at the same end, so the newest item leaves first." }],
+      recaps: [
+        {
+          concept: "Stacks",
+          title: "Stacks",
+          body: "A stack adds and removes at the same end, so the newest item leaves first.",
+        },
+      ],
       questions: [
         {
           id: "b1",
@@ -174,12 +212,18 @@ test("grading and question bank replies with null fields still validate", () => 
 test("reply text wins over the parsed output so LaTeX repairs still apply", () => {
   // A provider's own parse turns an unescaped \theta into a tab; the text keeps it repairable.
   const text = '{"note":"$\\theta$"}'
-  const value = replyObject({ text, output: { note: "$\theta$" } }) as { note: string }
+  const value = replyObject({ text, output: { note: "$\theta$" } }) as {
+    note: string
+  }
   assert.equal(value.note, "$\\theta$")
 })
 
 test("the parsed output is used when the text holds no JSON, and nothing usable still throws", () => {
-  assert.deepEqual(replyObject({ text: "Done.", output: { grades: [] } }), { grades: [] })
+  assert.deepEqual(replyObject({ text: "Done.", output: { grades: [] } }), {
+    grades: [],
+  })
   assert.throws(() => replyObject({ text: "Done." }))
-  assert.throws(() => replyObject({ text: "Done.", output: ["not", "an", "object"] }))
+  assert.throws(() =>
+    replyObject({ text: "Done.", output: ["not", "an", "object"] })
+  )
 })

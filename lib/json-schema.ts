@@ -21,7 +21,9 @@ export type JsonSchema = Record<string, unknown>
  * others, as strict mode demands.
  * @param properties Property schemas by name. Use `nullable` for optional ones.
  */
-export function strictObject(properties: Record<string, JsonSchema>): JsonSchema {
+export function strictObject(
+  properties: Record<string, JsonSchema>
+): JsonSchema {
   return {
     type: "object",
     properties,
