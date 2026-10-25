@@ -1,7 +1,19 @@
-/** Streams general workspace chat turns through the selected Blitz provider. */
+/**
+ * Streams general workspace chat turns through the selected Blitz provider.
+ *
+ * Teach sessions run here too. Around each turn the route copies a branched
+ * chat's runtime session instead of replaying its transcript, redoes a Teach
+ * reply in place by rewinding its turn, compacts a long Teach session before
+ * it overflows (and restates the unit material, outline, and plan after), and
+ * finishes a reply cut off by a full context once compaction frees room.
+ * Refusals, denied tools, and safety checks are saved beside the reply.
+ */
 
 import { api } from "@/convex/_generated/api"
 import { CHAT_PROVIDER_CAPABILITIES } from "@/lib/provider-capabilities"
+import { providerThreadFeatures } from "@/lib/provider-thread-features"
+import type { TurnNotice } from "@/lib/turn-notices"
+import type { TeachRedoStyle } from "@/lib/teach"
 import { citationPrompt } from "@/lib/citations"
 import { createChatAgentSession } from "@/lib/server/chat-agent"
 import {
@@ -27,7 +39,7 @@ import {
   resolveProviderApprovalPolicy,
   type AiProviderId,
 } from "@/lib/ai-model-settings"
-import { CardChatError } from "@/lib/server/card-chat"
+import { CardChatError, type CardChatResult } from "@/lib/server/card-chat"
 import { createChatProgress } from "@/lib/server/chat-progress"
 import { loadSavedAiModelSettings } from "@/lib/server/ai-model-settings"
 import {
@@ -52,12 +64,14 @@ import {
   parseTeachPlan,
   parseTeachSectionMarker,
   TEACH_QUICK_REPLIES,
+  teachRedoMessage,
   teachUnitTitle,
 } from "@/lib/teach"
 import {
   buildWorkspaceChatPrompt,
   combineWorkspaceChatContinuation,
   mergeWorkspaceChatReplay,
+  overflowContinuationMessage,
   parseWorkspaceChatRequest,
   type WorkspaceChatCardContext,
   type WorkspaceChatReplayContext,
@@ -123,6 +137,8 @@ const startWorkspaceTurn = makeFunctionReference<
     message: string
     attachments: PersistedAttachment[]
     annotations?: PersistedAnnotation[]
+    redoOf?: Id<"workspaceChatMessages">
+    redoStyle?: TeachRedoStyle
   },
   {
     chatId: Id<"workspaceChats">
@@ -136,6 +152,18 @@ const startWorkspaceTurn = makeFunctionReference<
     providerSessionId: string | null
     codexThreadId: string | null
     shouldReplayContext: boolean
+    /** Chat whose folder the agent works in; null for the chat's own. */
+    workspaceFolderId: string | null
+    /** Runtime session a branch copies on this first turn, when it can. */
+    fork: { sessionId: string; throughTurnId: string } | null
+    /** Whether a Teach turn compacts first and restates its context. */
+    context: { compactFirst: boolean; restate: boolean }
+    /** The reply a redo replaces, its turn, and the request it answered. */
+    redo: {
+      beforeTurnId: string
+      replacedMessageIds: Id<"workspaceChatMessages">[]
+      originalMessage: string
+    } | null
     replyPrefix: string
     replayContext: WorkspaceChatReplayContext
   }
@@ -206,6 +234,47 @@ const failWorkspaceTurn = makeFunctionReference<
   },
   null
 >("workspaceChats:fail")
+
+const addTurnNotice = makeFunctionReference<
+  "mutation",
+  {
+    chatId: Id<"workspaceChats">
+    messageId: Id<"workspaceChatMessages">
+    notice: TurnNotice
+  },
+  null
+>("workspaceChats:addNotice")
+
+const dropReplacedMessages = makeFunctionReference<
+  "mutation",
+  {
+    chatId: Id<"workspaceChats">
+    activeMessageId: Id<"workspaceChatMessages">
+    messageIds: Id<"workspaceChatMessages">[]
+  },
+  null
+>("workspaceChats:dropReplacedMessages")
+
+const recordCompaction = makeFunctionReference<
+  "mutation",
+  {
+    chatId: Id<"workspaceChats">
+    messageId: Id<"workspaceChatMessages">
+    origin: "auto" | "overflow" | "runtime"
+  },
+  null
+>("workspaceChats:recordCompaction")
+
+const finishTurnContext = makeFunctionReference<
+  "mutation",
+  {
+    chatId: Id<"workspaceChats">
+    messageId: Id<"workspaceChatMessages">
+    usage?: NonNullable<CardChatResult["contextUsage"]> & { updatedAt: number }
+    restated: boolean
+  },
+  null
+>("workspaceChats:finishTurnContext")
 
 /** Creates a server-side Convex client for resolving attached project context. */
 function convexClient(): ConvexHttpClient {
@@ -378,6 +447,8 @@ export async function POST(request: Request): Promise<Response> {
         | undefined
       let progress: ReturnType<typeof createChatProgress> | undefined
       let providerEvents: ProviderActivityEvent[] = []
+      /** Notice, compaction, and redo writes made while the reply streams; awaited before it ends. */
+      const pendingWrites: Promise<unknown>[] = []
       let providerEventsTimer: ReturnType<typeof setTimeout> | undefined
       let providerEventsPending: Promise<void> | undefined
       let flushProviderEvents: (() => Promise<void>) | undefined
@@ -525,6 +596,9 @@ export async function POST(request: Request): Promise<Response> {
           ...(input.annotations?.length
             ? { annotations: input.annotations }
             : {}),
+          ...(input.redo
+            ? { redoOf: input.redo.messageId, redoStyle: input.redo.style }
+            : {}),
         })
         activeTurn = {
           chatId: turn.chatId,
@@ -536,17 +610,19 @@ export async function POST(request: Request): Promise<Response> {
           turnAbort,
           Date.now() + WORKSPACE_CHAT_TIMEOUT_MS
         )
+        // A redo resends the request its replaced reply answered.
+        const learnerMessage = turn.redo?.originalMessage ?? input.message
         // A Teach session is a chat with its unit's material and protocol.
         const teach = input.chatId
           ? await client.query(api.units.teachContext, {
               chatId: turn.chatId,
-              message: input.message,
+              message: learnerMessage,
             })
           : null
         // `Plan my lesson` carries the learner's pre-check answers, read from
         // the saved answers rather than trusted from the browser.
         const precheck =
-          teach && input.message.trim() === TEACH_QUICK_REPLIES.precheckDone
+          teach && learnerMessage.trim() === TEACH_QUICK_REPLIES.precheckDone
             ? await client.query(api.teach.precheckResults, { chatId: turn.chatId })
             : undefined
         // Recovery sessions need original image bytes because native blocks are
@@ -716,7 +792,9 @@ export async function POST(request: Request): Promise<Response> {
           : workingProjectId
             ? (await prepareProjectAgentWorkspace(workingProjectId))
                 .projectDirectory
-            : await chatWorkspaceDirectory(turn.chatId)
+            : await chatWorkspaceDirectory(
+                turn.workspaceFolderId ?? turn.chatId
+              )
         await stageWorkspaceAttachments(
           client,
           workspaceDirectory,
@@ -773,8 +851,20 @@ export async function POST(request: Request): Promise<Response> {
             "This provider has no workspace-only OS sandbox. Choose approval mode or full access."
           )
         }
-        /** Builds a Teach turn's prompt, with the unit material when the session needs it. */
-        const teachPrompt = (includeContext: boolean): string =>
+        // What the tutor is asked this turn: a redo adds its steer.
+        const teachMessage =
+          turn.redo && input.redo
+            ? teachRedoMessage(turn.redo.originalMessage, input.redo.style)
+            : input.message
+        /**
+         * Builds a Teach turn's prompt, with the unit material when the
+         * session needs it. After a compaction the material, outline, and
+         * plan are restated but the dialogue is left to the runtime's summary.
+         */
+        const teachPrompt = (
+          includeContext: boolean,
+          options: { afterCompaction?: boolean; message?: string } = {}
+        ): string =>
           buildTeachPrompt({
             moduleTitle: teach!.moduleTitle,
             unitTitle: teach!.unitTitle,
@@ -783,14 +873,17 @@ export async function POST(request: Request): Promise<Response> {
               ...(source.relativeKey ? { relativeKey: source.relativeKey } : {}),
               text: source.text,
             })),
-            message: input.message,
+            message: options.message ?? teachMessage,
             includeContext,
-            history: turn.replayContext.messages
-              .filter((message) => message.content.trim())
-              .map((message) => ({
-                role: message.role,
-                content: message.content,
-              })),
+            ...(options.afterCompaction ? { afterCompaction: true } : {}),
+            history: options.afterCompaction
+              ? []
+              : turn.replayContext.messages
+                  .filter((message) => message.content.trim())
+                  .map((message) => ({
+                    role: message.role,
+                    content: message.content,
+                  })),
             ...(teach!.outline ? { outline: teach!.outline } : {}),
             ...(teach!.sectionIndex !== null
               ? { sectionIndex: teach!.sectionIndex }
@@ -851,14 +944,46 @@ export async function POST(request: Request): Promise<Response> {
           })()
           return replayPrompt
         }
+        const features = providerThreadFeatures(selection.providerId)
         let turnAccepted = false
+        /** Runtime thread of the accepted attempt, for compacting after an overflow. */
+        let boundThreadId: string | undefined
+        /** Reply text the current attempt has streamed. */
+        let attemptText = ""
+        /** Reply text kept from an attempt that ran out of room. */
+        let carriedText = ""
+        /** Whether Blitz's compaction ran before the current attempt. */
+        let requestedCompacted = false
+        /** Whether the runtime compacted by itself during the reply. */
+        let runtimeCompacted = false
+        /** How a compaction Blitz asks for is recorded: before a turn, or after an overflow. */
+        let compactionOrigin: "auto" | "overflow" = "auto"
+        /** Tracks one bookkeeping write, logging a failure instead of failing the reply. */
+        const track = (write: Promise<unknown>, label: string): void => {
+          pendingWrites.push(
+            write.catch((writeError: unknown) =>
+              console.warn(label, {
+                message:
+                  writeError instanceof Error ? writeError.message : "Unknown error",
+              })
+            )
+          )
+        }
         /** Runs one attempt and records its identifiers before any streamed failure. */
         const runTurn = async (
           prompt: string,
           threadId?: string,
-          attachments: readonly ProviderImageAttachment[] = nativeImageAttachments
+          attachments: readonly ProviderImageAttachment[] = nativeImageAttachments,
+          around: {
+            fork?: { sessionId: string; throughTurnId: string }
+            compactFirst?: boolean
+            compactedPrompt?: string
+            rewindBeforeTurnId?: string
+          } = {}
         ): ReturnType<typeof runProviderTextTurn> => {
           turnAccepted = false
+          attemptText = ""
+          requestedCompacted = false
           const codexModelCatalog =
             selection.providerId === "codex"
               ? await getCodexModelCatalog({ requestTimeoutMs: 5_000 })
@@ -889,6 +1014,24 @@ export async function POST(request: Request): Promise<Response> {
               approvalPolicy,
               signal: turnSignal,
               timeoutMs: WORKSPACE_CHAT_TIMEOUT_MS,
+              ...(around.fork
+                ? {
+                    fork: {
+                      threadId: around.fork.sessionId,
+                      throughTurnId: around.fork.throughTurnId,
+                    },
+                  }
+                : {}),
+              ...(around.compactFirst ? { compactFirst: true } : {}),
+              ...(around.compactedPrompt
+                ? { compactedPrompt: around.compactedPrompt }
+                : {}),
+              ...(around.rewindBeforeTurnId
+                ? { rewindBeforeTurnId: around.rewindBeforeTurnId }
+                : {}),
+              ...(teach && features.contextUsage
+                ? { readContextUsage: true }
+                : {}),
             },
             {
               ...(selection.providerId === "codex" && agentSession
@@ -901,8 +1044,51 @@ export async function POST(request: Request): Promise<Response> {
               onEvent: (event) => {
                 const activity = normalizeProviderActivity(event, providerEvents)
                 if (activity) appendProviderEvent(activity)
+                if (event.type === "notice") {
+                  send({ type: "notice", notice: event.notice })
+                  track(
+                    client.mutation(addTurnNotice, {
+                      chatId: turn.chatId,
+                      messageId: turn.assistantMessageId,
+                      notice: event.notice,
+                    }),
+                    "Workspace chat could not save a notice"
+                  )
+                  return
+                }
+                if (event.type === "compacted") {
+                  if (event.origin === "requested") requestedCompacted = true
+                  else runtimeCompacted = true
+                  if (teach)
+                    track(
+                      client.mutation(recordCompaction, {
+                        chatId: turn.chatId,
+                        messageId: turn.assistantMessageId,
+                        origin:
+                          event.origin === "requested"
+                            ? compactionOrigin
+                            : "runtime",
+                      }),
+                      "Teach could not record a compaction"
+                    )
+                  return
+                }
+                if (event.type === "rewound") {
+                  // The runtime dropped the replaced turn; the transcript follows.
+                  if (turn.redo)
+                    track(
+                      client.mutation(dropReplacedMessages, {
+                        chatId: turn.chatId,
+                        activeMessageId: turn.assistantMessageId,
+                        messageIds: turn.redo.replacedMessageIds,
+                      }),
+                      "Teach could not remove the replaced reply"
+                    )
+                  return
+                }
                 if (event.type === "turn-started") {
                   turnAccepted = true
+                  boundThreadId = event.threadId
                   bindingPromise = client
                     .mutation(bindWorkspaceTurn, {
                       chatId: turn.chatId,
@@ -935,6 +1121,7 @@ export async function POST(request: Request): Promise<Response> {
                   send({ type: "thought-delta", text: event.delta })
                 }
                 if (event.type === "text-delta") {
+                  attemptText += event.delta
                   progress?.append(event.delta)
                   send({ type: "delta", text: event.delta })
                 }
@@ -961,9 +1148,24 @@ export async function POST(request: Request): Promise<Response> {
             // A removed historical project does not invalidate the conversation.
           }
         }
+        // A branch copies its source's runtime session when it can; a reset
+        // or a provider without forks replays the transcript instead.
+        const forkSource = !resetContext && features.fork ? turn.fork : null
+        const replay =
+          (turn.shouldReplayContext && !forkSource) || resetContext
+        // A long Teach session compacts before the turn, then restates the
+        // unit material, outline, and plan the summary may have lost.
+        const compactFirst =
+          Boolean(teach) && !replay && features.compact && turn.context.compactFirst
+        const restate =
+          Boolean(teach) && !replay && !compactFirst && turn.context.restate
+        const rewindBeforeTurnId =
+          turn.redo && !replay && features.rewind
+            ? turn.redo.beforeTurnId
+            : undefined
         const initialPrompt = teach
-          ? teachPrompt(turn.shouldReplayContext || resetContext)
-          : turn.shouldReplayContext || resetContext
+          ? teachPrompt(replay || restate, { afterCompaction: restate })
+          : replay
             ? await promptWithReplay()
             : buildWorkspaceChatPrompt(input, projects, card)
         const citationProjectIds = [
@@ -999,29 +1201,75 @@ export async function POST(request: Request): Promise<Response> {
               ].slice(0, 60),
         })
         const citationContext = citationPrompt(citations)
+        /** Runs the reply's first attempt, falling back to replay when the saved session is gone. */
+        const firstAttempt = async (): ReturnType<typeof runProviderTextTurn> => {
+          try {
+            return await runTurn(
+              `${initialPrompt}\n\n${citationContext}`,
+              resetContext ? undefined : (turn.providerSessionId ?? undefined),
+              nativeImageAttachments,
+              {
+                ...(forkSource ? { fork: forkSource } : {}),
+                ...(compactFirst
+                  ? {
+                      compactFirst: true,
+                      compactedPrompt: `${teachPrompt(true, { afterCompaction: true })}\n\n${citationContext}`,
+                    }
+                  : {}),
+                ...(rewindBeforeTurnId ? { rewindBeforeTurnId } : {}),
+              }
+            )
+          } catch (error) {
+            // A copy that failed, such as one cut at a turn ID saved by an
+            // older runtime, replays the transcript instead without saying so.
+            if (forkSource && !turnAccepted) {
+              console.warn("Workspace chat could not copy the branched session", {
+                reason: error instanceof CardChatError ? error.reason : "unknown",
+              })
+              return runTurn(`${await promptWithReplay()}\n\n${citationContext}`)
+            }
+            if (
+              !turn.providerSessionId ||
+              turnAccepted ||
+              !(error instanceof CardChatError) ||
+              error.reason !== "transport"
+            )
+              throw error
+            console.warn(
+              "Workspace chat could not resume its saved provider session",
+              {
+                reason: error instanceof CardChatError ? error.reason : "unknown",
+              }
+            )
+            return runTurn(`${await promptWithReplay()}\n\n${citationContext}`)
+          }
+        }
         let result
         try {
-          result = await runTurn(
-            `${initialPrompt}\n\n${citationContext}`,
-            resetContext ? undefined : (turn.providerSessionId ?? undefined)
-          )
+          result = await firstAttempt()
         } catch (error) {
+          // A reply that ran out of room is finished after compacting, once.
+          const threadId = boundThreadId
           if (
-            !turn.providerSessionId ||
-            turnAccepted ||
             !(error instanceof CardChatError) ||
-            error.reason !== "transport"
+            error.reason !== "context-window" ||
+            !features.compact ||
+            !threadId
           )
             throw error
-          console.warn(
-            "Workspace chat could not resume its saved provider session",
-            {
-              reason: error instanceof CardChatError ? error.reason : "unknown",
-            }
+          console.warn("Workspace chat ran out of context; compacting to finish the reply")
+          carriedText += attemptText
+          compactionOrigin = "overflow"
+          const continuation = overflowContinuationMessage(
+            teach ? teachMessage : input.message,
+            carriedText
           )
-          result = await runTurn(
-            `${await promptWithReplay()}\n\n${citationContext}`
-          )
+          result = await runTurn(continuation, threadId, [], {
+            compactFirst: true,
+            compactedPrompt: teach
+              ? `${teachPrompt(true, { afterCompaction: true, message: continuation })}\n\n${citationContext}`
+              : continuation,
+          })
         }
         if (workingProjectId) {
           // The reply already exists at this point. Artifact listing is
@@ -1042,9 +1290,10 @@ export async function POST(request: Request): Promise<Response> {
         if (providerEventsTimer) clearTimeout(providerEventsTimer)
         await providerEventsPending
         if (providerEvents.length) await saveProviderEvents()
+        await Promise.all(pendingWrites)
         const reply = combineWorkspaceChatContinuation(
           turn.replyPrefix,
-          result.text
+          `${carriedText}${result.text}`
         )
         await client.mutation(completeWorkspaceTurn, {
           chatId: turn.chatId,
@@ -1062,6 +1311,24 @@ export async function POST(request: Request): Promise<Response> {
           thought: result.thought,
           durationMs: result.durationMs,
         })
+        if (teach)
+          await client
+            .mutation(finishTurnContext, {
+              chatId: turn.chatId,
+              messageId: turn.assistantMessageId,
+              ...(result.contextUsage
+                ? { usage: { ...result.contextUsage, updatedAt: Date.now() } }
+                : {}),
+              // A turn that sent the unit material again clears a pending
+              // restatement, unless the runtime compacted after it.
+              restated:
+                (replay || restate || requestedCompacted) && !runtimeCompacted,
+            })
+            .catch((error: unknown) => {
+              console.warn("Teach could not save context usage", {
+                message: error instanceof Error ? error.message : "Unknown error",
+              })
+            })
         if (teach) {
           // Progress is derived from the finished reply, never from the client.
           const outline = parseTeachOutline(reply)
@@ -1105,6 +1372,7 @@ export async function POST(request: Request): Promise<Response> {
       } catch (error) {
         await bindingPromise
         await progress?.finish().catch(() => undefined)
+        await Promise.all(pendingWrites)
         if (providerEventsTimer) clearTimeout(providerEventsTimer)
         await providerEventsPending
         if (providerEvents.length) await flushProviderEvents?.()
