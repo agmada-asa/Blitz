@@ -384,10 +384,13 @@ async function runTurn(
     if (result.status === "failed") throw turnFailure(result.error)
     if (result.status === "interrupted")
       throw new CardChatError("turn-interrupted", "Blitz turn interrupted")
+    // A schema-checked reply may arrive only as parsed output (Claude Code
+    // returns it through a tool call), so its JSON stands in as the text.
     const reply =
-      request.providerId === "codex"
+      (request.providerId === "codex"
         ? answers.join("\n") || text || result.text
-        : text || result.text
+        : text || result.text) ||
+      (result.output === undefined ? "" : JSON.stringify(result.output))
     if (reply.length > MAX_CARD_CHAT_STREAM_TEXT_LENGTH)
       throw new CardChatError(
         "transport",
@@ -405,6 +408,7 @@ async function runTurn(
       text: reply,
       ...(finalThought ? { thought: finalThought } : {}),
       durationMs: Math.max(0, Date.now() - startedAt),
+      ...(result.output === undefined ? {} : { output: result.output }),
     }
     finished = true
     emit({ ...value, type: "completed", status: "completed" })

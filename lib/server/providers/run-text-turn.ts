@@ -85,6 +85,9 @@ const BLITZ_CLAUDE_SDK_OPTIONS = {
   includeHookEvents: false,
 } as const
 
+/** Claude Code's built-in tool that carries a schema-checked reply. */
+const STRUCTURED_OUTPUT_TOOL = "StructuredOutput"
+
 /** Provider-aware text request accepted by chat and generation callers. */
 export interface RunProviderTextTurnRequest {
   /** Provider integration selected for this turn. */
@@ -117,6 +120,13 @@ export interface RunProviderTextTurnRequest {
   readonly signal?: AbortSignal
   /** Wall-clock turn deadline. */
   readonly timeoutMs?: number
+  /**
+   * JSON Schema the reply must match, for background generation. Codex and
+   * Claude Code enforce it and return the parsed reply as `output`; OpenCode
+   * cannot, so its turns run without it and the caller parses the text as
+   * before. Write it with `lib/json-schema.ts` so Codex's strict mode accepts it.
+   */
+  readonly outputSchema?: Record<string, unknown>
 }
 
 /** Codex settings a caller owns outright, such as the chat agent's policy and tools. */
@@ -251,7 +261,9 @@ export function codexThreadOptions(
  * Claude Code thread settings for a turn.
  *
  * Background generation runs fully isolated: no settings, skills, plugins,
- * hooks, MCP servers, or tools. Chat turns load the user's own Claude Code
+ * hooks, MCP servers, or tools. A turn with an `outputSchema` keeps exactly
+ * one tool, Claude Code's own StructuredOutput, which is how the SDK returns a
+ * schema-checked reply; every other tool is still refused. Chat turns load the user's own Claude Code
  * setup (user-level settings only; project and local settings would come from
  * workspaces the agent can write to) and map Blitz's access policy onto native
  * permission modes: full access bypasses prompts, on-request routes prompts to
@@ -272,7 +284,12 @@ export function claudeThreadSettings(
         strictMcpConfig: true,
         skills: [],
         tools: [],
-        disallowedTools: ["*"],
+        // A blanket deny would also refuse StructuredOutput; with no built-in
+        // tools and no MCP servers it is the only tool left, and "dontAsk"
+        // refuses anything that is not explicitly allowed.
+        ...(request.outputSchema
+          ? { allowedTools: [STRUCTURED_OUTPUT_TOOL] }
+          : { disallowedTools: ["*"] }),
         permissionMode: "dontAsk",
         extra: {
           ...BLITZ_CLAUDE_SDK_OPTIONS,
@@ -438,6 +455,7 @@ async function runEngineProviderTurn(
         ...(model ? { model } : {}),
         ...(effort ? { effort } : {}),
         ...(instructions ? { instructions } : {}),
+        ...(request.outputSchema ? { outputSchema: request.outputSchema } : {}),
         ...settings,
       },
       ...(request.threadId ? { threadId: request.threadId } : {}),

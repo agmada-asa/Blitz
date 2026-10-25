@@ -563,3 +563,35 @@ test("Claude normalizes saved aliases, checks effort, and rejects Codex-only pol
     "invalid-input"
   )
 })
+
+test("a reply schema reaches Codex and Claude threads, and Claude keeps only its StructuredOutput tool", async () => {
+  const schema = { type: "object", properties: {}, required: [], additionalProperties: false }
+  const background = {
+    ephemeral: true,
+    webSearchMode: "disabled",
+    sandbox: "read-only",
+    approvalPolicy: "never",
+    outputSchema: schema,
+  } as const
+  const codex = await route("codex", background)
+  assert.deepEqual(codex.started[0].outputSchema, schema)
+  const claude = await route("claude", background)
+  const options = claude.started[0]
+  assert.deepEqual(options.outputSchema, schema)
+  assert.deepEqual(options.claude?.tools, [])
+  assert.deepEqual(options.claude?.allowedTools, ["StructuredOutput"])
+  assert.equal(options.claude?.disallowedTools, undefined)
+  assert.equal(options.claude?.permissionMode, "dontAsk")
+})
+
+test("a schema reply that arrives only as parsed output becomes the text and is returned", async () => {
+  const output = { grades: [{ id: "q1", marks: 2, feedback: "Good." }] }
+  const engine = new FakeEngine("claude", (turn) => {
+    turn.push({ type: "turn.started" })
+    turn.finish({ status: "completed", text: "", output })
+  })
+  const { result } = await run(engine)
+  const value = await result
+  assert.deepEqual(value.output, output)
+  assert.equal(value.text, JSON.stringify(output))
+})
