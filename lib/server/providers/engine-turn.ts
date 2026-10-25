@@ -80,6 +80,11 @@ export interface EngineTurnRequest {
    */
   readonly compactFirst?: boolean
   /**
+   * Input sent instead of `input` when `compactFirst` compacted the thread,
+   * such as a prompt that restates what the compaction summarised away.
+   */
+  readonly compactedInput?: TurnInput
+  /**
    * Drops this turn and every later one before the new turn runs, so the reply
    * is redone in place. Reported with a `rewound` event; a rewind that fails is
    * logged and the turn runs on top of the existing conversation instead.
@@ -424,7 +429,7 @@ async function runTurn(
    * the reply: only the compaction itself is reported. A failed or refused
    * compaction is logged and left for the runtime's own handling.
    */
-  const compact = async (opened: Thread): Promise<void> => {
+  const compact = async (opened: Thread): Promise<boolean> => {
     let compacted = false
     try {
       const compaction = opened.compact()
@@ -457,6 +462,7 @@ async function runTurn(
           kind: result.error?.kind ?? "unknown",
         })
       turn = undefined
+      return result.status === "completed"
     } catch (error) {
       // A cancelled compaction stays the active turn, so cleanup interrupts it.
       if (cancelReason) throw cancelReason
@@ -464,6 +470,7 @@ async function runTurn(
       console.warn("Provider could not compact the thread", {
         message: error instanceof Error ? error.message : "Unknown error",
       })
+      return false
     }
   }
 
@@ -525,8 +532,11 @@ async function runTurn(
     // Rewind first: rewinding to before a compaction would undo it.
     if (request.rewindBeforeTurnId)
       await rewind(thread, request.rewindBeforeTurnId)
-    if (request.compactFirst) await compact(thread)
-    const running = thread.run(request.input, request.turnOptions)
+    const compacted = request.compactFirst ? await compact(thread) : false
+    const running = thread.run(
+      compacted && request.compactedInput ? request.compactedInput : request.input,
+      request.turnOptions
+    )
     turn = running
     void running.id.then(started, () => undefined)
     const consumed = (async () => {

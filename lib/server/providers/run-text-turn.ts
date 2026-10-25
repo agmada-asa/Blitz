@@ -112,6 +112,8 @@ export interface RunProviderTextTurnRequest {
   readonly fork?: { readonly threadId: string; readonly throughTurnId?: string }
   /** Compacts the Codex or Claude Code thread before the turn. OpenCode ignores it. */
   readonly compactFirst?: boolean
+  /** Prompt sent instead of `prompt` when `compactFirst` compacted the thread. */
+  readonly compactedPrompt?: string
   /**
    * Drops this Codex or Claude Code turn and the ones after it before the new
    * turn runs, so a reply is redone in place. OpenCode ignores it.
@@ -457,6 +459,20 @@ async function runEngineProviderTurn(
       ...(request.threadId ? { threadId: request.threadId } : {}),
       ...(request.fork ? { fork: request.fork } : {}),
       ...(request.compactFirst ? { compactFirst: true } : {}),
+      ...(request.compactFirst && request.compactedPrompt
+        ? {
+            compactedInput: request.attachments?.length
+              ? {
+                  text: request.compactedPrompt,
+                  images: request.attachments.map((attachment) => ({
+                    type: "base64" as const,
+                    mediaType: attachment.mimeType,
+                    data: attachment.data,
+                  })),
+                }
+              : request.compactedPrompt,
+          }
+        : {}),
       ...(request.rewindBeforeTurnId
         ? { rewindBeforeTurnId: request.rewindBeforeTurnId }
         : {}),

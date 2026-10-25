@@ -765,3 +765,30 @@ test("reads context usage after a completed turn when asked, and tolerates a run
   assert.equal(value.text, "A clear answer.")
   assert.equal(value.contextUsage, undefined)
 })
+
+test("sends the compacted input only when the compaction ran", async () => {
+  const engine = new FakeEngine("codex")
+  const first = await run(engine, {
+    threadId: "thr_saved",
+    compactFirst: true,
+    compactedInput: "Restated prompt",
+  })
+  await first.result
+  assert.equal(engine.runs[0]?.input, "Restated prompt")
+
+  const failing = new FakeEngine("codex")
+  failing.compactScript = (turn) => turn.finish({ status: "failed" })
+  const warn = console.warn
+  console.warn = () => undefined
+  try {
+    const second = await run(failing, {
+      threadId: "thr_saved",
+      compactFirst: true,
+      compactedInput: "Restated prompt",
+    })
+    await second.result
+    assert.equal(failing.runs[0]?.input, "Question")
+  } finally {
+    console.warn = warn
+  }
+})
