@@ -38,6 +38,10 @@ Only text, reasoning, tool, file, request, and lifecycle events shape a turn. Ev
 
 A Codex reply is its answer messages; progress notes between tool calls and reasoning become the thought trace. A Claude Code or OpenCode reply is everything it streamed in the turn. Subagent text stays out of both, though subagent tool steps still show.
 
+## Moving to another provider
+
+When a turn stops at a usage limit, the chat (and Teach) offers to continue on another provider that is installed and signed in (`components/chat/provider-handoff-offer.tsx`). Choosing one runs `workspaceChats.handOff`: the chat drops its old session and model settings and keeps the old session in `providerHandoff`, and the stopped reply records `continuedWith`, so the chat shows which provider took over. The next turn reads the old session back with `readThread` (no model turn, so it works at the limit), trims it (`lib/server/provider-handoff.ts`), and starts the new provider's session with it as `seed`. A seed carries the tool calls and shortened tool output the old provider saw, which Blitz's own replay leaves out. When the old session cannot be read, the chat falls back to that replay. Teach always replays from its unit, outline and plan, since a seed of its first prompt would only repeat the unit text. The handoff ends once the new session binds.
+
 ## Checks
 
 The library refuses a runtime below its floor when a thread starts: Codex CLI 0.164.0 (within v0) and Claude Code 2.1.248 as of agent-engines 0.4.0. Its own weekly check watches the latest Codex and Claude Code. `npm run check:runtimes` covers the rest: OpenCode's version, and the live Codex catalogue against `CODEX_MODEL_OPTIONS`. Tests use an in-memory engine (`tests/fixtures/fake-engine.ts`) and never start a model turn. It models only the methods Blitz calls; the rest of the engine and thread surface throws `UnsupportedFeatureError`.
