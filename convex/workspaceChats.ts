@@ -1877,6 +1877,8 @@ export const handOff = mutation({
       // A branch that never ran would copy the old provider's session, which
       // the new one cannot open, so it replays its transcript instead.
       forkSource: undefined,
+      // The meter measured the old session; the new one reports after its first turn.
+      contextUsage: undefined,
       // A second move keeps the session that still holds the conversation.
       providerHandoff: chat.providerHandoff ?? {
         fromProviderId,

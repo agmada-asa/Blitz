@@ -472,6 +472,7 @@ test("handOff moves a chat stopped at a usage limit to another provider", async 
     workingProjectId: "project-1",
     agentPlanFirst: true,
     forkSource: { sessionId: "codex-source", throughTurnId: "codex-turn" },
+    contextUsage: { usedTokens: 200_000, maxTokens: 250_000, percent: 80 },
   })
   const move = { ...turn, providerId: "claude-code" }
 
@@ -498,6 +499,8 @@ test("handOff moves a chat stopped at a usage limit to another provider", async 
     "providerEffort",
     // A pending fork names a Codex thread the new provider cannot copy.
     "forkSource",
+    // The context meter measured the old session.
+    "contextUsage",
   ])
     assert.equal(chat[field], undefined, field)
   // Agent settings stay with the chat, for whichever provider supports them.
