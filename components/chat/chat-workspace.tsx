@@ -63,6 +63,10 @@ import {
 import { AnnotatedAssistantMessage } from "@/components/chat/annotated-assistant-message"
 import { InteractiveBlocksProvider } from "@/components/ui/interactive-blocks"
 import { ReadAloudButton } from "@/components/chat/read-aloud-button"
+import {
+  ContinuedWithNote,
+  ProviderHandoffOffer,
+} from "@/components/chat/provider-handoff-offer"
 import { type FloatingAnnotation } from "@/components/chat/floating-annotation-chip"
 import { ReplyModelPicker } from "@/components/chat/reply-model-picker"
 import { Markdown } from "@/components/ui/markdown"
@@ -2405,6 +2409,11 @@ export function ChatWorkspace({
                     >
                       {message.role === "assistant" ? (
                         <>
+                          {message.continuedWith ? (
+                            <ContinuedWithNote
+                              providerId={message.continuedWith.providerId}
+                            />
+                          ) : null}
                           <ThoughtTrace
                             thought={message.thought}
                             durationMs={message.durationMs}
@@ -2461,6 +2470,18 @@ export function ChatWorkspace({
                               {activeChat?.lastError ||
                                 "Blitz could not finish this reply."}
                             </p>
+                          ) : null}
+                          {latest &&
+                          message.status === "failed" &&
+                          activeChat?.lastErrorReason === "usage-limit" &&
+                          activeChatId ? (
+                            <ProviderHandoffOffer
+                              chatId={activeChatId}
+                              messageId={message.id}
+                              providerId={activeChat.providerId}
+                              disabled={isRunning || Boolean(messageActionId)}
+                              onContinue={() => continueResponse(message.id)}
+                            />
                           ) : null}
                         </>
                       ) : editing ? (

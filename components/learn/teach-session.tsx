@@ -12,6 +12,7 @@
 import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
 import { useMutation, useQuery } from "convex/react"
+import { ProviderHandoffOffer } from "@/components/chat/provider-handoff-offer"
 import type { FunctionReturnType } from "convex/server"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useMinuteClock } from "@/hooks/use-minute-clock"
@@ -728,6 +729,19 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
           ) : null}
         </div>
 
+        {dockState.kind === "paused" &&
+        chat?.lastErrorReason === "usage-limit" &&
+        lastMessage?.role === "assistant" ? (
+          <div className="px-4 sm:px-6">
+            <ProviderHandoffOffer
+              chatId={chat.id}
+              messageId={lastMessage.id}
+              providerId={chat.providerId}
+              disabled={sending}
+              onContinue={() => send("", lastMessage.id)}
+            />
+          </div>
+        ) : null}
         <TeachDock
           state={dockState}
           error={error}
