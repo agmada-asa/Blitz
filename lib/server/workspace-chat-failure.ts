@@ -25,6 +25,12 @@ export function workspaceChatFailure(
       reason: error.reason,
       message: `${error.message}${contextSaved ? " Your chat context is saved." : ""}`,
     }
+  // Reached only when compacting could not free room, or was not possible.
+  if (error instanceof CardChatError && error.reason === "context-window")
+    return {
+      reason: error.reason,
+      message: `${error.message} Compacting it didn't free enough room. Start a new chat, or start the unit over in Teach, to carry on.`,
+    }
   const recovery = contextSaved
     ? "Your chat context is saved, so try again."
     : "Try again."

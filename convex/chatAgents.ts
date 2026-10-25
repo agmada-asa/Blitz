@@ -2,6 +2,7 @@
 import { mutation, query, type QueryCtx } from "./_generated/server"
 import type { Id } from "./_generated/dataModel"
 import { v } from "convex/values"
+import { PLAN_REQUEST_METHOD } from "../lib/agent-request"
 
 const autonomy = v.union(
   v.literal("approval"),
@@ -156,14 +157,19 @@ function isActiveMessage(
   )
 }
 
-/** Returns whether an approval grants provider access rather than confirming a user-requested step. */
+/**
+ * Returns whether an approval grants provider access rather than confirming a
+ * user-requested step. A plan review is one the learner asked for by turning
+ * on Plan first, so it is allowed at every access level.
+ */
 function requiresApprovalAutonomy(approval: {
   kind?: "approval" | "question" | "form" | "url"
   method: string
 }): boolean {
   return (
     (approval.kind ?? "approval") === "approval" &&
-    approval.method !== "item/tool/call"
+    approval.method !== "item/tool/call" &&
+    approval.method !== PLAN_REQUEST_METHOD
   )
 }
 
@@ -177,6 +183,7 @@ export const getSettings = query({
       autonomy: chat.agentAutonomy ?? "approval",
       additionalInstructions: chat.agentInstructions ?? "",
       workingProjectId: chat.workingProjectId,
+      planFirst: chat.agentPlanFirst === true,
     }
   },
 })
@@ -188,6 +195,8 @@ export const configure = mutation({
     autonomy,
     additionalInstructions: v.string(),
     workingProjectId: v.optional(v.id("projects")),
+    /** Plan before editing; omitted keeps the saved choice. */
+    planFirst: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const chat = await chatFor(ctx, args.chatId)
@@ -213,6 +222,8 @@ export const configure = mutation({
       agentAutonomy: args.autonomy,
       agentInstructions: instructions,
       workingProjectId: args.workingProjectId,
+      // Plan first is set per turn, so changing it never resets the context.
+      ...(args.planFirst === undefined ? {} : { agentPlanFirst: args.planFirst }),
       agentRequestToolsVersion: AGENT_REQUEST_TOOLS_VERSION,
       // A general chat joins the project it works in so history groups it there.
       ...(args.workingProjectId && !chat.projectId

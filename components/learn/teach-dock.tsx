@@ -6,23 +6,56 @@
  * the tutor is writing. After the opening pre-check it offers to plan the
  * lesson around the answers or skip the check; after the recap it offers
  * practice and the next unit. N sends the next section from the keyboard
- * while the lesson waits for the learner.
+ * while the lesson waits for the learner. "Try that again" redoes the latest
+ * section in place, more simply, from an example, or shorter, where the
+ * provider can rewind its conversation. The mic beside the question box turns
+ * a spoken question into text to send or edit (`teach-voice.tsx`).
  */
 
 import Link from "next/link"
-import { useEffect, useState, type FormEvent, type KeyboardEvent } from "react"
+import {
+  useCallback,
+  useEffect,
+  useState,
+  type FormEvent,
+  type KeyboardEvent,
+} from "react"
 
 import { Button } from "@/components/ui/button"
-import { ArrowRightIcon, SendIcon } from "@/components/ui/icon"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
+import {
+  ArrowDownIcon,
+  ArrowRightIcon,
+  RotateLeftIcon,
+  SendIcon,
+} from "@/components/ui/icon"
 import { Textarea } from "@/components/ui/textarea"
 import { isTypingTarget } from "@/hooks/use-quiz-shortcuts"
-import { TEACH_QUICK_REPLIES } from "@/lib/teach"
+import {
+  TEACH_QUICK_REPLIES,
+  TEACH_REDO_STYLES,
+  type TeachRedoStyle,
+} from "@/lib/teach"
+import {
+  DictationButton,
+  DictationStatus,
+  useDictation,
+} from "@/components/learn/teach-voice"
 
 /** What the dock should offer for the session's current state. */
 export type TeachDockState =
   | { kind: "no-material" }
   | { kind: "starting" }
   | { kind: "writing" }
+  /** Compact now is running; nothing can be sent until it finishes. */
+  | { kind: "compacting" }
   | { kind: "paused"; hasText: boolean }
   /** The opening check is on screen; `answered` counts its answered quizzes. */
   | { kind: "precheck"; answered: number }
@@ -40,6 +73,13 @@ type TeachDockProps = {
   onSend: (message: string) => void
   onPause: () => void
   onResume: () => void
+  /**
+   * Number of the section the latest reply taught, when it can be redone in
+   * place. Omitted when there is nothing to redo or the provider can't.
+   */
+  redoSection?: number
+  /** Redoes the latest section reply in the chosen style. */
+  onRedo: (style: TeachRedoStyle) => void
 }
 
 /** Secondary quick replies, in the order learners reach for them. */
@@ -59,9 +99,19 @@ export function TeachDock({
   onSend,
   onPause,
   onResume,
+  redoSection,
+  onRedo,
 }: TeachDockProps) {
   const [draft, setDraft] = useState("")
   const canAsk = state.kind === "ready" || state.kind === "complete"
+  // A spoken question joins whatever is already typed, ready to edit or send.
+  const dictation = useDictation(
+    useCallback(
+      (text: string) =>
+        setDraft((current) => (current.trim() ? `${current.trim()} ${text}` : text)),
+      []
+    )
+  )
   const ready = state.kind === "ready"
 
   // While the lesson waits for the learner, N sends "Next section" unless they are typing or hold a modifier.
@@ -187,6 +237,40 @@ export function TeachDock({
                 {reply.label}
               </Button>
             ))}
+            {redoSection ? (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="min-h-11 shrink-0 rounded-full px-4"
+                  >
+                    <RotateLeftIcon aria-hidden="true" />
+                    Try that again
+                    <ArrowDownIcon aria-hidden="true" className="size-3.5" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-72">
+                  <DropdownMenuLabel>Redo section {redoSection}</DropdownMenuLabel>
+                  {(Object.keys(TEACH_REDO_STYLES) as TeachRedoStyle[]).map((style) => (
+                    <DropdownMenuItem
+                      key={style}
+                      onSelect={() => onRedo(style)}
+                      className="flex-col items-start gap-0"
+                    >
+                      <span>{TEACH_REDO_STYLES[style].label}</span>
+                      <span className="text-xs text-muted-foreground">
+                        {TEACH_REDO_STYLES[style].hint}
+                      </span>
+                    </DropdownMenuItem>
+                  ))}
+                  <DropdownMenuSeparator />
+                  <p className="px-2 py-1.5 text-xs text-muted-foreground">
+                    Replaces the explanation above. Quiz answers you already gave in it still count.
+                  </p>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            ) : null}
           </div>
         ) : state.kind === "paused" ? (
           <Button
@@ -201,7 +285,9 @@ export function TeachDock({
             <p role="status" className="text-sm text-muted-foreground">
               {state.kind === "starting"
                 ? "Preparing your lesson…"
-                : "Writing…"}
+                : state.kind === "compacting"
+                  ? "Compacting the session…"
+                  : "Writing…"}
             </p>
             {state.kind === "writing" ? (
               <Button
@@ -238,6 +324,7 @@ export function TeachDock({
               disabled={!canAsk}
               className="max-h-40 min-h-11 resize-none rounded-2xl px-4 py-2.5"
             />
+            <DictationButton dictation={dictation} disabled={!canAsk} />
             <Button
               type="submit"
               size="icon"
@@ -248,6 +335,9 @@ export function TeachDock({
               <SendIcon aria-hidden="true" />
             </Button>
           </form>
+        )}
+        {state.kind === "no-material" ? null : (
+          <DictationStatus dictation={dictation} />
         )}
       </div>
     </div>

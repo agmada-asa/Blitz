@@ -5,6 +5,17 @@
  */
 
 import { parseInteractiveBlock, type QuizBlock } from "./interactive-blocks.ts"
+import {
+  anyOf,
+  arrayOf,
+  BOOLEAN,
+  INTEGER,
+  nullable,
+  oneOfStrings,
+  STRING,
+  strictObject,
+  type JsonSchema,
+} from "./json-schema.ts"
 import { budgetSources } from "./teach.ts"
 import { QUESTION_TEACHING_GUIDANCE } from "./teaching-voice.ts"
 
@@ -95,6 +106,46 @@ export function buildQuestionBankPrompt(input: BankPromptInput): string {
     .filter(Boolean)
     .join("\n\n")
 }
+
+/**
+ * Reply shape a question bank turn asks Codex and Claude Code for. It mirrors
+ * the QUESTION and RECAP shapes in the prompt, with every field present and
+ * the ones a question type does not use set to null. `answer` takes each
+ * type's form: an index, indices, true or false, accepted blank answers, or
+ * the printed output.
+ */
+export const QUESTION_BANK_SCHEMA: JsonSchema = strictObject({
+  recaps: arrayOf(strictObject({ concept: STRING, title: STRING, body: STRING })),
+  questions: arrayOf(
+    strictObject({
+      id: STRING,
+      concept: STRING,
+      type: oneOfStrings([
+        "single-choice",
+        "multiple-answer",
+        "true-false",
+        "cloze",
+        "ordering",
+        "matching",
+        "code-output",
+      ]),
+      question: STRING,
+      options: nullable(arrayOf(STRING)),
+      answer: anyOf(
+        INTEGER,
+        BOOLEAN,
+        STRING,
+        arrayOf(INTEGER),
+        arrayOf(STRING),
+        arrayOf(arrayOf(STRING)),
+        { type: "null" }
+      ),
+      explanation: nullable(STRING),
+      pairs: nullable(arrayOf(arrayOf(STRING))),
+      extras: nullable(arrayOf(STRING)),
+    })
+  ),
+})
 
 /** A short reminder of one concept, shown in the feed before its questions. */
 export type ConceptRecap = { concept: string; title: string; body: string }
@@ -214,6 +265,31 @@ export function extractJsonObject(text: string): unknown {
 }
 
 /**
+ * A provider reply to a JSON request: its text, or the turn result with the
+ * object the provider parsed against the requested schema.
+ */
+export type ModelReply = string | { text: string; output?: unknown }
+
+/**
+ * Returns the JSON object in a reply. The text is read first, through
+ * `extractJsonObject`, so LaTeX backslash repairs apply exactly as they do to
+ * unstructured replies: a provider's own parse would already have turned an
+ * unescaped `\theta` into a tab. The provider's parsed object is the fallback
+ * for a reply whose text holds no JSON.
+ * @throws When neither the text nor the parsed output holds a JSON object.
+ */
+export function replyObject(reply: ModelReply): unknown {
+  if (typeof reply === "string") return extractJsonObject(reply)
+  try {
+    return extractJsonObject(reply.text)
+  } catch (error) {
+    const output = reply.output
+    if (output && typeof output === "object" && !Array.isArray(output)) return output
+    throw error
+  }
+}
+
+/**
  * Validates a generated batch with the same rules as lesson quizzes.
  *
  * Invalid questions are dropped and counted rather than failing the batch, and
@@ -222,8 +298,8 @@ export function extractJsonObject(text: string): unknown {
  *
  * @throws When the reply holds no parsable JSON object with a `questions` array.
  */
-export function parseQuestionBank(text: string, idPrefix = "b"): ParsedQuestionBank {
-  const value = extractJsonObject(text) as { questions?: unknown; recaps?: unknown }
+export function parseQuestionBank(reply: ModelReply, idPrefix = "b"): ParsedQuestionBank {
+  const value = replyObject(reply) as { questions?: unknown; recaps?: unknown }
   if (!value || !Array.isArray(value.questions))
     throw new Error("The reply had no questions list")
   const questions: QuizBlock[] = []

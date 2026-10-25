@@ -7,6 +7,7 @@
  */
 
 import { readChatStream } from "../chat-stream.ts"
+import type { TeachRedoStyle } from "../teach.ts"
 
 /** Outcome of one Teach turn request. */
 export type TeachTurnResult =
@@ -27,12 +28,14 @@ export function createClientMessageId(): string {
  * @param input.chatId The unit's Teach session.
  * @param input.message Learner text or a quick reply; ignored when continuing.
  * @param input.continuationOf Paused assistant message to resume in place.
+ * @param input.redo Latest section reply to redo in place, and how.
  * @param input.signal Aborts the browser request; the server keeps the saved partial reply.
  */
 export async function sendTeachTurn(input: {
   chatId: string
   message: string
   continuationOf?: string
+  redo?: { messageId: string; style: TeachRedoStyle }
   signal?: AbortSignal
 }): Promise<TeachTurnResult> {
   let response: Response
@@ -47,6 +50,7 @@ export async function sendTeachTurn(input: {
         projectIds: [],
         attachments: [],
         ...(input.continuationOf ? { continuationOf: input.continuationOf } : {}),
+        ...(input.redo ? { redo: input.redo } : {}),
       }),
       ...(input.signal ? { signal: input.signal } : {}),
     })
@@ -84,4 +88,42 @@ export async function sendTeachTurn(input: {
     return { ok: false, error: "The connection to the tutor dropped. Try again." }
   }
   return failure ? { ok: false, error: failure } : { ok: true }
+}
+
+/**
+ * Asks the server to start the reply provider before a new session's first
+ * turn. Fire and forget: a failure only means the first reply starts the
+ * runtime itself.
+ *
+ * @param chatId The unit's Teach session.
+ */
+export function prewarmTeachSession(chatId: string): void {
+  void fetch("/api/teach/prewarm", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ chatId }),
+  }).catch(() => undefined)
+}
+
+/**
+ * Compacts a Teach session's model context now.
+ *
+ * @param chatId The unit's Teach session.
+ * @returns An error to show, or undefined once it compacted.
+ */
+export async function compactTeachSession(chatId: string): Promise<string | undefined> {
+  try {
+    const response = await fetch("/api/teach/compact", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ chatId }),
+    })
+    if (response.ok) return undefined
+    const payload = (await response.json().catch(() => null)) as { error?: unknown } | null
+    return typeof payload?.error === "string"
+      ? payload.error
+      : "The session couldn't be compacted. Try again."
+  } catch {
+    return "Blitz could not reach the tutor. Try again."
+  }
 }

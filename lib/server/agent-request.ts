@@ -8,6 +8,8 @@
  */
 
 import type { AgentRequest, CodexToolCall } from "agent-engines"
+
+import { PLAN_REQUEST_METHOD } from "../agent-request.ts"
 import type {
   AgentRequestField,
   AgentRequestInput,
@@ -173,11 +175,21 @@ function titleForKey(value: string): string {
 }
 
 /** Method label persisted for an engine approval, by what the agent wants to do. */
+/**
+ * Method label persisted for a plan waiting for approval: Claude Code's
+ * request to leave plan mode, or the proposal Codex ends a plan turn with.
+ */
+export const PLAN_METHOD = PLAN_REQUEST_METHOD
+
+/** Longest plan shown for review; longer plans are cut with a note. */
+const MAX_PLAN_CHARS = 19_000
+
 const APPROVAL_METHODS: Readonly<Record<string, string>> = {
   command: "approval/command",
   "file-change": "approval/file-change",
   tool: "approval/tool",
   permissions: "approval/permissions",
+  plan: PLAN_METHOD,
 }
 
 /** Method label persisted for an engine question. */
@@ -199,6 +211,8 @@ export function agentRequestTitle(method: string): string {
     case "approval/tool":
     case "session/request_permission":
       return "Blitz wants to use a tool"
+    case PLAN_METHOD:
+      return "Review the plan"
     case QUESTION_METHOD:
       return "Blitz needs your input"
     case ELICITATION_METHOD:
@@ -246,6 +260,23 @@ export function genericApprovalRequest(
   }
 }
 
+/** Runtime a request came from, which decides the grants Blitz may offer. */
+export type AgentRequestProvider = "codex" | "claude" | "opencode"
+
+/**
+ * Returns whether an ACP permission request offers one kind of choice.
+ *
+ * @param raw - The request's native `session/request_permission` params.
+ * @param kind - ACP option kind, such as `allow_once` or `allow_always`.
+ */
+function offersChoice(raw: unknown, kind: string): boolean {
+  const options = record(raw)?.options
+  return (
+    Array.isArray(options) &&
+    options.some((option) => record(option)?.kind === kind)
+  )
+}
+
 /** Converts an optional runtime reason into short approval guidance. */
 function approvalPrompt(
   request: Extract<AgentRequest, { kind: "approval" }>
@@ -261,13 +292,56 @@ function approvalPrompt(
 }
 
 /**
+ * Builds the plan card: the plan as Markdown in `details`, titled after its
+ * first heading so the card names what it will do. A heading that opens the
+ * plan moves into the title rather than repeating in the body.
+ * @param plan The proposed plan.
+ */
+export function planRequest(plan: string): AgentRequestSpec {
+  const full = plan.trim() || "The agent proposed a plan without details."
+  const match = /^#{1,3}\s+(.+)$/m.exec(full)
+  const heading = match?.[1]?.replace(/^plan:\s*/i, "").trim()
+  // The heading becomes the card's title, so the body does not repeat it.
+  const text =
+    heading && match && full.indexOf(match[0]) === 0
+      ? full.slice(match[0].length).trim() || full
+      : full
+  return {
+    method: PLAN_METHOD,
+    kind: "approval",
+    title: heading ? `Plan: ${heading}`.slice(0, 120) : agentRequestTitle(PLAN_METHOD),
+    details:
+      text.length > MAX_PLAN_CHARS
+        ? `${text.slice(0, MAX_PLAN_CHARS)}\n\n(The rest of the plan was cut for length.)`
+        : text,
+    prompt: "Approve to make these changes, or send it back with what to change.",
+  }
+}
+
+/**
+ * What the agent is told when its plan is not approved. With a note it
+ * revises the plan; without one (Send back left empty, or the card expired)
+ * it stops, so it does not keep proposing to nobody.
+ * @param feedback The learner's note, if any.
+ */
+export function planDeclinedMessage(feedback?: string): string {
+  return feedback?.trim()
+    ? `The learner sent the plan back with this note. Revise the plan and propose it again; do not change any files yet.\n\n${feedback.trim().slice(0, 4_000)}`
+    : PLAN_STOPPED_MESSAGE
+}
+
+/** Told to the agent when a plan is declined without a note: stop, do not revise. */
+export const PLAN_STOPPED_MESSAGE =
+  "The learner did not approve the plan. Do not change any files. Stop here and wait for their next message."
+
+/**
  * Normalizes one engine approval into one composer card. Codex file changes
  * must arrive with their proposed diff; an approval without one is refused,
  * since an opaque grant cannot be reviewed.
  */
 function approvalRequest(
   request: Extract<AgentRequest, { kind: "approval" }>,
-  provider: "codex" | "claude"
+  provider: AgentRequestProvider
 ): AgentRequestSpec | undefined {
   if (
     provider === "codex" &&
@@ -275,7 +349,12 @@ function approvalRequest(
     !request.changes?.length
   )
     return undefined
+  // Allowing must never fall through to an "always" grant, so OpenCode
+  // requests without an allow-once choice are refused unseen.
+  if (provider === "opencode" && !offersChoice(request.raw, "allow_once"))
+    return undefined
   const method = APPROVAL_METHODS[request.action] ?? "approval/tool"
+  if (method === PLAN_METHOD) return planRequest(request.plan ?? "")
   return {
     method,
     kind: "approval",
@@ -288,10 +367,12 @@ function approvalRequest(
         : {}),
     }),
     prompt: approvalPrompt(request),
-    // A session grant stays inside Codex's own session. Claude would write it to
-    // a settings file, which Blitz never does on the learner's behalf.
-    ...(provider === "codex" &&
-    (request.action === "command" || request.action === "file-change")
+    // A session grant stays inside Codex's own session. OpenCode keeps the
+    // allow-always choice Blitz has always offered it. Claude would write a
+    // grant to a settings file, which Blitz never does on the learner's behalf.
+    ...((provider === "codex" &&
+      (request.action === "command" || request.action === "file-change")) ||
+    (provider === "opencode" && offersChoice(request.raw, "allow_always"))
       ? {
           input: {
             approvalOptions: [
@@ -536,17 +617,19 @@ function mcpRequest(request: NativeRequest): AgentRequestSpec {
 }
 
 /**
- * Normalizes one Codex or Claude Code request from agent-engines into a
+ * Normalizes one Codex, Claude Code or OpenCode request from agent-engines into a
  * composer interaction.
  *
  * @param request - Request event from the running turn.
- * @param provider - Runtime that raised it; session grants are Codex-only.
+ * @param provider - Runtime that raised it; session grants are offered on
+ *   Codex and OpenCode only, and an OpenCode approval with no allow-once
+ *   choice is refused unseen.
  * @returns The interaction, or undefined when Blitz refuses it unseen (an
  *   unreviewable file change). Throws when the request is too large or malformed.
  */
 export function normalizeAgentRequest(
   request: AgentRequest,
-  provider: "codex" | "claude"
+  provider: AgentRequestProvider
 ): AgentRequestSpec | undefined {
   switch (request.kind) {
     case "approval":
@@ -613,12 +696,24 @@ export async function answerAgentRequest(
   switch (request.kind) {
     case "approval": {
       let optionId: string | undefined
+      let feedback: string | undefined
       try {
         const parsed = result.response ? JSON.parse(result.response) : undefined
         optionId =
           typeof parsed?.optionId === "string" ? parsed.optionId : undefined
+        feedback =
+          typeof parsed?.feedback === "string" ? parsed.feedback : undefined
       } catch {
         optionId = undefined
+      }
+      // A plan sent back carries the learner's note, so the agent can revise it.
+      if (spec.method === PLAN_METHOD) {
+        await request.respond(
+          result.accepted
+            ? { decision: "allow" }
+            : { decision: "deny", message: planDeclinedMessage(feedback) }
+        )
+        return
       }
       await request.respond({
         decision: !result.accepted

@@ -36,9 +36,12 @@ async function responseError(response: Response | null, fallback: string): Promi
 
 /**
  * Uploads one file as a module source with no unit, so it is stored and
- * read like any source but never taught.
+ * read like any source but never taught. A PDF with no text layer, such as a
+ * scan, is kept: question writing reads it from its pages where the chosen
+ * provider can.
  * @returns The source ID.
- * @throws With a learner-facing message when the upload fails or the file has no readable text.
+ * @throws With a learner-facing message when the upload fails, or when a
+ *   file other than a PDF has no readable text.
  */
 async function uploadPaperFile(projectId: string, file: File): Promise<string> {
   const response = await fetch("/api/sources/upload", {
@@ -56,8 +59,9 @@ async function uploadPaperFile(projectId: string, file: File): Promise<string> {
     sourceId?: unknown
     unsupported?: unknown
   } | null
-  if (result?.unsupported)
-    throw new Error(`${file.name} could not be read. Upload a PDF with selectable text.`)
+  const isPdf = file.type === "application/pdf" || /\.pdf$/i.test(file.name)
+  if (result?.unsupported && !isPdf)
+    throw new Error(`${file.name} could not be read. Upload a PDF or a text file.`)
   if (typeof result?.sourceId !== "string")
     throw new Error(`${file.name} could not be uploaded. Try again.`)
   return result.sourceId

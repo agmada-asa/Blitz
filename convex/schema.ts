@@ -5,7 +5,14 @@ import { v } from "convex/values"
 import { citationFields } from "./citationFields"
 import { examAnswerFields, examQuestionFields, examResultFields } from "./examFields"
 import { reviewMemoryFields } from "./reviewFields"
-import { teachOutlineFields, teachSectionPlanFields } from "./teachFields"
+import {
+  contextCompactionFields,
+  contextUsageFields,
+  teachOutlineFields,
+  teachRedoStyleField,
+  teachSectionPlanFields,
+  turnNoticeFields,
+} from "./teachFields"
 
 /** Validator shared by the cards table's supported learning formats. */
 const cardType = v.union(
@@ -348,6 +355,8 @@ export default defineSchema({
     questions: v.array(examQuestionFields),
     /** Questions dropped by validation. */
     rejectedCount: v.optional(v.number()),
+    /** Past papers: the paper had no text layer and was read from its pages as a document. */
+    readFromScan: v.optional(v.boolean()),
     runStartedAt: v.number(),
     finishedAt: v.optional(v.number()),
     createdAt: v.number(),
@@ -774,6 +783,20 @@ export default defineSchema({
     updatedAt: v.number(),
   }).index("by_scope", ["scope"]),
 
+  /**
+   * One global record for the spending caps on background tasks while a
+   * provider is signed in with an API key (`lib/spending-limits.ts`). Absent
+   * until the learner saves limits; the defaults apply until then.
+   */
+  spendingLimits: defineTable({
+    scope: v.literal("global"),
+    /** Most one background turn may spend, in US dollars. */
+    maxTaskUsd: v.number(),
+    /** Most model round trips one background turn may take. */
+    maxTaskSteps: v.number(),
+    updatedAt: v.number(),
+  }).index("by_scope", ["scope"]),
+
   /** One global record for the ordered Kokoro voices used as podcast hosts. */
   audioVoiceSettings: defineTable({
     scope: v.literal("global"),
@@ -788,6 +811,29 @@ export default defineSchema({
     ),
     updatedAt: v.number(),
   }).index("by_scope", ["scope"]),
+
+  /**
+   * Work on the Codex and Claude Code threads behind chats, done by the
+   * background worker (`lib/server/runtime-threads.ts`): give a thread its
+   * chat's title, or delete it once its chat is gone. A job stays here until
+   * it succeeds or has failed three times.
+   */
+  runtimeThreadJobs: defineTable({
+    kind: v.union(v.literal("rename"), v.literal("delete")),
+    /** `codex` or `claude-code`. */
+    providerId: v.string(),
+    threadId: v.string(),
+    /** Chat whose folder the thread runs in, for a rename. */
+    chatId: v.optional(v.string()),
+    /** Project whose folder the thread runs in, when it is not the chat's own. */
+    projectId: v.optional(v.string()),
+    /** Title for a rename. */
+    title: v.optional(v.string()),
+    attempts: v.number(),
+    createdAt: v.number(),
+  })
+    .index("by_createdAt", ["createdAt"])
+    .index("by_thread", ["threadId"]),
 
   /** General Blitz sessions opened from the top-level Chat tab. */
   workspaceChats: defineTable({
@@ -812,6 +858,8 @@ export default defineSchema({
     ),
     agentInstructions: v.optional(v.string()),
     workingProjectId: v.optional(v.id("projects")),
+    /** Project agent turns propose a plan for approval before changing files. */
+    agentPlanFirst: v.optional(v.boolean()),
     /** Version of the app-owned interactive tool set attached to the provider session. */
     agentRequestToolsVersion: v.optional(v.number()),
     /** Manual history state. Optional keeps chats created before this feature readable. */
@@ -821,6 +869,33 @@ export default defineSchema({
     archivedAt: v.optional(v.number()),
     branchedFromChatId: v.optional(v.id("workspaceChats")),
     branchedFromMessageId: v.optional(v.id("workspaceChatMessages")),
+    /**
+     * Chat whose local folder this chat's agent works in. A branch shares its
+     * source's folder, so a copied Claude Code session (kept per folder) can
+     * be resumed. Absent means the chat's own folder.
+     */
+    workspaceFolderId: v.optional(v.string()),
+    /**
+     * Runtime session a branch copies on its first turn, through the turn it
+     * was branched at, instead of replaying the transcript. Cleared once the
+     * copy is bound; a failed copy falls back to replay.
+     */
+    forkSource: v.optional(
+      v.object({ sessionId: v.string(), throughTurnId: v.string() })
+    ),
+    /** Context usage after the last turn, for the Teach context meter. */
+    contextUsage: v.optional(contextUsageFields),
+    /** Compactions of this chat's context, newest last, bounded. */
+    contextCompactions: v.optional(v.array(contextCompactionFields)),
+    /**
+     * Set by a compaction; the next Teach turn restates the unit material,
+     * outline, and plan, then clears it.
+     */
+    contextRestatePending: v.optional(v.boolean()),
+    /** The reply whose turn last restated the context after a compaction. */
+    contextRestatedMessageId: v.optional(v.id("workspaceChatMessages")),
+    /** When a Compact now request started; new turns wait while it is recent. */
+    compactingSince: v.optional(v.number()),
     /** Provider snapshot for new sessions; absent on legacy Codex chats. */
     providerId: v.optional(v.string()),
     providerInstanceId: v.optional(v.string()),
@@ -829,6 +904,17 @@ export default defineSchema({
     providerEffort: v.optional(v.string()),
     codexThreadId: v.optional(v.string()),
     codexContextReady: v.optional(v.boolean()),
+    /**
+     * Provider and session the chat moved away from, set when the learner
+     * continues on another provider after a usage limit. The next turn seeds
+     * its new session with that session's transcript, then this is cleared.
+     */
+    providerHandoff: v.optional(
+      v.object({
+        fromProviderId: v.string(),
+        fromSessionId: v.optional(v.string()),
+      })
+    ),
     status: v.union(
       v.literal("idle"),
       v.literal("running"),
@@ -887,6 +973,13 @@ export default defineSchema({
     ),
     providerTurnId: v.optional(v.string()),
     codexTurnId: v.optional(v.string()),
+    /** Provider that took this reply over from another at a usage limit, shown above it. */
+    continuedWith: v.optional(
+      v.object({
+        providerId: v.string(),
+        fromProviderId: v.string(),
+      })
+    ),
     /** Pending or decided agent request attached to this assistant turn. */
     agentApproval: v.optional(
       v.object({
@@ -969,6 +1062,10 @@ export default defineSchema({
         })
       )
     ),
+    /** Refusals, denied tools, and safety checks that explain a short reply. */
+    notices: v.optional(v.array(turnNoticeFields)),
+    /** For a Teach reply redone in place, the style it was asked for. */
+    redoStyle: v.optional(teachRedoStyleField),
     /** Bounded steering notes provided by the user to guide an interrupted continuation. */
     steeringNotes: v.optional(
       v.array(

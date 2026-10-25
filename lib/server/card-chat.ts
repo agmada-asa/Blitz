@@ -1,11 +1,16 @@
 /**
  * Defines the event, result, and error types every provider adapter shares.
  *
- * Codex and Claude Code turns run through agent-engines (see
- * `providers/engine-turn.ts`) and OpenCode through Blitz's ACP adapter; both
- * report in these shapes. The names keep their original card chat prefix;
+ * Every provider's turns run through agent-engines (see
+ * `providers/engine-turn.ts`) and report in these shapes. The names keep their original card chat prefix;
  * workspace chat, Teach, research, and project agents all use them.
  */
+
+import type { TurnContextUsage } from "../context-usage.ts"
+import type { TurnNotice } from "../turn-notices.ts"
+
+export type { TurnContextUsage } from "../context-usage.ts"
+export type { TurnNotice } from "../turn-notices.ts"
 
 /** Maximum assistant text plus raced delta text retained for one turn. */
 export const MAX_CARD_CHAT_STREAM_TEXT_LENGTH = 250_000
@@ -80,6 +85,34 @@ export interface CardChatServerRequestEvent {
   readonly serverRequest: CardChatServerRequest
 }
 
+/** A notice the learner should see: a refusal, a denied tool, or a safety check. */
+export interface CardChatNoticeEvent {
+  /** Discriminator for user-facing runtime notices. */
+  readonly type: "notice"
+  /** Notice already filtered to the kinds Blitz shows. */
+  readonly notice: TurnNotice
+}
+
+/** The runtime compacted the thread's context, on Blitz's request or by itself. */
+export interface CardChatCompactedEvent {
+  /** Discriminator for context compaction. */
+  readonly type: "compacted"
+  /** `requested` when Blitz asked before the turn; `runtime` when the runtime did it mid-turn. */
+  readonly origin: "requested" | "runtime"
+  /** Tokens in the context before compaction, when the runtime said. */
+  readonly beforeTokens?: number
+  /** Tokens in the context after compaction, when the runtime said. */
+  readonly afterTokens?: number
+}
+
+/** The thread was rewound before the turn ran, dropping the replaced turns. */
+export interface CardChatRewoundEvent {
+  /** Discriminator for a successful rewind. */
+  readonly type: "rewound"
+  /** Turns the runtime dropped from the conversation. */
+  readonly droppedTurns: number
+}
+
 /** Typed successful turn completion event. */
 export interface CardChatCompletionEvent {
   /** Discriminator for terminal success. */
@@ -96,6 +129,12 @@ export interface CardChatCompletionEvent {
   readonly thought?: string
   /** Elapsed turn duration in milliseconds. */
   readonly durationMs?: number
+  /**
+   * The reply as the provider parsed it against the turn's `outputSchema`.
+   * Absent without a schema, on providers that cannot take one, or when the
+   * reply was not valid JSON. Callers still validate it before saving.
+   */
+  readonly output?: unknown
 }
 
 /** Reasons a text turn can fail before producing a completion. */
@@ -106,9 +145,11 @@ export type CardChatFailureReason =
   | "transport"
   | "provider-overloaded"
   | "usage-limit"
+  | "spend-limit"
   | "rate-limit"
   | "turn-failed"
   | "turn-interrupted"
+  | "context-window"
 
 /** Typed terminal failure event. */
 export interface CardChatErrorEvent {
@@ -127,6 +168,9 @@ export type CardChatEvent =
   | CardChatServerRequestEvent
   | CardChatCompletionEvent
   | CardChatErrorEvent
+  | CardChatNoticeEvent
+  | CardChatCompactedEvent
+  | CardChatRewoundEvent
 
 /** Successful result returned after a server-confirmed completed turn. */
 export interface CardChatResult {
@@ -140,6 +184,10 @@ export interface CardChatResult {
   readonly thought?: string
   /** Elapsed turn duration in milliseconds. */
   readonly durationMs?: number
+  /** How full the thread's context window was when the turn ended, when asked for and known. */
+  readonly contextUsage?: TurnContextUsage
+  /** Parsed schema reply; see `CardChatCompletionEvent.output`. */
+  readonly output?: unknown
 }
 
 /** Stable error for invalid input, cancellation, timeout, provider limits, or turn failure. */

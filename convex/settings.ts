@@ -1,4 +1,8 @@
-/** Stores global task-specific provider, model, and reasoning choices for Blitz's local workers. */
+/**
+ * Stores the global provider, model, and reasoning choices each local worker
+ * uses for its task, and the spending caps for background tasks on an
+ * API-key sign-in.
+ */
 
 import { mutation, query } from "./_generated/server"
 import { v } from "convex/values"
@@ -9,6 +13,11 @@ import {
   validateAiTaskProviders,
   type AiModelSettings,
 } from "../lib/ai-model-settings"
+import {
+  DEFAULT_SPENDING_LIMITS,
+  validateSpendingLimits,
+  type SpendingLimits,
+} from "../lib/spending-limits"
 
 /** Identifies the one application-wide settings record in this personal deployment. */
 const GLOBAL_SETTINGS_SCOPE = "global"
@@ -77,5 +86,44 @@ export const save = mutation({
       })
     }
     return settings
+  },
+})
+
+/** Reads the saved background spending caps, or the defaults when none are saved. */
+export const spendingLimits = query({
+  args: {},
+  handler: async (ctx): Promise<SpendingLimits & { saved: boolean }> => {
+    const saved = await ctx.db
+      .query("spendingLimits")
+      .withIndex("by_scope", (index) => index.eq("scope", GLOBAL_SETTINGS_SCOPE))
+      .unique()
+    if (!saved) return { ...DEFAULT_SPENDING_LIMITS, saved: false }
+    try {
+      return { ...validateSpendingLimits(saved), saved: true }
+    } catch {
+      // A record outside today's bounds falls back to the defaults rather than no cap.
+      return { ...DEFAULT_SPENDING_LIMITS, saved: false }
+    }
+  },
+})
+
+/** Validates and saves the background spending caps. */
+export const saveSpendingLimits = mutation({
+  args: { maxTaskUsd: v.number(), maxTaskSteps: v.number() },
+  handler: async (ctx, args): Promise<SpendingLimits> => {
+    const limits = validateSpendingLimits(args)
+    const existing = await ctx.db
+      .query("spendingLimits")
+      .withIndex("by_scope", (index) => index.eq("scope", GLOBAL_SETTINGS_SCOPE))
+      .unique()
+    const now = Date.now()
+    if (existing) await ctx.db.patch(existing._id, { ...limits, updatedAt: now })
+    else
+      await ctx.db.insert("spendingLimits", {
+        scope: GLOBAL_SETTINGS_SCOPE,
+        ...limits,
+        updatedAt: now,
+      })
+    return limits
   },
 })

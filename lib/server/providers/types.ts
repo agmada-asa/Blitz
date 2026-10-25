@@ -56,6 +56,11 @@ export interface ProviderAvailability {
     | "probe-failed"
   /** User-safe setup detail without command output or credentials. */
   readonly message: string
+  /**
+   * How a connected runtime is billed, when it says: `api-key` bills every
+   * token, so Settings offers spending limits for it.
+   */
+  readonly billing?: "subscription" | "api-key"
 }
 
 /** One provider-owned model choice, including reasoning encoded in its native ID. */
@@ -138,55 +143,6 @@ export interface ProviderTextTurnRequest {
   readonly timeoutMs?: number
 }
 
-/** Normalized provider event consumed by product-level orchestration. */
-export type ProviderEvent =
-  | {
-      readonly type: "turn-started"
-      readonly threadId: string
-      readonly turnId: string
-    }
-  | {
-      readonly type: "text-delta"
-      readonly threadId: string
-      readonly turnId: string
-      readonly delta: string
-    }
-  | {
-      readonly type: "thought-delta"
-      readonly threadId: string
-      readonly turnId: string
-      readonly delta: string
-    }
-  | {
-      readonly type: "activity"
-      readonly method: string
-      readonly params?: unknown
-    }
-  | {
-      readonly type: "request"
-      readonly requestId: string | number
-      readonly method: string
-      readonly params?: unknown
-    }
-
-/** Result of one normalized provider text turn. */
-export interface ProviderTextTurnResult {
-  /** Provider integration that produced the response. */
-  readonly providerId: AiProviderId
-  /** Provider instance that produced the response. */
-  readonly providerInstanceId: string
-  /** Session identifier safe to persist for later turns. */
-  readonly threadId: string
-  /** Turn identifier safe to associate with one message. */
-  readonly turnId: string
-  /** Complete assistant text. */
-  readonly text: string
-  /** Cumulative thought, reasoning, or commentary trace for the turn. */
-  readonly thought?: string
-  /** Elapsed turn duration in milliseconds. */
-  readonly durationMs?: number
-}
-
 /** Input required to check a provider before showing it as available. */
 export interface ProviderHealthOptions {
   /** Local workspace used only for a non-authenticating protocol probe. */
@@ -212,25 +168,3 @@ export interface ProviderAdapterDefinition {
     options: ProviderHealthOptions
   ) => Promise<ProviderAvailability>
 }
-
-/** Reviews one bounded provider operation; true grants only this invocation. */
-export type ProviderApprovalDecision =
-  | boolean
-  | {
-      /** Whether this provider operation is accepted. */
-      readonly accepted: boolean
-      /** Exact provider option selected by the user, when applicable. */
-      readonly optionId?: string
-      /** Structured response payload for provider-specific prompts. */
-      readonly response?: string
-    }
-
-/** Reviews one bounded provider operation and preserves its native identity. */
-export type ProviderApprovalHandler = (request: {
-  /** Native provider request ID used to correlate the eventual response. */
-  readonly requestId?: string | number
-  readonly method: string
-  readonly params: unknown
-  /** Cancels this review independently of the surrounding turn. */
-  readonly signal?: AbortSignal
-}) => Promise<ProviderApprovalDecision>

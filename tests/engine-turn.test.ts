@@ -140,8 +140,8 @@ test("maps usage limits, capacity, rate limits, and unknown failures to recovery
     [{ kind: "model", message: "Rerouted" }, "invalid-input"],
     [{ kind: "connection", message: "Codex exited" }, "transport"],
     [{ kind: "other", message: "Something odd" }, "turn-failed"],
-    // Blitz sets no turn limits, so a limit stop is an ordinary failed turn.
-    [{ kind: "limit", message: "Turn limit reached" }, "turn-failed"],
+    // A cap the thread set is a spending stop with its own recovery copy.
+    [{ kind: "limit", message: "Turn limit reached" }, "spend-limit"],
   ] as const) {
     const engine = new FakeEngine("codex", (turn) =>
       turn.finish({ status: "failed", error: { ...error } })
@@ -387,7 +387,13 @@ async function route(
       prompt: "Question",
       ...request,
     },
-    { codexModelCatalog: CATALOG, createEngine: () => engine, ...options }
+    {
+      codexModelCatalog: CATALOG,
+      createEngine: () => engine,
+      // Never probe the real Claude Code sign-in from a test.
+      backgroundLimits: async () => undefined,
+      ...options,
+    }
   )
   return engine
 }
@@ -562,4 +568,381 @@ test("Claude normalizes saved aliases, checks effort, and rejects Codex-only pol
     }),
     "invalid-input"
   )
+})
+
+test("shows refusals, denied tools, and safety checks, and only logs other notices", async () => {
+  const engine = new FakeEngine("claude", (turn) => {
+    turn.push({ type: "turn.started" })
+    turn.push({ type: "notice", kind: "warning", message: "Config file is old" })
+    turn.push({
+      type: "notice",
+      kind: "permission-denied",
+      message: "WebFetch was not allowed.",
+      details: "dontAsk mode",
+    })
+    turn.push({ type: "notice", kind: "refusal", message: "The model declined." })
+    turn.answer("Partial answer.")
+  })
+  const logged: unknown[] = []
+  const info = console.info
+  console.info = (...args: unknown[]) => void logged.push(args)
+  try {
+    const { events, result } = await run(engine)
+    await result
+    const notices = events.flatMap((event) =>
+      event.type === "notice" ? [event.notice] : []
+    )
+    assert.deepEqual(notices, [
+      {
+        kind: "permission-denied",
+        message: "WebFetch was not allowed.",
+        details: "dontAsk mode",
+      },
+      { kind: "refusal", message: "The model declined." },
+    ])
+    assert.equal(logged.length, 1)
+  } finally {
+    console.info = info
+  }
+})
+
+test("a context-window failure names the cause instead of a generic failure", async () => {
+  const engine = new FakeEngine("codex", (turn) => {
+    turn.push({ type: "turn.started" })
+    turn.finish({
+      status: "failed",
+      error: { kind: "context-window", message: "contextWindowExceeded" },
+    })
+  })
+  const { result } = await run(engine)
+  await assert.rejects(
+    result,
+    (error: unknown) =>
+      error instanceof CardChatError &&
+      error.reason === "context-window" &&
+      /ran out of room/.test(error.message)
+  )
+})
+
+test("compacts before the turn without treating the compaction as the reply's turn", async () => {
+  const engine = new FakeEngine("codex")
+  const { events, result } = await run(engine, {
+    threadId: "thr_saved",
+    compactFirst: true,
+  })
+  const value = await result
+  assert.deepEqual(engine.compactions, ["thr_saved"])
+  assert.equal(value.turnId, "turn_1")
+  assert.deepEqual(
+    events.filter((event) => event.type === "compacted"),
+    [{ type: "compacted", origin: "requested", beforeTokens: 900, afterTokens: 100 }]
+  )
+  const started = events.filter((event) => event.type === "turn-started")
+  assert.deepEqual(
+    started.map((event) => (event.type === "turn-started" ? event.turnId : "")),
+    ["turn_1"]
+  )
+  assert.ok(
+    events.findIndex((event) => event.type === "compacted") <
+      events.findIndex((event) => event.type === "turn-started")
+  )
+})
+
+test("a failed compaction is logged and the turn still runs", async () => {
+  const engine = new FakeEngine("claude")
+  engine.compactScript = (turn) =>
+    turn.finish({ status: "failed", error: { kind: "other", message: "no" } })
+  const warn = console.warn
+  console.warn = () => undefined
+  try {
+    const { events, result } = await run(engine, {
+      threadId: "thr_saved",
+      compactFirst: true,
+    })
+    assert.equal((await result).text, "A clear answer.")
+    assert.equal(events.some((event) => event.type === "compacted"), false)
+  } finally {
+    console.warn = warn
+  }
+})
+
+test("reports a compaction the runtime makes by itself mid-turn", async () => {
+  const engine = new FakeEngine("claude", (turn) => {
+    turn.push({ type: "turn.started" })
+    turn.push({ type: "compacted", beforeTokens: 190_000 })
+    turn.answer("Still here.")
+  })
+  const { events, result } = await run(engine, { threadId: "thr_saved" })
+  await result
+  assert.deepEqual(
+    events.filter((event) => event.type === "compacted"),
+    [{ type: "compacted", origin: "runtime", beforeTokens: 190_000 }]
+  )
+})
+
+test("rewinds before the turn and reports it; a failed rewind still runs the turn", async () => {
+  const engine = new FakeEngine("codex")
+  const { events, result } = await run(engine, {
+    threadId: "thr_saved",
+    rewindBeforeTurnId: "turn_old",
+  })
+  await result
+  assert.deepEqual(engine.rewinds, ["turn_old"])
+  assert.deepEqual(
+    events.filter((event) => event.type === "rewound"),
+    [{ type: "rewound", droppedTurns: 1 }]
+  )
+
+  const refusing = new FakeEngine("claude")
+  refusing.rewindError = new Error("There is nothing before the first turn")
+  const warn = console.warn
+  console.warn = () => undefined
+  try {
+    const second = await run(refusing, {
+      threadId: "thr_saved",
+      rewindBeforeTurnId: "turn_first",
+    })
+    assert.equal((await second.result).text, "A clear answer.")
+    assert.equal(
+      second.events.some((event) => event.type === "rewound"),
+      false
+    )
+  } finally {
+    console.warn = warn
+  }
+})
+
+test("forks a saved thread through a turn instead of resuming it", async () => {
+  const engine = new FakeEngine("codex")
+  const { result } = await run(engine, {
+    threadId: "thr_ignored",
+    fork: { threadId: "thr_source", throughTurnId: "turn_7" },
+  })
+  const value = await result
+  assert.equal(value.threadId, "thr_fork")
+  assert.equal(engine.resumed.length, 0)
+  assert.equal(engine.started.length, 0)
+  assert.deepEqual(engine.forks, [
+    {
+      id: "thr_source",
+      options: { cwd: WORKSPACE, throughTurnId: "turn_7" },
+    },
+  ])
+})
+
+test("a failed fork fails before any turn so the caller can replay instead", async () => {
+  const engine = new FakeEngine("claude")
+  engine.forkError = new Error("No turn turn_7 on this thread.")
+  const { events, result } = await run(engine, {
+    fork: { threadId: "thr_source", throughTurnId: "turn_7" },
+  })
+  await rejectsWith(result, "transport")
+  assert.equal(engine.runs.length, 0)
+  assert.equal(events.some((event) => event.type === "turn-started"), false)
+  assert.equal(engine.closed, true)
+})
+
+test("reads context usage after a completed turn when asked, and tolerates a runtime without it", async () => {
+  const engine = new FakeEngine("claude")
+  engine.contextReport = {
+    usedTokens: 78_000,
+    maxTokens: 200_000,
+    percent: 39,
+    categories: [
+      { name: "System prompt", tokens: 6_000, kind: "used" },
+      { name: "Messages", tokens: 72_000, kind: "used" },
+      { name: "Free space", tokens: 122_000, kind: "free" },
+    ],
+  }
+  const { result } = await run(engine, { readContextUsage: true })
+  assert.deepEqual((await result).contextUsage, {
+    usedTokens: 78_000,
+    maxTokens: 200_000,
+    percent: 39,
+    categories: [
+      { label: "instructions", tokens: 6_000 },
+      { label: "conversation", tokens: 72_000 },
+    ],
+  })
+
+  const without = new FakeEngine("codex")
+  const second = await run(without, { readContextUsage: true })
+  const value = await second.result
+  assert.equal(value.text, "A clear answer.")
+  assert.equal(value.contextUsage, undefined)
+})
+
+test("sends the compacted input only when the compaction ran", async () => {
+  const engine = new FakeEngine("codex")
+  const first = await run(engine, {
+    threadId: "thr_saved",
+    compactFirst: true,
+    compactedInput: "Restated prompt",
+  })
+  await first.result
+  assert.equal(engine.runs[0]?.input, "Restated prompt")
+
+  const failing = new FakeEngine("codex")
+  failing.compactScript = (turn) => turn.finish({ status: "failed" })
+  const warn = console.warn
+  console.warn = () => undefined
+  try {
+    const second = await run(failing, {
+      threadId: "thr_saved",
+      compactFirst: true,
+      compactedInput: "Restated prompt",
+    })
+    await second.result
+    assert.equal(failing.runs[0]?.input, "Question")
+  } finally {
+    console.warn = warn
+  }
+})
+
+test("a reply schema reaches Codex and Claude threads, and Claude keeps only its StructuredOutput tool", async () => {
+  const schema = { type: "object", properties: {}, required: [], additionalProperties: false }
+  const background = {
+    ephemeral: true,
+    webSearchMode: "disabled",
+    sandbox: "read-only",
+    approvalPolicy: "never",
+    outputSchema: schema,
+  } as const
+  const codex = await route("codex", background)
+  assert.deepEqual(codex.started[0].outputSchema, schema)
+  const claude = await route("claude", background)
+  const options = claude.started[0]
+  assert.deepEqual(options.outputSchema, schema)
+  assert.deepEqual(options.claude?.tools, [])
+  assert.deepEqual(options.claude?.allowedTools, ["StructuredOutput"])
+  assert.equal(options.claude?.disallowedTools, undefined)
+  assert.equal(options.claude?.permissionMode, "dontAsk")
+})
+
+test("a schema reply that arrives only as parsed output becomes the text and is returned", async () => {
+  const output = { grades: [{ id: "q1", marks: 2, feedback: "Good." }] }
+  const engine = new FakeEngine("claude", (turn) => {
+    turn.push({ type: "turn.started" })
+    turn.finish({ status: "completed", text: "", output })
+  })
+  const { result } = await run(engine)
+  const value = await result
+  assert.deepEqual(value.output, output)
+  assert.equal(value.text, JSON.stringify(output))
+})
+
+test("background Claude turns carry the spending caps; chats, subscriptions and Codex do not", async () => {
+  const caps = { maxBudgetUsd: 3, maxTurns: 10 }
+  const background = {
+    ephemeral: true,
+    webSearchMode: "disabled",
+    sandbox: "read-only",
+    approvalPolicy: "never",
+  } as const
+  let asked = 0
+  const capped = await route("claude", background, {
+    backgroundLimits: async () => {
+      asked += 1
+      return caps
+    },
+  })
+  assert.deepEqual(capped.started[0].limits, caps)
+  const uncapped = await route("claude", background)
+  assert.equal(uncapped.started[0].limits, undefined)
+  // A chat turn never asks for caps, and Codex cannot take them.
+  const chat = await route(
+    "claude",
+    { approvalPolicy: "on-request" },
+    { backgroundLimits: async () => ((asked += 1), caps) }
+  )
+  assert.equal(chat.started[0].limits, undefined)
+  const codex = await route("codex", background, {
+    backgroundLimits: async () => ((asked += 1), caps),
+  })
+  assert.equal(codex.started[0].limits, undefined)
+  assert.equal(asked, 1)
+})
+
+test("a spending stop names the cap it hit", async () => {
+  for (const [message, expected] of [
+    ["error_max_budget_usd", /Stopped at your \$2\.50 limit for one task\. Nothing was saved\./],
+    ["error_max_turns", /Stopped after 6 steps, your limit for one task\./],
+  ] as const) {
+    const engine = new FakeEngine("claude", (turn) =>
+      turn.finish({ status: "failed", error: { kind: "limit", message } })
+    )
+    const { result } = await run(engine, {
+      thread: { cwd: WORKSPACE, limits: { maxBudgetUsd: 2.5, maxTurns: 6 } },
+    })
+    await assert.rejects(result, (failure: unknown) => {
+      assert.ok(failure instanceof CardChatError)
+      assert.equal(failure.reason, "spend-limit")
+      assert.match(failure.message, expected)
+      assert.match(failure.message, /Raise the limit in Settings/)
+      return true
+    })
+  }
+})
+
+/** A Codex plan-mode turn: a proposal and no answer text, as Codex ends one. */
+function proposePlan(turn: FakeTurn, plan: string) {
+  turn.push({ type: "turn.started" })
+  turn.push({ type: "plan.proposal.done", itemId: "p1", text: plan })
+  turn.finish({ status: "completed", text: "" })
+}
+
+test("a Codex plan goes to review, and approval runs it as the next turn", async () => {
+  const engine = new FakeEngine("codex", (turn) =>
+    engine.turns.length === 1 ? proposePlan(turn, "1. Create Revision/") : turn.answer("Done: folders created.")
+  )
+  const reviewed: AgentRequest[] = []
+  const { result } = await run(engine, { turnOptions: { mode: "plan" } }, async (request) => {
+    reviewed.push(request)
+    await (request as Extract<AgentRequest, { kind: "approval" }>).respond({ decision: "allow" })
+  })
+  const value = await result
+  assert.equal(reviewed.length, 1)
+  const plan = reviewed[0] as Extract<AgentRequest, { kind: "approval" }>
+  assert.equal(plan.action, "plan")
+  assert.equal(plan.plan, "1. Create Revision/")
+  assert.deepEqual(engine.runs[1].options, { mode: "default" })
+  assert.match(String(engine.runs[1].input), /approved the plan/)
+  assert.equal(value.text, "Done: folders created.")
+  // The reply is saved under the turn that carried the plan out, so a branch
+  // forked through it keeps the work.
+  assert.equal(value.turnId, "turn_2")
+})
+
+test("a Codex plan sent back is revised, and one declined without a note is the reply", async () => {
+  const engine = new FakeEngine("codex", (turn) =>
+    proposePlan(turn, engine.turns.length === 1 ? "Plan A" : "Plan B")
+  )
+  let reviews = 0
+  const { result } = await run(engine, { turnOptions: { mode: "plan" } }, async (request) => {
+    reviews += 1
+    const approval = request as Extract<AgentRequest, { kind: "approval" }>
+    await approval.respond(
+      reviews === 1 ? { decision: "deny", message: "Use fewer folders." } : { decision: "deny" }
+    )
+  })
+  const value = await result
+  assert.equal(reviews, 2)
+  assert.deepEqual(engine.runs[1], { input: "Use fewer folders.", options: { mode: "plan" } })
+  assert.equal(value.text, "Plan B")
+  // Without a handler the plan is refused and still becomes the reply.
+  const unattended = new FakeEngine("codex", (turn) => proposePlan(turn, "Plan C"))
+  const { result: refused } = await run(unattended, { turnOptions: { mode: "plan" } })
+  assert.equal((await refused).text, "Plan C")
+  assert.equal(unattended.runs.length, 1)
+})
+
+test("plan mode reaches the turn, and Claude allows edits once a plan is approved", async () => {
+  const codex = await route("codex", { approvalPolicy: "on-request", mode: "plan" })
+  assert.deepEqual(codex.runs[0].options, { mode: "plan" })
+  const claude = await route("claude", { approvalPolicy: "on-request", mode: "plan" })
+  assert.equal(claude.started[0].access, "accept-edits")
+  assert.deepEqual(claude.runs[0].options, { mode: "plan" })
+  // Full access stays full; without plan mode, approval mode still asks.
+  assert.equal((await route("claude", { approvalPolicy: "full-access", mode: "plan" })).started[0].access, "full")
+  assert.equal((await route("claude", { approvalPolicy: "on-request" })).started[0].access, "ask")
 })

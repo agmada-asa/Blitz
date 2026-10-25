@@ -63,6 +63,10 @@ import {
 import { AnnotatedAssistantMessage } from "@/components/chat/annotated-assistant-message"
 import { InteractiveBlocksProvider } from "@/components/ui/interactive-blocks"
 import { ReadAloudButton } from "@/components/chat/read-aloud-button"
+import {
+  ContinuedWithNote,
+  ProviderHandoffOffer,
+} from "@/components/chat/provider-handoff-offer"
 import { type FloatingAnnotation } from "@/components/chat/floating-annotation-chip"
 import { ReplyModelPicker } from "@/components/chat/reply-model-picker"
 import { Markdown } from "@/components/ui/markdown"
@@ -94,6 +98,7 @@ import {
   type SourceSelection,
 } from "@/components/chat/source-pane"
 import { ThoughtTrace } from "@/components/chat/thought-trace"
+import { TurnNotices } from "@/components/chat/turn-notices"
 import { Textarea } from "@/components/ui/textarea"
 import { Checkbox } from "@/components/ui/checkbox"
 import { CancelIcon, LoadingIcon, SparklesIcon } from "@/components/ui/icon"
@@ -112,6 +117,9 @@ import {
   type AgentRequestSubmission,
 } from "@/lib/agent-request"
 import { cn } from "@/lib/utils"
+import { resolveAiProvider } from "@/lib/ai-model-settings"
+import { providerThreadFeatures } from "@/lib/provider-thread-features"
+import type { TurnNotice } from "@/lib/turn-notices"
 import type { ProviderActivityEvent } from "@/lib/provider-activity"
 import {
   clipboardImageFiles,
@@ -524,6 +532,7 @@ export function ChatWorkspace({
   onOpenSource,
 }: ChatWorkspaceProps) {
   const projects = useQuery(api.projects.listProjects)
+  const modelSettings = useQuery(api.settings.get)
   const chats = useQuery(api.workspaceChats.list, { archived: false }) as
     ChatHistoryItem[] | undefined
   const archivedChats = useQuery(api.workspaceChats.list, {
@@ -642,6 +651,7 @@ export function ChatWorkspace({
     ChatAgentAutonomy | undefined
   >(undefined)
   const [agentInstructions, setAgentInstructions] = useState("")
+  const [agentPlanFirst, setAgentPlanFirst] = useState(false)
   const [workingProjectId, setWorkingProjectId] = useState<
     Id<"projects"> | undefined
   >(initialCard?.projectId ?? initialPassage?.projectId ?? initialProject?._id)
@@ -973,6 +983,7 @@ export function ChatWorkspace({
         agentAutonomy?: ChatAgentAutonomy
         agentInstructions?: string
         workingProjectId?: Id<"projects">
+        agentPlanFirst?: boolean
       })
     | null
     | undefined
@@ -987,6 +998,16 @@ export function ChatWorkspace({
   const effectiveWorkingProjectId = agentSettingsTouched
     ? workingProjectId
     : (persistedAgentSettings?.workingProjectId ?? workingProjectId)
+  const effectivePlanFirst = agentSettingsTouched
+    ? agentPlanFirst
+    : (persistedAgentSettings?.agentPlanFirst ?? agentPlanFirst)
+  // A chat keeps the provider of its first reply (or the one it was handed
+  // to); a new chat uses the reply provider from Settings. Plan first only
+  // shows where that provider has a plan mode.
+  const turnProviderId = activeChat?.messages.length
+    ? activeChat.providerId
+    : resolveAiProvider(modelSettings, "replyProvider")
+  const canPlanFirst = providerThreadFeatures(turnProviderId).planMode
 
   /**
    * Files the chat under a newly chosen working project so history groups it there.
@@ -1138,6 +1159,7 @@ export function ChatWorkspace({
     setStreamAgentRequests({})
     setStreamProviderEvents([])
     setAgentAutonomy(undefined)
+    setAgentPlanFirst(false)
     setAgentSettingsTouched(false)
     setHistoryOpen(false)
     if (!embedded)
@@ -1170,6 +1192,7 @@ export function ChatWorkspace({
     setEditDraft("")
     setAgentAutonomy(readCachedAgentAutonomy())
     setAgentInstructions("")
+    setAgentPlanFirst(false)
     setWorkingProjectId(undefined)
     setNewChatProjectId(undefined)
     draftProjectFromWorkingRef.current = false
@@ -1204,6 +1227,7 @@ export function ChatWorkspace({
     setEditDraft("")
     setAgentAutonomy(readCachedAgentAutonomy())
     setAgentInstructions("")
+    setAgentPlanFirst(false)
     setWorkingProjectId(project._id)
     setNewChatProjectId(project._id)
     draftProjectFromWorkingRef.current = false
@@ -1659,7 +1683,10 @@ export function ChatWorkspace({
             autonomy: effectiveAgentAutonomy,
             additionalInstructions: effectiveAgentInstructions,
             ...(effectiveWorkingProjectId
-              ? { workingProjectId: effectiveWorkingProjectId }
+              ? {
+                  workingProjectId: effectiveWorkingProjectId,
+                  planFirst: effectivePlanFirst,
+                }
               : {}),
           }),
         })
@@ -2405,6 +2432,11 @@ export function ChatWorkspace({
                     >
                       {message.role === "assistant" ? (
                         <>
+                          {message.continuedWith ? (
+                            <ContinuedWithNote
+                              providerId={message.continuedWith.providerId}
+                            />
+                          ) : null}
                           <ThoughtTrace
                             thought={message.thought}
                             durationMs={message.durationMs}
@@ -2412,6 +2444,14 @@ export function ChatWorkspace({
                             startedAt={message.createdAt}
                             events={messageEvents}
                             requests={messageRequests}
+                          />
+                          <TurnNotices
+                            notices={
+                              "notices" in message && Array.isArray(message.notices)
+                                ? (message.notices as TurnNotice[])
+                                : []
+                            }
+                            context="chat"
                           />
                           {message.content ? (
                             <InteractiveBlocksProvider
@@ -2461,6 +2501,18 @@ export function ChatWorkspace({
                               {activeChat?.lastError ||
                                 "Blitz could not finish this reply."}
                             </p>
+                          ) : null}
+                          {latest &&
+                          message.status === "failed" &&
+                          activeChat?.lastErrorReason === "usage-limit" &&
+                          activeChatId ? (
+                            <ProviderHandoffOffer
+                              chatId={activeChatId}
+                              messageId={message.id}
+                              providerId={activeChat.providerId}
+                              disabled={isRunning || Boolean(messageActionId)}
+                              onContinue={() => continueResponse(message.id)}
+                            />
                           ) : null}
                         </>
                       ) : editing ? (
@@ -2936,6 +2988,22 @@ export function ChatWorkspace({
                           autonomy={effectiveAgentAutonomy}
                           additionalInstructions={effectiveAgentInstructions}
                           workingProjectId={effectiveWorkingProjectId}
+                          planFirst={effectivePlanFirst}
+                          onPlanFirstChange={
+                            canPlanFirst
+                              ? (value) => {
+                                  // The first change keeps the chat's saved
+                                  // settings rather than this draft's defaults.
+                                  if (!agentSettingsTouched) {
+                                    setAgentAutonomy(effectiveAgentAutonomy)
+                                    setAgentInstructions(effectiveAgentInstructions)
+                                    setWorkingProjectId(effectiveWorkingProjectId)
+                                  }
+                                  setAgentSettingsTouched(true)
+                                  setAgentPlanFirst(value)
+                                }
+                              : undefined
+                          }
                           projects={projects}
                           disabled={Boolean(continuableMessage)}
                           onAutonomyChange={(value) => {

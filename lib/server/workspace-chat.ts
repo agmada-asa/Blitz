@@ -5,6 +5,7 @@ import {
   CHAT_INTERACTIVE_BLOCKS_GUIDANCE,
   INTERACTIVE_BLOCKS_PROMPT,
 } from "../interactive-blocks.ts"
+import { isTeachRedoStyle, type TeachRedoStyle } from "../teach.ts"
 import { TUTOR_REPLY_GUIDANCE } from "../teaching-voice.ts"
 
 /** Maximum user message size accepted by workspace chat. */
@@ -74,9 +75,13 @@ export interface WorkspaceChatRequest {
   additionalInstructions?: string
   /** Single writable project, independent of projects attached for reference. */
   workingProjectId?: Id<"projects">
+  /** Whether a project agent proposes a plan for approval before editing. */
+  planFirst?: boolean
   chatId?: Id<"workspaceChats">
   /** Failed assistant message whose output should continue in place. */
   continuationOf?: Id<"workspaceChatMessages">
+  /** Latest Teach reply to redo in place, and how to explain it this time. */
+  redo?: { messageId: Id<"workspaceChatMessages">; style: TeachRedoStyle }
   /** A card reference always starts a new workspace chat. */
   card?: WorkspaceChatCardReference
   clientMessageId: string
@@ -195,6 +200,9 @@ export function parseWorkspaceChatRequest(
     autonomy !== "full"
   )
     throw new Error("Choose a valid access level")
+  const planFirst = input.planFirst
+  if (planFirst !== undefined && typeof planFirst !== "boolean")
+    throw new Error("Plan first must be on or off")
   const additionalInstructions = input.additionalInstructions
   if (
     additionalInstructions !== undefined &&
@@ -253,9 +261,30 @@ export function parseWorkspaceChatRequest(
     }
   }
 
+  let redo: WorkspaceChatRequest["redo"]
+  if (input.redo !== undefined) {
+    const value = input.redo
+    if (!value || typeof value !== "object" || Array.isArray(value))
+      throw new Error("Redo request is invalid")
+    const { messageId, style } = value as Record<string, unknown>
+    if (!isTeachRedoStyle(style)) throw new Error("Choose how to explain it again")
+    redo = {
+      messageId: requiredString(
+        messageId,
+        "Redone message ID",
+        200
+      ) as Id<"workspaceChatMessages">,
+      style,
+    }
+    if (continuationOf) throw new Error("A redone reply cannot continue another")
+  }
+
   let message = ""
   if (continuationOf) {
     message = workspaceChatContinuationPrompt(steeringPrompt)
+  } else if (redo) {
+    // The server resends the replaced request; any message text is ignored.
+    message = ""
   } else if (typeof input.message === "string") {
     message = input.message.trim()
     if (message.length > MAX_WORKSPACE_CHAT_MESSAGE_LENGTH) {
@@ -276,6 +305,7 @@ export function parseWorkspaceChatRequest(
     throw new Error("The card does not belong to the chat project")
   if (continuationOf && !chatId)
     throw new Error("Continuing a response requires a chat")
+  if (redo && !chatId) throw new Error("Redoing a reply requires a chat")
   const clientMessageId = requiredString(
     input.clientMessageId,
     "Client message ID",
@@ -409,6 +439,7 @@ export function parseWorkspaceChatRequest(
     ...(autonomy === undefined ? {} : { autonomy }),
     ...(additionalInstructions === undefined ? {} : { additionalInstructions }),
     ...(workingProjectId === undefined ? {} : { workingProjectId }),
+    ...(planFirst === undefined ? {} : { planFirst }),
     message,
     ...(projectId ? { projectId } : {}),
     clientMessageId,
@@ -419,6 +450,7 @@ export function parseWorkspaceChatRequest(
     ...(chatId ? { chatId } : {}),
     ...(continuationOf ? { continuationOf } : {}),
     ...(steeringPrompt ? { steeringPrompt } : {}),
+    ...(redo ? { redo } : {}),
   }
 }
 
@@ -427,6 +459,26 @@ function boundedText(value: string, maximum: number): string {
   if (value.length <= maximum) return value
   const marker = "\n[remaining context omitted by Blitz]"
   return `${value.slice(0, maximum - marker.length)}${marker}`
+}
+
+/** Characters of a cut-off reply quoted back so the model can carry on from it. */
+const OVERFLOW_TAIL_CHARACTERS = 1_500
+
+/**
+ * Builds the message that finishes a reply cut off because the conversation
+ * ran out of room. After compaction the model no longer holds what it wrote,
+ * so the end of the partial reply is quoted back.
+ *
+ * @param message - The learner message the reply answers.
+ * @param partial - What the reply had streamed before it stopped.
+ */
+export function overflowContinuationMessage(
+  message: string,
+  partial: string
+): string {
+  const tail = partial.slice(-OVERFLOW_TAIL_CHARACTERS).trim()
+  if (!tail) return message
+  return `${message}\n\nYour reply to this was cut off because the conversation ran out of room, and it was compacted to free space. The reply so far ended with:\nPARTIAL REPLY END BEGIN\n${tail}\nPARTIAL REPLY END END\nContinue from exactly where it stopped. Do not repeat anything already written and do not restart the reply.`
 }
 
 /** Appends a continued turn to its saved partial response under the reply bound. */

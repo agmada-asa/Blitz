@@ -22,6 +22,23 @@ type PlaybackState = "idle" | "loading" | "playing" | "error"
 /** Keeps read aloud to one active reply or learning item across controls. */
 let activeReadAloudStop: { id: symbol; stop: () => void } | undefined
 
+/**
+ * Stops whatever is being read aloud and makes `stop` the playback the next
+ * read aloud control stops, for readers outside this button, such as Teach
+ * reading each new reply.
+ *
+ * @param stop - Stops the caller's playback.
+ * @returns Releases the claim once that playback ends by itself.
+ */
+export function claimReadAloud(stop: () => void): () => void {
+  activeReadAloudStop?.stop()
+  const id = Symbol()
+  activeReadAloudStop = { id, stop }
+  return () => {
+    if (activeReadAloudStop?.id === id) activeReadAloudStop = undefined
+  }
+}
+
 /** Reads one item; prepare opts only active content into quiet preparation while visible. */
 export function ReadAloudButton({
   text,

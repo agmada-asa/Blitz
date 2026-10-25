@@ -14,12 +14,15 @@ import { ChevronRightIcon } from "@/components/ai/provider-icons"
 import {
   extractApprovalCommand,
   parseAgentRequestInput,
+  PLAN_REQUEST_METHOD,
   type AgentRequest,
   type AgentRequestField,
   type AgentRequestQuestion,
   type AgentRequestSubmission,
 } from "@/lib/agent-request"
 import { cn } from "@/lib/utils"
+
+import { PlanRequestCard } from "./plan-request-card"
 
 /** Props needed to resolve one provider request from the composer. */
 type AgentRequestPanelProps = {
@@ -396,6 +399,17 @@ export function AgentRequestPanel({
   const formReady = fields.every(
     (field) => !field.required || hasValue(formValues[field.id])
   )
+  // A plan from Plan first has its own card, live and in the transcript.
+  if (request.method === PLAN_REQUEST_METHOD)
+    return (
+      <PlanRequestCard
+        request={request}
+        busy={busy}
+        readOnly={readOnly}
+        {...(className ? { className } : {})}
+        onSubmit={onSubmit}
+      />
+    )
   if (readOnly) {
     const stateLabel =
       request.status === "approved"

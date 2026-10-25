@@ -23,7 +23,7 @@ import type { AiReasoningEffort } from "../../ai-model-settings.ts"
 import { providerCommand } from "./registry.ts"
 import type { ProviderAvailability, ProviderModelOption } from "./types.ts"
 
-/** Providers Blitz runs through agent-engines. OpenCode stays on Blitz's ACP adapter. */
+/** Providers with their own agent-engines engine. OpenCode's ACP engine is in `opencode.ts`. */
 export type EngineProviderId = "codex" | "claude-code"
 
 /** Reasoning tokens a provider may report; unknown future values are kept when well formed. */
@@ -154,7 +154,8 @@ export function providerModelOptions(
  * Maps an engine's availability into the setup state the settings page shows.
  *
  * A signed-out runtime is installed but not connected, so the sign-in action
- * stays available. Blitz allows API keys, so `api-key` never blocks.
+ * stays available. API keys are allowed, so `api-key` never blocks, but it
+ * is reported as `billing` so Settings can offer spending limits.
  *
  * @param providerId - Blitz provider being checked.
  * @param instanceId - Local profile key reported back to the settings page.
@@ -168,15 +169,25 @@ export function providerAvailabilityFromEngine(
   const base = { providerId, providerInstanceId: instanceId }
   switch (state.reason) {
     case "ready":
-    case "api-key":
+    case "api-key": {
+      const apiKey =
+        state.reason === "api-key" || state.account?.kind === "api-key"
       return {
         ...base,
         available: true,
         authenticated: true,
         canDisconnect: true,
         reason: "ready",
-        message: "Connected and ready.",
+        message: apiKey
+          ? "Connected with an API key, billed per token."
+          : "Connected and ready.",
+        ...(apiKey
+          ? { billing: "api-key" as const }
+          : state.account?.kind === "subscription"
+            ? { billing: "subscription" as const }
+            : {}),
       }
+    }
     case "signed-out":
       return {
         ...base,

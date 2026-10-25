@@ -14,8 +14,14 @@ import { api } from "../../convex/_generated/api.js"
 import type { Id } from "../../convex/_generated/dataModel.js"
 import { resolveAiTaskSelection } from "../ai-model-settings.ts"
 import { quizPayload } from "../interactive-blocks.ts"
-import { buildQuestionBankPrompt, DEFAULT_BANK_BATCH, parseQuestionBank } from "../practice.ts"
+import {
+  buildQuestionBankPrompt,
+  DEFAULT_BANK_BATCH,
+  parseQuestionBank,
+  QUESTION_BANK_SCHEMA,
+} from "../practice.ts"
 import { loadSavedAiModelSettings } from "./ai-model-settings.ts"
+import { CardChatError } from "./card-chat.ts"
 import { serverConvexClient } from "./convex.ts"
 import { runProviderTextTurn } from "./providers/run-text-turn.ts"
 
@@ -24,6 +30,7 @@ const GENERATION_TIMEOUT_MS = 540_000
 
 /** Returns a short learner-facing reason for a failed run. */
 function failureMessage(error: unknown): string {
+  if (error instanceof CardChatError && error.reason === "spend-limit") return error.message
   const message = error instanceof Error ? error.message : ""
   if (/usage limit|rate limit|quota/i.test(message))
     return "Your AI subscription's usage limit was reached. Try again later."
@@ -69,8 +76,9 @@ export async function runQuestionBank(
       sandbox: "read-only",
       approvalPolicy: "never",
       timeoutMs: GENERATION_TIMEOUT_MS,
+      outputSchema: QUESTION_BANK_SCHEMA,
     })
-    const { questions, recaps, rejected } = parseQuestionBank(result.text)
+    const { questions, recaps, rejected } = parseQuestionBank(result)
     if (!questions.length) throw new Error("No valid questions in JSON")
     await client.mutation(api.practice.saveGeneratedQuestions, {
       generationId,

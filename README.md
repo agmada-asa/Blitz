@@ -113,7 +113,7 @@ npm run check:runtimes
 
 `npm run check:runtimes` reports when OpenCode or the Codex model catalogue no longer matches what Blitz relies on; Codex and Claude Code compatibility is checked by [agent-engines](docs/agent-engines.md). See [AI model settings](docs/ai-model-settings.md).
 
-The [overhaul plan](docs/overhaul-plan.md) records the current direction. Implementation details are in [Teach](docs/teach.md), [source ingestion](docs/source-ingestion.md), [learning API](docs/learning-api.md), [provider text turns and legacy card chat](docs/card-chat.md), and [Codex and Claude Code through agent-engines](docs/agent-engines.md).
+The [overhaul plan](docs/overhaul-plan.md) records the current direction. Implementation details are in [Teach](docs/teach.md), [source ingestion](docs/source-ingestion.md), [learning API](docs/learning-api.md), [provider text turns and legacy card chat](docs/card-chat.md), and [providers through agent-engines](docs/agent-engines.md).
 
 ## Known limits
 
@@ -125,7 +125,7 @@ This version is a personal local app without account authentication. It is not c
 
 ## Credits
 
-Read aloud and podcasts use [Kokoro](https://huggingface.co/hexgrad/Kokoro-82M) (Apache 2.0), downloaded on first use. The voice previews in `public/audio/voices/` were generated with it.
+Read aloud and podcasts use [Kokoro](https://huggingface.co/hexgrad/Kokoro-82M) (Apache 2.0), downloaded on first use. Spoken Teach questions are transcribed on the Mac with [Parakeet TDT 0.6B v2](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v2) (CC-BY-4.0), also downloaded on first use; see [local Kokoro speech](docs/local-kokoro.md). The voice previews in `public/audio/voices/` were generated with it.
 
 ## License
 

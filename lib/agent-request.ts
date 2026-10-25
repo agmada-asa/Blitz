@@ -1,5 +1,11 @@
 /** Defines the bounded request shapes shared by the chat UI and agent bridge. */
 
+/**
+ * Method of a plan review: a project agent's plan, shown for approval before
+ * it changes files when Plan first is on.
+ */
+export const PLAN_REQUEST_METHOD = "approval/plan"
+
 /** Interaction modes that a provider can ask Blitz to present to a learner. */
 export type AgentRequestKind = "approval" | "question" | "form" | "url"
 

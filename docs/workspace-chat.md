@@ -24,9 +24,24 @@ Opening the Chat tab itself presents a fresh conversation ready for any question
 Each saved message has a copy action. Editing a user message creates a branch
 immediately before that message, sends the revision there, and leaves the
 original transcript unchanged. Branching an assistant response copies the
-transcript and attachments through that response into a new chat. The next
-message rebuilds a fresh Codex session from that branch so it keeps the selected
-history without reusing later turns from the original conversation.
+transcript and attachments through that response into a new chat. On Codex and
+Claude Code the branch's first message forks the original runtime thread
+through the last kept reply (`forkSource` on the chat), so it keeps everything
+the original had read, tool results included, without later turns. A branch
+shares its source's working folder, because Claude Code keeps sessions per
+folder; a Claude Code chat with a working project, and every OpenCode chat,
+replays the bounded transcript into a fresh session instead, as does a fork that
+fails (for example at a turn ID saved by an older runtime).
+
+A chat stopped at a provider's usage limit can move to another signed-in
+provider. Before starting a turn, the route reads the chat's saved selection
+through `workspaceChats.replySelection`; global settings supply defaults only
+for the same provider. This keeps continuations and later messages on the
+chosen provider without carrying over an incompatible model or reasoning level.
+
+When a reply stops short because a tool was blocked, the model refused, or a
+safety check held part of it back, the reply carries a short notice saying so
+(`lib/turn-notices.ts`). Other runtime notices go to the server log only.
 
 While a reply is streaming, the send control and the latest assistant message
 offer `Pause`. Typing notes into the composer while streaming allows in-flight

@@ -3,14 +3,19 @@
 /**
  * Renders a Teach session as a lesson: tutor replies become section pages with
  * citations and interactive blocks, quick replies become quiet dividers, and
- * the learner's own questions stay visible as chat bubbles.
+ * the learner's own questions stay visible as chat bubbles. Compactions show
+ * as dividers where they happened, a redone reply says how it was redone, and
+ * a reply that stopped short because of a refusal or a blocked tool says so.
  */
 
 import type { FunctionReturnType } from "convex/server"
 import { memo, useMemo } from "react"
 
 import { ReadAloudButton } from "@/components/chat/read-aloud-button"
+import { ContinuedWithNote } from "@/components/chat/provider-handoff-offer"
+import { TurnNotices } from "@/components/chat/turn-notices"
 import { ElapsedTime } from "@/components/ui/elapsed-time"
+import { LoadingIcon, SparklesIcon } from "@/components/ui/icon"
 import { InteractiveBlocksProvider } from "@/components/ui/interactive-blocks"
 import { Markdown } from "@/components/ui/markdown"
 import type { api } from "@/convex/_generated/api"
@@ -22,8 +27,16 @@ import {
   parseTeachSectionMarker,
   stripTeachMarkers,
   TEACH_QUICK_REPLIES,
+  TEACH_REDO_STYLES,
   type TeachOutline,
 } from "@/lib/teach"
+import {
+  AFTER_LAST_MESSAGE,
+  placeTeachCompactions,
+  teachCompactionText,
+  type PlacedTeachCompaction,
+  type TeachCompactionRecord,
+} from "@/lib/teach-compactions"
 import { cn } from "@/lib/utils"
 
 /** One saved message from the Teach session. */
@@ -60,6 +73,22 @@ type TeachLessonProps = {
   busy: boolean
   /** True while a source is open; the outline rail then appears only on the widest screens. */
   sourceOpen: boolean
+  /** The session's compactions, shown as dividers where they happened. */
+  compactions: readonly TeachCompactionRecord[]
+}
+
+/** A quiet divider marking where the session's context was compacted. */
+function CompactionDivider({ compaction }: { compaction: PlacedTeachCompaction }) {
+  return (
+    <div className="flex items-center gap-3" role="note">
+      <span aria-hidden="true" className="h-px flex-1 bg-border" />
+      <span className="flex max-w-[85%] items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1 text-xs text-muted-foreground">
+        <SparklesIcon aria-hidden="true" className="size-3.5 shrink-0" />
+        {teachCompactionText(compaction)}
+      </span>
+      <span aria-hidden="true" className="h-px flex-1 bg-border" />
+    </div>
+  )
 }
 
 /**
@@ -76,10 +105,31 @@ export function TeachLesson({
   onFollowUp,
   busy,
   sourceOpen,
+  compactions,
 }: TeachLessonProps) {
+  // A reply still being finished after it ran out of room says so in place;
+  // its divider appears once it is done.
+  const finishing = new Set(
+    compactions
+      .filter((compaction) => compaction.origin === "overflow" && compaction.messageId)
+      .map((compaction) => compaction.messageId!)
+      .filter((id) => messages.some((message) => message.id === id && message.status === "running"))
+  )
+  const placed = placeTeachCompactions(
+    messages,
+    compactions.filter(
+      (compaction) => !(compaction.messageId && finishing.has(compaction.messageId))
+    ),
+    outline
+  )
+  const dividers = (key: string) =>
+    (placed.get(key) ?? []).map((compaction) => (
+      <CompactionDivider key={`compaction-${compaction.at}`} compaction={compaction} />
+    ))
   return (
     <div className="space-y-10">
-      {messages.map((message, index) =>
+      {messages.flatMap((message, index) => [
+        ...dividers(message.id),
         message.role === "user" ? (
           // The opening request is implied by the screen itself.
           index === 0 && message.content.trim() === TEACH_QUICK_REPLIES.start ? null : (
@@ -96,9 +146,11 @@ export function TeachLesson({
             onQuizAnswer={onQuizAnswer}
             onFollowUp={busy ? undefined : onFollowUp}
             sourceOpen={sourceOpen}
+            finishingAfterOverflow={finishing.has(message.id)}
           />
-        )
-      )}
+        ),
+      ])}
+      {dividers(AFTER_LAST_MESSAGE)}
     </div>
   )
 }
@@ -133,6 +185,8 @@ type TutorReplyProps = {
   onQuizAnswer: TeachLessonProps["onQuizAnswer"]
   onFollowUp: ((text: string) => void) | undefined
   sourceOpen: boolean
+  /** The reply ran out of room and is being finished after a compaction. */
+  finishingAfterOverflow: boolean
 }
 
 /**
@@ -149,6 +203,7 @@ const TutorReply = memo(function TutorReply({
   onQuizAnswer,
   onFollowUp,
   sourceOpen,
+  finishingAfterOverflow,
 }: TutorReplyProps) {
   const streaming = message.status === "running"
   const marker = useMemo(() => parseTeachSectionMarker(message.content), [message.content])
@@ -206,11 +261,18 @@ const TutorReply = memo(function TutorReply({
             <h2 className="mt-0.5 font-heading text-2xl font-semibold tracking-tight text-balance">
               {outline!.sections[sectionNumber].title}
             </h2>
-            {!streaming && body.trim() ? (
-              <div className="mt-2 -ml-2.5 sm:-ml-2">
-                <ReadAloudButton
-                  text={`${outline!.sections[sectionNumber].title}\n\n${body}`}
-                />
+            {(!streaming && body.trim()) || message.redoStyle ? (
+              <div className="mt-2 -ml-2.5 flex flex-wrap items-center gap-2 sm:-ml-2">
+                {!streaming && body.trim() ? (
+                  <ReadAloudButton
+                    text={`${outline!.sections[sectionNumber].title}\n\n${body}`}
+                  />
+                ) : null}
+                {message.redoStyle ? (
+                  <span className="rounded-full bg-brand/10 px-2.5 py-0.5 text-xs font-medium text-brand">
+                    {TEACH_REDO_STYLES[message.redoStyle].eyebrow}
+                  </span>
+                ) : null}
               </div>
             ) : null}
           </div>
@@ -235,6 +297,10 @@ const TutorReply = memo(function TutorReply({
           ) : null}
         </header>
       ) : null}
+      {message.continuedWith ? (
+        <ContinuedWithNote providerId={message.continuedWith.providerId} />
+      ) : null}
+      <TurnNotices notices={message.notices} context="teach" />
       {body.trim() ? (
         <InteractiveBlocksProvider value={interactive}>
           <Markdown
@@ -249,6 +315,12 @@ const TutorReply = memo(function TutorReply({
           <span aria-hidden="true" className="size-2 rounded-full bg-brand motion-safe:animate-pulse" />
           Reading your material…
           <ElapsedTime since={message.createdAt} />
+        </p>
+      ) : null}
+      {finishingAfterOverflow ? (
+        <p role="status" className="mt-4 flex items-center gap-2 text-sm text-muted-foreground">
+          <LoadingIcon aria-hidden="true" className="size-4 shrink-0 motion-safe:animate-spin" />
+          The session ran out of room. Blitz compacted it and is finishing this reply.
         </p>
       ) : null}
       {message.status === "failed" && !streaming ? (
