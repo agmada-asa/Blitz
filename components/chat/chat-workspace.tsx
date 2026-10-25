@@ -94,6 +94,7 @@ import {
   type SourceSelection,
 } from "@/components/chat/source-pane"
 import { ThoughtTrace } from "@/components/chat/thought-trace"
+import { TurnNotices } from "@/components/chat/turn-notices"
 import { Textarea } from "@/components/ui/textarea"
 import { Checkbox } from "@/components/ui/checkbox"
 import { CancelIcon, LoadingIcon, SparklesIcon } from "@/components/ui/icon"
@@ -112,6 +113,7 @@ import {
   type AgentRequestSubmission,
 } from "@/lib/agent-request"
 import { cn } from "@/lib/utils"
+import type { TurnNotice } from "@/lib/turn-notices"
 import type { ProviderActivityEvent } from "@/lib/provider-activity"
 import {
   clipboardImageFiles,
@@ -2412,6 +2414,14 @@ export function ChatWorkspace({
                             startedAt={message.createdAt}
                             events={messageEvents}
                             requests={messageRequests}
+                          />
+                          <TurnNotices
+                            notices={
+                              "notices" in message && Array.isArray(message.notices)
+                                ? (message.notices as TurnNotice[])
+                                : []
+                            }
+                            context="chat"
                           />
                           {message.content ? (
                             <InteractiveBlocksProvider
