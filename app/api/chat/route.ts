@@ -1039,7 +1039,11 @@ export async function POST(request: Request): Promise<Response> {
                     ),
                     approvalPolicy,
                   }),
-              ...(planFirst ? { mode: "plan" as const } : {}),
+              // The chat keeps its Plan first choice when it moves to a
+              // provider without plan mode, so it applies again on return.
+              ...(planFirst && features.planMode
+                ? { mode: "plan" as const }
+                : {}),
               signal: turnSignal,
               timeoutMs: WORKSPACE_CHAT_TIMEOUT_MS,
               ...(around.fork

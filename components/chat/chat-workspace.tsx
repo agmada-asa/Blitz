@@ -117,6 +117,8 @@ import {
   type AgentRequestSubmission,
 } from "@/lib/agent-request"
 import { cn } from "@/lib/utils"
+import { resolveAiProvider } from "@/lib/ai-model-settings"
+import { providerThreadFeatures } from "@/lib/provider-thread-features"
 import type { TurnNotice } from "@/lib/turn-notices"
 import type { ProviderActivityEvent } from "@/lib/provider-activity"
 import {
@@ -530,6 +532,7 @@ export function ChatWorkspace({
   onOpenSource,
 }: ChatWorkspaceProps) {
   const projects = useQuery(api.projects.listProjects)
+  const modelSettings = useQuery(api.settings.get)
   const chats = useQuery(api.workspaceChats.list, { archived: false }) as
     ChatHistoryItem[] | undefined
   const archivedChats = useQuery(api.workspaceChats.list, {
@@ -998,6 +1001,13 @@ export function ChatWorkspace({
   const effectivePlanFirst = agentSettingsTouched
     ? agentPlanFirst
     : (persistedAgentSettings?.agentPlanFirst ?? agentPlanFirst)
+  // A chat keeps the provider of its first reply (or the one it was handed
+  // to); a new chat uses the reply provider from Settings. Plan first only
+  // shows where that provider has a plan mode.
+  const turnProviderId = activeChat?.messages.length
+    ? activeChat.providerId
+    : resolveAiProvider(modelSettings, "replyProvider")
+  const canPlanFirst = providerThreadFeatures(turnProviderId).planMode
 
   /**
    * Files the chat under a newly chosen working project so history groups it there.
@@ -2979,17 +2989,21 @@ export function ChatWorkspace({
                           additionalInstructions={effectiveAgentInstructions}
                           workingProjectId={effectiveWorkingProjectId}
                           planFirst={effectivePlanFirst}
-                          onPlanFirstChange={(value) => {
-                            // The first change keeps the chat's saved
-                            // settings rather than this draft's defaults.
-                            if (!agentSettingsTouched) {
-                              setAgentAutonomy(effectiveAgentAutonomy)
-                              setAgentInstructions(effectiveAgentInstructions)
-                              setWorkingProjectId(effectiveWorkingProjectId)
-                            }
-                            setAgentSettingsTouched(true)
-                            setAgentPlanFirst(value)
-                          }}
+                          onPlanFirstChange={
+                            canPlanFirst
+                              ? (value) => {
+                                  // The first change keeps the chat's saved
+                                  // settings rather than this draft's defaults.
+                                  if (!agentSettingsTouched) {
+                                    setAgentAutonomy(effectiveAgentAutonomy)
+                                    setAgentInstructions(effectiveAgentInstructions)
+                                    setWorkingProjectId(effectiveWorkingProjectId)
+                                  }
+                                  setAgentSettingsTouched(true)
+                                  setAgentPlanFirst(value)
+                                }
+                              : undefined
+                          }
                           projects={projects}
                           disabled={Boolean(continuableMessage)}
                           onAutonomyChange={(value) => {
