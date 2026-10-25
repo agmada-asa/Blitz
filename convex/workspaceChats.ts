@@ -1827,9 +1827,10 @@ export const endCompaction = mutation({
  * Moves a chat whose provider hit its usage limit onto another provider, so
  * the learner can continue the stopped reply on the same chat.
  *
- * The chat forgets its old session and model settings and keeps the old
- * session in `providerHandoff`, which the next turn exports and seeds into
- * the new provider's session. The stopped reply records the provider that
+ * The chat forgets its old session, model settings and any pending fork, and
+ * keeps the old session in `providerHandoff`, which the next turn exports and
+ * seeds into the new provider's session. Its agent settings (access, working
+ * project, Plan first) stay, and apply wherever the new provider supports them. The stopped reply records the provider that
  * takes it over, so the chat can say so.
  *
  * @throws When the chat is not stopped at a usage limit on its latest reply,
@@ -1873,6 +1874,9 @@ export const handOff = mutation({
       providerEffort: undefined,
       codexThreadId: undefined,
       codexContextReady: false,
+      // A branch that never ran would copy the old provider's session, which
+      // the new one cannot open, so it replays its transcript instead.
+      forkSource: undefined,
       // A second move keeps the session that still holds the conversation.
       providerHandoff: chat.providerHandoff ?? {
         fromProviderId,

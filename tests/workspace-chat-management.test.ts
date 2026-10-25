@@ -468,6 +468,10 @@ test("handOff moves a chat stopped at a usage limit to another provider", async 
     codexThreadId: "codex-thread",
     providerModel: "gpt-6",
     providerEffort: "xhigh",
+    agentAutonomy: "project",
+    workingProjectId: "project-1",
+    agentPlanFirst: true,
+    forkSource: { sessionId: "codex-source", throughTurnId: "codex-turn" },
   })
   const move = { ...turn, providerId: "claude-code" }
 
@@ -492,8 +496,14 @@ test("handOff moves a chat stopped at a usage limit to another provider", async 
     "codexThreadId",
     "providerModel",
     "providerEffort",
+    // A pending fork names a Codex thread the new provider cannot copy.
+    "forkSource",
   ])
     assert.equal(chat[field], undefined, field)
+  // Agent settings stay with the chat, for whichever provider supports them.
+  assert.equal(chat.agentAutonomy, "project")
+  assert.equal(chat.workingProjectId, "project-1")
+  assert.equal(chat.agentPlanFirst, true)
   assert.deepEqual(chat.providerHandoff, {
     fromProviderId: "codex",
     fromSessionId: "codex-thread",
