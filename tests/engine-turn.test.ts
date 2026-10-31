@@ -445,6 +445,8 @@ test("forwards Codex sandbox, instructions, search, and images through the route
     assert.equal(options.model, "gpt-6-luna")
     assert.equal(options.effort, "low")
     assert.equal(options.codex?.sandbox, sandbox)
+    // Codex threads list the MCP tools the user's config adds, so the model needn't search for them.
+    assert.equal(options.codex?.listMcpTools, true)
     assert.equal(options.codex?.config?.web_search, "live")
     assert.equal(
       options.codex?.config?.["sandbox_workspace_write.exclude_slash_tmp"],

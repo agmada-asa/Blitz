@@ -237,8 +237,10 @@ function withTimeout<T>(operation: Promise<T>, ms: number): Promise<T> {
 
 /**
  * Codex thread settings for a turn: Blitz's approval policy and sandbox,
- * hosted search, and the workspace-only write rules, then the caller's
- * overrides on top.
+ * hosted search, the workspace-only write rules, and MCP tool names listed for
+ * the model, then the caller's overrides on top. Blitz sets no MCP servers of
+ * its own, so the names come from the user's Codex config, which the app-server
+ * loads for every thread; with none configured the listing is skipped.
  */
 export function codexThreadOptions(
   request: RunProviderTextTurnRequest,
@@ -253,6 +255,7 @@ export function codexThreadOptions(
   return {
     approvalPolicy,
     sandbox,
+    listMcpTools: true,
     ...(request.ephemeral === undefined
       ? {}
       : { ephemeral: request.ephemeral }),
