@@ -45,7 +45,9 @@ citations, interactive blocks, and quizzes that count as study evidence.
 
 The header carries the unit title, the current section, a segmented progress
 bar (one segment per section: taught, current, or ahead), the XP earned this
-sitting, and **Finish for now**. On narrow screens the progress bar opens the
+sitting, and a three-dot **Unit options** menu. The menu holds **Session context**,
+**Read replies aloud**, **Stop reading** during playback, **Finish for now**, and
+**Start this unit over**. On narrow screens the progress bar opens the
 outline; on wide ones the outline is a rail drawn as a path, with the unit's
 sources beneath it. Each section in the lesson opens with a numbered heading.
 
@@ -124,8 +126,9 @@ new reply is added after the old one instead.
 ## Long sessions
 
 After each turn the route saves the runtime's context usage on the chat
-(`contextUsage`). The header shows it as a meter; its sheet breaks it down
-where the runtime does (Claude Code; Codex reports only the total) and offers
+(`contextUsage`). **Session context** in Unit options shows the usage and opens
+a details dialog that breaks it down where the runtime does (Claude Code;
+Codex reports only the total) and offers
 **Compact now** (`POST /api/teach/compact`).
 
 Once the context passes 80% (`AUTO_COMPACT_PERCENT` in `lib/context-usage.ts`),

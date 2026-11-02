@@ -9,8 +9,8 @@
  * stream through `/api/chat` and render from Convex as they are saved.
  *
  * Opening a new session prewarms the reply provider. Where the provider
- * supports it, the header shows how full the session's context is (with
- * Compact now in its sheet), and the latest section can be redone in place.
+ * supports it, Unit options shows how full the session's context is (with
+ * Compact now in its dialog), and the latest section can be redone in place.
  */
 
 import Link from "next/link"
@@ -31,7 +31,10 @@ import {
   type LearningSourceSelection,
   type SourceSelection,
 } from "@/components/chat/source-pane"
-import { TeachContextMeter } from "@/components/learn/teach-context-meter"
+import {
+  TeachContextDetails,
+  TeachContextMeter,
+} from "@/components/learn/teach-context-meter"
 import { TeachDock, type TeachDockState } from "@/components/learn/teach-dock"
 import { TeachLesson } from "@/components/learn/teach-lesson"
 import {
@@ -52,6 +55,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { ArrowDownIcon, ArrowLeftIcon, FileIcon } from "@/components/ui/icon"
@@ -155,6 +159,13 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
   const [confirmRestart, setConfirmRestart] = useState(false)
   const [outlineOpen, setOutlineOpen] = useState(false)
   const [summaryOpen, setSummaryOpen] = useState(false)
+  const [contextOpen, setContextOpen] = useState(false)
+  const unitOptionsRef = useRef<HTMLButtonElement>(null)
+  /** Returns keyboard focus to the menu after one of its dialogs closes. */
+  const focusUnitOptions = useCallback((event: Event) => {
+    event.preventDefault()
+    requestAnimationFrame(() => unitOptionsRef.current?.focus())
+  }, [])
   // When this sitting began; "Finish for now" summarises from here.
   const [sittingStartedAt] = useState(() =>
     typeof window === "undefined" ? 0 : sittingStart(String(unit.id), Date.now())
@@ -652,52 +663,54 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
                 </p>
               ) : null}
             </div>
-            {features.contextUsage && chat?.contextUsage ? (
-              <TeachContextMeter
-                usage={chat.contextUsage}
-                compacting={compacting}
-                canCompact={features.compact && !running}
-                onCompact={() => void compactNow()}
-                error={compactError}
-              />
-            ) : null}
             {sitting?.xp ? (
               <p
-                className="hidden shrink-0 rounded-full bg-brand/10 px-3 py-1 text-xs font-medium text-brand tabular-nums sm:block"
+                className="shrink-0 rounded-full bg-brand/10 px-3 py-1 text-xs font-medium text-brand tabular-nums"
                 aria-label={`${sitting.xp} XP earned this session`}
               >
                 +{sitting.xp} XP
               </p>
             ) : null}
-            {chat ? (
-              <ReadRepliesToggle
-                enabled={readReplies}
-                onChange={setReadReplies}
-                reader={replyReader}
-              />
-            ) : null}
-            {chat && messages.length ? (
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => setSummaryOpen(true)}
-                className="min-h-10 shrink-0 rounded-full px-3 sm:px-4"
-              >
-                Finish<span className="hidden sm:inline">&nbsp;for now</span>
-              </Button>
-            ) : null}
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button
+                  ref={unitOptionsRef}
                   variant="ghost"
-                  className="min-h-10 shrink-0 rounded-full px-2 sm:px-3"
+                  size="icon"
+                  className="size-10 shrink-0 rounded-full"
                   aria-label="Unit options"
                 >
                   ⋯
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
+              <DropdownMenuContent align="end" className="min-w-60">
+                {features.contextUsage && chat?.contextUsage ? (
+                  <DropdownMenuItem
+                    onSelect={() => setContextOpen(true)}
+                    className="group min-h-11"
+                  >
+                    Session context
+                    <TeachContextMeter usage={chat.contextUsage} compacting={compacting} />
+                  </DropdownMenuItem>
+                ) : null}
+                {chat ? (
+                  <ReadRepliesToggle
+                    enabled={readReplies}
+                    onChange={setReadReplies}
+                    reader={replyReader}
+                  />
+                ) : null}
+                {chat && messages.length ? (
+                  <DropdownMenuItem
+                    onSelect={() => setSummaryOpen(true)}
+                    className="min-h-11"
+                  >
+                    Finish for now
+                  </DropdownMenuItem>
+                ) : null}
+                {chat ? <DropdownMenuSeparator /> : null}
                 <DropdownMenuItem
+                  className="min-h-11"
                   disabled={running}
                   onSelect={() => setConfirmRestart(true)}
                 >
@@ -868,7 +881,10 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
       ) : null}
 
       <Dialog open={summaryOpen} onOpenChange={setSummaryOpen}>
-        <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-lg">
+        <DialogContent
+          className="max-h-[90dvh] overflow-y-auto sm:max-w-lg"
+          onCloseAutoFocus={focusUnitOptions}
+        >
           <DialogHeader className="sr-only">
             <DialogTitle>This session</DialogTitle>
             <DialogDescription>
@@ -917,8 +933,21 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
         </DialogContent>
       </Dialog>
 
+      {features.contextUsage && chat?.contextUsage ? (
+        <TeachContextDetails
+          open={contextOpen}
+          onOpenChange={setContextOpen}
+          onCloseAutoFocus={focusUnitOptions}
+          usage={chat.contextUsage}
+          compacting={compacting}
+          canCompact={features.compact && !running}
+          onCompact={() => void compactNow()}
+          error={compactError}
+        />
+      ) : null}
+
       <Dialog open={confirmRestart} onOpenChange={setConfirmRestart}>
-        <DialogContent>
+        <DialogContent onCloseAutoFocus={focusUnitOptions}>
           <DialogHeader>
             <DialogTitle>Start this unit over?</DialogTitle>
             <DialogDescription>

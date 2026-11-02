@@ -71,6 +71,53 @@ function DropdownMenuItem({
   )
 }
 
+/**
+ * Renders an on/off setting as a menu row: the label on the left and a switch
+ * on the right, aligned with the trailing details of the other rows. Choosing
+ * it flips `checked` through `onCheckedChange` and keeps the menu open, so the
+ * switch can be seen to move.
+ */
+function DropdownMenuSwitchItem({
+  className,
+  children,
+  checked,
+  onSelect,
+  ...props
+}: React.ComponentProps<typeof DropdownMenuPrimitive.CheckboxItem>) {
+  const on = checked === true
+  return (
+    <DropdownMenuPrimitive.CheckboxItem
+      data-slot="dropdown-menu-switch-item"
+      checked={checked}
+      onSelect={(event) => {
+        event.preventDefault()
+        onSelect?.(event)
+      }}
+      className={cn(
+        "relative flex min-h-9 cursor-default items-center gap-2 rounded-lg px-2 py-1.5 text-sm outline-none select-none data-[disabled]:pointer-events-none data-[disabled]:opacity-50 data-[highlighted]:bg-muted data-[highlighted]:text-foreground",
+        className
+      )}
+      {...props}
+    >
+      {children}
+      <span
+        aria-hidden="true"
+        className={cn(
+          "relative ml-auto inline-flex h-4 w-7 shrink-0 rounded-full transition-colors motion-reduce:transition-none",
+          on ? "bg-brand" : "bg-muted-foreground/30"
+        )}
+      >
+        <span
+          className={cn(
+            "absolute top-0.5 size-3 rounded-full bg-background transition-transform motion-reduce:transition-none",
+            on ? "translate-x-3.5" : "translate-x-0.5"
+          )}
+        />
+      </span>
+    </DropdownMenuPrimitive.CheckboxItem>
+  )
+}
+
 /** Renders a quiet non-selectable heading for a menu section. */
 function DropdownMenuLabel({
   className,
@@ -169,5 +216,6 @@ export {
   DropdownMenuSub,
   DropdownMenuSubContent,
   DropdownMenuSubTrigger,
+  DropdownMenuSwitchItem,
   DropdownMenuTrigger,
 }
