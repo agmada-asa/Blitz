@@ -52,7 +52,7 @@ export type AccentColor = (typeof ACCENT_OPTIONS)[number]["id"]
 const ACCENT_STORAGE_KEY = "blitz-accent"
 
 /** Accent used for first-time visitors and the server-rendered shell. */
-const DEFAULT_ACCENT: AccentColor = "orange"
+const DEFAULT_ACCENT: AccentColor = "blue"
 
 /** Listener collection used to notify settings controls of accent changes. */
 const accentListeners = new Set<() => void>()

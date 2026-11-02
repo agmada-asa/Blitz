@@ -26,7 +26,7 @@ Generated read aloud WAVs remain in a private disk cache capped at 500 MiB and s
 
 ## Voice Teach
 
-The Teach header's **Read replies aloud** switch reads each new tutor reply with the same player once it finishes, starting with the section title. Only replies written while the screen is open are read, so returning to a unit does not read its history. The choice is kept in the browser. Starting a section's own Read aloud stops it, and so does the mic.
+The **Read replies aloud** setting in Teach's three-dot Unit options menu reads each new tutor reply with the same player once it finishes, starting with the section title. Only replies written while the screen is open are read, so returning to a unit does not read its history. The choice is kept in the browser. Starting a section's own Read aloud stops it, and so does the mic.
 
 The mic beside the question box turns a spoken question into text on the Mac. The browser records only while the mic is on, then mixes the recording to mono, resamples it to 16 kHz and encodes 16-bit PCM WAV (`lib/speech-wav.ts`), so the server needs no audio decoder. `/api/audio/transcribe` passes it to a second Python worker (`scripts/speech-to-text-worker.py`) in the Kokoro environment, which runs NVIDIA's Parakeet TDT 0.6B v2 (English, int8) on onnxruntime through `onnx-asr`. The text goes into the question box to edit or send. Recordings are capped at two minutes, written to a private temporary folder for the worker and deleted straight after; nothing is sent off the Mac.
 

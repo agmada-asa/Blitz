@@ -1,11 +1,13 @@
 # Local desktop host
 
-`npm run desktop` starts the Mac-only Electron shell for Blitz. The shell starts
+[Blitz.app](#blitzapp) is the Mac-only Electron shell for Blitz. The shell starts
 the same local services as the LAN launcher on loopback: Convex on the port pair
 saved in `.convex/local/default/config.json` (or the next free pair from
 `3220`), Next at `3008` (`dev:lan` uses `3007`), and the background worker
-(`scripts/worker.ts`). The native shell uses the shared Blitz PNG for the macOS Dock icon and
-window icon. The BrowserWindow waits for Next to answer before it loads the app.
+(`scripts/worker.ts`). The packaged app's icon is drawn from `app/icon.svg` at install
+time on Apple's icon grid; the shared square PNG is only used when running the shell
+unpackaged. The window opens straight away and shows that Blitz is starting
+until Next answers.
 
 The desktop supervisor in `electron/service-manager.mjs` owns each process
 group, and `npm run dev:lan` uses the same supervisor. Closing the window or
@@ -46,9 +48,27 @@ escapes.
 
 For a desktop session that
 also serves browser clients, set `BLITZ_LAN_ADDRESS` to the Mac's
-LAN address before `npm run desktop`; the host then binds Next for that LAN
-while the BrowserWindow continues to use loopback. The desktop host is
-intentionally not a packaged installer yet.
+LAN address before opening the app; the host then binds Next for that LAN
+while the BrowserWindow continues to use loopback.
+
+## Blitz.app
+
+`npm run desktop:install` builds `Blitz.app` and copies it to `~/Applications`.
+The bundle holds Electron, the icon and a small entry point, and runs Blitz from
+the checkout it was built in. It therefore runs whatever that checkout holds,
+including the current branch and uncommitted edits: changes need only a relaunch,
+and moving the checkout or changing Electron's version needs a new install. It is
+unsigned and for the Mac that built it, not an installer to share.
+
+Opened from Finder, the app reads `PATH` and the other variables from the login
+shell, because macOS starts apps with a minimal environment. Service output goes
+to `~/Library/Logs/Blitz/blitz.log`, with the last launch's beside it as
+`blitz.log.previous`. Next is bound to loopback unless `BLITZ_LAN_ADDRESS` is set,
+which a Finder launch only picks up from the login shell.
+
+If Convex and Next already answer, from `npm run dev:lan` (preferred) or a host
+that crashed, the window loads that stack instead of starting a second one over
+the same database. Quitting then leaves that stack running.
 
 ## Source files and retrieval
 

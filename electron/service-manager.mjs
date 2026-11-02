@@ -12,12 +12,14 @@ import { join } from "node:path"
 
 /**
  * Background workers started after Next and Convex answer, as
- * `[service name, npm script]` pairs. Source recovery and Deep Research run as
+ * `[service name, node arguments]` pairs. Source recovery and Deep Research run as
  * two isolated loops inside the one `worker` process (`scripts/worker.ts`), so
  * one failing loop backs off without stopping the other. The Kokoro speech
  * worker is started on demand by Next and is not supervised here.
  */
-const workerDefinitions = [["worker", "worker"]]
+const workerDefinitions = [
+  ["worker", ["--experimental-strip-types", "scripts/worker.ts"]],
+]
 
 /**
  * Reads the saved Blitz port pair, then checks upward by pairs when occupied.
@@ -85,6 +87,43 @@ function isPortAvailable(port) {
 }
 
 /**
+ * Finds a Blitz stack that is already up, such as `npm run dev:lan` or one left
+ * behind by a crashed desktop host. It owns the local database, so a second
+ * stack could not start beside it.
+ * @param {string} cwd Blitz's repository root containing the local Convex config.
+ * @param {number[]} ports The Next ports to check, in order of preference.
+ * @param {HealthFetch} [fetchImpl] Injectable fetch for tests.
+ * @returns {Promise<{port: number, convexUrl: string} | undefined>} The stack, when Convex and Next both answer.
+ */
+export async function findRunningStack(
+  cwd,
+  ports,
+  fetchImpl = globalThis.fetch
+) {
+  let convexUrl
+  try {
+    const { ports: saved } = JSON.parse(
+      await readFile(
+        join(cwd, ".convex", "local", "default", "config.json"),
+        "utf8"
+      )
+    )
+    convexUrl = `http://127.0.0.1:${saved.cloud}`
+  } catch {
+    return undefined
+  }
+  const answers = (url) =>
+    fetchImpl(url, { signal: AbortSignal.timeout(1_500) })
+      .then((response) => response.status < 500)
+      .catch(() => false)
+  if (!(await answers(convexUrl))) return undefined
+  for (const port of ports)
+    if (await answers(`http://127.0.0.1:${port}/api/health`))
+      return { port, convexUrl }
+  return undefined
+}
+
+/**
  * @typedef {"running" | "ready" | "restarting" | "stopped"} ServiceState
  * @typedef {{state: ServiceState, restarts: number, since: number, lastExit?: string, nextRestartAt?: number}} ServiceStatus
  */
@@ -104,7 +143,7 @@ function isPortAvailable(port) {
 export class ServiceManager {
   /**
    * Creates a stopped supervisor with the supplied repository and port settings.
-   * @param {{cwd: string, port?: number, host?: string, desktop?: boolean, environment?: NodeJS.ProcessEnv, spawnProcess?: SpawnProcess, fetchImpl?: HealthFetch, killProcess?: ProcessKiller, restartBaseDelayMs?: number, restartMaxDelayMs?: number, stableUptimeMs?: number, healthIntervalMs?: number, healthTimeoutMs?: number, livenessIntervalMs?: number, livenessGraceMs?: number, livenessFailureLimit?: number, shutdownGraceMs?: number, onStatus?: (name: string, status: ServiceStatus) => void}} options
+   * @param {{cwd: string, port?: number, host?: string, desktop?: boolean, environment?: NodeJS.ProcessEnv, stdio?: import("node:child_process").StdioOptions, spawnProcess?: SpawnProcess, fetchImpl?: HealthFetch, killProcess?: ProcessKiller, restartBaseDelayMs?: number, restartMaxDelayMs?: number, stableUptimeMs?: number, healthIntervalMs?: number, healthTimeoutMs?: number, livenessIntervalMs?: number, livenessGraceMs?: number, livenessFailureLimit?: number, shutdownGraceMs?: number, onStatus?: (name: string, status: ServiceStatus) => void}} options
    */
   constructor({
     cwd,
@@ -112,6 +151,7 @@ export class ServiceManager {
     host = process.env.BLITZ_DESKTOP_HOST || "127.0.0.1",
     desktop = true,
     environment = process.env,
+    stdio = "inherit",
     spawnProcess = spawn,
     fetchImpl = globalThis.fetch,
     killProcess = process.kill,
@@ -126,7 +166,7 @@ export class ServiceManager {
     livenessGraceMs = 30_000,
     livenessFailureLimit = 3,
     // Longer than the launchers' own 3 s grace (scripts/process-groups.mjs), so
-    // `npm run dev` can force-kill a hung Next group before it is killed itself.
+    // `scripts/dev.mjs` can force-kill a hung Next group before it is killed itself.
     // Killing the launcher first would orphan Next with the port still bound.
     shutdownGraceMs = 5_000,
     onStatus = () => undefined,
@@ -136,6 +176,7 @@ export class ServiceManager {
     this.host = host
     this.desktop = desktop
     this.baseEnvironment = environment
+    this.stdio = stdio
     /** @type {Map<string, ManagedChild>} */
     this.children = new Map()
     /** @type {Map<string, ServiceStatus>} */
@@ -203,10 +244,8 @@ export class ServiceManager {
         "--local-site-port",
         String(convexPorts.site),
       ])
-    this.define("next", "npm", [
-      "run",
-      "dev",
-      "--",
+    this.define("next", "node", [
+      "scripts/dev.mjs",
       "--hostname",
       this.host,
       "--port",
@@ -220,8 +259,8 @@ export class ServiceManager {
     )
     this.livenessTimer.unref?.()
     if (base.BLITZ_DESKTOP_SKIP_WORKERS !== "1")
-      for (const [name, script] of workerDefinitions) {
-        this.define(name, "npm", ["run", script])
+      for (const [name, args] of workerDefinitions) {
+        this.define(name, "node", args)
         this.startService(name)
       }
   }
@@ -274,14 +313,10 @@ export class ServiceManager {
     if (this.stopping) return
     const definition = this.definitions.get(name)
     if (!definition) return
-    const executable =
-      process.platform === "win32" && definition.command === "npm"
-        ? "npm.cmd"
-        : definition.command
-    const child = this.spawnProcess(executable, definition.args, {
+    const child = this.spawnProcess(definition.command, definition.args, {
       cwd: this.cwd,
       env: this.environment,
-      stdio: "inherit",
+      stdio: this.stdio,
       detached: process.platform !== "win32",
     })
     const startedAt = Date.now()

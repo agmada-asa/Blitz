@@ -2,11 +2,61 @@
 
 import assert from "node:assert/strict"
 import { EventEmitter } from "node:events"
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import test from "node:test"
+import { parseLoginEnvironment } from "../electron/login-environment.mjs"
 import {
+  findRunningStack,
   resolveLocalConvexPorts,
   ServiceManager,
 } from "../electron/service-manager.mjs"
+
+test("the login environment ignores startup output and shell bookkeeping", () => {
+  assert.deepEqual(
+    parseLoginEnvironment(
+      "Welcome back\n__BLITZ_ENVIRONMENT__PATH=/a:/b\0NOTE=x=y\0SHLVL=2\0_=/usr/bin/env\0"
+    ),
+    { PATH: "/a:/b", NOTE: "x=y" }
+  )
+  assert.deepEqual(parseLoginEnvironment("PATH=/a\0"), {})
+})
+
+test("a running stack needs both Convex and Next to answer", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "blitz-stack-"))
+  try {
+    /** Answers only the listed URLs, as a real loopback probe would. */
+    const answering = (...urls: string[]) => async (url: string) => {
+      if (!urls.includes(url)) throw new Error("refused")
+      return { ok: true, status: 200 }
+    }
+    const convex = "http://127.0.0.1:4100"
+    const lan = "http://127.0.0.1:4007/api/health"
+    const desktop = "http://127.0.0.1:4008/api/health"
+    const ports = [4007, 4008]
+
+    assert.equal(await findRunningStack(cwd, ports, answering(convex, lan)), undefined)
+
+    await mkdir(join(cwd, ".convex", "local", "default"), { recursive: true })
+    await writeFile(
+      join(cwd, ".convex", "local", "default", "config.json"),
+      JSON.stringify({ ports: { cloud: 4100, site: 4101 } })
+    )
+    assert.equal(await findRunningStack(cwd, ports, answering(lan)), undefined)
+    assert.equal(await findRunningStack(cwd, ports, answering(convex)), undefined)
+    assert.deepEqual(await findRunningStack(cwd, ports, answering(convex, desktop)), {
+      port: 4008,
+      convexUrl: convex,
+    })
+    assert.deepEqual(await findRunningStack(cwd, ports, answering(convex, lan, desktop)), {
+      port: 4007,
+      convexUrl: convex,
+    })
+  } finally {
+    await rm(cwd, { recursive: true, force: true })
+  }
+})
 
 /** Child-process double that records its spawn command. */
 type FakeChild = EventEmitter & {
@@ -49,9 +99,11 @@ function harness(options: Record<string, unknown> = {}) {
       statusEvents.push([name, status.state]),
     ...options,
   })
-  /** Returns the newest child spawned for a service, identified by its npm script. */
-  const latest = (script: string) =>
-    children.findLast((child) => child.args.includes(script))
+  /** Returns the newest child spawned for a service, identified by its script file. */
+  const latest = (service: "next" | "worker") => {
+    const script = service === "next" ? "scripts/dev.mjs" : "scripts/worker.ts"
+    return children.findLast((child) => child.args.includes(script))
+  }
   return { manager, children, healthUrls, statusEvents, latest }
 }
 
@@ -63,7 +115,10 @@ test("starts Convex and Next, checks both, then starts the one worker process", 
   const convexPorts = await resolveLocalConvexPorts(process.cwd())
   await manager.start()
   assert.equal(children.length, 3)
-  assert.deepEqual(children[2].args, ["run", "worker"])
+  assert.deepEqual(children[2].args, [
+    "--experimental-strip-types",
+    "scripts/worker.ts",
+  ])
   assert.equal(children[0].command, "npx")
   assert.deepEqual(children[0].args.slice(-4), [
     "--local-cloud-port",
@@ -99,7 +154,7 @@ test("restarts Next and Convex instead of shutting the stack down", async () => 
   const { manager, latest, children } = harness()
   await manager.start()
   children[0].emit("exit", null, "SIGKILL")
-  latest("dev")?.emit("exit", 1, null)
+  latest("next")?.emit("exit", 1, null)
   await settle()
   const status = manager.snapshot()
   assert.equal(status.convex.state, "running")

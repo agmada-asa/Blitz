@@ -23,6 +23,10 @@ import { Mic01Icon, StopIcon } from "@hugeicons/core-free-icons"
 import { HugeiconsIcon } from "@hugeicons/react"
 
 import { Button } from "@/components/ui/button"
+import {
+  DropdownMenuItem,
+  DropdownMenuSwitchItem,
+} from "@/components/ui/dropdown-menu"
 import { LoadingIcon } from "@/components/ui/icon"
 import { claimReadAloud } from "@/components/chat/read-aloud-button"
 import { api } from "@/convex/_generated/api"
@@ -217,8 +221,7 @@ export function useReplyReader(
 }
 
 /**
- * The header control that turns reading replies aloud on or off, and stops a
- * reply being read.
+ * Unit menu settings for reading new replies aloud and stopping playback.
  */
 export function ReadRepliesToggle({
   enabled,
@@ -231,51 +234,32 @@ export function ReadRepliesToggle({
 }) {
   const reading = reader.state === "loading" || reader.state === "playing"
   return (
-    <div className="flex shrink-0 items-center gap-1">
-      {reading ? (
-        <Button
-          type="button"
-          variant="outline"
-          onClick={reader.stop}
-          className="min-h-10 rounded-full px-3"
-        >
-          {reader.state === "loading" ? (
-            <LoadingIcon className="size-4 animate-spin motion-reduce:animate-none" />
-          ) : (
-            <HugeiconsIcon icon={StopIcon} size={16} aria-hidden="true" />
-          )}
-          Stop reading
-        </Button>
-      ) : null}
-      <Button
-        type="button"
-        variant="ghost"
-        aria-pressed={enabled}
-        onClick={() => {
-          if (enabled) reader.stop()
-          onChange(!enabled)
+    <>
+      <DropdownMenuSwitchItem
+        checked={enabled}
+        onCheckedChange={(checked) => {
+          if (!checked) reader.stop()
+          onChange(checked)
         }}
-        title={reader.state === "error" ? reader.error : "Read replies aloud"}
-        className="min-h-10 gap-2 rounded-full px-2 sm:px-3"
+        title={reader.state === "error" ? reader.error : undefined}
+        className="min-h-11"
       >
-        <span
-          aria-hidden="true"
-          className={cn(
-            "relative inline-flex h-4 w-7 shrink-0 rounded-full transition-colors motion-reduce:transition-none",
-            enabled ? "bg-brand" : "bg-muted-foreground/30"
-          )}
+        Read replies aloud
+      </DropdownMenuSwitchItem>
+      {reading ? (
+        <DropdownMenuItem
+          onSelect={reader.stop}
+          className="min-h-11"
         >
-          <span
-            className={cn(
-              "absolute top-0.5 size-3 rounded-full bg-background transition-transform motion-reduce:transition-none",
-              enabled ? "translate-x-3.5" : "translate-x-0.5"
-            )}
-          />
-        </span>
-        {/* Narrow headers keep the switch alone so the unit title stays readable. */}
-        <span className="sr-only sm:not-sr-only">Read replies aloud</span>
-      </Button>
-    </div>
+          Stop reading
+          {reader.state === "loading" ? (
+            <LoadingIcon className="ml-auto size-4 animate-spin motion-reduce:animate-none" />
+          ) : (
+            <HugeiconsIcon icon={StopIcon} size={16} aria-hidden="true" className="ml-auto" />
+          )}
+        </DropdownMenuItem>
+      ) : null}
+    </>
   )
 }
 

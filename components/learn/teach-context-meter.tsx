@@ -1,10 +1,11 @@
 "use client"
 
 /**
- * The quiet context meter in the Teach header and the sheet it opens.
+ * The context meter on Teach's Unit options menu, and the details dialog
+ * its Session context row opens.
  *
  * The meter shows how full the session's model context is after the last
- * turn. The sheet breaks that down where the runtime reports it (Claude Code;
+ * turn. The dialog breaks that down where the runtime reports it (Claude Code;
  * Codex reports only the total), explains that Blitz compacts the session
  * before it fills, and offers Compact now. Shown only for providers that
  * report context usage.
@@ -13,10 +14,12 @@
 import { Button } from "@/components/ui/button"
 import { LoadingIcon } from "@/components/ui/icon"
 import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover"
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 import {
   CONTEXT_CATEGORY_NAMES,
   categoryPercent,
@@ -39,8 +42,14 @@ const CATEGORY_DOTS = [
   "text-muted-foreground/60",
 ] as const
 
-/** Props for the context meter. */
-type TeachContextMeterProps = {
+/** Context usage and actions for the controlled details dialog. */
+type TeachContextDetailsProps = {
+  /** Whether the details dialog is visible. */
+  open: boolean
+  /** Updates dialog visibility when it is dismissed. */
+  onOpenChange: (open: boolean) => void
+  /** Restores focus to Unit options when the dialog closes. */
+  onCloseAutoFocus: (event: Event) => void
   /** Usage saved after the last turn. */
   usage: TurnContextUsage
   /** True while Compact now runs. */
@@ -49,7 +58,7 @@ type TeachContextMeterProps = {
   canCompact: boolean
   /** Starts Compact now. */
   onCompact: () => void
-  /** Why the last Compact now failed, shown in the sheet. */
+  /** Why the last Compact now failed, shown in the dialog. */
   error: string
 }
 
@@ -74,50 +83,61 @@ function UsageRing({ percent }: { percent: number }) {
 }
 
 /**
- * Renders the meter chip and its sheet. Without a known window size the chip
- * shows the token count instead of a percentage.
+ * The context meter shown on the Session context row of Unit options: the
+ * ring alone, or a spinner while Compact now runs. When the row is hovered or
+ * focused, how full the context is slides out to the left of the ring in a
+ * pill. Without a known window size it shows the token count instead of a
+ * percentage. The row must carry the `group` class for the pill to open.
  */
 export function TeachContextMeter({
+  usage,
+  compacting,
+}: {
+  usage: TurnContextUsage
+  compacting: boolean
+}) {
+  const percent = usage.percent === undefined ? undefined : Math.round(usage.percent)
+  return (
+    <span className="-mr-0.5 ml-auto inline-flex shrink-0 items-center rounded-full p-0.5 text-xs text-muted-foreground tabular-nums transition-colors group-data-[highlighted]:bg-background motion-reduce:transition-none">
+      {/* Collapsed to nothing until the row is highlighted; still read by screen readers. */}
+      <span className="max-w-0 overflow-hidden whitespace-nowrap opacity-0 transition-[max-width,opacity] duration-200 group-data-[highlighted]:max-w-24 group-data-[highlighted]:opacity-100 motion-reduce:transition-none">
+        <span className="block pr-1.5 pl-2">
+          {percent !== undefined ? `${percent}%` : `${Math.round(usage.usedTokens / 1000)}k tokens`}
+        </span>
+      </span>
+      {compacting ? (
+        <LoadingIcon aria-hidden="true" className="size-4 motion-safe:animate-spin" />
+      ) : (
+        <UsageRing percent={percent ?? 0} />
+      )}
+    </span>
+  )
+}
+
+/** Shows context usage and manual compaction without adding a header control. */
+export function TeachContextDetails({
+  open,
+  onOpenChange,
+  onCloseAutoFocus,
   usage,
   compacting,
   canCompact,
   onCompact,
   error,
-}: TeachContextMeterProps) {
+}: TeachContextDetailsProps) {
   const percent = usage.percent === undefined ? undefined : Math.round(usage.percent)
-  const label =
-    percent !== undefined
-      ? `${percent}%`
-      : `${Math.round(usage.usedTokens / 1000)}k tokens`
   const categories = usage.categories ?? []
   return (
-    <Popover>
-      <PopoverTrigger asChild>
-        <button
-          type="button"
-          aria-label={
-            percent !== undefined
-              ? `Session context ${percent}% full. Show details`
-              : `Session context uses ${label}. Show details`
-          }
-          className="inline-flex size-10 shrink-0 items-center justify-center gap-1.5 rounded-full bg-muted text-xs text-muted-foreground tabular-nums hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none sm:h-8 sm:w-auto sm:px-2.5"
-        >
-          {compacting ? (
-            <LoadingIcon aria-hidden="true" className="size-4 motion-safe:animate-spin" />
-          ) : (
-            <UsageRing percent={percent ?? 0} />
-          )}
-          {/* Narrow headers show the ring alone so the unit title stays readable. */}
-          <span className="hidden sm:inline">{label}</span>
-        </button>
-      </PopoverTrigger>
-      <PopoverContent align="end" className="w-[min(21rem,calc(100vw-2rem))] p-4">
-        <h2 className="text-sm font-semibold">Session context</h2>
-        <p className="mt-0.5 text-xs text-muted-foreground">
-          {percent !== undefined
-            ? `${percent}% of the model's context window used`
-            : `${usage.usedTokens.toLocaleString()} tokens in the model's context`}
-        </p>
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="gap-0" onCloseAutoFocus={onCloseAutoFocus}>
+        <DialogHeader>
+          <DialogTitle>Session context</DialogTitle>
+          <DialogDescription>
+            {percent !== undefined
+              ? `${percent}% of the model's context window used`
+              : `${usage.usedTokens.toLocaleString()} tokens in the model's context`}
+          </DialogDescription>
+        </DialogHeader>
         {categories.length && usage.maxTokens ? (
           <>
             <div className="mt-3 flex h-2 overflow-hidden rounded-full bg-muted" aria-hidden="true">
@@ -171,7 +191,7 @@ export function TeachContextMeter({
             "Compact now"
           )}
         </Button>
-      </PopoverContent>
-    </Popover>
+      </DialogContent>
+    </Dialog>
   )
 }
