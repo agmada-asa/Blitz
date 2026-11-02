@@ -931,7 +931,7 @@ const fallbackVizTheme: Omit<VizTheme, "dark"> = {
   muted: "#f1f1f1",
   mutedForeground: "#666666",
   border: "#dedede",
-  brand: "#aa3822",
+  brand: "#2563eb",
   brandForeground: "#ffffff",
   fontFamily: "system-ui, sans-serif",
 }

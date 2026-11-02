@@ -27,7 +27,7 @@ export default function RootLayout({
   children: React.ReactNode
 }>) {
   return (
-    <html lang="en" data-accent="orange" suppressHydrationWarning>
+    <html lang="en" data-accent="blue" suppressHydrationWarning>
       <head>
         <script dangerouslySetInnerHTML={{ __html: accentBootstrapScript }} />
       </head>
