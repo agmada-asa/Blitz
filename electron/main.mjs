@@ -3,22 +3,58 @@
 import { app, BrowserWindow, dialog, ipcMain, Notification, shell } from "electron"
 import { ConvexHttpClient } from "convex/browser"
 import { anyApi } from "convex/server"
-import { readFileSync, writeFileSync } from "node:fs"
+import {
+  existsSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  renameSync,
+  writeFileSync,
+} from "node:fs"
 import { join } from "node:path"
+import { loadLoginEnvironment } from "./login-environment.mjs"
 import { startStudyReminders } from "./reminders.mjs"
-import { ServiceManager } from "./service-manager.mjs"
+import { findRunningStack, ServiceManager } from "./service-manager.mjs"
 import { assertProjectPath, repositoryRoot } from "./paths.mjs"
 
-const port = Number(process.env.BLITZ_PORT || 3008)
+const desktopPort = Number(process.env.BLITZ_PORT || 3008)
+/** Where `npm run dev:lan` serves Blitz, which the desktop app can share. */
+const lanPort = 3007
 const host = process.env.BLITZ_LAN_ADDRESS ? "0.0.0.0" : "127.0.0.1"
 /** Shared native icon used by the macOS Dock and non-macOS window chrome. */
 const appIconPath = join(repositoryRoot(), "app", "apple-icon.png")
-const services = new ServiceManager({ cwd: repositoryRoot(), port, host })
+/** Shown from launch until the local services answer. */
+const startingPage = `data:text/html;charset=utf-8,${encodeURIComponent(
+  `<!doctype html><title>Blitz</title><style>html{color-scheme:dark;height:100%}body{height:100%;margin:0;display:grid;place-items:center;background:#111;color:#999;font:14px -apple-system,sans-serif}</style><p>Starting Blitz…</p>`
+)}`
+const logPath = app.isPackaged ? join(app.getPath("logs"), "blitz.log") : undefined
+const isOnlyInstance = app.requestSingleInstanceLock()
+const services = new ServiceManager({
+  cwd: repositoryRoot(),
+  port: desktopPort,
+  host,
+  // A second launch only hands over to the first, so it must not rotate its log.
+  stdio: isOnlyInstance ? serviceOutput() : "ignore",
+})
+/** The port the window loads, which differs when sharing a running stack. */
+let port = desktopPort
 let mainWindow
 let shutdownStarted
 let shutdownFinished = false
 
-/** Creates the isolated BrowserWindow and loads the existing Next interface. */
+/**
+ * A packaged app has no terminal, so its services write to a log that starts
+ * fresh each launch and keeps the previous one beside it.
+ */
+function serviceOutput() {
+  if (!logPath) return "inherit"
+  mkdirSync(app.getPath("logs"), { recursive: true })
+  if (existsSync(logPath)) renameSync(logPath, `${logPath}.previous`)
+  const log = openSync(logPath, "a")
+  return ["ignore", log, log]
+}
+
+/** Opens the isolated BrowserWindow straight away, showing that Blitz is starting. */
 async function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1440,
@@ -26,6 +62,7 @@ async function createWindow() {
     minWidth: 960,
     minHeight: 640,
     icon: appIconPath,
+    backgroundColor: "#111111",
     webPreferences: {
       preload: join(repositoryRoot(), "electron", "preload.cjs"),
       contextIsolation: true,
@@ -33,11 +70,11 @@ async function createWindow() {
       sandbox: true,
     },
   })
-  await mainWindow.loadURL(`http://127.0.0.1:${port}`)
   mainWindow.on("closed", () => {
     mainWindow = undefined
     app.quit()
   })
+  await mainWindow.loadURL(startingPage)
 }
 
 /** Rejects renderer calls that do not originate from the loopback Next app. */
@@ -86,25 +123,40 @@ async function boot() {
     app.quit()
     return
   }
-  if (!app.requestSingleInstanceLock()) {
+  if (!isOnlyInstance) {
     app.quit()
     return
   }
-  if (process.platform === "darwin") app.dock?.setIcon(appIconPath)
-  app.on("second-instance", () => mainWindow?.show())
+  // The packaged app already has its macOS icon; this would replace it with the square one.
+  if (process.platform === "darwin" && !app.isPackaged)
+    app.dock?.setIcon(appIconPath)
+  app.on("second-instance", () => {
+    if (mainWindow?.isMinimized()) mainWindow.restore()
+    mainWindow?.show()
+    mainWindow?.focus()
+  })
   registerIpc()
-  await services.start()
   await createWindow()
-  startReminders()
+  if (app.isPackaged) Object.assign(process.env, await loadLoginEnvironment())
+  const running = await findRunningStack(repositoryRoot(), [
+    lanPort,
+    desktopPort,
+  ])
+  if (running) port = running.port
+  else await services.start()
+  // The learner may have closed the window while the services were starting.
+  if (!mainWindow) return
+  await mainWindow.loadURL(`http://127.0.0.1:${port}`)
+  startReminders(running?.convexUrl ?? services.environment.BLITZ_CONVEX_URL)
 }
 
 /**
  * Starts the daily study reminder. Clicking the notification opens the unit
  * the learner is working through, or Home.
  */
-function startReminders() {
+function startReminders(convexUrl) {
   if (!Notification.isSupported()) return
-  const convex = new ConvexHttpClient(services.environment.BLITZ_CONVEX_URL)
+  const convex = new ConvexHttpClient(convexUrl)
   // The last reminder day survives restarts so reopening Blitz in the evening
   // does not send the same day's reminder again.
   const statePath = join(app.getPath("userData"), "study-reminder.json")
@@ -156,9 +208,10 @@ app
   .then(boot)
   .catch(async (error) => {
     await shutdown()
+    const message = error instanceof Error ? error.message : String(error)
     dialog.showErrorBox(
       "Blitz could not start",
-      error instanceof Error ? error.message : String(error)
+      logPath ? `${message}\n\nDetails are in ${logPath}` : message
     )
     app.quit()
   })

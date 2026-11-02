@@ -85,6 +85,43 @@ function isPortAvailable(port) {
 }
 
 /**
+ * Finds a Blitz stack that is already up, such as `npm run dev:lan` or one left
+ * behind by a crashed desktop host. It owns the local database, so a second
+ * stack could not start beside it.
+ * @param {string} cwd Blitz's repository root containing the local Convex config.
+ * @param {number[]} ports The Next ports to check, in order of preference.
+ * @param {HealthFetch} [fetchImpl] Injectable fetch for tests.
+ * @returns {Promise<{port: number, convexUrl: string} | undefined>} The stack, when Convex and Next both answer.
+ */
+export async function findRunningStack(
+  cwd,
+  ports,
+  fetchImpl = globalThis.fetch
+) {
+  let convexUrl
+  try {
+    const { ports: saved } = JSON.parse(
+      await readFile(
+        join(cwd, ".convex", "local", "default", "config.json"),
+        "utf8"
+      )
+    )
+    convexUrl = `http://127.0.0.1:${saved.cloud}`
+  } catch {
+    return undefined
+  }
+  const answers = (url) =>
+    fetchImpl(url, { signal: AbortSignal.timeout(1_500) })
+      .then((response) => response.status < 500)
+      .catch(() => false)
+  if (!(await answers(convexUrl))) return undefined
+  for (const port of ports)
+    if (await answers(`http://127.0.0.1:${port}/api/health`))
+      return { port, convexUrl }
+  return undefined
+}
+
+/**
  * @typedef {"running" | "ready" | "restarting" | "stopped"} ServiceState
  * @typedef {{state: ServiceState, restarts: number, since: number, lastExit?: string, nextRestartAt?: number}} ServiceStatus
  */
@@ -104,7 +141,7 @@ function isPortAvailable(port) {
 export class ServiceManager {
   /**
    * Creates a stopped supervisor with the supplied repository and port settings.
-   * @param {{cwd: string, port?: number, host?: string, desktop?: boolean, environment?: NodeJS.ProcessEnv, spawnProcess?: SpawnProcess, fetchImpl?: HealthFetch, killProcess?: ProcessKiller, restartBaseDelayMs?: number, restartMaxDelayMs?: number, stableUptimeMs?: number, healthIntervalMs?: number, healthTimeoutMs?: number, livenessIntervalMs?: number, livenessGraceMs?: number, livenessFailureLimit?: number, shutdownGraceMs?: number, onStatus?: (name: string, status: ServiceStatus) => void}} options
+   * @param {{cwd: string, port?: number, host?: string, desktop?: boolean, environment?: NodeJS.ProcessEnv, stdio?: import("node:child_process").StdioOptions, spawnProcess?: SpawnProcess, fetchImpl?: HealthFetch, killProcess?: ProcessKiller, restartBaseDelayMs?: number, restartMaxDelayMs?: number, stableUptimeMs?: number, healthIntervalMs?: number, healthTimeoutMs?: number, livenessIntervalMs?: number, livenessGraceMs?: number, livenessFailureLimit?: number, shutdownGraceMs?: number, onStatus?: (name: string, status: ServiceStatus) => void}} options
    */
   constructor({
     cwd,
@@ -112,6 +149,7 @@ export class ServiceManager {
     host = process.env.BLITZ_DESKTOP_HOST || "127.0.0.1",
     desktop = true,
     environment = process.env,
+    stdio = "inherit",
     spawnProcess = spawn,
     fetchImpl = globalThis.fetch,
     killProcess = process.kill,
@@ -136,6 +174,7 @@ export class ServiceManager {
     this.host = host
     this.desktop = desktop
     this.baseEnvironment = environment
+    this.stdio = stdio
     /** @type {Map<string, ManagedChild>} */
     this.children = new Map()
     /** @type {Map<string, ServiceStatus>} */
@@ -281,7 +320,7 @@ export class ServiceManager {
     const child = this.spawnProcess(executable, definition.args, {
       cwd: this.cwd,
       env: this.environment,
-      stdio: "inherit",
+      stdio: this.stdio,
       detached: process.platform !== "win32",
     })
     const startedAt = Date.now()
