@@ -5,22 +5,12 @@
   "private": true,
   "license": "MIT",
   "scripts": {
-    "dev": "node scripts/dev.mjs",
     "dev:lan": "node scripts/dev-lan.mjs",
-    "desktop": "electron electron/main.mjs",
     "desktop:install": "node scripts/package-desktop.mjs --install",
     "build": "next build",
-    "build:ocean": "node ocean-app/build.mjs",
-    "start": "next start",
     "lint": "eslint",
     "test": "node --test --experimental-strip-types tests/*.test.ts",
-    "format": "prettier --write \"**/*.{js,mjs,ts,tsx}\"",
     "typecheck": "tsc --noEmit",
-    "worker": "node --experimental-strip-types scripts/worker.ts",
-    "worker:research": "node --experimental-strip-types scripts/worker.ts --only research",
-    "worker:ingestion": "node --experimental-strip-types scripts/worker.ts --only ingestion",
-    "eval:ingestion": "node --experimental-strip-types scripts/eval-ingestion.ts",
-    "benchmark:teach": "node --experimental-strip-types scripts/benchmark-teach.ts",
     "check:runtimes": "node --experimental-strip-types scripts/check-provider-runtimes.ts"
   },
   "dependencies": {

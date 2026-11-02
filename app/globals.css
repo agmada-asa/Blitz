@@ -41,7 +41,7 @@
 }
 
 :root {
-  --brand: #aa3822;
+  --brand: #2563eb;
   --brand-foreground: #ffffff;
   --background: #fafafa;
   --foreground: #111111;
@@ -65,8 +65,8 @@
 }
 
 .dark {
-  --brand: #ff8065;
-  --brand-foreground: #1b0d0a;
+  --brand: #60a5fa;
+  --brand-foreground: #0b1b36;
   --background: #101010;
   --foreground: #f7f7f7;
   --card: #191919;

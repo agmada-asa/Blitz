@@ -6,7 +6,7 @@ against a recorded baseline instead of judged by eye.
 
 ## Ingestion eval
 
-`npm run eval:ingestion` runs each file through `prepareStoredSource`'s two
+`node --experimental-strip-types scripts/eval-ingestion.ts` runs each file through `prepareStoredSource`'s two
 stages, the same ones desktop uploads use, and reports:
 
 - **Outcome**: whether the file reaches generation with sections, or where it

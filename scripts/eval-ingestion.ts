@@ -8,7 +8,7 @@
  * The JSON report goes to the gitignored `.eval/` directory and never
  * contains source text.
  *
- * Usage: npm run eval:ingestion -- [--manifest path] [--suite id]
+ * Usage: node --experimental-strip-types scripts/eval-ingestion.ts [--manifest path] [--suite id]
  */
 
 import { createHash } from "node:crypto"
