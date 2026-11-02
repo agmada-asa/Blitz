@@ -15,7 +15,8 @@ const host = process.env.BLITZ_LAN_ADDRESS ? "0.0.0.0" : "127.0.0.1"
 const appIconPath = join(repositoryRoot(), "app", "apple-icon.png")
 const services = new ServiceManager({ cwd: repositoryRoot(), port, host })
 let mainWindow
-let shuttingDown = false
+let shutdownStarted
+let shutdownFinished = false
 
 /** Creates the isolated BrowserWindow and loads the existing Next interface. */
 async function createWindow() {
@@ -35,7 +36,7 @@ async function createWindow() {
   await mainWindow.loadURL(`http://127.0.0.1:${port}`)
   mainWindow.on("closed", () => {
     mainWindow = undefined
-    if (!shuttingDown) app.quit()
+    app.quit()
   })
 }
 
@@ -143,10 +144,11 @@ function startReminders() {
 }
 
 /** Stops every managed process group before the Electron process exits. */
-async function shutdown() {
-  if (shuttingDown) return
-  shuttingDown = true
-  await services.stop()
+function shutdown() {
+  shutdownStarted ??= services.stop().finally(() => {
+    shutdownFinished = true
+  })
+  return shutdownStarted
 }
 
 app
@@ -160,8 +162,10 @@ app
     )
     app.quit()
   })
+// Closing the window asks to quit twice. Every request has to wait for the
+// shutdown, or the exit hook kills the launchers before they can stop Next.
 app.on("before-quit", (event) => {
-  if (shuttingDown) return
+  if (shutdownFinished) return
   event.preventDefault()
   shutdown().finally(() => app.quit())
 })
