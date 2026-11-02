@@ -103,7 +103,7 @@ access another project or modify an original source.
 - [x] Add native file selection, open-file, and reveal-in-Finder actions.
 - [x] Keep the existing browser and Android LAN flows working.
 
-**Done when:** `npm run desktop` opens Blitz, recovers from one worker failure, and
+**Done when:** `npx electron electron/main.mjs` opens Blitz, recovers from one worker failure, and
 shuts down without leaving managed processes running.
 
 ## Stage 8: interface and verification

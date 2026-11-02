@@ -150,7 +150,7 @@ generic error. OpenCode sessions show no meter and never compact.
 ## Measuring speed
 
 ```bash
-npm run benchmark:teach -- "<folder>" --match "Week 1" --title "Algorithms benchmark" --teach
+node --experimental-strip-types scripts/benchmark-teach.ts "<folder>" --match "Week 1" --title "Algorithms benchmark" --teach
 ```
 
 The script imports the folder into a new module as one unit and reports time
