@@ -17,7 +17,7 @@
  * and the desktop app, and restarts it if it exits. The Kokoro speech worker
  * is a separate Python process and is not part of this one.
  *
- *   npm run worker [-- --only ingestion|research|threads] [--once]
+ *   node --experimental-strip-types scripts/worker.ts [--only ingestion|research|threads] [--once]
  */
 
 import { join } from "node:path"
@@ -58,7 +58,7 @@ type LoopName = (typeof LOOP_NAMES)[number]
 type WorkerOptions = { loops: LoopName[]; once: boolean }
 
 /** Usage text printed for `--help` and invalid arguments. */
-const USAGE = `Usage: npm run worker [-- --only ingestion|research|threads] [--once]
+const USAGE = `Usage: node --experimental-strip-types scripts/worker.ts [--only ingestion|research|threads] [--once]
 
 Runs Blitz's background loops in one process:
   ingestion  replays queued source ingestion after restarts

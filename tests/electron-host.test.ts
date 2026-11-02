@@ -99,9 +99,11 @@ function harness(options: Record<string, unknown> = {}) {
       statusEvents.push([name, status.state]),
     ...options,
   })
-  /** Returns the newest child spawned for a service, identified by its npm script. */
-  const latest = (script: string) =>
-    children.findLast((child) => child.args.includes(script))
+  /** Returns the newest child spawned for a service, identified by its script file. */
+  const latest = (service: "next" | "worker") => {
+    const script = service === "next" ? "scripts/dev.mjs" : "scripts/worker.ts"
+    return children.findLast((child) => child.args.includes(script))
+  }
   return { manager, children, healthUrls, statusEvents, latest }
 }
 
@@ -113,7 +115,10 @@ test("starts Convex and Next, checks both, then starts the one worker process", 
   const convexPorts = await resolveLocalConvexPorts(process.cwd())
   await manager.start()
   assert.equal(children.length, 3)
-  assert.deepEqual(children[2].args, ["run", "worker"])
+  assert.deepEqual(children[2].args, [
+    "--experimental-strip-types",
+    "scripts/worker.ts",
+  ])
   assert.equal(children[0].command, "npx")
   assert.deepEqual(children[0].args.slice(-4), [
     "--local-cloud-port",
@@ -149,7 +154,7 @@ test("restarts Next and Convex instead of shutting the stack down", async () => 
   const { manager, latest, children } = harness()
   await manager.start()
   children[0].emit("exit", null, "SIGKILL")
-  latest("dev")?.emit("exit", 1, null)
+  latest("next")?.emit("exit", 1, null)
   await settle()
   const status = manager.snapshot()
   assert.equal(status.convex.state, "running")

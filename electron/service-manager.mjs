@@ -12,12 +12,14 @@ import { join } from "node:path"
 
 /**
  * Background workers started after Next and Convex answer, as
- * `[service name, npm script]` pairs. Source recovery and Deep Research run as
+ * `[service name, node arguments]` pairs. Source recovery and Deep Research run as
  * two isolated loops inside the one `worker` process (`scripts/worker.ts`), so
  * one failing loop backs off without stopping the other. The Kokoro speech
  * worker is started on demand by Next and is not supervised here.
  */
-const workerDefinitions = [["worker", "worker"]]
+const workerDefinitions = [
+  ["worker", ["--experimental-strip-types", "scripts/worker.ts"]],
+]
 
 /**
  * Reads the saved Blitz port pair, then checks upward by pairs when occupied.
@@ -164,7 +166,7 @@ export class ServiceManager {
     livenessGraceMs = 30_000,
     livenessFailureLimit = 3,
     // Longer than the launchers' own 3 s grace (scripts/process-groups.mjs), so
-    // `npm run dev` can force-kill a hung Next group before it is killed itself.
+    // `scripts/dev.mjs` can force-kill a hung Next group before it is killed itself.
     // Killing the launcher first would orphan Next with the port still bound.
     shutdownGraceMs = 5_000,
     onStatus = () => undefined,
@@ -242,10 +244,8 @@ export class ServiceManager {
         "--local-site-port",
         String(convexPorts.site),
       ])
-    this.define("next", "npm", [
-      "run",
-      "dev",
-      "--",
+    this.define("next", "node", [
+      "scripts/dev.mjs",
       "--hostname",
       this.host,
       "--port",
@@ -259,8 +259,8 @@ export class ServiceManager {
     )
     this.livenessTimer.unref?.()
     if (base.BLITZ_DESKTOP_SKIP_WORKERS !== "1")
-      for (const [name, script] of workerDefinitions) {
-        this.define(name, "npm", ["run", script])
+      for (const [name, args] of workerDefinitions) {
+        this.define(name, "node", args)
         this.startService(name)
       }
   }
@@ -313,11 +313,7 @@ export class ServiceManager {
     if (this.stopping) return
     const definition = this.definitions.get(name)
     if (!definition) return
-    const executable =
-      process.platform === "win32" && definition.command === "npm"
-        ? "npm.cmd"
-        : definition.command
-    const child = this.spawnProcess(executable, definition.args, {
+    const child = this.spawnProcess(definition.command, definition.args, {
       cwd: this.cwd,
       env: this.environment,
       stdio: this.stdio,

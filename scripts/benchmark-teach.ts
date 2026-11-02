@@ -9,7 +9,7 @@
  * as the Teach screen does when a session opens, so runs with and without it
  * can be compared.
  *
- *   npm run benchmark:teach -- <folder> [--match text]... [--title name] [--teach] [--prewarm]
+ *   node --experimental-strip-types scripts/benchmark-teach.ts <folder> [--match text]... [--title name] [--teach] [--prewarm]
  *
  * Requires a running Blitz (`npm run dev:lan`). `--teach` runs one real tutor
  * turn on the configured provider. Course material is never copied into the
@@ -42,7 +42,7 @@ function parseArgs(argv: string[]): Options {
     else if (!options.folder) options.folder = value
   }
   if (!options.folder) {
-    console.error("Usage: npm run benchmark:teach -- <folder> [--match text]... [--title name] [--teach] [--prewarm]")
+    console.error("Usage: node --experimental-strip-types scripts/benchmark-teach.ts <folder> [--match text]... [--title name] [--teach] [--prewarm]")
     process.exit(1)
   }
   return options
