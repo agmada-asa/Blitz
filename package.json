@@ -5,21 +5,12 @@
   "private": true,
   "license": "MIT",
   "scripts": {
-    "dev": "node scripts/dev.mjs",
     "dev:lan": "node scripts/dev-lan.mjs",
-    "desktop": "electron electron/main.mjs",
+    "desktop:install": "node scripts/package-desktop.mjs --install",
     "build": "next build",
-    "build:ocean": "node ocean-app/build.mjs",
-    "start": "next start",
     "lint": "eslint",
     "test": "node --test --experimental-strip-types tests/*.test.ts",
-    "format": "prettier --write \"**/*.{js,mjs,ts,tsx}\"",
     "typecheck": "tsc --noEmit",
-    "worker": "node --experimental-strip-types scripts/worker.ts",
-    "worker:research": "node --experimental-strip-types scripts/worker.ts --only research",
-    "worker:ingestion": "node --experimental-strip-types scripts/worker.ts --only ingestion",
-    "eval:ingestion": "node --experimental-strip-types scripts/eval-ingestion.ts",
-    "benchmark:teach": "node --experimental-strip-types scripts/benchmark-teach.ts",
     "check:runtimes": "node --experimental-strip-types scripts/check-provider-runtimes.ts"
   },
   "dependencies": {
@@ -51,6 +42,7 @@
     "zod": "^4.5.4"
   },
   "devDependencies": {
+    "@electron/packager": "^20.3.0",
     "@tailwindcss/postcss": "^4",
     "@types/katex": "^0.16.8",
     "@types/node": "^20",
@@ -65,6 +57,7 @@
     "prettier": "^3.8.3",
     "prettier-plugin-tailwindcss": "^0.8.0",
     "qrcode": "^1.5.4",
+    "sharp": "^0.35.5",
     "tailwindcss": "^4",
     "typescript": "^5"
   }

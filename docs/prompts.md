@@ -42,5 +42,5 @@ instructions.
    in the prompt identical to what the parser accepts.
 2. Update the tests next to it (`tests/teach.test.ts`, `tests/practice.test.ts`,
    `tests/interactive-blocks.test.ts`, `tests/workspace-chat.test.ts`).
-3. Check a real reply: `npm run benchmark:teach -- <folder> --teach` for Teach,
+3. Check a real reply: `node --experimental-strip-types scripts/benchmark-teach.ts <folder> --teach` for Teach,
    or write a question batch from the Practice screen.

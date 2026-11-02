@@ -16,7 +16,7 @@ names the PR that delivers it once one exists.
 
 ## Phase 1: Teach
 
-- [x] Benchmark script over the school materials fixture (`npm run benchmark:teach`)
+- [x] Benchmark script over the school materials fixture (`node --experimental-strip-types scripts/benchmark-teach.ts`)
 - [x] Module and unit data model
 - [x] Uploads filed into units, titled from filenames, renamed by the tutor
 - [x] `.vtt` and `.srt` transcripts with timestamp anchors
