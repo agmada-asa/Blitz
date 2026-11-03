@@ -18,7 +18,9 @@ Material goes through the same upload and extraction routes as the web app's Add
 
 The server keeps no state and needs Blitz running on the same Mac. It finds the app on `3007` (`npm run dev:lan`) or `3008` (the desktop shell) and the Convex deployment from `.convex/local/default/config.json`. `BLITZ_URL` and `BLITZ_CONVEX_URL` override them. Links in its answers use the Mac's Tailscale name when it has one, so they open on a phone too; `BLITZ_PUBLIC_URL` overrides that.
 
-When a host runs it as a plug-in (`BLITZ_OCEAN=1`, set by its plug-in manifest), it also serves that host's widget and the `app_*` tools behind its mini app.
+It's built on the official MCP SDK. Each tool declares its risk through annotations, and `today`, `list_modules` and `read_module` also return their data as `structuredContent` for clients with a UI.
+
+An optional local module, `mcp/host-plugin.mjs`, can add what one host's mini app needs. It isn't in this repository, and its tools are offered only to a client that says it can show MCP Apps, because other clients wouldn't hide app-only tools from their model.
 
 To add it to an agent, register the command, for example:
 

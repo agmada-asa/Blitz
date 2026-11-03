@@ -157,12 +157,24 @@ export function taught(teach) {
   )
 }
 
-/** Today's summary as on the Library: streak, XP against the goal, what's due and the lesson to continue. */
-export async function today(blitz) {
-  const summary = await blitz.convex.query(anyApi.progress.today, {
+/** The current time, to the minute, which is as finely as Blitz's summaries change. */
+const thisMinute = () => Math.floor(Date.now() / 60_000) * 60_000
+
+/** Today's summary from Convex, for this Mac's time zone and the current minute. */
+export function todaySummary(blitz) {
+  return blitz.convex.query(anyApi.progress.today, {
     tzOffsetMinutes: new Date().getTimezoneOffset(),
-    now: Math.floor(Date.now() / 60_000) * 60_000,
+    now: thisMinute(),
   })
+}
+
+/**
+ * Today's summary as on the Library: streak, XP against the goal, what's due and the lesson to continue.
+ *
+ * @returns The same reading as `text` for an agent and `data` for a client with a UI.
+ */
+export async function today(blitz) {
+  const summary = await todaySummary(blitz)
   const lines = [
     `Streak: ${summary.streak.current} day${summary.streak.current === 1 ? "" : "s"} (longest ${summary.streak.longest})${summary.streak.todayMet ? ", today's goal met" : ""}.`,
     `Today: ${summary.todayXp}/${summary.goal} XP, ${summary.answeredToday} questions answered, ${summary.sectionsToday} sections taught.`,
@@ -175,57 +187,159 @@ export async function today(blitz) {
       `Continue: ${projectTitle} › ${unitTitle} (${detail}). ${blitz.links}/projects/${projectId}/learn/${unitId}`
     )
   }
-  return lines.join("\n")
+  return {
+    text: lines.join("\n"),
+    data: {
+      links: blitz.links,
+      xp: summary.todayXp,
+      goal: summary.goal,
+      streak: summary.streak.current,
+      longest: summary.streak.longest,
+      goalMet: summary.streak.todayMet,
+      answered: summary.answeredToday,
+      sections: summary.sectionsToday,
+      due: summary.dueConcepts,
+      week: summary.week,
+      resume: summary.resume
+        ? {
+            module: summary.resume.projectId,
+            moduleTitle: summary.resume.projectTitle,
+            unit: summary.resume.unitId,
+            unitTitle: summary.resume.unitTitle,
+            detail: summary.resume.detail,
+          }
+        : null,
+    },
+  }
 }
 
-/** The Library: each module with its units' Teach progress and what to study next. */
+/**
+ * The Library: each module with its units' Teach progress and what to study next.
+ * Recently studied modules come first, then the rest newest first, as the Library
+ * orders them. The sort is stable, so modules never studied keep that order.
+ *
+ * @returns The same reading as `text` for an agent and `data` for a client with a UI.
+ */
 export async function listModules(blitz) {
   const [all, progress] = await Promise.all([
     modules(blitz),
     blitz.convex.query(anyApi.units.libraryProgress, {}),
   ])
-  if (!all.length) return "The Library is empty."
-  return all
+  const list = all
     .map((item) => {
       const state = progress[item.id]
-      const units = state?.unitCount
-        ? `${state.unitCount} unit${state.unitCount === 1 ? "" : "s"}, ${state.taughtCount} finished` +
-          (state.nextUnitTitle ? `, next: ${state.nextUnitTitle}` : "")
-        : state?.hasUnsortedSources
+      return {
+        id: item.id,
+        title: item.title,
+        units: state?.unitCount ?? 0,
+        finished: state?.taughtCount ?? 0,
+        next: state?.nextUnitTitle ?? null,
+        unsorted: Boolean(state?.hasUnsortedSources),
+        lastStudiedAt: state?.lastStudiedAt || null,
+        progress: state?.unitProgress?.length
+          ? state.unitProgress.reduce((sum, share) => sum + share, 0) /
+            state.unitProgress.length
+          : 0,
+      }
+    })
+    .sort((a, b) => (b.lastStudiedAt ?? 0) - (a.lastStudiedAt ?? 0))
+  const text = list
+    .map((item) => {
+      const units = item.units
+        ? `${item.units} unit${item.units === 1 ? "" : "s"}, ${item.finished} finished` +
+          (item.next ? `, next: ${item.next}` : "")
+        : item.unsorted
           ? "sources not grouped into units yet"
           : "no material yet"
       return `- ${item.title} (${units}) · id ${item.id} · ${blitz.links}/projects/${item.id}`
     })
     .join("\n")
+  return {
+    text: text || "The Library is empty.",
+    data: { links: blitz.links, modules: list },
+  }
 }
 
-/** One module's learning path: each unit with its sources and Teach progress, plus unsorted and reference sources. */
+/** One source of a module, as `readModule` reports it. */
+function sourceItem(source) {
+  return {
+    id: source.id,
+    name: source.filename,
+    status: source.status,
+    unreadable: Boolean(source.unsupported),
+    error: source.error ?? null,
+  }
+}
+
+/**
+ * One module's learning path: each unit with its sources and Teach progress,
+ * plus unsorted and reference sources and the module's practice summary.
+ *
+ * @param name The module's id or title.
+ * @returns The same reading as `text` for an agent and `data` for a client with a UI.
+ * @throws BlitzError when no module, or more than one, matches.
+ */
 export async function readModule(blitz, name) {
   const found = await findModule(blitz, name)
-  const path = await blitz.convex.query(anyApi.units.listForProject, {
-    projectId: found.id,
-  })
+  const [path, practice] = await Promise.all([
+    blitz.convex.query(anyApi.units.listForProject, { projectId: found.id }),
+    blitz.convex.query(anyApi.practice.overview, {
+      projectId: found.id,
+      now: thisMinute(),
+    }),
+  ])
+  const questions = new Map(practice.units.map((unit) => [unit.id, unit]))
+  const data = {
+    id: found.id,
+    title: found.title,
+    links: blitz.links,
+    units: path.units.map((unit) => {
+      const drill = questions.get(unit.id)
+      return {
+        id: unit.id,
+        title: unit.title,
+        taught: taught(unit.teach),
+        started: Boolean(unit.teach),
+        section: unit.teach?.currentSectionTitle ?? null,
+        questions: drill?.questionCount ?? 0,
+        answered: drill?.answeredCount ?? 0,
+        correct: drill?.correctCount ?? 0,
+        sources: unit.sources.map(sourceItem),
+      }
+    }),
+    unsorted: path.unsortedSources.map(sourceItem),
+    references: path.referenceSources.map(sourceItem),
+    practice: {
+      due: practice.dueConceptCount,
+      missed: practice.missedCount,
+      unanswered: practice.unansweredCount,
+      weak: practice.weakConcepts.map((concept) => ({
+        title: concept.title,
+        unit: concept.unitTitle,
+        accuracy: concept.accuracy,
+      })),
+    },
+  }
+
   const source = (item) =>
-    `  - ${item.filename}${item.status === "ready" ? "" : ` (${item.status})`}${item.unsupported ? " (unreadable)" : ""}${item.error ? `: ${item.error}` : ""}`
-  const lines = [`${found.title} · ${blitz.links}/projects/${found.id}`]
-  if (!path.units.length) lines.push("No units yet.")
-  for (const unit of path.units) {
-    const teach = unit.teach?.currentSectionTitle
-      ? `, now on "${unit.teach.currentSectionTitle}"`
-      : ""
+    `  - ${item.name}${item.status === "ready" ? "" : ` (${item.status})`}${item.unreadable ? " (unreadable)" : ""}${item.error ? `: ${item.error}` : ""}`
+  const lines = [`${data.title} · ${blitz.links}/projects/${data.id}`]
+  if (!data.units.length) lines.push("No units yet.")
+  for (const unit of data.units) {
+    const teach = unit.section ? `, now on "${unit.section}"` : ""
     lines.push(
-      `- ${unit.title} (${taught(unit.teach)}% taught${teach}) · id ${unit.id} · ${blitz.links}/projects/${found.id}/learn/${unit.id}`
+      `- ${unit.title} (${unit.taught}% taught${teach}) · id ${unit.id} · ${blitz.links}/projects/${data.id}/learn/${unit.id}`
     )
     lines.push(...unit.sources.map(source))
   }
-  if (path.unsortedSources.length)
-    lines.push("Not in a unit yet:", ...path.unsortedSources.map(source))
-  if (path.referenceSources.length)
+  if (data.unsorted.length)
+    lines.push("Not in a unit yet:", ...data.unsorted.map(source))
+  if (data.references.length)
     lines.push(
       "Reference books (back up every unit):",
-      ...path.referenceSources.map(source)
+      ...data.references.map(source)
     )
-  return lines.join("\n")
+  return { text: lines.join("\n"), data }
 }
 
 /** Creates an empty module and returns where to find it. */
