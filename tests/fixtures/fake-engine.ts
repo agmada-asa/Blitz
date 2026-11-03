@@ -16,6 +16,8 @@ import {
   type ContextUsage,
   type Engine,
   type ForkOptions,
+  type RuntimeUpdateResult,
+  type RuntimeVersionStatus,
   type Thread,
   type ThreadOptions,
   type Turn,
@@ -225,6 +227,16 @@ export class FakeEngine implements Engine {
 
   async usage(): Promise<never> {
     throw new Error("not used")
+  }
+
+  /** Not modelled; these tests do not inspect runtime versions. */
+  runtimeVersion(): Promise<RuntimeVersionStatus> {
+    return this.refuse("check runtime versions")
+  }
+
+  /** Not modelled; these tests do not update provider runtimes. */
+  updateRuntime(): Promise<RuntimeUpdateResult> {
+    return this.refuse("update provider runtimes")
   }
 
   async commands(): Promise<never[]> {
