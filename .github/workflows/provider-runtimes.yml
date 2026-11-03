@@ -30,10 +30,11 @@ permissions:
   contents: read
 
 jobs:
-  # Run the complete offline suite without provider credentials or a database.
+  # macOS also exercises transcription tests whose entry point rejects other OSes.
+  # No provider credentials or running database are needed.
   tests:
     name: Test suite
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
