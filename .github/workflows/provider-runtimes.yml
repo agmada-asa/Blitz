@@ -1,4 +1,7 @@
-# Checks Blitz's OpenCode requirement against the latest published OpenCode.
+# Runs the full offline test suite and checks provider runtime compatibility.
+# Every pull request and push to main runs tests, including test-only changes.
+# npm caching reuses downloaded packages; npm ci still installs the lockfile.
+# Test failures propagate directly to the job, and Node prints the test totals.
 #
 # Codex and Claude Code run through agent-engines, whose own weekly workflow
 # checks the latest Codex and Claude Code CLIs against its pinned protocol and
@@ -12,7 +15,7 @@
 # catalogue comparison is skipped here. Run `npm run check:runtimes` locally
 # to compare it with Blitz's fallback model list.
 
-name: Provider runtimes
+name: CI
 
 on:
   schedule:
@@ -20,16 +23,32 @@ on:
     - cron: "0 6 * * 1"
   workflow_dispatch:
   pull_request:
-    paths:
-      - "lib/server/providers/runtime-compat.ts"
-      - "lib/server/providers/opencode.ts"
-      - "scripts/check-provider-runtimes.ts"
-      - ".github/workflows/provider-runtimes.yml"
+  push:
+    branches: [main]
 
 permissions:
   contents: read
 
 jobs:
+  # Run the complete offline suite without provider credentials or a database.
+  tests:
+    name: Test suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run all tests
+        run: npm test
+
   check:
     runs-on: ubuntu-latest
     timeout-minutes: 15
