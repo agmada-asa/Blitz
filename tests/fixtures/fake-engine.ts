@@ -229,12 +229,12 @@ export class FakeEngine implements Engine {
     throw new Error("not used")
   }
 
-  /** Not modelled; Blitz does not inspect runtime versions in these tests. */
+  /** Not modelled; these tests do not inspect runtime versions. */
   runtimeVersion(): Promise<RuntimeVersionStatus> {
     return this.refuse("check runtime versions")
   }
 
-  /** Not modelled; Blitz does not update provider runtimes in these tests. */
+  /** Not modelled; these tests do not update provider runtimes. */
   updateRuntime(): Promise<RuntimeUpdateResult> {
     return this.refuse("update provider runtimes")
   }
