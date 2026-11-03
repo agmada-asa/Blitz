@@ -103,6 +103,8 @@ The ACP client negotiates `session/load` and `session/resume`. If neither is sup
 
 ## Checks and implementation
 
+The CI workflow in `.github/workflows/provider-runtimes.yml` runs the full `npm test` suite on macOS with Node.js 24 for every pull request and every push to `main`, without path filters. The macOS runner also exercises the two transcription tests that would skip on Linux because transcription is restricted to macOS. It uses the npm download cache and `npm ci`; test failures fail the job, and the log includes test totals. Tests use local fixtures and doubles, so no running database, provider login, or deployment is needed. The same workflow retains the scheduled provider compatibility check and supports manual runs.
+
 ```bash
 npm test
 npm run typecheck
