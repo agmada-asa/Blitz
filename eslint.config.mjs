@@ -20,8 +20,8 @@ const eslintConfig = defineConfig([
     "convex/_generated/**",
     // Temporary git worktrees created by coding agents are separate checkouts.
     ".claude/worktrees/**",
-    // Ocean builds the mini app here; the sources are in ocean-app/src.
-    "ocean-app/dist/**",
+    // Build output of anything built outside Next.
+    "**/dist/**",
   ]),
   // Electron's sandbox preload only supports CommonJS in this host version.
   {

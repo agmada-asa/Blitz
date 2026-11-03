@@ -21,7 +21,6 @@
 
 # production
 /build
-/ocean-app/dist/
 
 # misc
 .DS_Store
