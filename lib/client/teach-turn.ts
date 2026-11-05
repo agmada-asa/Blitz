@@ -7,7 +7,6 @@
  */
 
 import { readChatStream } from "../chat-stream.ts"
-import type { TeachRedoStyle } from "../teach.ts"
 
 /** Outcome of one Teach turn request. */
 export type TeachTurnResult =
@@ -28,14 +27,12 @@ export function createClientMessageId(): string {
  * @param input.chatId The unit's Teach session.
  * @param input.message Learner text or a quick reply; ignored when continuing.
  * @param input.continuationOf Paused assistant message to resume in place.
- * @param input.redo Latest section reply to redo in place, and how.
  * @param input.signal Aborts the browser request; the server keeps the saved partial reply.
  */
 export async function sendTeachTurn(input: {
   chatId: string
   message: string
   continuationOf?: string
-  redo?: { messageId: string; style: TeachRedoStyle }
   signal?: AbortSignal
 }): Promise<TeachTurnResult> {
   let response: Response
@@ -50,7 +47,6 @@ export async function sendTeachTurn(input: {
         projectIds: [],
         attachments: [],
         ...(input.continuationOf ? { continuationOf: input.continuationOf } : {}),
-        ...(input.redo ? { redo: input.redo } : {}),
       }),
       ...(input.signal ? { signal: input.signal } : {}),
     })
