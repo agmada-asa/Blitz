@@ -52,7 +52,7 @@ Past papers, mock exams, marking, question banks, podcast and audiobook scripts 
 Around a turn, `engine-turn.ts` can also:
 
 - fork a saved thread through a turn instead of starting or resuming one (branched and edited chats); a failed fork throws before any turn, and the route replays instead;
-- rewind before a turn, so a Teach reply is redone in place (Try that again); a failed rewind runs the turn on top of the conversation;
+- rewind before a turn, so a Teach reply can be redone in place; a failed rewind runs the turn on top of the conversation;
 - compact before the turn, sending a different prompt only when compaction ran;
 - read context usage after a completed turn, for the Teach context meter.
 
