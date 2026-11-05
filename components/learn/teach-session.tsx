@@ -10,13 +10,24 @@
  *
  * Opening a new session prewarms the reply provider. Where the provider
  * supports it, Unit options shows how full the session's context is (with
- * Compact now in its dialog), and the latest section can be redone in place.
+ * Compact now in its dialog).
+ *
+ * Questions go to a side chat on the right rather than into the lesson: an
+ * ordinary chat of its own, so the lesson's conversation stays on its plan and
+ * a question can be asked while the tutor is writing. A passage picked from
+ * the lesson (`teach-ask-overlay.tsx`) is quoted into it.
  */
 
 import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
 import { useMutation, useQuery } from "convex/react"
+import { BlitzLogo } from "@/components/blitz-logo"
 import { ProviderHandoffOffer } from "@/components/chat/provider-handoff-offer"
+import { TeachAskOverlay } from "@/components/learn/teach-ask-overlay"
+import {
+  LearningSidePane,
+  type LearningSidePaneTab,
+} from "@/components/projects/learning-side-pane"
 import {
   ReadRepliesToggle,
   useReadRepliesSetting,
@@ -26,10 +37,9 @@ import type { FunctionReturnType } from "convex/server"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useMinuteClock } from "@/hooks/use-minute-clock"
 
-import {
-  SourcePane,
-  type LearningSourceSelection,
-  type SourceSelection,
+import type {
+  LearningSourceSelection,
+  SourceSelection,
 } from "@/components/chat/source-pane"
 import {
   TeachContextDetails,
@@ -69,8 +79,10 @@ import { cn } from "@/lib/utils"
 import { api } from "@/convex/_generated/api"
 import type { Id } from "@/convex/_generated/dataModel"
 import type { ChatCitation } from "@/lib/citations"
+import type { LessonPassage } from "@/lib/client/lesson-passage-dom"
 import { consumeRelearn } from "@/lib/client/relearn"
 import { restartSitting, sittingStart } from "@/lib/client/teach-sitting"
+import { MAX_LESSON_SECTION_CHARACTERS } from "@/lib/lesson-passage"
 import {
   compactTeachSession,
   createClientMessageId,
@@ -84,10 +96,10 @@ import {
   parseTeachOutline,
   parseTeachPlan,
   parseTeachSectionMarker,
+  stripTeachMarkers,
   TEACH_QUICK_REPLIES,
   teachJumpMessage,
   type TeachOutline,
-  type TeachRedoStyle,
   type TeachSectionPlan,
 } from "@/lib/teach"
 
@@ -156,6 +168,11 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
   const [source, setSource] = useState<
     SourceSelection | LearningSourceSelection
   >()
+  const [sideChatOpen, setSideChatOpen] = useState(false)
+  const [sideTab, setSideTab] = useState<LearningSidePaneTab>("chat")
+  /** Passage waiting in the side chat's composer. */
+  const [quote, setQuote] = useState<LessonPassage & { id: string }>()
+  const setTeachSideChat = useMutation(api.workspaceChats.setTeachSideChat)
   const [confirmRestart, setConfirmRestart] = useState(false)
   const [outlineOpen, setOutlineOpen] = useState(false)
   const [summaryOpen, setSummaryOpen] = useState(false)
@@ -186,6 +203,7 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
   )
   const [showJump, setShowJump] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
+  const columnRef = useRef<HTMLDivElement>(null)
   const startingRef = useRef(false)
   const autoStartedRef = useRef<string | undefined>(undefined)
   const revealNextReplyRef = useRef(false)
@@ -310,13 +328,9 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
     ? Object.keys(answered?.[lastMessage.id] ?? {}).length
     : 0
 
-  /** Sends a learner message or quick reply, resumes a paused reply, or redoes the latest section. */
+  /** Sends a quick reply or resumes a paused reply. */
   const send = useCallback(
-    async (
-      message: string,
-      continuationOf?: string,
-      redo?: { messageId: string; style: TeachRedoStyle }
-    ) => {
+    async (message: string, continuationOf?: string) => {
       if (!activeChatId || sending || chat?.status === "running") return
       setSending(true)
       setError("")
@@ -327,7 +341,6 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
         chatId: activeChatId,
         message,
         ...(continuationOf ? { continuationOf } : {}),
-        ...(redo ? { redo } : {}),
         signal: controller.signal,
       })
       abortRef.current = undefined
@@ -457,17 +470,89 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
     [activeChatId]
   )
 
+  /** Shows a source in the side panel, leaving an open side chat one tab away. */
+  const showSource = useCallback(
+    (selection: SourceSelection | LearningSourceSelection) => {
+      setSource(selection)
+      setSideTab("source")
+    },
+    []
+  )
+
   const openCitation = useCallback(
     (messageId: string, citation: ChatCitation) => {
       if (!activeChatId) return
-      setSource({
+      showSource({
         chatId: activeChatId,
         messageId: messageId as Id<"workspaceChatMessages">,
         citationId: citation.id,
       })
     },
-    [activeChatId]
+    [activeChatId, showSource]
   )
+
+  /** Opens the side chat, quoting a passage from the lesson when one was picked. */
+  const openSideChat = useCallback((passage?: LessonPassage) => {
+    if (passage) setQuote({ ...passage, id: createClientMessageId() })
+    setSideChatOpen(true)
+    setSideTab("chat")
+  }, [])
+
+  /** Closes the side chat, leaving an open source showing. */
+  const closeSideChat = useCallback(() => {
+    setSideChatOpen(false)
+    setQuote(undefined)
+    setSideTab("source")
+  }, [])
+
+  /** Closes whichever side panel tab is showing, revealing the other if there is one. */
+  const closeSideTab = useCallback(() => {
+    if (source && sideTab === "source") {
+      setSource(undefined)
+      setSideTab("chat")
+    } else closeSideChat()
+  }, [closeSideChat, sideTab, source])
+
+  /** Closes the whole side panel, as dismissing it on a phone does. */
+  const closeSidePanel = useCallback(() => {
+    setSource(undefined)
+    setSideChatOpen(false)
+    setQuote(undefined)
+  }, [])
+
+  const clearQuote = useCallback(() => setQuote(undefined), [])
+
+  /** Remembers a new side chat on this session, so it reopens with the lesson. */
+  const rememberSideChat = useCallback(
+    (sideChatId: Id<"workspaceChats">) => {
+      if (!activeChatId) return
+      void setTeachSideChat({ chatId: activeChatId, sideChatId }).catch(
+        (failure: unknown) =>
+          console.warn("Could not save the side chat", {
+            message: failure instanceof Error ? failure.message : "Unknown error",
+          })
+      )
+    },
+    [activeChatId, setTeachSideChat]
+  )
+
+  // Answers draw on the section the question is about: the quoted passage's
+  // section, otherwise the latest one.
+  const askedReply = quote
+    ? messages.find((message) => message.id === quote.messageId)
+    : messages.findLast((message) => message.role === "assistant")
+  const askedSection = useMemo(() => {
+    if (!askedReply) return undefined
+    const marker = parseTeachSectionMarker(askedReply.content)
+    const title =
+      marker?.kind === "section"
+        ? outline?.sections.find((section) => section.id === marker.id)?.title
+        : undefined
+    const text = stripTeachMarkers(askedReply.content)
+      .trim()
+      .slice(0, MAX_LESSON_SECTION_CHARACTERS)
+    return text ? { title: title ?? unit.title, text } : undefined
+  }, [askedReply, outline, unit.title])
 
   /** Scrolls to a section already taught. */
   const openSection = useCallback(
@@ -499,26 +584,6 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
       element.scrollHeight - element.scrollTop - element.clientHeight > 600
     )
   }, [])
-
-  // The latest reply can be redone in place when it taught a section, it is
-  // not the opening reply (Claude Code cannot rewind past its first turn),
-  // and the provider rewinds.
-  const firstReplyId = messages.find((message) => message.role === "assistant")?.id
-  const lastMarker =
-    lastMessage?.role === "assistant" ? parseTeachSectionMarker(lastMessage.content) : undefined
-  const redoSectionIndex =
-    outline && lastMarker?.kind === "section"
-      ? outline.sections.findIndex((section) => section.id === lastMarker.id)
-      : -1
-  const redoMessageId =
-    features.rewind &&
-    chat?.providerSessionId &&
-    lastMessage?.role === "assistant" &&
-    lastMessage.status === "completed" &&
-    lastMessage.id !== firstReplyId &&
-    redoSectionIndex >= 0
-      ? lastMessage.id
-      : undefined
 
   const projectHref = `/projects/${encodeURIComponent(String(unit.projectId))}`
   const hasMaterial = hasReadableMaterial
@@ -561,6 +626,8 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
       ? "Planning the lesson"
       : null
 
+  const sideOpen = sideChatOpen || Boolean(source)
+
   const outlineList = outline ? (
     <TeachOutlineList
       outline={outline}
@@ -581,8 +648,8 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
         aria-label="Unit outline"
         className={cn(
           "hidden w-72 shrink-0 flex-col overflow-y-auto border-r border-border/70 px-3 py-5",
-          // An open source needs the room on mid-size screens; the header still shows progress.
-          source ? "2xl:flex" : "lg:flex"
+          // An open side panel needs the room on mid-size screens; the header still shows progress.
+          sideOpen ? "2xl:flex" : "lg:flex"
         )}
       >
         <Button
@@ -617,7 +684,7 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
                     type="button"
                     disabled={!item.hasText}
                     onClick={() =>
-                      setSource({
+                      showSource({
                         kind: "learning",
                         projectId: unit.projectId,
                         sourceId: item.id,
@@ -643,7 +710,7 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
               asChild
               variant="ghost"
               size="icon"
-              className={cn("size-10 shrink-0", source ? "2xl:hidden" : "lg:hidden")}
+              className={cn("size-10 shrink-0", sideOpen ? "2xl:hidden" : "lg:hidden")}
             >
               <Link
                 href={projectHref}
@@ -671,6 +738,23 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
                 +{sitting.xp} XP
               </p>
             ) : null}
+            {chat ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className={cn(
+                  "size-10 shrink-0 rounded-full",
+                  sideChatOpen ? "text-brand" : "text-muted-foreground"
+                )}
+                aria-label="Ask Blitz"
+                aria-expanded={sideChatOpen}
+                title="Ask Blitz"
+                onClick={() => (sideChatOpen ? closeSideChat() : openSideChat())}
+              >
+                <BlitzLogo size={17} mono />
+              </Button>
+            ) : null}
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button
@@ -684,6 +768,14 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="min-w-60">
+                {dockState.kind === "writing" ? (
+                  <DropdownMenuItem
+                    onSelect={() => void pause()}
+                    className="min-h-11"
+                  >
+                    Pause writing
+                  </DropdownMenuItem>
+                ) : null}
                 {features.contextUsage && chat?.contextUsage ? (
                   <DropdownMenuItem
                     onSelect={() => setContextOpen(true)}
@@ -726,7 +818,7 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
                 sectionIndex={sectionIndex}
                 taughtSectionIds={taughtSectionIds}
                 plan={plan}
-                className={cn("mt-3", source ? "hidden 2xl:flex" : "hidden lg:flex")}
+                className={cn("mt-3", sideOpen ? "hidden 2xl:flex" : "hidden lg:flex")}
               />
               {/* Narrow screens have no rail, so the progress bar opens the outline. */}
               <Popover open={outlineOpen} onOpenChange={setOutlineOpen}>
@@ -736,7 +828,7 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
                     aria-label={`${progressLabel}. Show outline`}
                     className={cn(
                       "mt-2 flex min-h-8 w-full items-center gap-2 rounded-lg focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none",
-                      source ? "2xl:hidden" : "lg:hidden"
+                      sideOpen ? "2xl:hidden" : "lg:hidden"
                     )}
                   >
                     <TeachProgressBar
@@ -766,7 +858,10 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
             onScroll={onScroll}
             className="relative h-full overflow-y-auto"
           >
-            <div className="mx-auto w-full max-w-3xl px-4 py-8 sm:px-6">
+            <div
+              ref={columnRef}
+              className="mx-auto w-full max-w-3xl px-4 py-8 sm:px-6"
+            >
               {chat ? (
                 <TeachLesson
                   messages={messages}
@@ -777,7 +872,7 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
                   onQuizAnswer={answerQuiz}
                   onFollowUp={(text) => void send(text)}
                   busy={running || compacting}
-                  sourceOpen={Boolean(source)}
+                  sourceOpen={sideOpen}
                   compactions={chat.contextCompactions}
                 />
               ) : (
@@ -834,6 +929,14 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
               <ArrowDownIcon aria-hidden="true" />
             </Button>
           ) : null}
+          {chat ? (
+            <TeachAskOverlay
+              scrollRef={scrollRef}
+              columnRef={columnRef}
+              heldRange={quote?.range}
+              onAsk={openSideChat}
+            />
+          ) : null}
         </div>
 
         {dockState.kind === "paused" &&
@@ -853,13 +956,6 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
           state={dockState}
           error={error}
           onSend={(message) => void send(message)}
-          onPause={() => void pause()}
-          {...(redoMessageId ? { redoSection: redoSectionIndex + 1 } : {})}
-          onRedo={(style: TeachRedoStyle) =>
-            redoMessageId
-              ? void send("", undefined, { messageId: redoMessageId, style })
-              : undefined
-          }
           onResume={() =>
             lastMessage?.role === "assistant"
               ? void send("", lastMessage.id)
@@ -868,15 +964,33 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
         />
       </div>
 
-      {source ? (
-        // Citation readers size themselves; rail sources need a column width.
-        <div
-          className={cn(
-            "contents",
-            "kind" in source && "lg:block lg:w-[min(45vw,680px)] lg:shrink-0"
-          )}
-        >
-          <SourcePane selection={source} onClose={() => setSource(undefined)} />
+      {sideOpen ? (
+        <div className="contents lg:block lg:h-full lg:w-[min(42vw,620px)] lg:min-w-96 lg:shrink-0">
+          <LearningSidePane
+            sourceSelection={source}
+            chatOpen={sideChatOpen}
+            chatLesson={{
+              projectId: unit.projectId,
+              ...(quote
+                ? {
+                    quote: {
+                      id: quote.id,
+                      messageId: quote.messageId,
+                      text: quote.text,
+                    },
+                  }
+                : {}),
+              ...(askedSection ? { section: askedSection } : {}),
+              onQuoteCleared: clearQuote,
+              onChatStarted: rememberSideChat,
+            }}
+            lessonChatId={chat?.teachSideChatId ?? undefined}
+            activeTab={source ? sideTab : "chat"}
+            onTabChange={setSideTab}
+            onCloseTab={closeSideTab}
+            onClose={closeSidePanel}
+            onOpenSource={showSource}
+          />
         </div>
       ) : null}
 

@@ -851,6 +851,11 @@ export default defineSchema({
     teachSectionIndex: v.optional(v.number()),
     /** Ids of the outline sections actually taught. */
     teachTaughtSectionIds: v.optional(v.array(v.string())),
+    /**
+     * Ordinary chat holding the learner's questions beside this Teach session,
+     * kept apart so asking never disturbs the lesson's own conversation.
+     */
+    teachSideChatId: v.optional(v.id("workspaceChats")),
     title: v.string(),
     /** Optional chat agent policy; legacy chats use approval with no extra instructions. */
     agentAutonomy: v.optional(

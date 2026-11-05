@@ -369,7 +369,7 @@ export function DictationButton({
       disabled={(disabled && !listening) || busy}
       onClick={dictation.toggle}
       className={cn(
-        "size-11 shrink-0 rounded-full",
+        "shrink-0 rounded-full",
         listening && "bg-destructive text-white hover:bg-destructive/90"
       )}
     >

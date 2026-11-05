@@ -61,6 +61,11 @@ import {
   writeCachedAgentAutonomy,
 } from "@/components/chat/chat-agent-controls"
 import { AnnotatedAssistantMessage } from "@/components/chat/annotated-assistant-message"
+import {
+  DictationButton,
+  DictationStatus,
+  useDictation,
+} from "@/components/learn/teach-voice"
 import { InteractiveBlocksProvider } from "@/components/ui/interactive-blocks"
 import { ReadAloudButton } from "@/components/chat/read-aloud-button"
 import {
@@ -112,6 +117,10 @@ import {
   subscribeToQuizAnswers,
 } from "@/lib/client/chat-quiz-answers"
 import { gradeQuizAnswer, type QuizBlock } from "@/lib/interactive-blocks"
+import {
+  EXPLAIN_PASSAGE_MESSAGE,
+  LESSON_SECTION_LABEL_PREFIX,
+} from "@/lib/lesson-passage"
 import {
   type AgentRequest,
   type AgentRequestSubmission,
@@ -199,6 +208,24 @@ type ChatWorkspaceProps = {
   embedded?: boolean
   /** Lets an owning panel open citations in its own source tab. */
   onOpenSource?: (selection: SourceSelection) => void
+  /** The lesson this chat sits beside, when it is a Teach screen's side chat. */
+  lesson?: ChatLessonContext
+  /** Puts a close button on the title row, when the owning panel has no header of its own. */
+  onClose?: () => void
+}
+
+/** What a Teach screen's side chat knows about the lesson beside it. */
+export type ChatLessonContext = {
+  /** Module the side chat belongs to; its sources ground the answers. */
+  projectId: Id<"projects">
+  /** Passage quoted into the composer, sent with the next message. */
+  quote?: { id: string; messageId: string; text: string }
+  /** The section being read, attached the first time a question touches it. */
+  section?: { title: string; text: string }
+  /** The quote was sent or removed. */
+  onQuoteCleared: () => void
+  /** A new chat was saved, so the lesson can reopen it next time. */
+  onChatStarted: (chatId: Id<"workspaceChats">) => void
 }
 
 /** Selected recording passages supplied as inline context, without the full project. */
@@ -530,6 +557,8 @@ export function ChatWorkspace({
   initialProject,
   embedded = false,
   onOpenSource,
+  lesson,
+  onClose,
 }: ChatWorkspaceProps) {
   const projects = useQuery(api.projects.listProjects)
   const modelSettings = useQuery(api.settings.get)
@@ -654,7 +683,12 @@ export function ChatWorkspace({
   const [agentPlanFirst, setAgentPlanFirst] = useState(false)
   const [workingProjectId, setWorkingProjectId] = useState<
     Id<"projects"> | undefined
-  >(initialCard?.projectId ?? initialPassage?.projectId ?? initialProject?._id)
+  >(
+    initialCard?.projectId ??
+      initialPassage?.projectId ??
+      lesson?.projectId ??
+      initialProject?._id
+  )
   const [agentSettingsTouched, setAgentSettingsTouched] = useState(false)
   const [streamAgentRequests, setStreamAgentRequests] = useState<
     Record<string, { request: AgentRequest; messageId: string }>
@@ -667,7 +701,22 @@ export function ChatWorkspace({
   const [newChatDialogOpen, setNewChatDialogOpen] = useState(false)
   const [newChatProjectId, setNewChatProjectId] = useState<
     Id<"projects"> | undefined
-  >(initialCard?.projectId ?? initialPassage?.projectId ?? initialProject?._id)
+  >(
+    initialCard?.projectId ??
+      initialPassage?.projectId ??
+      lesson?.projectId ??
+      initialProject?._id
+  )
+  const composerRef = useRef<HTMLTextAreaElement>(null)
+  // A spoken question joins whatever is already typed, ready to edit or send.
+  const dictation = useDictation((text: string) =>
+    setDraft((current) => (current.trim() ? `${current.trim()} ${text}` : text))
+  )
+  const lessonQuoteId = lesson?.quote?.id
+  // A newly quoted passage is ready for its question straight away.
+  useEffect(() => {
+    if (lessonQuoteId) composerRef.current?.focus()
+  }, [lessonQuoteId])
   const [linkDialogOpen, setLinkDialogOpen] = useState(false)
   const [linkUrl, setLinkUrl] = useState("")
   const [importingLink, setImportingLink] = useState(false)
@@ -1243,14 +1292,43 @@ export function ChatWorkspace({
       )
   }
 
+  /**
+   * Turns the quoted lesson passage into an annotation on the message sent
+   * with it, numbered after any annotations on this chat's own replies.
+   *
+   * @param message The question being sent, which becomes the annotation's note.
+   * @param others The other annotations going with this message.
+   * @returns The annotation, or nothing when no passage is quoted.
+   */
+  const lessonQuoteAnnotation = (
+    message: string,
+    others: readonly FloatingAnnotation[]
+  ): FloatingAnnotation[] =>
+    lesson?.quote
+      ? [
+          {
+            id: lesson.quote.id,
+            number: others.length + 1,
+            messageId: lesson.quote.messageId,
+            selectedText: lesson.quote.text,
+            note: message,
+          },
+        ]
+      : []
+
   /** Queues the draft message and attachments to send automatically once the active response completes. */
   const queueDraftMessage = (): void => {
-    const message = draft.trim()
+    const message = draft.trim() || (lesson?.quote ? EXPLAIN_PASSAGE_MESSAGE : "")
     const hasAttachments = attachments.length > 0
-    const validAnnotations = draftAnnotations.filter(
+    const draftNotes = draftAnnotations.filter(
       (annotation) => annotation.note.trim().length > 0
     )
+    const validAnnotations = [
+      ...draftNotes,
+      ...lessonQuoteAnnotation(message, draftNotes),
+    ]
     if (!message && !hasAttachments && validAnnotations.length === 0) return
+    if (lesson?.quote) lesson.onQuoteCleared()
 
     setQueuedMessage((prev) => {
       const combinedMessage = prev?.message
@@ -1560,13 +1638,22 @@ export function ChatWorkspace({
     options: SendMessageOptions = {}
   ): Promise<boolean> => {
     manuallyMarkedUnreadRef.current = undefined
+    // Only what's in the composer carries the quote, not a follow-up chip or a resend.
+    const composerTurn = options.message === undefined && !options.continuationOf
+    const rawMessage = (options.message ?? draft).trim()
+    const message =
+      rawMessage ||
+      (composerTurn && !options.annotations && lesson?.quote
+        ? EXPLAIN_PASSAGE_MESSAGE
+        : "")
+    const draftNotes = composerTurn
+      ? draftAnnotations.filter((a) => a.note.trim().length > 0)
+      : []
     const submittedAnnotations =
       options.annotations ??
-      (options.message === undefined && !options.continuationOf
-        ? draftAnnotations.filter((a) => a.note.trim().length > 0)
+      (composerTurn
+        ? [...draftNotes, ...lessonQuoteAnnotation(message, draftNotes)]
         : [])
-    const rawMessage = (options.message ?? draft).trim()
-    const message = rawMessage
     const targetChatId = options.chatId ?? activeChatId
     const targetProjectId = targetChatId ? undefined : newChatProjectId
     if (
@@ -1580,11 +1667,31 @@ export function ChatWorkspace({
       (options.continuationOf && !targetChatId)
     )
       return false
-    const submittedAttachments =
-      options.attachments ??
-      (options.message === undefined && !options.continuationOf
-        ? attachments
-        : [])
+    // The section being read goes along once, so answers can draw on the rest of it.
+    const lessonSectionLabel = lesson?.section
+      ? `${LESSON_SECTION_LABEL_PREFIX}${lesson.section.title}`.slice(0, 255)
+      : undefined
+    const lessonSection: DraftAttachment[] =
+      lesson?.section &&
+      lessonSectionLabel &&
+      !options.continuationOf &&
+      !persistedAttachments.some((item) => item.label === lessonSectionLabel)
+        ? [
+            {
+              id: `lesson:${lessonSectionLabel}`,
+              kind: "file",
+              label: lessonSectionLabel,
+              text: lesson.section.text,
+            },
+          ]
+        : []
+    const submittedAttachments = [
+      ...(options.attachments ??
+        (options.message === undefined && !options.continuationOf
+          ? attachments
+          : [])),
+      ...lessonSection,
+    ]
     const cardAttachment = submittedAttachments.find(
       (attachment) =>
         attachment.kind === "card" && attachment.projectId && attachment.itemId
@@ -1594,6 +1701,7 @@ export function ChatWorkspace({
       setAttachments([])
       setDraftAnnotations([])
       setExpandedAnnotationId(undefined)
+      if (composerTurn && lesson?.quote) lesson.onQuoteCleared()
     } else if (options.steeringPrompt) {
       setDraft("")
     }
@@ -1704,6 +1812,7 @@ export function ChatWorkspace({
           if (event.type === "started") {
             started = true
             resolvedChatId = event.chatId
+            if (!targetChatId) lesson?.onChatStarted(event.chatId)
             // Follow a new chat only if the learner has not moved on to another one.
             const following = isVisible()
             reply.chatId = event.chatId
@@ -2054,6 +2163,7 @@ export function ChatWorkspace({
         if (isStreaming) {
           const hasDraftContent =
             Boolean(draft.trim()) ||
+            Boolean(lesson?.quote) ||
             attachments.length > 0 ||
             draftAnnotations.some((a) => a.note.trim().length > 0)
           if (hasDraftContent) {
@@ -2139,8 +2249,13 @@ export function ChatWorkspace({
             </div>
           </div>
         )}
-        <header className="shrink-0">
-          <div className="flex h-16 items-center justify-between gap-3">
+        <header className={cn("shrink-0", embedded && "border-b border-border/60")}>
+          <div
+            className={cn(
+              "flex items-center justify-between gap-3",
+              embedded ? "h-10" : "h-16"
+            )}
+          >
             <div className="flex min-w-0 flex-1 items-center gap-2">
               <Button
                 type="button"
@@ -2152,7 +2267,12 @@ export function ChatWorkspace({
               >
                 <HugeiconsIcon icon={Menu01Icon} size={18} strokeWidth={1.8} />
               </Button>
-              <h1 className="min-w-0 flex-1 truncate text-xl font-medium tracking-tight">
+              <h1
+                className={cn(
+                  "min-w-0 flex-1 truncate font-medium",
+                  embedded ? "text-sm" : "text-xl tracking-tight"
+                )}
+              >
                 {activeChat?.title ?? "New chat"}
               </h1>
               <DropdownMenu>
@@ -2222,16 +2342,38 @@ export function ChatWorkspace({
             <Button
               type="button"
               variant="outline"
-              className="shrink-0 rounded-full px-3 md:hidden"
+              size={embedded ? "sm" : "default"}
+              className={cn(
+                "shrink-0 rounded-full px-3 md:hidden",
+                embedded && !activeChat && "hidden"
+              )}
               disabled={uploadingFiles || importingLink}
               onClick={startNewChat}
             >
               New chat
             </Button>
+            {onClose ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                className="shrink-0 rounded-full text-muted-foreground hover:text-foreground"
+                aria-label="Close Ask Blitz"
+                onClick={onClose}
+              >
+                <CancelIcon size={15} aria-hidden="true" />
+              </Button>
+            ) : null}
           </div>
-          {contextualAttachments.length || contextProjectId ? (
-            <div className="flex min-h-9 items-center justify-between gap-2 border-b border-border/60 px-1 pb-2">
-              {contextProjectId ? (
+          {/* Beside a lesson the project is already on screen, so only chips earn a row. */}
+          {contextualAttachments.length || (contextProjectId && !embedded) ? (
+            <div
+              className={cn(
+                "flex min-h-9 items-center justify-between gap-2 px-1 pb-2",
+                !embedded && "border-b border-border/60"
+              )}
+            >
+              {contextProjectId && !embedded ? (
                 <Button asChild type="button" variant="ghost" size="sm" className="h-8 shrink-0 px-2 text-xs">
                   <Link href={contextualCard
                     ? `/projects/${encodeURIComponent(contextProjectId)}/learn?resume=1`
@@ -2370,6 +2512,9 @@ export function ChatWorkspace({
                 const messageAttachments =
                   message.role === "user"
                     ? persistedAttachments.filter((attachment) => {
+                        // The learner is looking at the lesson; a chip for it adds nothing.
+                        if (attachment.label.startsWith(LESSON_SECTION_LABEL_PREFIX))
+                          return false
                         if (
                           attachment.clientMessageId &&
                           userClientMessageIds.has(attachment.clientMessageId)
@@ -2564,28 +2709,15 @@ export function ChatWorkspace({
                           </div>
                         </div>
                       ) : (
-                        <div>
-                          {message.content ? (
-                            <Markdown text={message.content} />
-                          ) : null}
-                          {"annotations" in message &&
-                          Array.isArray(message.annotations) &&
-                          message.annotations.length ? (
-                            <div
-                              className={cn(
-                                message.content
-                                  ? "mt-1 flex justify-end"
-                                  : "flex items-center"
-                              )}
-                            >
-                              <UserMessageAnnotationsBadge
-                                annotations={
-                                  message.annotations as FloatingAnnotation[]
-                                }
-                              />
-                            </div>
-                          ) : null}
-                        </div>
+                        <UserMessageBody
+                          content={message.content}
+                          annotations={
+                            "annotations" in message &&
+                            Array.isArray(message.annotations)
+                              ? (message.annotations as FloatingAnnotation[])
+                              : []
+                          }
+                        />
                       )}
                     </div>
 
@@ -2900,10 +3032,31 @@ export function ChatWorkspace({
               draggingFiles && "border-brand bg-brand/5 ring-2 ring-brand/30"
             )}
           >
+            {lesson?.quote ? (
+              <div className="mb-1 flex items-start gap-1 rounded-2xl bg-muted/60 py-2 pr-1 pl-3">
+                <blockquote className="line-clamp-3 min-w-0 flex-1 border-l-2 border-brand/60 pl-2 text-xs whitespace-pre-line text-muted-foreground">
+                  <QuotedPassage text={lesson.quote.text} />
+                </blockquote>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-xs"
+                  className="size-6 shrink-0 rounded-full text-muted-foreground"
+                  aria-label="Remove quoted passage"
+                  onClick={() => {
+                    lesson.onQuoteCleared()
+                    composerRef.current?.focus()
+                  }}
+                >
+                  <CancelIcon aria-hidden="true" className="size-3" />
+                </Button>
+              </div>
+            ) : null}
             {/* File drops bubble to the chat pane's single drop handler. */}
             <Textarea
+              ref={composerRef}
               aria-label="Message Blitz"
-              autoFocus={Boolean(initialPassage)}
+              autoFocus={Boolean(initialPassage || lesson)}
               value={draft}
               maxLength={4_000}
               rows={2}
@@ -2920,7 +3073,9 @@ export function ChatWorkspace({
                     : "Press Enter to queue, Ctrl+Enter to steer"
                   : continuableMessage
                     ? "Add notes before continuing, or press Play to resume"
-                    : "Ask Blitz…"
+                    : lesson?.quote
+                      ? "Ask about this, or just press Enter"
+                      : "Ask Blitz…"
               }
               className="max-h-40 min-h-16 resize-none border-0 bg-transparent px-3 py-2 shadow-none focus-visible:ring-0"
               onChange={(event) => setDraft(event.target.value)}
@@ -3113,27 +3268,39 @@ export function ChatWorkspace({
                   )
                 }
                 return (
-                  <Button
-                    type="button"
-                    size="icon"
-                    aria-label="Send message"
-                    className="ml-auto shrink-0 rounded-full bg-brand text-brand-foreground hover:bg-brand/85"
-                    disabled={
-                      (!draft.trim() && !draftAnnotations.length) || isRunning
-                    }
-                    onClick={() => void sendMessage()}
-                  >
-                    <HugeiconsIcon
-                      icon={SendIcon}
-                      size={18}
-                      strokeWidth={2}
-                    />
-                  </Button>
+                  <>
+                    {lesson ? (
+                      <DictationButton dictation={dictation} disabled={isRunning} />
+                    ) : null}
+                    <Button
+                      type="button"
+                      size="icon"
+                      aria-label="Send message"
+                      className={cn(
+                        "shrink-0 rounded-full bg-brand text-brand-foreground hover:bg-brand/85",
+                        !lesson && "ml-auto"
+                      )}
+                      disabled={
+                        (!draft.trim() &&
+                          !draftAnnotations.length &&
+                          !lesson?.quote) ||
+                        isRunning
+                      }
+                      onClick={() => void sendMessage()}
+                    >
+                      <HugeiconsIcon
+                        icon={SendIcon}
+                        size={18}
+                        strokeWidth={2}
+                      />
+                    </Button>
+                  </>
                 )
               })()}
             </div>
           </div>
           <div className="min-h-6 px-3 pt-1.5">
+            {lesson ? <DictationStatus dictation={dictation} /> : null}
             {uploadingFiles ? (
               <p role="status" className="text-xs text-muted-foreground">
                 Saving and reading files…
@@ -3642,6 +3809,54 @@ function AnnotationAttachmentChip({
         </button>
       ) : null}
     </li>
+  )
+}
+
+/**
+ * Shows a quoted lesson passage. Quotes keep their maths as TeX, so those are
+ * drawn; anything else stays literal, because a quoted line of code isn't Markdown.
+ *
+ * @param text - The quote.
+ */
+function QuotedPassage({ text }: { text: string }) {
+  return text.includes("$") ? <Markdown text={text} /> : <>{text}</>
+}
+
+/**
+ * Renders a sent message. A passage quoted from a lesson is the message's own
+ * subject, so it shows above the text; notes on this chat's replies stay in
+ * their badge.
+ *
+ * @param content - The message text.
+ * @param annotations - The annotations sent with it. One whose note is the
+ * message itself was quoted from a lesson.
+ */
+function UserMessageBody({
+  content,
+  annotations,
+}: {
+  content: string
+  annotations: FloatingAnnotation[]
+}) {
+  const quotes = annotations.filter((item) => item.note === content)
+  const notes = annotations.filter((item) => item.note !== content)
+  return (
+    <div>
+      {quotes.map((quote) => (
+        <blockquote
+          key={quote.id}
+          className="mb-1.5 line-clamp-4 border-l-2 border-current/40 pl-2 text-xs whitespace-pre-line opacity-80"
+        >
+          <QuotedPassage text={quote.selectedText} />
+        </blockquote>
+      ))}
+      {content ? <Markdown text={content} /> : null}
+      {notes.length ? (
+        <div className={cn(content ? "mt-1 flex justify-end" : "flex items-center")}>
+          <UserMessageAnnotationsBadge annotations={notes} />
+        </div>
+      ) : null}
+    </div>
   )
 }
 

@@ -105,15 +105,48 @@ The tutor's rules live in `TEACH_RULES` in `lib/teach.ts`:
 - Every reply that teaches a section starts with a ```section block holding the
   section id; the recap after the last section uses `done`.
 - Quick replies (`TEACH_QUICK_REPLIES`) have fixed meanings: next section,
-  deeper, another example, and re-explain. Any other message is a question.
+  deeper, another example, and re-explain. Any other message is a question. The
+  dock now only sends `Next section`; the others stay for saved sessions, and
+  for follow-up chips and Relearn requests that still reach the lesson.
 - Interactive blocks (quiz, steps, viz, followups) follow
   `INTERACTIVE_BLOCKS_PROMPT` in `lib/interactive-blocks.ts`. Malformed blocks
   fall back to visible code; outline and section markers are hidden everywhere.
 
+## Asking about the lesson
+
+The dock is one bar as wide as the lesson's text: `Next section`, or a disabled
+spinner while the tutor works (Pause is in Unit options). So questions go to a
+side chat on the right
+(`LearningSidePane`, the same panel as source citations). It is an ordinary
+chat in the module, remembered on the session as `teachSideChatId`, and it keeps
+its own provider conversation: asking never moves the lesson on or fills its
+context, and works while the tutor is writing. Starting the unit over starts a
+new side chat, and past ones stay in chat history.
+
+There are three ways in (`teach-ask-overlay.tsx`):
+
+- a faint Blitz mark in the margin beside the line being read, shown while the
+  learner scrolls or moves the pointer. Hovering turns it accent and highlights
+  what it would quote; pressing opens the chat with that quoted.
+- selecting text, which shows an **Ask Blitz** button under the selection.
+- the Blitz button in the header, which opens the chat with nothing quoted.
+
+The mark quotes one sentence of prose, or a whole component (table, code,
+diagram, displayed maths, quiz, and so on), because part of those means little.
+`lib/client/lesson-passage-dom.ts` reads the passage, with maths as TeX and a
+diagram as its source, and paints the highlight with the CSS Custom Highlight
+API. A quote is sent as an annotation whose note is the question, shown above
+the question in the chat. The section it came from goes along once as an
+attachment, and the quoted words count towards which source passages are
+offered for citation. Sending with no text asks `Explain this.`
+
 ## Redoing a section
 
-When a section's explanation misses, **Try that again** in the dock redoes the
-latest section reply in place: more simply, from a worked example, or shorter
+The dock no longer offers this, so nothing in the app starts a redo today. The
+server support stays, and replies redone earlier still show how they were redone.
+
+Asking to redo the latest section reply replaces it in place: more simply, from
+a worked example, or shorter
 (`TEACH_REDO_STYLES` in `lib/teach.ts`). The route rewinds the runtime thread
 to before that reply's turn, sends the original request again with the chosen
 steer, and deletes the replaced request and reply once the rewind succeeds

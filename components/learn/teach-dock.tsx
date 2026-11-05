@@ -1,53 +1,23 @@
 "use client"
 
 /**
- * The bottom of the Teach screen: one-tap replies that move the lesson along,
- * a box for the learner's own questions, and pause or resume controls while
- * the tutor is writing. After the opening pre-check it offers to plan the
- * lesson around the answers or skip the check; after the recap it offers
- * practice and the next unit. N sends the next section from the keyboard
- * while the lesson waits for the learner. "Try that again" redoes the latest
- * section in place, more simply, from an example, or shorter, where the
- * provider can rewind its conversation. The mic beside the question box turns
- * a spoken question into text to send or edit (`teach-voice.tsx`).
+ * The bottom of the Teach screen: one bar, as wide as the lesson's text, that
+ * moves the lesson along. It says `Next section` while the lesson waits for
+ * the learner and shows a disabled spinner while the tutor works. After the
+ * opening pre-check it offers to plan the lesson around the answers or skip
+ * the check; after the recap it offers practice and the next unit. N sends the
+ * next section from the keyboard. Questions go to the side chat instead, which
+ * leaves the lesson undisturbed, and Pause is in Unit options.
  */
 
 import Link from "next/link"
-import {
-  useCallback,
-  useEffect,
-  useState,
-  type FormEvent,
-  type KeyboardEvent,
-} from "react"
+import { useEffect, type ReactNode } from "react"
 
 import { Button } from "@/components/ui/button"
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
-import {
-  ArrowDownIcon,
-  ArrowRightIcon,
-  RotateLeftIcon,
-  SendIcon,
-} from "@/components/ui/icon"
-import { Textarea } from "@/components/ui/textarea"
+import { ArrowRightIcon, LoadingIcon } from "@/components/ui/icon"
 import { isTypingTarget } from "@/hooks/use-quiz-shortcuts"
-import {
-  TEACH_QUICK_REPLIES,
-  TEACH_REDO_STYLES,
-  type TeachRedoStyle,
-} from "@/lib/teach"
-import {
-  DictationButton,
-  DictationStatus,
-  useDictation,
-} from "@/components/learn/teach-voice"
+import { TEACH_QUICK_REPLIES } from "@/lib/teach"
+import { cn } from "@/lib/utils"
 
 /** What the dock should offer for the session's current state. */
 export type TeachDockState =
@@ -71,47 +41,17 @@ type TeachDockProps = {
   state: TeachDockState
   error: string
   onSend: (message: string) => void
-  onPause: () => void
   onResume: () => void
-  /**
-   * Number of the section the latest reply taught, when it can be redone in
-   * place. Omitted when there is nothing to redo or the provider can't.
-   */
-  redoSection?: number
-  /** Redoes the latest section reply in the chosen style. */
-  onRedo: (style: TeachRedoStyle) => void
 }
 
-/** Secondary quick replies, in the order learners reach for them. */
-const SECONDARY_REPLIES = [
-  { label: "Another example", message: TEACH_QUICK_REPLIES.example },
-  { label: "Go deeper", message: TEACH_QUICK_REPLIES.deeper },
-  { label: "I don't get it", message: TEACH_QUICK_REPLIES.confused },
-] as const
+/** Shape of the dock's main bar, and of any button sharing the row with it. */
+const BAR_CLASS = "min-h-12 rounded-full text-[15px]"
 
-/**
- * Renders quick replies and the question box. `Next section` is the primary
- * action; the other replies and the question box are visibly secondary.
- */
-export function TeachDock({
-  state,
-  error,
-  onSend,
-  onPause,
-  onResume,
-  redoSection,
-  onRedo,
-}: TeachDockProps) {
-  const [draft, setDraft] = useState("")
-  const canAsk = state.kind === "ready" || state.kind === "complete"
-  // A spoken question joins whatever is already typed, ready to edit or send.
-  const dictation = useDictation(
-    useCallback(
-      (text: string) =>
-        setDraft((current) => (current.trim() ? `${current.trim()} ${text}` : text)),
-      []
-    )
-  )
+/** The main bar's colours. */
+const PRIMARY_BAR_CLASS = `${BAR_CLASS} min-w-0 flex-1 bg-brand px-5 text-brand-foreground hover:bg-brand/85`
+
+/** Renders the lesson's current action as a single bar. */
+export function TeachDock({ state, error, onSend, onResume }: TeachDockProps) {
   const ready = state.kind === "ready"
 
   // While the lesson waits for the learner, N sends "Next section" unless they are typing or hold a modifier.
@@ -135,87 +75,68 @@ export function TeachDock({
     return () => window.removeEventListener("keydown", onKeyDown)
   }, [ready, onSend])
 
-  /** Sends the typed question and clears the box. */
-  function submit(event?: FormEvent) {
-    event?.preventDefault()
-    const message = draft.trim()
-    if (!message || !canAsk) return
-    onSend(message)
-    setDraft("")
-  }
+  if (state.kind === "no-material" && !error) return null
 
-  /** Sends on Enter; Shift+Enter keeps a newline. */
-  function onKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
-    if (
-      event.key === "Enter" &&
-      !event.shiftKey &&
-      !event.nativeEvent.isComposing
-    ) {
-      event.preventDefault()
-      submit()
-    }
-  }
-
-  return (
-    <div className="border-t border-border/70 bg-background/95 px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] backdrop-blur-xl sm:px-6">
-      <div className="mx-auto w-full max-w-3xl space-y-3">
-        {error ? (
-          <p role="alert" className="text-sm text-destructive">
-            {error}
-          </p>
-        ) : null}
-
-        {state.kind === "no-material" ? null : state.kind === "complete" ? (
-          <div className="flex flex-wrap gap-2">
-            <Button
-              asChild
-              className="min-h-11 rounded-full bg-brand px-5 text-brand-foreground hover:bg-brand/85"
-            >
+  /** Chooses the bar for the session's current state. */
+  function bar(): ReactNode {
+    switch (state.kind) {
+      case "no-material":
+        return null
+      case "complete":
+        return (
+          <div className="flex gap-2">
+            <Button asChild className={PRIMARY_BAR_CLASS}>
               <Link href={state.practiceHref}>Practice this unit</Link>
             </Button>
             {state.nextUnit ? (
               <Button
                 asChild
                 variant="outline"
-                className="min-h-11 rounded-full px-5"
+                className={cn(BAR_CLASS, "min-w-0 flex-1 px-5")}
               >
                 <Link href={state.nextUnit.href}>
-                  Next: {state.nextUnit.title}
+                  <span className="truncate">Next: {state.nextUnit.title}</span>
                   <ArrowRightIcon aria-hidden="true" />
                 </Link>
               </Button>
             ) : null}
           </div>
-        ) : state.kind === "precheck" ? (
-          <div className="flex flex-wrap items-center gap-2">
-            <Button
-              type="button"
-              onClick={() => onSend(TEACH_QUICK_REPLIES.precheckDone)}
-              className="min-h-11 shrink-0 rounded-full bg-brand px-5 text-brand-foreground hover:bg-brand/85"
-            >
-              Plan my lesson
-              <ArrowRightIcon aria-hidden="true" />
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => onSend(TEACH_QUICK_REPLIES.skipPrecheck)}
-              className="min-h-11 shrink-0 rounded-full px-4"
-            >
-              Skip the check
-            </Button>
-            <p className="text-sm text-muted-foreground" role="status">
+        )
+      case "precheck":
+        return (
+          <>
+            <p className="mb-2 text-center text-sm text-muted-foreground" role="status">
               {state.answered
                 ? `${state.answered} answered. Anything you leave gets taught.`
                 : "Answer what you can. Anything you leave gets taught."}
             </p>
-          </div>
-        ) : state.kind === "ready" ? (
-          <div className="-mx-1 flex [scrollbar-width:none] gap-2 overflow-x-auto px-1 pb-0.5">
+            <div className="flex gap-2">
+              <Button
+                type="button"
+                onClick={() => onSend(TEACH_QUICK_REPLIES.precheckDone)}
+                className={PRIMARY_BAR_CLASS}
+              >
+                Plan my lesson
+                <ArrowRightIcon aria-hidden="true" />
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => onSend(TEACH_QUICK_REPLIES.skipPrecheck)}
+                className={cn(BAR_CLASS, "shrink-0 px-5")}
+              >
+                Skip the check
+              </Button>
+            </div>
+          </>
+        )
+      case "ready":
+        return (
+          <div className="flex">
             <Button
               type="button"
               onClick={() => onSend(TEACH_QUICK_REPLIES.next)}
-              className="min-h-11 shrink-0 rounded-full bg-brand px-5 text-brand-foreground hover:bg-brand/85"
+              className={PRIMARY_BAR_CLASS}
             >
               {state.isLastSection ? "Finish unit" : "Next section"}
               <kbd
@@ -226,120 +147,46 @@ export function TeachDock({
               </kbd>
               <ArrowRightIcon aria-hidden="true" />
             </Button>
-            {SECONDARY_REPLIES.map((reply) => (
-              <Button
-                key={reply.label}
-                type="button"
-                variant="outline"
-                onClick={() => onSend(reply.message)}
-                className="min-h-11 shrink-0 rounded-full px-4"
-              >
-                {reply.label}
-              </Button>
-            ))}
-            {redoSection ? (
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="min-h-11 shrink-0 rounded-full px-4"
-                  >
-                    <RotateLeftIcon aria-hidden="true" />
-                    Try that again
-                    <ArrowDownIcon aria-hidden="true" className="size-3.5" />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="w-72">
-                  <DropdownMenuLabel>Redo section {redoSection}</DropdownMenuLabel>
-                  {(Object.keys(TEACH_REDO_STYLES) as TeachRedoStyle[]).map((style) => (
-                    <DropdownMenuItem
-                      key={style}
-                      onSelect={() => onRedo(style)}
-                      className="flex-col items-start gap-0"
-                    >
-                      <span>{TEACH_REDO_STYLES[style].label}</span>
-                      <span className="text-xs text-muted-foreground">
-                        {TEACH_REDO_STYLES[style].hint}
-                      </span>
-                    </DropdownMenuItem>
-                  ))}
-                  <DropdownMenuSeparator />
-                  <p className="px-2 py-1.5 text-xs text-muted-foreground">
-                    Replaces the explanation above. Quiz answers you already gave in it still count.
-                  </p>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            ) : null}
           </div>
-        ) : state.kind === "paused" ? (
-          <Button
-            type="button"
-            onClick={onResume}
-            className="min-h-11 rounded-full bg-brand px-5 text-brand-foreground hover:bg-brand/85"
-          >
-            {state.hasText ? "Continue writing" : "Try again"}
-          </Button>
-        ) : (
-          <div className="flex min-h-11 items-center justify-between gap-3">
-            <p role="status" className="text-sm text-muted-foreground">
-              {state.kind === "starting"
-                ? "Preparing your lesson…"
-                : state.kind === "compacting"
-                  ? "Compacting the session…"
-                  : "Writing…"}
-            </p>
-            {state.kind === "writing" ? (
-              <Button
-                type="button"
-                variant="outline"
-                onClick={onPause}
-                className="min-h-11 rounded-full px-4"
-              >
-                Pause
-              </Button>
-            ) : null}
-          </div>
-        )}
-
-        {state.kind === "no-material" ? null : (
-          <form onSubmit={submit} className="flex items-end gap-2">
-            <label htmlFor="teach-question" className="sr-only">
-              Ask the tutor a question
-            </label>
-            <Textarea
-              id="teach-question"
-              value={draft}
-              onChange={(event) => setDraft(event.target.value)}
-              onKeyDown={onKeyDown}
-              maxLength={4_000}
-              rows={1}
-              placeholder={
-                canAsk
-                  ? "Ask about this section"
-                  : state.kind === "precheck"
-                    ? "You can ask once your lesson is planned"
-                    : "You can ask once the tutor finishes"
-              }
-              disabled={!canAsk}
-              className="max-h-40 min-h-11 resize-none rounded-2xl px-4 py-2.5"
-            />
-            <DictationButton dictation={dictation} disabled={!canAsk} />
-            <Button
-              type="submit"
-              size="icon"
-              disabled={!canAsk || !draft.trim()}
-              aria-label="Send question"
-              className="size-11 shrink-0 rounded-full"
-            >
-              <SendIcon aria-hidden="true" />
+        )
+      case "paused":
+        return (
+          <div className="flex">
+            <Button type="button" onClick={onResume} className={PRIMARY_BAR_CLASS}>
+              {state.hasText ? "Continue writing" : "Try again"}
             </Button>
-          </form>
-        )}
-        {state.kind === "no-material" ? null : (
-          <DictationStatus dictation={dictation} />
-        )}
-      </div>
+          </div>
+        )
+      default:
+        return (
+          <div className="flex">
+            <Button type="button" disabled className={PRIMARY_BAR_CLASS}>
+              <LoadingIcon
+                aria-hidden="true"
+                className="size-4 animate-spin motion-reduce:animate-none"
+              />
+              <span role="status">
+                {state.kind === "starting"
+                  ? "Preparing your lesson…"
+                  : state.kind === "compacting"
+                    ? "Compacting the session…"
+                    : "Working…"}
+              </span>
+            </Button>
+          </div>
+        )
+    }
+  }
+
+  return (
+    // The same width and padding as the lesson column, so the bar lines up with its text.
+    <div className="mx-auto w-full max-w-3xl px-4 pt-2 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:px-6">
+      {error ? (
+        <p role="alert" className="mb-2 text-sm text-destructive">
+          {error}
+        </p>
+      ) : null}
+      {bar()}
     </div>
   )
 }

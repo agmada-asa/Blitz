@@ -6,6 +6,7 @@ import { useSyncExternalStore } from "react"
 
 import {
   ChatWorkspace,
+  type ChatLessonContext,
   type ChatPassage,
 } from "@/components/chat/chat-workspace"
 import {
@@ -58,6 +59,10 @@ type LearningSidePaneProps = {
   chatCard?: LearningChatCard
   /** Selected transcript context for a listening room chat. */
   chatPassage?: ChatPassage
+  /** Lesson context for a Teach screen's side chat. */
+  chatLesson?: ChatLessonContext
+  /** Saved side chat to reopen beside the lesson. */
+  lessonChatId?: Id<"workspaceChats">
   /** Selected side panel tab. */
   activeTab: LearningSidePaneTab
   /** Changes the selected side panel tab. */
@@ -93,6 +98,8 @@ export function LearningSidePane({
   chatOpen,
   chatCard,
   chatPassage,
+  chatLesson,
+  lessonChatId,
   activeTab,
   onTabChange,
   onCloseTab,
@@ -104,30 +111,34 @@ export function LearningSidePane({
     getDesktopSnapshot,
     getServerSnapshot
   )
+  // A lone chat has nothing to switch to, so its title row carries the close button.
+  const chatOnly = chatOpen && !sourceSelection
   const tabs = (
     <Tabs
-      value={activeTab}
+      value={chatOnly ? "chat" : activeTab}
       onValueChange={(value) => onTabChange(value as LearningSidePaneTab)}
       className="flex min-h-0 flex-1 gap-0"
     >
-      <header className="flex min-h-12 shrink-0 items-center justify-between gap-2 border-b px-3">
-        <TabsList className="h-9 w-auto justify-start">
-          {sourceSelection ? (
-            <TabsTrigger value="source">Source</TabsTrigger>
-          ) : null}
-          {chatOpen ? <TabsTrigger value="chat">Ask Blitz</TabsTrigger> : null}
-        </TabsList>
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          className="shrink-0 gap-1.5 px-2 text-muted-foreground"
-          onClick={onCloseTab}
-        >
-          <CancelIcon size={15} aria-hidden="true" />
-          Close {activeTab === "source" ? "source" : "Ask Blitz"}
-        </Button>
-      </header>
+      {chatOnly ? null : (
+        <header className="flex min-h-12 shrink-0 items-center justify-between gap-2 border-b px-3">
+          <TabsList className="h-9 w-auto justify-start">
+            {sourceSelection ? (
+              <TabsTrigger value="source">Source</TabsTrigger>
+            ) : null}
+            {chatOpen ? <TabsTrigger value="chat">Ask Blitz</TabsTrigger> : null}
+          </TabsList>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="shrink-0 gap-1.5 px-2 text-muted-foreground"
+            onClick={onCloseTab}
+          >
+            <CancelIcon size={15} aria-hidden="true" />
+            Close {activeTab === "source" ? "source" : "Ask Blitz"}
+          </Button>
+        </header>
+      )}
       {sourceSelection ? (
         <TabsContent
           value="source"
@@ -144,18 +155,21 @@ export function LearningSidePane({
           />
         </TabsContent>
       ) : null}
-      {chatOpen && (chatCard || chatPassage) ? (
+      {chatOpen && (chatCard || chatPassage || chatLesson) ? (
         <TabsContent
           value="chat"
           forceMount
           className="mt-0 flex min-h-0 flex-1 flex-col overflow-hidden data-[state=inactive]:hidden"
         >
           <ChatWorkspace
-            key={chatCard?.id ?? chatPassage?.id}
+            key={chatCard?.id ?? chatPassage?.id ?? "lesson"}
             initialCard={chatCard}
             initialPassage={chatPassage}
+            initialChatId={lessonChatId}
+            lesson={chatLesson}
             embedded
             onOpenSource={onOpenSource}
+            onClose={chatOnly ? onCloseTab : undefined}
           />
         </TabsContent>
       ) : null}
@@ -173,7 +187,7 @@ export function LearningSidePane({
         <DialogContent
           showCloseButton={false}
           aria-describedby={undefined}
-          className="inset-0 h-[100dvh] max-h-none w-full max-w-none translate-x-0 translate-y-0 gap-0 overflow-hidden rounded-none p-0 sm:max-w-none"
+          className="inset-0 flex h-[100dvh] max-h-none w-full max-w-none translate-x-0 translate-y-0 flex-col gap-0 overflow-hidden rounded-none p-0 sm:max-w-none"
         >
           <DialogTitle className="sr-only">Learning tools</DialogTitle>
           {tabs}
@@ -185,6 +199,10 @@ export function LearningSidePane({
     <aside
       aria-label="Learning side panel"
       className="flex h-full min-h-0 min-w-0 flex-col border-l bg-background"
+      onKeyDown={(event) => {
+        // A menu or dialog inside the panel closes itself first.
+        if (event.key === "Escape" && !event.defaultPrevented) onCloseTab()
+      }}
     >
       {tabs}
     </aside>

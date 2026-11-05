@@ -93,7 +93,8 @@ export function MarkdownMermaid({
   const current =
     result?.source === source && result.dark === dark ? result : undefined
   return (
-    <div className="markdown-diagram">
+    // Lesson questions quote a diagram by its source, which says what it shows.
+    <div className="markdown-diagram" data-ask-text={source}>
       {current?.svg ? (
         <div
           className="markdown-diagram-canvas"

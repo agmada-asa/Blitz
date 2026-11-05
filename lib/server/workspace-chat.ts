@@ -591,7 +591,7 @@ export function buildWorkspaceChatPrompt(
       `USER ANNOTATIONS ON PREVIOUS REPLIES:\n${request.annotations
         .map((annotation, index) => {
           const num = annotation.number ?? index + 1
-          return `[Annotation ${num}] (link with [Annotation ${num}](annotation:${num}) or [custom text](annotation:${num}))\nQuoted text from previous reply: "${boundedText(annotation.selectedText, 1_000)}"\nUser note: "${boundedText(annotation.note, 2_000)}"`
+          return `[Annotation ${num}] (link with [Annotation ${num}](annotation:${num}) or [custom text](annotation:${num}))\nQuoted text from previous reply: "${boundedText(annotation.selectedText, 4_000)}"\nUser note: "${boundedText(annotation.note, 2_000)}"`
         })
         .join("\n\n")}`
     )

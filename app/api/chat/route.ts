@@ -546,14 +546,14 @@ export async function POST(request: Request): Promise<Response> {
             attachmentBudget - attachment.text.length
           )
         }
-        const retrievalQuestion =
-          input.message.trim() ||
-          input.annotations
-            ?.map((a) => `${a.note} ${a.selectedText}`)
-            .join(" ")
-            .slice(0, 500)
-            .trim() ||
-          ""
+        // "What does this mean?" has no topic words, so quoted text counts too.
+        const retrievalQuestion = [
+          input.message.trim(),
+          ...(input.annotations ?? []).map((a) => a.selectedText),
+        ]
+          .join(" ")
+          .slice(0, 500)
+          .trim()
         const projects = input.projectIds.length
           ? await client.query(getProjectContext, {
               projectIds: input.projectIds,
