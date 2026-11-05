@@ -575,13 +575,15 @@ function interactiveBlock(
   const complete = !options.streaming || isClosedCodeFence(token.raw)
   if (parsed.ok && complete)
     return (
-      <InteractiveBlockView
-        key={key}
-        block={parsed.block}
-        streaming={options.streaming}
-        renderMarkdown={nestedMarkdownRenderer(options)}
-        source={<CodeBlock code={token.text} language="html" />}
-      />
+      // Marks one component for lesson questions, which quote it whole.
+      <div key={key} data-ask-block>
+        <InteractiveBlockView
+          block={parsed.block}
+          streaming={options.streaming}
+          renderMarkdown={nestedMarkdownRenderer(options)}
+          source={<CodeBlock code={token.text} language="html" />}
+        />
+      </div>
     )
   if (options.streaming)
     return <InteractiveBlockPlaceholder key={key} language={language} />

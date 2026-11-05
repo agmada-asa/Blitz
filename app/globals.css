@@ -230,6 +230,11 @@
   }
 }
 
+/* The lesson passage the side chat would quote, or has quoted. */
+::highlight(lesson-ask) {
+  background-color: color-mix(in oklab, var(--brand) 28%, transparent);
+}
+
 /* Ambient color stays behind the feed; only transforms animate to avoid repainting gradients. */
 .feed-backdrop::before,
 .feed-backdrop::after {
