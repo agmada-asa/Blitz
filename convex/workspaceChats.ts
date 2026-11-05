@@ -460,6 +460,27 @@ export const setUnread = mutation({
   },
 })
 
+/**
+ * Remembers which chat holds the learner's questions beside a Teach session,
+ * so it reopens with the lesson. Starting the unit over makes a new session,
+ * which starts with no side chat.
+ */
+export const setTeachSideChat = mutation({
+  args: {
+    chatId: v.id("workspaceChats"),
+    sideChatId: v.id("workspaceChats"),
+  },
+  handler: async (ctx, args) => {
+    const chat = await ctx.db.get(args.chatId)
+    if (!chat || chat.purpose !== "teach")
+      throw new Error("Teach session not found")
+    const sideChat = await ctx.db.get(args.sideChatId)
+    if (!sideChat || sideChat.purpose === "teach")
+      throw new Error("Side chat not found")
+    await ctx.db.patch(chat._id, { teachSideChatId: sideChat._id })
+  },
+})
+
 /** Sets whether one saved chat stays at the top of the history list. */
 export const setPinned = mutation({
   args: { chatId: v.id("workspaceChats"), pinned: v.boolean() },
@@ -563,6 +584,11 @@ export const get = query({
       id: chat._id,
       projectId: chat.projectId,
       purpose: chat.purpose ?? null,
+      // A side chat the learner deleted leaves nothing to reopen.
+      teachSideChatId:
+        chat.teachSideChatId && (await ctx.db.get(chat.teachSideChatId))
+          ? chat.teachSideChatId
+          : null,
       title: chat.title,
       providerId: chat.providerId ?? "codex",
       providerInstanceId: chat.providerInstanceId ?? null,
