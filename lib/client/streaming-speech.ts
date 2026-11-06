@@ -1,9 +1,10 @@
 /** Feeds growing Markdown through the existing cancellable, gapless speech player. */
+import { splitSpeechText } from "../speech-text.ts"
 import { pieceEnd } from "../speech-pieces.ts"
-import { spokenMarkdownText } from "../spoken-markdown"
-import { playSpeechSections } from "./speech-playback"
+import { spokenMarkdownText } from "../spoken-markdown.ts"
+import { playSpeechSections } from "./speech-playback.ts"
 
-/** One growing reply. Updates must preserve the existing prefix; stop on rewrites or navigation. */
+/** One growing reply. Unread text may change; rewriting consumed text stops playback. */
 export class StreamingSpeech {
   private text = ""
   private consumed = 0
@@ -17,17 +18,28 @@ export class StreamingSpeech {
   private current: { text: string; at: number; ms: number } | undefined
   private controller = new AbortController()
 
+  private voiceId: string
+  private state: (state: "loading" | "playing") => void
+  private error: (error: unknown) => void
+  private onHeard?: (synthesisMs: number) => void
+
   /** Selects the saved voice and reports playback state and failures to its owning screen. */
   constructor(
-    private voiceId: string,
-    private state: (state: "loading" | "playing") => void,
-    private error: (error: unknown) => void,
-    private onHeard?: (synthesisMs: number) => void,
-  ) {}
+    voiceId: string,
+    state: (state: "loading" | "playing") => void,
+    error: (error: unknown) => void,
+    onHeard?: (synthesisMs: number) => void,
+  ) {
+    this.voiceId = voiceId
+    this.state = state
+    this.error = error
+    this.onHeard = onHeard
+  }
 
   /** Queues only complete pieces, flushing the final remainder after generation completes. */
   update(text: string, complete: boolean): void {
-    if (!text.startsWith(this.text)) { this.stop(); return }
+    // Streamed metadata may disappear before it is spoken. Only consumed text is immutable.
+    if (!text.startsWith(this.text.slice(0, this.consumed))) { this.stop(); return }
     this.text = text
     while (!this.controller.signal.aborted) {
       const pending = text.slice(this.consumed)
@@ -38,7 +50,7 @@ export class StreamingSpeech {
       const words = spokenMarkdownText(pending.slice(0, end))
       if (!words.trim()) continue
       this.first = false
-      this.queue.push(words)
+      this.queue.push(...splitSpeechText(words))
     }
     this.complete = complete
     this.wake?.()
