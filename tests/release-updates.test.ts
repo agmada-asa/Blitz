@@ -134,6 +134,19 @@ test("a failed build is removed and keeps its log", async () => {
   }
 })
 
+test("a failed command names its first error, not the warnings after it", async () => {
+  await assert.rejects(
+    runCommand(
+      "sh",
+      ["-c", 'echo "compiling"; echo "x.ts(1,1): error TS2322: bad" >&2; echo "warning: later"; exit 2'],
+      { label: "next build" }
+    ),
+    (error: Error) =>
+      error.message.split("\n")[0] ===
+      "next build exited with 2: x.ts(1,1): error TS2322: bad"
+  )
+})
+
 test("pruning keeps the served release and the newest builds", async () => {
   const { root, source, home, first, manager } = await releaseFixture()
   try {

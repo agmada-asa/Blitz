@@ -158,8 +158,9 @@ export async function currentRelease(home) {
  * Output is also appended to `logPath` when given. A timeout kills the whole
  * group, so a hung build cannot leave workers behind.
  * @type {RunCommand}
- * @throws When the command cannot start, exits non-zero, or times out; the
- * message ends with the last lines of its output.
+ * @throws When the command cannot start, exits non-zero, or times out. The
+ * first line names the command and the first line of output that looks like
+ * an error (a build prints many warnings after it); the last lines follow.
  */
 export function runCommand(command, args, options = {}) {
   const {
@@ -180,11 +181,17 @@ export function runCommand(command, args, options = {}) {
     })
     let stdout = ""
     let tail = ""
+    let firstError
     /** Keeps the output for the caller and the error message, and copies it to the log. */
     const collect = (isStdout) => (chunk) => {
       const text = chunk.toString()
       if (isStdout && stdout.length < 1_000_000) stdout += text
       tail = (tail + text).slice(-2_000)
+      firstError ??= text
+        .split("\n")
+        .find((line) => /\berror\b|ERR!|Failed to/i.test(line))
+        ?.trim()
+        .slice(0, 300)
       log?.write(chunk)
     }
     child.stdout.on("data", collect(true))
@@ -208,7 +215,8 @@ export function runCommand(command, args, options = {}) {
       if (code === 0) return finish()
       const reason = signal ? `was stopped (${signal})` : `exited with ${code}`
       const detail = tail.trim().split("\n").slice(-8).join("\n")
-      finish(new Error(`${label} ${reason}${detail ? `:\n${detail}` : ""}`))
+      const summary = firstError ? `: ${firstError}` : "."
+      finish(new Error(`${label} ${reason}${summary}${detail ? `\n${detail}` : ""}`))
     })
   })
 }
