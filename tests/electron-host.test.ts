@@ -110,12 +110,13 @@ function harness(options: Record<string, unknown> = {}) {
 /** Waits long enough for millisecond restart timers to fire. */
 const settle = (ms = 30) => new Promise((resolve) => setTimeout(resolve, ms))
 
-test("starts Convex and Next, checks both, then starts the one worker process", async () => {
+test("starts Convex and Next, checks both, then starts voice and background workers", async () => {
   const { manager, children, healthUrls } = harness()
   const convexPorts = await resolveLocalConvexPorts(process.cwd())
   await manager.start()
-  assert.equal(children.length, 3)
-  assert.deepEqual(children[2].args, [
+  assert.equal(children.length, 4)
+  assert.deepEqual(children[2].args, ["--experimental-strip-types", "scripts/voice-service.ts"])
+  assert.deepEqual(children[3].args, [
     "--experimental-strip-types",
     "scripts/worker.ts",
   ])
@@ -130,6 +131,7 @@ test("starts Convex and Next, checks both, then starts the one worker process", 
   assert.equal(manager.snapshot().next.state, "ready")
   assert.equal(manager.snapshot().convex.state, "ready")
   assert.equal(manager.snapshot().worker.state, "running")
+  assert.equal(manager.snapshot().voice.state, "running")
   await manager.stop()
 })
 
@@ -217,7 +219,7 @@ test("stops every service and cancels pending restarts", async () => {
   const states = Object.values(manager.snapshot()).map(
     (status) => (status as { state: string }).state
   )
-  assert.equal(states.length, 3)
+  assert.equal(states.length, 4)
   assert.ok(states.every((state) => state === "stopped"))
 })
 

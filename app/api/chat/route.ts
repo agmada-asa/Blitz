@@ -835,6 +835,24 @@ export async function POST(request: Request): Promise<Response> {
           )
         }
         const selection = savedChatReplySelection(configuredSelection, turn)
+        if (input.spoken && !teach) {
+          // Stay on the signed-in provider; discover its fast option rather than requiring another account.
+          if (selection.providerId === "claude-code") {
+            selection.model = process.env.BLITZ_VOICE_MODEL || "haiku"
+            selection.effort = undefined
+          } else if (selection.providerId === "codex") {
+            const models = await getCodexModelCatalog()
+            const fast = models.find(model => model.id === process.env.BLITZ_VOICE_MODEL) ??
+              models.find(model => /mini|spark/i.test(model.id))
+            if (fast) {
+              selection.model = fast.id
+              selection.effort = fast.reasoningEfforts?.includes("low") ? "low" : undefined
+            }
+          } else if (process.env.BLITZ_VOICE_MODEL) {
+            selection.model = process.env.BLITZ_VOICE_MODEL
+            selection.effort = undefined
+          }
+        }
         // Teach reads untrusted course files, so it never inherits the global
         // access setting: no approvals to wait on, and a read-only sandbox.
         const approvalPolicy = teach
@@ -1009,7 +1027,10 @@ export async function POST(request: Request): Promise<Response> {
             {
               providerId: selection.providerId,
               workspaceDirectory,
-              prompt,
+              prompt: input.spoken
+                ? prompt + "\n\nThis is a spoken conversation. Recognition may contain small errors. Use short sentences and say maths in words. " +
+                  (teach ? "Keep lesson Markdown for the screen." : "Lead with the answer. Avoid Markdown, tables, code and links. Keep replies brief unless asked for detail.")
+                : prompt,
               ...(attachments.length ? { attachments } : {}),
               ...(threadId ? { threadId } : {}),
               ...(around.seed ? { seed: around.seed } : {}),

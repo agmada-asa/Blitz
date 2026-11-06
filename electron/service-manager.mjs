@@ -18,6 +18,7 @@ import { join } from "node:path"
  * worker is started on demand by Next and is not supervised here.
  */
 const workerDefinitions = [
+  ["voice", ["--experimental-strip-types", "scripts/voice-service.ts"]],
   ["worker", ["--experimental-strip-types", "scripts/worker.ts"]],
 ]
 
@@ -220,6 +221,7 @@ export class ServiceManager {
     const environment = {
       ...base,
       BLITZ_PORT: String(this.port),
+      BLITZ_VOICE_PORT: base.BLITZ_VOICE_PORT || String(this.port + 100),
       BLITZ_SERVER_URL: `http://127.0.0.1:${this.port}`,
       BLITZ_CONVEX_URL: `http://127.0.0.1:${convexPorts.cloud}`,
       NEXT_PUBLIC_CONVEX_URL: `http://127.0.0.1:${convexPorts.cloud}`,
