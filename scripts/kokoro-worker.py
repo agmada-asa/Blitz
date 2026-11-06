@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import contextlib
 import os
 import shutil
 import ssl
@@ -53,6 +54,13 @@ def initialize(data_dir: Path):
         "VECLIB_MAXIMUM_THREADS", "NUMEXPR_NUM_THREADS",
     ):
         os.environ[variable] = "2"
+    if sys.platform == "darwin" and os.uname().machine == "arm64":
+        try:
+            from mlx_audio.tts.utils import load_model
+            import soundfile as sf
+            return load_model("mlx-community/Kokoro-82M-bf16"), sf
+        except ImportError:
+            pass  # Keep ONNX for installations without MLX.
     try:
         import soundfile as sf
         import onnxruntime as rt
@@ -83,9 +91,10 @@ def main() -> None:
     threading.Thread(target=watch_parent, args=(os.getppid(),), daemon=True).start()
     data_dir = Path(os.environ["BLITZ_KOKORO_DIR"]).expanduser()
     try:
-        kokoro, soundfile = initialize(data_dir)
-        # Exercise phonemization and first inference before advertising readiness.
-        kokoro.create("Ready.", voice="af_heart", speed=1.0, lang="en-us")
+        with contextlib.redirect_stdout(sys.stderr):
+            kokoro, soundfile = initialize(data_dir)
+            # Exercise phonemization and first inference before advertising readiness.
+            synthesize(kokoro, "Ready.", os.environ.get("BLITZ_KOKORO_VOICE", "af_heart"))
     except Exception as error:
         print(json.dumps({"ready": False, "error": str(error)}), flush=True)
         return
@@ -104,12 +113,29 @@ def main() -> None:
             if not output_path.is_absolute():
                 raise ValueError("Audio output path must be absolute.")
 
-            samples, sample_rate = kokoro.create(text, voice=voice_id, speed=1.0, lang="en-us")
+            with contextlib.redirect_stdout(sys.stderr):
+                samples, sample_rate = synthesize(kokoro, text, voice_id)
             output_path.parent.mkdir(parents=True, exist_ok=True)
             soundfile.write(str(output_path), samples, sample_rate, format="WAV", subtype="PCM_16")
             print(json.dumps({"ok": True}), flush=True)
         except Exception as error:
             print(json.dumps({"ok": False, "error": str(error)}), flush=True)
+
+
+def synthesize(model, text, voice):
+    """Synthesize locally and trim edge silence, keeping 10 ms padding."""
+    import numpy as np
+    if hasattr(model, "generate"):
+        parts = list(model.generate(text=text, voice=voice, speed=1.0, lang_code="a"))
+        samples = np.concatenate([np.asarray(part.audio) for part in parts])
+        rate = parts[0].sample_rate
+    else:
+        samples, rate = model.create(text, voice=voice, speed=1.0, lang="en-us")
+    active = np.flatnonzero(np.abs(samples) > 0.003)
+    if active.size:
+        padding = int(rate * 0.01)
+        samples = samples[max(0, active[0] - padding):active[-1] + padding + 1]
+    return samples, rate
 
 
 if __name__ == "__main__":

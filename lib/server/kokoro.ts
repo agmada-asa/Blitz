@@ -87,6 +87,7 @@ function validateRequest(
 
 /** Shares bounded worker ownership across development reloads and route bundles. */
 const runtime = (state.runtime ??= new KokoroWorker({
+  idleTimeoutMs: 10 * 60_000,
   spawnWorker: () =>
     spawn(/* turbopackIgnore: true */ pythonExecutable, [workerScript], {
       cwd: dirname(workerScript),
@@ -285,7 +286,7 @@ export async function synthesizeKokoroWav(
   validateRequest(options.text, options.voiceId)
   options.signal?.throwIfAborted()
   const key = createHash("sha256")
-    .update(`read-aloud-v1\0${options.voiceId}\0${options.text}`, "utf8")
+    .update(`read-aloud-v2-trimmed\0${options.voiceId}\0${options.text}`, "utf8")
     .digest("hex")
   const cacheAvailable = await prepareReadAloudCache()
 
