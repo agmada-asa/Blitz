@@ -23,7 +23,7 @@
 import { createHash } from "node:crypto"
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises"
 import { join } from "node:path"
-import { currentRelease, homePaths } from "./release-manager.mjs"
+import { currentRelease, homePaths, readServerConfig } from "./release-manager.mjs"
 
 /** How often the tracked branch is fetched. */
 export const CHECK_INTERVAL_MS = 15 * 60_000
@@ -290,6 +290,12 @@ export class AutoUpdater {
   async runCheck({ rebuild, reason }) {
     this.setPhase("checking")
     await this.writeState()
+    // Pick up edits to config.json, such as another branch, without a restart.
+    const config = await readServerConfig(this.home)
+    if (config) {
+      this.releases.config = config
+      this.state.branch = config.branch
+    }
     /** @type {Omit<CheckResult, "at" | "reason">} */
     let outcome
     try {

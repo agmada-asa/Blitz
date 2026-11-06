@@ -347,18 +347,19 @@ export class ReleaseManager {
   }
 
   /**
-   * Fetches the tracked branch from the configured repository.
+   * Fetches the tracked branch from the repository named in `config.json`,
+   * so editing that file is enough to follow another repository or branch.
    * @returns {Promise<string>} The branch's newest commit.
    * @throws When the network or repository is unavailable.
    */
   async fetchTarget() {
-    const { branch } = this.config
+    const { branch, repository } = this.config
     await this.git(
       [
         "fetch",
         "--quiet",
         "--no-tags",
-        "origin",
+        repository,
         `+refs/heads/${branch}:refs/remotes/origin/${branch}`,
       ],
       { timeoutMs: 2 * 60_000 }
