@@ -261,10 +261,11 @@ const TutorReply = memo(function TutorReply({
             <h2 className="mt-0.5 font-heading text-2xl font-semibold tracking-tight text-balance">
               {outline!.sections[sectionNumber].title}
             </h2>
-            {(!streaming && body.trim()) || message.redoStyle ? (
+            {body.trim() || message.redoStyle ? (
               <div className="mt-2 -ml-2.5 flex flex-wrap items-center gap-2 sm:-ml-2">
-                {!streaming && body.trim() ? (
+                {body.trim() ? (
                   <ReadAloudButton
+                    streaming={streaming}
                     text={`${outline!.sections[sectionNumber].title}\n\n${body}`}
                   />
                 ) : null}
@@ -290,9 +291,9 @@ const TutorReply = memo(function TutorReply({
           <h2 className="mt-1 font-heading text-2xl font-semibold tracking-tight">
             {outline?.title ?? unitTitle}
           </h2>
-          {!streaming && body.trim() ? (
+          {body.trim() ? (
             <div className="mt-2 -ml-2.5 sm:-ml-2">
-              <ReadAloudButton text={body} />
+              <ReadAloudButton text={body} streaming={streaming} />
             </div>
           ) : null}
         </header>

@@ -1,6 +1,7 @@
 "use client"
 
 /** Owns persisted Blitz chat selection, streaming, and mixed-context attachments. */
+import { VoiceConversation } from "@/components/voice/voice-conversation"
 
 import {
   Archive02Icon,
@@ -65,6 +66,8 @@ import {
   DictationButton,
   DictationStatus,
   useDictation,
+  useReplyReader,
+  useReadRepliesSetting,
 } from "@/components/learn/teach-voice"
 import { InteractiveBlocksProvider } from "@/components/ui/interactive-blocks"
 import { ReadAloudButton } from "@/components/chat/read-aloud-button"
@@ -242,6 +245,7 @@ export type ChatPassage = {
 
 /** Optional overrides for standard, edited, and continued chat submissions. */
 type SendMessageOptions = {
+  spoken?: boolean
   message?: string
   chatId?: Id<"workspaceChats">
   continuationOf?: Id<"workspaceChatMessages">
@@ -740,6 +744,9 @@ export function ChatWorkspace({
       ) === index
   )
   const messages = activeChat?.messages ?? []
+  const [readReplies, setReadReplies] = useReadRepliesSetting()
+  const [voiceActive, setVoiceActive] = useState(false)
+  const chatReader = useReplyReader(readReplies && !voiceActive, messages, null)
   /** Formats the loaded conversation as Markdown with optional agent activity. */
   const exportChatMarkdown = (): string => {
     const title = activeChat?.title?.trim() || "Chat"
@@ -1748,6 +1755,7 @@ export function ChatWorkspace({
                   },
                 }
               : {}),
+            spoken: options.spoken === true,
             projectIds: submittedAttachments.flatMap((attachment) =>
               attachment.kind === "project" && attachment.projectId
                 ? [attachment.projectId]
@@ -2769,12 +2777,11 @@ export function ChatWorkspace({
                           <>
                             {message.content ? (
                               <>
-                                {message.status !== "running" ? (
                                   <ReadAloudButton
                                     text={message.content}
                                     prepare={latest}
+                                    streaming={message.status === "running"}
                                   />
-                                ) : null}
                                 <Button
                                   type="button"
                                   variant="ghost"
@@ -3128,6 +3135,10 @@ export function ChatWorkspace({
                     className="max-h-[min(70svh,32rem)] w-[min(24rem,calc(100vw-2rem))] overflow-y-auto rounded-xl p-4"
                   >
                     <div className="space-y-4">
+                      <label className="flex min-h-11 items-center gap-3 text-sm">
+                        <Checkbox checked={readReplies} onCheckedChange={value => { if (!value) chatReader.stop(); setReadReplies(value === true) }} />
+                        Read replies aloud
+                      </label>
                       <section className="space-y-2">
                         <h2 className="text-sm font-medium">Reply model</h2>
                         {/* Settings are read when a turn starts, so changes made
@@ -3269,9 +3280,7 @@ export function ChatWorkspace({
                 }
                 return (
                   <>
-                    {lesson ? (
-                      <DictationButton dictation={dictation} disabled={isRunning} />
-                    ) : null}
+                    <DictationButton dictation={dictation} disabled={isRunning} />
                     <Button
                       type="button"
                       size="icon"
@@ -3300,7 +3309,19 @@ export function ChatWorkspace({
             </div>
           </div>
           <div className="min-h-6 px-3 pt-1.5">
-            {lesson ? <DictationStatus dictation={dictation} /> : null}
+            <DictationStatus dictation={dictation} />
+            <VoiceConversation
+              key={activeChatId ?? "new"}
+              onActiveChange={setVoiceActive}
+              busy={isRunning}
+              onInterrupt={pauseReply}
+              onTurn={(text) => sendMessage({ message: text, spoken: true })}
+              reply={messages.findLast(message => message.role === "assistant") ? {
+                id: messages.findLast(message => message.role === "assistant")!.id,
+                text: messages.findLast(message => message.role === "assistant")!.content,
+                complete: messages.findLast(message => message.role === "assistant")!.status !== "running",
+              } : null}
+            />
             {uploadingFiles ? (
               <p role="status" className="text-xs text-muted-foreground">
                 Saving and reading files…

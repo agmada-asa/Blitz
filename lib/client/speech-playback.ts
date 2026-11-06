@@ -1,4 +1,5 @@
 /** Prepares bounded local speech openings and schedules continuous, cancellable browser playback. */
+import { highlightSpeech } from "./speech-highlight.ts"
 
 /** Small browser cache avoids another HTTP round trip for recently prepared sections. */
 const CACHE_LIMIT_BYTES = 8 * 1024 * 1024
@@ -106,6 +107,9 @@ function speechContext(): AudioContext {
   return context
 }
 
+/** Unlocks output during a microphone button's user gesture, before asynchronous model setup. */
+export function unlockSpeech(): void { void speechContext().resume() }
+
 /** Lets stop or navigation release a player even if the browser never resumes its audio context. */
 function waitForAudioResume(
   resumed: Promise<void>,
@@ -138,10 +142,11 @@ function waitForAudioResume(
 
 /** Schedules at most two decoded sections ahead, stops promptly, and propagates real playback errors. */
 export async function playSpeechSections(
-  chunks: readonly string[],
+  chunks: readonly string[] | AsyncIterable<string>,
   voiceId: string,
   signal: AbortSignal,
-  onState: (state: "loading" | "playing") => void
+  onState: (state: "loading" | "playing") => void,
+  onPiece?: (text: string, durationMs: number, phase: "playing" | "played", synthesisMs: number) => void
 ): Promise<void> {
   signal.throwIfAborted()
   const audioContext = speechContext()
@@ -150,12 +155,16 @@ export async function playSpeechSections(
   activePlaybacks += 1
   cancelPreparation()
   const sources = new Set<AudioBufferSourceNode>()
+  const timers = new Set<ReturnType<typeof setTimeout>>()
+  let clearHighlight: (() => void) | undefined
   const pending: Promise<void>[] = []
   let scheduledThrough = audioContext.currentTime
   let preparing = true
 
   /** Stops current and scheduled sections together when the owning control is cancelled. */
   function stopSources(): void {
+    for (const timer of timers) clearTimeout(timer)
+    clearHighlight?.()
     for (const source of sources) source.stop()
   }
   signal.addEventListener("abort", stopSources, { once: true })
@@ -164,11 +173,13 @@ export async function playSpeechSections(
     signal.throwIfAborted()
     if (audioContext.state !== "running")
       throw new Error("Audio could not start. Try reading aloud again.")
-    for (const chunk of chunks) {
+    for await (const chunk of chunks) {
       // Bound synthesis and decoded buffers even when the text contains many sections.
       if (pending.length >= 2) await pending.shift()
       signal.throwIfAborted()
+      const requestedAt = performance.now()
       const bytes = await requestSpeech(chunk, voiceId, signal)
+      const synthesisMs = performance.now() - requestedAt
       const buffer = await audioContext.decodeAudioData(bytes.slice(0))
       signal.throwIfAborted()
       const source = audioContext.createBufferSource()
@@ -178,6 +189,7 @@ export async function playSpeechSections(
       const ended = new Promise<void>((resolve) => {
         /** Releases each section and reports a buffer underrun only while more speech is coming. */
         source.onended = () => {
+          if (!signal.aborted) onPiece?.(chunk, buffer.duration * 1000, "played", synthesisMs)
           sources.delete(source)
           source.disconnect()
           if (!sources.size && preparing && !signal.aborted) onState("loading")
@@ -189,6 +201,12 @@ export async function playSpeechSections(
         scheduledThrough
       )
       source.start(startsAt)
+      const timer = setTimeout(() => {
+        timers.delete(timer)
+        clearHighlight = highlightSpeech(chunk)
+        onPiece?.(chunk, buffer.duration * 1000, "playing", synthesisMs)
+      }, Math.max(0, (startsAt - audioContext.currentTime) * 1000))
+      timers.add(timer)
       scheduledThrough = startsAt + buffer.duration
       pending.push(ended)
       onState("playing")

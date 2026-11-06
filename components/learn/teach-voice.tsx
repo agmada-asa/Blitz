@@ -8,7 +8,7 @@
  * Reading uses the same Kokoro playback as each section's Read aloud button,
  * and claims it, so only one thing speaks at once. Dictation records only
  * while the mic button is on, fills the question box, and leaves the learner
- * to send or edit; starting it stops the tutor mid-sentence.
+ * to send or edit. Continuous listening and interruption live in voice mode.
  */
 
 import {
@@ -31,15 +31,8 @@ import { LoadingIcon } from "@/components/ui/icon"
 import { claimReadAloud } from "@/components/chat/read-aloud-button"
 import { api } from "@/convex/_generated/api"
 import { cn } from "@/lib/utils"
-import { playSpeechSections } from "@/lib/client/speech-playback"
-import {
-  startSpeechRecording,
-  transcribeRecording,
-  warmSpeechToText,
-  type SpeechRecording,
-} from "@/lib/client/speech-recording"
-import { splitSpeechText } from "@/lib/speech-text"
-import { spokenMarkdownText } from "@/lib/spoken-markdown"
+import { StreamingSpeech } from "@/lib/client/streaming-speech"
+import { VoiceConnection } from "@/lib/client/voice-connection"
 import {
   parseTeachSectionMarker,
   stripTeachMarkers,
@@ -48,9 +41,6 @@ import {
 
 /** Where the learner's choice to hear replies is kept between visits. */
 const READ_REPLIES_KEY = "blitz.teach.readRepliesAloud"
-
-/** Stops the reply being read, if any; set by the active reader. */
-let stopActiveReply: (() => void) | undefined
 
 /** One tutor or learner message, as far as reading it aloud needs. */
 type VoiceMessage = {
@@ -126,7 +116,7 @@ export function useReadRepliesSetting(): [boolean, (enabled: boolean) => void] {
 export type ReplyReaderState = "idle" | "loading" | "playing" | "error"
 
 /**
- * Reads each new tutor reply aloud once it is complete, while `enabled`.
+ * Reads complete pieces of each growing tutor reply while `enabled`.
  *
  * Only replies written while this screen is open are read, so returning to a
  * unit does not read its history. The toggle stops a reply when reading is
@@ -156,64 +146,34 @@ export function useReplyReader(
     setState("idle")
   }, [])
 
-  /** Reads one reply, replacing anything else being read aloud. */
-  const read = useCallback(
-    async (text: string) => {
-      const chunks = splitSpeechText(spokenMarkdownText(text))
-      if (!chunks.length) return
-      controllerRef.current?.abort()
-      const controller = new AbortController()
-      controllerRef.current = controller
-      const stopThis = () => {
-        controller.abort()
-        if (controllerRef.current === controller) {
-          controllerRef.current = undefined
-          setState("idle")
-        }
-      }
-      const release = claimReadAloud(stopThis)
-      stopActiveReply = stopThis
-      setError("")
-      setState("loading")
-      try {
-        await playSpeechSections(chunks, voiceId, controller.signal, (next) => {
-          if (!controller.signal.aborted) setState(next)
-        })
-        if (!controller.signal.aborted) setState("idle")
-      } catch (caught) {
-        if (controller.signal.aborted) return
-        setError(
-          caught instanceof Error ? caught.message : "The reply could not be read aloud."
-        )
-        setState("error")
-      } finally {
-        release()
-        if (stopActiveReply === stopThis) stopActiveReply = undefined
-        if (controllerRef.current === controller) controllerRef.current = undefined
-      }
-    },
-    [voiceId]
-  )
-
+  const stream = useRef<StreamingSpeech | undefined>(undefined)
+  const streamId = useRef("")
   const last = messages.findLast((message) => message.role === "assistant")
   useEffect(() => {
-    if (!last) return
-    if (last.status === "running") {
-      writtenHere.current.add(last.id)
-      return
+    if (!enabled) { stream.current?.stop(); return }
+    if (!last || savedSettings === undefined) return
+    if (last.status === "running") writtenHere.current.add(last.id)
+    if (!writtenHere.current.has(last.id) || spoken.current.has(last.id)) return
+    if (streamId.current !== last.id) {
+      stream.current?.stop()
+      const controller = new AbortController()
+      controllerRef.current = controller
+      const current = new StreamingSpeech(voiceId, setState, caught => {
+        setError(caught instanceof Error ? caught.message : "The reply could not be read aloud.")
+        setState("error")
+      })
+      stream.current = current
+      streamId.current = last.id
+      const release = claimReadAloud(() => current.stop())
+      controller.signal.addEventListener("abort", () => { current.stop(); release() }, { once: true })
     }
-    // Wait for the saved voice, so the first reply uses the learner's choice.
-    if (
-      !enabled ||
-      savedSettings === undefined ||
-      last.status !== "completed" ||
-      !writtenHere.current.has(last.id) ||
-      spoken.current.has(last.id)
-    )
-      return
-    spoken.current.add(last.id)
-    void read(spokenReplyText(last.content, outline))
-  }, [enabled, last, outline, read, savedSettings])
+    stream.current?.update(spokenReplyText(last.content, outline), last.status !== "running")
+    if (last.status !== "running") {
+      spoken.current.add(last.id)
+      const current = stream.current
+      void current?.done().then(() => { if (!current.failed && stream.current === current) setState("idle") })
+    }
+  }, [enabled, last, outline, savedSettings, voiceId])
 
   useEffect(() => () => controllerRef.current?.abort(), [])
 
@@ -288,7 +248,7 @@ function dictationError(error: unknown): string {
 /**
  * Records a spoken question and hands its text over.
  *
- * `toggle` starts listening (stopping any reply being read) and, pressed
+ * `toggle` starts listening and, pressed
  * again, stops and transcribes. The model is warmed as recording starts.
  *
  * @param onText - Receives the transcript of each question.
@@ -296,55 +256,43 @@ function dictationError(error: unknown): string {
 export function useDictation(onText: (text: string) => void): Dictation {
   const [state, setState] = useState<DictationState>("idle")
   const [error, setError] = useState("")
-  const recordingRef = useRef<SpeechRecording | undefined>(undefined)
-  const requestRef = useRef<AbortController | undefined>(undefined)
-
-  useEffect(
-    () => () => {
-      recordingRef.current?.cancel()
-      requestRef.current?.abort()
-    },
-    []
-  )
+  const connection = useRef<VoiceConnection | undefined>(undefined)
+  const mounted = useRef(true)
+  const callback = useRef(onText)
+  useEffect(() => { callback.current = onText })
+  useEffect(() => {
+    mounted.current = true
+    return () => { mounted.current = false; connection.current?.close() }
+  }, [])
 
   const toggle = useCallback(() => {
-    if (state === "starting" || state === "transcribing") return
+    if (state === "starting") { connection.current?.close(); return }
+    if (state === "transcribing") return
     if (state === "listening") {
-      const recording = recordingRef.current
-      recordingRef.current = undefined
-      if (!recording) return
       setState("transcribing")
-      const controller = new AbortController()
-      requestRef.current = controller
-      void (async () => {
-        try {
-          const text = (await transcribeRecording(await recording.stop(), controller.signal)).trim()
-          if (text) onText(text)
-          else setError("Nothing was heard. Try again a little closer to the mic.")
-        } catch (caught) {
-          if (!controller.signal.aborted) setError(dictationError(caught))
-        } finally {
-          if (requestRef.current === controller) requestRef.current = undefined
-          setState("idle")
-        }
-      })()
+      connection.current?.finish()
       return
     }
     setError("")
     setState("starting")
-    stopActiveReply?.()
-    warmSpeechToText()
-    void startSpeechRecording().then(
-      (recording) => {
-        recordingRef.current = recording
-        setState("listening")
-      },
-      (caught: unknown) => {
-        setError(dictationError(caught))
-        setState("idle")
+    const current = new VoiceConnection(event => {
+      if (!mounted.current || connection.current !== current) return
+      if (event.type === "user") {
+        if (event.text?.trim()) callback.current(event.text)
+        else setError("Nothing was heard. Try again closer to the mic.")
+        current.close()
       }
-    )
-  }, [state, onText])
+      if (event.type === "error") { setError(event.message || "Dictation failed."); current.close() }
+      if (event.type === "closed") { connection.current = undefined; setState("idle") }
+    })
+    connection.current = current
+    void current.start("dictate").then(() => {
+      if (mounted.current && connection.current === current) setState("listening")
+    }).catch(caught => {
+      if (!mounted.current || connection.current !== current) return
+      setError(dictationError(caught)); current.close()
+    })
+  }, [state])
 
   return { state, error, toggle }
 }
@@ -365,11 +313,11 @@ export function DictationButton({
       size="icon"
       variant={listening ? "default" : "outline"}
       aria-pressed={listening}
-      aria-label={listening ? "Stop and transcribe" : "Speak your question"}
-      disabled={(disabled && !listening) || busy}
+      aria-label={dictation.state === "starting" ? "Cancel microphone" : listening ? "Stop and transcribe" : "Speak your question"}
+      disabled={(disabled && !listening && dictation.state !== "starting") || dictation.state === "transcribing"}
       onClick={dictation.toggle}
       className={cn(
-        "shrink-0 rounded-full",
+        "min-h-11 min-w-11 shrink-0 rounded-full",
         listening && "bg-destructive text-white hover:bg-destructive/90"
       )}
     >

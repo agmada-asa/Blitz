@@ -231,6 +231,10 @@
 }
 
 /* The lesson passage the side chat would quote, or has quoted. */
+::highlight(read-aloud) {
+  background-color: color-mix(in oklab, var(--brand) 24%, transparent);
+}
+
 ::highlight(lesson-ask) {
   background-color: color-mix(in oklab, var(--brand) 28%, transparent);
 }

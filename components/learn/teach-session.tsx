@@ -19,6 +19,8 @@
  */
 
 import Link from "next/link"
+import { VoiceConversation } from "@/components/voice/voice-conversation"
+import { spokenReplyText } from "@/components/learn/teach-voice"
 import { usePathname, useRouter } from "next/navigation"
 import { useMutation, useQuery } from "convex/react"
 import { BlitzLogo } from "@/components/blitz-logo"
@@ -263,7 +265,8 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
   }, [unit.outline, messages])
   // Hands-free: new replies are read aloud while the learner has it on.
   const [readReplies, setReadReplies] = useReadRepliesSetting()
-  const replyReader = useReplyReader(readReplies, messages, outline)
+  const [voiceActive, setVoiceActive] = useState(false)
+  const replyReader = useReplyReader(readReplies && !voiceActive, messages, outline)
 
   // The latest section marker is the current section; every marker seen is a
   // taught section. Reading them from messages keeps progress live while a
@@ -330,7 +333,7 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
 
   /** Sends a quick reply or resumes a paused reply. */
   const send = useCallback(
-    async (message: string, continuationOf?: string) => {
+    async (message: string, continuationOf?: string, spoken = false) => {
       if (!activeChatId || sending || chat?.status === "running") return
       setSending(true)
       setError("")
@@ -339,6 +342,7 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
       abortRef.current = controller
       const result = await sendTeachTurn({
         chatId: activeChatId,
+        spoken,
         message,
         ...(continuationOf ? { continuationOf } : {}),
         signal: controller.signal,
@@ -952,6 +956,16 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
             />
           </div>
         ) : null}
+        <VoiceConversation
+          onActiveChange={setVoiceActive}
+          disabled={!activeChatId}
+          busy={running}
+          onInterrupt={() => void pause()}
+          onTurn={(text) => send(/^(next|next section)[.!?]?$/i.test(text.trim()) ? TEACH_QUICK_REPLIES.next : text, undefined, true)}
+          reply={lastMessage?.role === "assistant" ? {
+            id: lastMessage.id, text: spokenReplyText(lastMessage.content, outline), complete: lastMessage.status !== "running",
+          } : null}
+        />
         <TeachDock
           state={dockState}
           error={error}

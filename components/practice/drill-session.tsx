@@ -9,6 +9,8 @@
  */
 
 import Link from "next/link"
+import { VoiceConversation } from "@/components/voice/voice-conversation"
+import { spokenQuizAnswer } from "@/lib/voice-quiz"
 import { useConvex } from "convex/react"
 import type { FunctionReturnType } from "convex/server"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
@@ -35,7 +37,7 @@ type DrillQuestion = FunctionReturnType<typeof api.practice.drill>[number]
 const DRILL_LENGTH = 10
 
 /** Result of one answered question. */
-type DrillResult = { correct: boolean }
+type DrillResult = { correct: boolean; selectedOptionIds?: string[] }
 
 /**
  * Posts an answer to the shared learning endpoint, which scores it and
@@ -85,6 +87,9 @@ export function DrillSession({ projectId, unitId }: { projectId: string; unitId?
   const [index, setIndex] = useState(0)
   const [results, setResults] = useState<Record<string, DrillResult>>({})
   const [round, setRound] = useState(0)
+  const [voiceRevision, setVoiceRevision] = useState(0)
+  const [voiceFeedback, setVoiceFeedback] = useState("")
+  const [voiceBusy, setVoiceBusy] = useState(false)
   // When this round's deck arrived; the summary counts answers from then on.
   const [startedAt, setStartedAt] = useState(0)
   // Right answers in a row, for the combo counter. It starts from the run the
@@ -134,7 +139,7 @@ export function DrillSession({ projectId, unitId }: { projectId: string; unitId?
     async (_block: QuizBlock, selectedOptionIds: string[], confidence?: "guess") => {
       if (!current) return null
       const result = await submitAnswer(projectId, current, selectedOptionIds, confidence)
-      setResults((previous) => ({ ...previous, [current.itemId]: result }))
+      setResults((previous) => ({ ...previous, [current.itemId]: { ...result, selectedOptionIds } }))
       setRun((value) => (result.correct ? value + 1 : 0))
       // Move focus to Next so keyboard learners can continue with Enter.
       window.requestAnimationFrame(() => nextRef.current?.focus())
@@ -143,8 +148,10 @@ export function DrillSession({ projectId, unitId }: { projectId: string; unitId?
     [current, projectId]
   )
   const interactive = useMemo(
-    () => ({ onQuizAnswer, acceptsConfidence: true }),
-    [onQuizAnswer]
+    () => ({ onQuizAnswer, acceptsConfidence: true, answeredQuizzes: current && answered ? {
+      [current.quiz.id]: { selectedOptionIds: answered.selectedOptionIds ?? [], correct: answered.correct },
+    } : {} }),
+    [onQuizAnswer, current, answered]
   )
 
   const correctCount = Object.values(results).filter((result) => result.correct).length
@@ -266,6 +273,42 @@ export function DrillSession({ projectId, unitId }: { projectId: string; unitId?
         </div>
       ) : current ? (
         <section className="mt-8 flex-1" aria-label={`Question ${index + 1}`}>
+          <VoiceConversation
+            readOnStart
+            busy={voiceBusy}
+            onInterrupt={() => {}}
+            reply={{
+              id: current.itemId + ":" + voiceRevision + ":" + Boolean(answered),
+              text: voiceFeedback || (answered
+                ? (answered.correct ? "Correct. " : "Not quite. ") + current.quiz.explanation + " Say next for the next question."
+                : current.quiz.question + "\n" + current.quiz.options.map((option, at) => String.fromCharCode(65 + at) + ". " + option.text).join("\n")),
+              complete: true,
+            }}
+            onTurn={async text => {
+              const answer = spokenQuizAnswer(text, current.quiz.options)
+              setVoiceFeedback("")
+              if (answer === "repeat") { setVoiceRevision(value => value + 1); return }
+              if (answer === "next" && answered) { setIndex(value => value + 1); return }
+              if (answer === "skip") {
+                if (!answered) await onQuizAnswer(current.quiz, [], "guess")
+                setVoiceRevision(value => value + 1); return
+              }
+              if (answered) { setVoiceFeedback("Say next to move on, or repeat to hear the feedback."); setVoiceRevision(value => value + 1); return }
+              if (current.quiz.type === "code-output" || (current.quiz.type === "cloze" && current.quiz.acceptedAnswers?.length === 1)) {
+                setVoiceBusy(true)
+                try { await onQuizAnswer(current.quiz, [text]) }
+                finally { setVoiceBusy(false) }
+                return
+              }
+              if (typeof answer !== "number" || !["single-choice", "true-false"].includes(current.quiz.type)) {
+                setVoiceFeedback("Say one option letter or its number, or answer on screen.")
+                setVoiceRevision(value => value + 1); return
+              }
+              setVoiceBusy(true)
+              try { await onQuizAnswer(current.quiz, [current.quiz.options[answer].id]) }
+              finally { setVoiceBusy(false) }
+            }}
+          />
           <p className="mb-3 text-xs text-muted-foreground">
             {current.unitTitle}
             {current.lastOutcome === "incorrect" ? " · You missed this last time" : ""}
