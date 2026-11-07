@@ -28,6 +28,8 @@ class TestContext {
   async decodeAudioData() { return { duration: 0.001 } }
   /** Stands in for the output-level analyser every section plays through. */
   createAnalyser() { return { fftSize: 0, connect() {}, getFloatTimeDomainData() {} } }
+  /** Stands in for the volume speech is ducked with. */
+  createGain() { return { gain: { setTargetAtTime() {} }, connect() {} } }
   /** Creates a cancellable fixture section. */
   createBufferSource() { return new TestSource() }
 }
@@ -58,6 +60,14 @@ test("streaming speech accepts unread metadata edits and bounds synthesis reques
     assert.ok(requests.length > 2)
     assert.ok(requests.every(text => text.length <= 360))
     assert.equal(long.heard().match(/Membrane transport/g)?.length, 800)
+
+    // A reply stopped part-way resumes at the piece it was cut in, not from the start.
+    requests.length = 0
+    const resumed = new StreamingSpeech("af_heart", () => {}, error => errors.push(error), undefined, 2)
+    resumed.update("First sentence here. Second sentence here. Third sentence here.", true)
+    await resumed.done()
+    assert.deepEqual(requests, ["Third sentence here."])
+    assert.equal(resumed.played, 3)
   } finally {
     globalThis.AudioContext = originalContext
   }

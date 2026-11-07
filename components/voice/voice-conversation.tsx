@@ -12,10 +12,10 @@ import { AudioWave01Icon, Cancel01Icon, KeyboardIcon, Mic01Icon, MicOff01Icon, N
 import { api } from "@/convex/_generated/api"
 import { Button } from "@/components/ui/button"
 import { claimReadAloud } from "@/components/chat/read-aloud-button"
-import { VoiceOrb, type OrbState } from "@/components/voice/voice-orb"
+import { VoiceBolt, type BoltState } from "@/components/voice/voice-bolt"
 import { VoiceConnection } from "@/lib/client/voice-connection"
 import { StreamingSpeech } from "@/lib/client/streaming-speech"
-import { speechOutputLevel, unlockSpeech } from "@/lib/client/speech-playback"
+import { duckSpeech, speechOutputLevel, unlockSpeech } from "@/lib/client/speech-playback"
 import { cn } from "@/lib/utils"
 
 /** What a voice session is doing. */
@@ -23,6 +23,17 @@ export type VoicePhase = "off" | "starting" | "listening" | "hearing" | "thinkin
 
 /** The reply being read: its id, the text so far, and whether it has finished. */
 export type VoiceReply = { id: string; text: string; complete: boolean } | null
+
+/** The learner talked over a reply: what they heard of it, empty if they spoke before it began. */
+export type VoiceCut = { heard: string }
+
+/** Tells the model, alongside the learner's words, how much of its last spoken reply they heard. */
+export function voiceCutNote(cut: VoiceCut | null): string {
+  if (!cut) return ""
+  return cut.heard
+    ? `The learner cut in while your last reply was being read aloud. They heard only: "${cut.heard.slice(-2000)}". Carry on from what they say now.`
+    : "The learner said this before hearing any of your last reply, which was stopped. Answer their last two messages together."
+}
 
 /** A running voice session's state and controls. */
 export type VoiceSession = {
@@ -56,13 +67,22 @@ function startError(error: unknown): string {
  * Runs one hands-free voice session: listens continuously, sends finished turns, reads the growing
  * reply sentence by sentence, and stops it when the learner talks over it.
  */
-export function useVoiceSession({ onTurn, onInterrupt, reply, busy, readOnStart = false }: {
-  onTurn: (text: string) => Promise<unknown>
-  onInterrupt: () => void
+export function useVoiceSession({ onTurn, onInterrupt, reply, busy, readOnStart = false, onReplyDone }: {
+  /**
+   * Sends the learner's words. `cut` is set when they talked over a reply: `heard` is how much of it
+   * they heard, empty when they spoke again before any of it.
+   */
+  onTurn: (text: string, cut: VoiceCut | null) => Promise<unknown>
+  /** Stops the reply still being written when the learner talks over it. Without it, it keeps writing. */
+  onInterrupt?: () => void
+  /** The reply to read. A reply read before, then stopped, resumes at the sentence it was cut in. */
   reply: VoiceReply
+  /** A reply is being written; a turn waits for it to finish or stop. */
   busy: boolean
   /** Read the latest reply as soon as voice starts, instead of only new ones. */
   readOnStart?: boolean
+  /** A reply has been read to its end. */
+  onReplyDone?: (id: string) => void
 }): VoiceSession {
   const settings = useQuery(api.audioSettings.get)
   const [phase, setPhase] = useState<VoicePhase>("off")
@@ -75,74 +95,99 @@ export function useVoiceSession({ onTurn, onInterrupt, reply, busy, readOnStart 
   const reader = useRef<StreamingSpeech | null>(null)
   const readingId = useRef("")
   const loggedReply = useRef("")
-  const pending = useRef("")
-  const callbacks = useRef({ onTurn, onInterrupt, busy, muted })
+  const pending = useRef<{ text: string; cut: VoiceCut | null } | null>(null)
+  const callbacks = useRef({ onTurn, onInterrupt, onReplyDone, busy, muted })
   const release = useRef<(() => void) | null>(null)
   const mounted = useRef(true)
   const session = useRef(0)
-  const cutOff = useRef<string | null>(null)
+  /** Set when the learner talked over a reply, until their words go out with it. */
+  const cutOff = useRef<VoiceCut | null>(null)
+  /** Pieces of each reply already heard, so a reply that was stopped resumes where it was cut. */
+  const progress = useRef(new Map<string, number>())
+  /** A turn went out and its reply hasn't started being read. */
+  const awaiting = useRef(false)
+  const watched = useRef<StreamingSpeech | null>(null)
   const turnAt = useRef(0)
   const wakeLock = useRef<WakeLockSentinel | null>(null)
   // Event callbacks see the current turn state without reopening the microphone.
-  useEffect(() => { callbacks.current = { onTurn, onInterrupt, busy, muted } })
+  useEffect(() => { callbacks.current = { onTurn, onInterrupt, onReplyDone, busy, muted } })
+
+  /** Stops the reader, remembering how far it got so the same reply can resume later. */
+  const stopReading = useCallback(() => {
+    const current = reader.current
+    if (current && readingId.current) progress.current.set(readingId.current, current.played)
+    current?.stop()
+    duckSpeech(false)
+  }, [])
 
   /** Releases capture, speech, wake lock and queued unsent words. */
   const stop = useCallback(() => {
     session.current++
     connection.current?.close(); connection.current = null
     reader.current?.stop(); reader.current = null
+    duckSpeech(false)
     release.current?.(); release.current = null
     void wakeLock.current?.release(); wakeLock.current = null
-    pending.current = ""; readingId.current = ""; cutOff.current = null
+    pending.current = null; readingId.current = ""; cutOff.current = null; awaiting.current = false
+    progress.current.clear()
     setPhase("off"); setMuted(false); setHeard(""); setSpeaking(""); setCut(null)
   }, [])
 
   useEffect(() => {
     mounted.current = true
-    return () => { mounted.current = false; connection.current?.close(); reader.current?.stop(); release.current?.(); void wakeLock.current?.release() }
+    return () => { mounted.current = false; connection.current?.close(); reader.current?.stop(); duckSpeech(false); release.current?.(); void wakeLock.current?.release() }
   }, [])
 
-  /** Sends a turn now, or queues it and interrupts the reply that is still being written. */
-  const sendTurn = useCallback((text: string) => {
+  /** Sends a turn now, or holds it until the reply being written has finished or stopped. */
+  const sendTurn = useCallback((text: string, cut: VoiceCut | null) => {
     turnAt.current = performance.now()
-    reader.current?.stop()
-    if (callbacks.current.busy) { pending.current = text; callbacks.current.onInterrupt() }
-    else void callbacks.current.onTurn(text).catch(caught => setError(caught instanceof Error ? caught.message : "Your turn failed. Try again."))
-  }, [])
+    awaiting.current = true
+    stopReading()
+    if (callbacks.current.busy) { pending.current = { text, cut }; return }
+    void callbacks.current.onTurn(text, cut).catch(caught => setError(caught instanceof Error ? caught.message : "Your turn failed. Try again."))
+  }, [stopReading])
 
-  // Reads the reply as it grows; a new reply id starts a new reader.
+  // Reads the reply as it grows; a new reply id starts a new reader, resuming where that reply was cut.
   useEffect(() => {
     if (phase === "off" || phase === "starting" || !reply) return
     if (readingId.current !== reply.id) {
-      reader.current?.stop()
+      stopReading()
+      const id = reply.id
       const current = new StreamingSpeech(settings?.voiceIds?.[0] ?? "af_heart", next => {
         if (reader.current !== current) return
+        if (next === "playing") awaiting.current = false
         setPhase(next === "playing" ? "speaking" : "thinking")
       }, caught => setError(caught instanceof Error ? caught.message : "Speech failed. Try again."), synthesisMs => {
         connection.current?.send({ type: "timing", heardMs: performance.now() - turnAt.current, synthesisMs })
-      })
+      }, progress.current.get(id) ?? 0)
       current.onSpeaking = text => { if (reader.current === current) { setSpeaking(text); setCut(null) } }
       reader.current = current
-      readingId.current = reply.id
+      readingId.current = id
     }
-    reader.current?.update(reply.text, reply.complete)
-    if (reply.complete) {
-      const current = reader.current
-      void current?.done().then(() => {
-        if (!current.failed && reader.current === current && connection.current) { setPhase("listening"); setSpeaking("") }
+    const current = reader.current
+    current?.update(reply.text, reply.complete)
+    if (reply.complete && current && watched.current !== current) {
+      watched.current = current
+      const id = reply.id
+      void current.done().then(() => {
+        if (current.failed || current.stopped || reader.current !== current || !connection.current) return
+        progress.current.set(id, current.played)
+        awaiting.current = false
+        setPhase("listening"); setSpeaking("")
+        callbacks.current.onReplyDone?.(id)
       })
-      if (loggedReply.current !== reply.id && current) {
+      if (loggedReply.current !== reply.id) {
         loggedReply.current = reply.id
         connection.current?.send({ type: "reply", text: reply.text.slice(0, 6000) })
       }
     }
-  }, [reply, settings, phase])
+  }, [reply, settings, phase, stopReading])
 
-  // A turn queued while the last reply was being stopped goes out once it has stopped.
+  // A turn held while the last reply was being written or stopped goes out once it has.
   useEffect(() => {
     if (!busy && pending.current && connection.current) {
-      const text = pending.current; pending.current = ""
-      void onTurn(text).catch(caught => setError(caught instanceof Error ? caught.message : "Your turn failed. Try again."))
+      const { text, cut } = pending.current; pending.current = null
+      void onTurn(text, cut).catch(caught => setError(caught instanceof Error ? caught.message : "Your turn failed. Try again."))
     }
   }, [busy, onTurn, phase])
 
@@ -158,28 +203,34 @@ export function useVoiceSession({ onTurn, onInterrupt, reply, busy, readOnStart 
       if (event.type === "error") { setError(event.message || "Voice failed."); stop() }
       if (event.type === "closed") { if (connection.current === socket) stop() }
       if (callbacks.current.muted) return
+      const reading = Boolean(reader.current?.active)
       if (event.type === "state" && event.state) {
-        // While a reply plays, only the learner starting to talk changes what the bar shows.
-        if (event.state === "hearing") { setPhase("hearing"); setHeard("") }
-        else if (event.state === "thinking") setPhase("thinking")
-        else if (!reader.current?.active) setPhase("listening")
+        // Something that may be the learner turns the reply down; it stops only for real words
+        // (`interrupt`), and comes back up if it was only noise.
+        if (event.state === "hearing") { if (reading) duckSpeech(true); setPhase("hearing"); setHeard("") }
+        else if (event.state === "thinking") { if (!reading) setPhase("thinking") }
+        else {
+          duckSpeech(false)
+          setPhase(reading ? "speaking" : awaiting.current ? "thinking" : "listening")
+          if (!reading) setHeard("")
+        }
       }
       if (event.type === "caption" && typeof event.text === "string") setHeard(event.text)
       if (event.type === "interrupt") {
-        if (!callbacks.current.busy && !reader.current?.active) return
+        const writing = callbacks.current.busy
+        if (!reading && !writing) return
         const split = reader.current?.split() ?? null
-        cutOff.current = reader.current?.heard() ?? ""
+        cutOff.current = { heard: reading ? reader.current?.heard() ?? "" : "" }
         if (split?.unheard) setCut(split)
-        reader.current?.stop()
-        if (callbacks.current.busy) callbacks.current.onInterrupt()
+        stopReading()
+        if (writing) callbacks.current.onInterrupt?.()
       }
       if (event.type === "user" && event.text) {
         const words = event.text.trim()
         setHeard(words); setPhase("thinking")
-        const text = cutOff.current === null || readOnStart ? words : words +
-          (cutOff.current ? '\n\n[Your previous reply was interrupted. The learner heard only: "' + cutOff.current.slice(-2000) + '".]' : "\n\n[The learner was still adding to the previous question; none of the reply was heard.]")
+        const cut = cutOff.current
         cutOff.current = null
-        sendTurn(text)
+        sendTurn(words, cut)
       }
     })
     connection.current = socket
@@ -197,21 +248,21 @@ export function useVoiceSession({ onTurn, onInterrupt, reply, busy, readOnStart 
         if (generation === session.current) { stop(); setError(startError(caught)) }
       }
     })()
-  }, [readOnStart, reply?.id, reply?.text, sendTurn, stop])
+  }, [readOnStart, reply?.id, reply?.text, sendTurn, stop, stopReading])
 
   const mute = useCallback((value: boolean) => {
     setMuted(value); connection.current?.mute(value)
     if (value) setHeard("")
   }, [])
 
-  const say = useCallback((text: string) => { setHeard(""); setPhase("thinking"); cutOff.current = null; sendTurn(text) }, [sendTurn])
+  const say = useCallback((text: string) => { setHeard(""); setPhase("thinking"); cutOff.current = null; sendTurn(text, null) }, [sendTurn])
   const levels = useCallback(() => ({ mic: connection.current?.level ?? 0, out: speechOutputLevel() }), [])
   const dismissError = useCallback(() => setError(""), [])
 
   return { phase, muted, error, heard, speaking, cut, start, stop, mute, say, dismissError, levels }
 }
 
-/** Whether the viewport is phone-sized, so the bar stacks around a larger orb. */
+/** Whether the viewport is phone-sized, so the bar stacks around a larger bolt. */
 function useNarrow(): boolean {
   return useSyncExternalStore(
     notify => { const query = window.matchMedia("(max-width: 639px)"); query.addEventListener("change", notify); return () => query.removeEventListener("change", notify) },
@@ -232,8 +283,8 @@ function label(session: VoiceSession): string {
   }
 }
 
-/** The orb's motion for the session's state. */
-function orbState(session: VoiceSession): OrbState {
+/** The bolt's motion for the session's state. */
+function boltState(session: VoiceSession): BoltState {
   if (session.muted && session.phase !== "speaking") return "idle"
   return session.phase === "off" ? "idle" : session.phase
 }
@@ -284,9 +335,9 @@ function BarButton({ label: text, onClick, icon, className, pressed }: {
 }
 
 /**
- * The voice bar, in the composer's place while a session is on: the orb, what it's doing, the
+ * The voice bar, in the composer's place while a session is on: the bolt, what it's doing, the
  * words being said or heard, then mute, an optional next step, and end. On a phone it stacks
- * around a larger orb. Keys while it has the page: Space mutes, N goes next, Escape ends.
+ * around a larger bolt. Keys while it has the page: Space mutes, N goes next, Escape ends.
  */
 export function VoiceBar({ session, hint, onNext, nextLabel = "Next section", onTypeInstead }: {
   session: VoiceSession
@@ -354,7 +405,7 @@ export function VoiceBar({ session, hint, onNext, nextLabel = "Next section", on
     return (
       <div role="group" aria-label="Voice" className="relative flex flex-col items-center gap-2 rounded-3xl border bg-card px-4 pt-3 pb-4 shadow-sm">
         {typeInstead ? <div className="absolute top-1 right-1">{typeInstead}</div> : null}
-        <VoiceOrb size={104} state={orbState(session)} levels={session.levels} />
+        <VoiceBolt size={104} state={boltState(session)} levels={session.levels} />
         {status}
         <div className="min-h-[2.75rem] w-full">{caption}</div>
         {controls}
@@ -362,7 +413,7 @@ export function VoiceBar({ session, hint, onNext, nextLabel = "Next section", on
     )
   return (
     <div role="group" aria-label="Voice" className="flex items-center gap-3 rounded-3xl border bg-card py-2 pr-3 pl-2 shadow-sm">
-      <VoiceOrb size={64} state={orbState(session)} levels={session.levels} />
+      <VoiceBolt size={64} state={boltState(session)} levels={session.levels} />
       <div className="min-w-0 flex-1 space-y-0.5">
         <div className="flex items-center gap-2">{status}</div>
         {caption}

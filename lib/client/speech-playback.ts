@@ -102,19 +102,32 @@ export function prepareSpeechOpening(
 }
 
 let analyser: AnalyserNode | undefined
+let volume: GainNode | undefined
 let samples: Float32Array<ArrayBuffer> | undefined
 
 /** Creates the single audio context on demand; resume must happen during the user's click. */
 function speechContext(): AudioContext {
   if (!context || context.state === "closed") {
     context = new AudioContext()
-    // Every section plays through one analyser, so the voice orb can move with the reply.
+    // Every section plays through one analyser, so the voice bolt can move with the reply,
+    // then one volume, so speech can be turned down while the learner may be talking.
     analyser = context.createAnalyser()
     analyser.fftSize = 1024
-    analyser.connect(context.destination)
+    volume = context.createGain()
+    analyser.connect(volume)
+    volume.connect(context.destination)
     samples = new Float32Array(analyser.fftSize)
   }
   return context
+}
+
+/**
+ * Turns speech down while the microphone hears something that may be the learner, and back up if it
+ * wasn't. Stopping playback waits for actual words, so a cough or a voice across the room only dips it.
+ */
+export function duckSpeech(ducked: boolean): void {
+  if (!context || !volume) return
+  volume.gain.setTargetAtTime(ducked ? 0.25 : 1, context.currentTime, 0.06)
 }
 
 /** How loud speech playback is right now, as RMS (0..1); 0 when nothing plays. */

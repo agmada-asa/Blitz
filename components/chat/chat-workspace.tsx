@@ -1,7 +1,7 @@
 "use client"
 
 /** Owns persisted Blitz chat selection, streaming, and mixed-context attachments. */
-import { TalkButton, useVoiceSession, VoiceBar, VoiceError } from "@/components/voice/voice-conversation"
+import { TalkButton, useVoiceSession, VoiceBar, VoiceError, voiceCutNote } from "@/components/voice/voice-conversation"
 
 import {
   Archive02Icon,
@@ -41,6 +41,7 @@ import {
   type ClipboardEvent,
   type DragEvent,
   type KeyboardEvent,
+  type ReactNode,
 } from "react"
 
 import {
@@ -229,6 +230,21 @@ export type ChatLessonContext = {
   onQuoteCleared: () => void
   /** A new chat was saved, so the lesson can reopen it next time. */
   onChatStarted: (chatId: Id<"workspaceChats">) => void
+  /** A Teach voice lesson asking questions here: the lesson owns the microphone and reads answers. */
+  voice?: LessonVoice
+}
+
+/** Spoken questions from a Teach voice lesson. The lesson reads their answers from the saved chat. */
+export type LessonVoice = {
+  /** A spoken question not yet sent; a new id is a new question. */
+  ask: { id: number; text: string; note: string } | null
+  /**
+   * The question was sent, with the messages already in the chat, whose replies aren't its answer;
+   * or it couldn't be. A reopened panel never sends it again.
+   */
+  onAsked: (id: number, sent: boolean, before?: string[]) => void
+  /** The voice bar, shown in place of the composer while voice is on. */
+  bar: ReactNode
 }
 
 /** Selected recording passages supplied as inline context, without the full project. */
@@ -246,6 +262,8 @@ export type ChatPassage = {
 /** Optional overrides for standard, edited, and continued chat submissions. */
 type SendMessageOptions = {
   spoken?: boolean
+  /** Context for the model about the last spoken reply; never shown or saved as the learner's words. */
+  voiceNote?: string
   message?: string
   chatId?: Id<"workspaceChats">
   continuationOf?: Id<"workspaceChatMessages">
@@ -616,6 +634,8 @@ export function ChatWorkspace({
   >(initialCard || initialPassage ? undefined : initialChatId)
   /** Visible chat, read by stream callbacks that outlive the render that started them. */
   const activeChatIdRef = useRef(activeChatId)
+  /** The chat a new chat's first message just created, so following it keeps voice on. */
+  const createdChatIdRef = useRef<Id<"workspaceChats"> | undefined>(undefined)
   const activeChat = useQuery(
     api.workspaceChats.get,
     activeChatId ? { chatId: activeChatId } : "skip"
@@ -1762,6 +1782,7 @@ export function ChatWorkspace({
                 }
               : {}),
             spoken: options.spoken === true,
+            ...(options.spoken && options.voiceNote ? { voiceNote: options.voiceNote } : {}),
             projectIds: submittedAttachments.flatMap((attachment) =>
               attachment.kind === "project" && attachment.projectId
                 ? [attachment.projectId]
@@ -1833,6 +1854,7 @@ export function ChatWorkspace({
             inFlightRepliesRef.current = [...inFlightRepliesRef.current]
             setInFlightReplies(inFlightRepliesRef.current)
             if (following) {
+              if (!targetChatId) createdChatIdRef.current = event.chatId
               revokeDraftPreviews()
               setAttachments([])
               setDraftAnnotations([])
@@ -2037,16 +2059,40 @@ export function ChatWorkspace({
   const voice = useVoiceSession({
     busy: isRunning,
     onInterrupt: pauseReply,
-    onTurn: (text) => sendMessage({ message: text, spoken: true }),
+    onTurn: (text, cut) => sendMessage({ message: text, spoken: true, voiceNote: voiceCutNote(cut) }),
     reply: lastAssistant
       ? { id: lastAssistant.id, text: lastAssistant.content, complete: lastAssistant.status !== "running" }
       : null,
   })
   const voiceOn = voice.phase !== "off"
-  const chatReader = useReplyReader(readReplies && !voiceOn, messages, null)
+  const lessonVoice = lesson?.voice
+  const chatReader = useReplyReader(readReplies && !voiceOn && !lessonVoice, messages, null)
   const stopVoice = voice.stop
-  // Voice belongs to one chat; switching chats ends it.
-  useEffect(() => stopVoice, [activeChatId, stopVoice])
+  // Voice belongs to one chat; switching chats ends it. A new chat getting its id from the first
+  // spoken turn is the same conversation, so voice carries on into it.
+  const voiceChatId = useRef(activeChatId)
+  useEffect(() => {
+    if (voiceChatId.current === activeChatId) return
+    const created = !voiceChatId.current && activeChatId === createdChatIdRef.current
+    voiceChatId.current = activeChatId
+    if (!created) stopVoice()
+  }, [activeChatId, stopVoice])
+
+  // A Teach voice lesson's spoken question is sent once the chat has loaded and is free.
+  const voiceAsk = lessonVoice?.ask
+  const onVoiceAsked = lessonVoice?.onAsked
+  const askedId = useRef(0)
+  const sendRef = useRef(sendMessage)
+  useEffect(() => { sendRef.current = sendMessage })
+  useEffect(() => {
+    if (!voiceAsk || askedId.current === voiceAsk.id) return
+    if ((activeChatId && activeChat === undefined) || isRunning) return
+    const id = askedId.current = voiceAsk.id
+    onVoiceAsked?.(id, true, (activeChat?.messages ?? []).map((message) => message.id))
+    void sendRef.current({ message: voiceAsk.text, spoken: true, voiceNote: voiceAsk.note }).then((sent) => {
+      if (!sent) onVoiceAsked?.(id, false)
+    })
+  }, [voiceAsk, activeChatId, activeChat, isRunning, onVoiceAsked])
 
   /** Resolves a pending agent request for the current chat message. */
   const decideAgentRequest = async (
@@ -2672,10 +2718,19 @@ export function ChatWorkspace({
                             />
                             </InteractiveBlocksProvider>
                           ) : message.status === "failed" ? (
-                            <p>
-                              {activeChat?.lastError ||
-                                "Blitz could not finish this reply."}
-                            </p>
+                            // The chat's error belongs to its latest reply. An earlier one left
+                            // empty, or one the learner stopped, such as by talking over it, just
+                            // says so rather than reporting a failure.
+                            latest && activeChat?.lastErrorReason !== "aborted" ? (
+                              <p>
+                                {activeChat?.lastError ||
+                                  "Blitz could not finish this reply."}
+                              </p>
+                            ) : (
+                              <p className="text-sm text-muted-foreground">
+                                {latest ? "Stopped." : "No reply."}
+                              </p>
+                            )
                           ) : null}
                           {latest &&
                           message.status === "failed" &&
@@ -3056,6 +3111,7 @@ export function ChatWorkspace({
             </div>
           ) : null}
           <VoiceError session={voice} onTypeInstead={() => composerRef.current?.focus()} />
+          {lessonVoice?.bar ?? null}
           {voiceOn ? (
             <VoiceBar
               session={voice}
@@ -3070,7 +3126,7 @@ export function ChatWorkspace({
             className={cn(
               "rounded-[24px] border bg-card p-2 shadow-sm focus-within:ring-2 focus-within:ring-ring/40",
               draggingFiles && "border-brand bg-brand/5 ring-2 ring-brand/30",
-              voiceOn && "hidden"
+              (voiceOn || lessonVoice?.bar) && "hidden"
             )}
           >
             {lesson?.quote ? (

@@ -75,7 +75,6 @@ sockets.on("connection", socket => {
   let started = false
   let prompt = ""
   let closed = false
-  let bargeTimer: ReturnType<typeof setTimeout> | undefined
   const lifetime = new AbortController()
   const limit = setTimeout(() => socket.close(1000, "Session limit reached. Reconnect."), 30 * 60_000)
 
@@ -115,7 +114,7 @@ sockets.on("connection", socket => {
     }
     try {
       const message = JSON.parse(data.toString())
-      if (message.type === "reset") { clearTimeout(bargeTimer); turns.reset() }
+      if (message.type === "reset") turns.reset()
       if (message.type === "start" && !started) {
         started = true
         const mode = turns.mode = message.mode === "voice" ? "voice" : "dictate"
@@ -138,17 +137,11 @@ sockets.on("connection", socket => {
               if (event.ready) send({ type: "ready" })
               if (event.event === "speech" || event.event === "resume") {
                 turns.speech()
-                // Dictation never interrupts anything; only a voice conversation has a reply to cut off.
-                if (mode === "voice") {
-                  clearTimeout(bargeTimer)
-                  bargeTimer = setTimeout(() => send({ type: "interrupt" }), 300)
-                  send({ type: "state", state: "hearing" })
-                }
+                // Hearing only turns a reply down; the turn logic stops it once it has caught real
+                // words, so noise or a voice across the room never cuts the reply off.
+                if (mode === "voice") send({ type: "state", state: "hearing" })
               }
-              if (event.event === "pause") {
-                clearTimeout(bargeTimer)
-                turns.pause()
-              }
+              if (event.event === "pause") turns.pause()
               if (event.event === "turn" && (event.p >= 0.5 || event.silence_ms >= 1400)) {
                 if (mode === "voice") void turns.take()
                 else turns.commit()
@@ -167,7 +160,7 @@ sockets.on("connection", socket => {
   })
   socket.on("error", () => socket.close())
   socket.on("close", () => {
-    closed = true; clearTimeout(limit); clearTimeout(bargeTimer)
+    closed = true; clearTimeout(limit)
     lifetime.abort(); worker?.kill(); turns.clear()
   })
 })

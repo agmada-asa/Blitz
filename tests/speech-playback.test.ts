@@ -62,6 +62,10 @@ class TestContext {
   createAnalyser() {
     return { fftSize: 0, connect() {}, getFloatTimeDomainData() {} }
   }
+  /** Stands in for the volume speech is ducked with. */
+  createGain() {
+    return { gain: { setTargetAtTime() {} }, connect() {} }
+  }
   /** Records one prepared source. */
   createBufferSource() {
     const source = new TestSource()

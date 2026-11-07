@@ -15,6 +15,10 @@ export class StreamingSpeech {
   private completed = ""
   private current: { text: string; at: number; ms: number } | undefined
   private controller = new AbortController()
+  /** Pieces still to pass over, when resuming a reply part-way through. */
+  private skip: number
+  /** Pieces skipped or played to the end, so a later reader can resume after them. */
+  played = 0
 
   private voiceId: string
   private state: (state: "loading" | "playing") => void
@@ -23,17 +27,22 @@ export class StreamingSpeech {
   /** Called with each piece's text as it starts playing, for the voice bar's caption. */
   onSpeaking?: (text: string) => void
 
-  /** Selects the saved voice and reports playback state and failures to its owning screen. */
+  /**
+   * Selects the saved voice and reports playback state and failures to its owning screen.
+   * @param skip Pieces already heard, so a reply that was stopped resumes at the piece it was cut in.
+   */
   constructor(
     voiceId: string,
     state: (state: "loading" | "playing") => void,
     error: (error: unknown) => void,
     onHeard?: (synthesisMs: number) => void,
+    skip = 0,
   ) {
     this.voiceId = voiceId
     this.state = state
     this.error = error
     this.onHeard = onHeard
+    this.skip = skip
   }
 
   /** Queues only complete pieces, flushing the final remainder after generation completes. */
@@ -50,13 +59,15 @@ export class StreamingSpeech {
       const words = spokenMarkdownText(pending.slice(0, end))
       if (!words.trim()) continue
       // Whole sentences keep Kokoro's intonation intact; only overlong ones are split, at a clause.
-      this.queue.push(...speakablePieces(words))
+      for (const piece of speakablePieces(words)) {
+        if (this.skip > 0) { this.skip--; this.played++ } else this.queue.push(piece)
+      }
     }
     this.complete = complete
     this.wake?.()
     this.tail ??= playSpeechSections(this.pieces(), this.voiceId, this.controller.signal, this.state, (text, ms, phase, synthesisMs) => {
       if (phase === "playing") { this.current = { text, at: performance.now(), ms }; this.onHeard?.(synthesisMs); this.onSpeaking?.(text) }
-      else { this.completed += text + " "; this.current = undefined }
+      else { this.completed += text + " "; this.current = undefined; this.played++ }
     })
       .catch((error: unknown) => {
         if (!this.controller.signal.aborted) { this.failed = true; this.error(error); this.stop() }
@@ -91,6 +102,9 @@ export class StreamingSpeech {
     const at = Math.floor(words.length * fraction)
     return { heard: words.slice(0, at).join(" "), unheard: words.slice(at).join(" ") }
   }
+
+  /** Whether this reader was stopped before the end. */
+  get stopped(): boolean { return this.controller.signal.aborted }
 
   /** Cancels queued inference and playback immediately. */
   stop(): void { this.controller.abort(); this.wake?.() }

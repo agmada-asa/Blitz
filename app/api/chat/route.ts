@@ -1029,7 +1029,8 @@ export async function POST(request: Request): Promise<Response> {
               workspaceDirectory,
               prompt: input.spoken
                 ? prompt + "\n\nThis is a spoken conversation. Recognition may contain small errors. Use short sentences and say maths in words. " +
-                  (teach ? "Keep lesson Markdown for the screen." : "Lead with the answer. Avoid Markdown, tables, code and links. Keep replies brief unless asked for detail.")
+                  (teach ? "Keep lesson Markdown for the screen." : "Lead with the answer. Avoid Markdown, tables, code and links. Keep replies brief unless asked for detail.") +
+                  (input.voiceNote ? `\n\n${input.voiceNote}` : "")
                 : prompt,
               ...(attachments.length ? { attachments } : {}),
               ...(threadId ? { threadId } : {}),
