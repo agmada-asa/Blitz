@@ -19,6 +19,9 @@
  */
 
 import Link from "next/link"
+import { TalkButton, useVoiceSession, VoiceBar, VoiceError, voiceCutNote, type VoiceReply } from "@/components/voice/voice-conversation"
+import type { LessonVoice } from "@/components/chat/chat-workspace"
+import { spokenReplyText } from "@/components/learn/teach-voice"
 import { usePathname, useRouter } from "next/navigation"
 import { useMutation, useQuery } from "convex/react"
 import { BlitzLogo } from "@/components/blitz-logo"
@@ -34,7 +37,7 @@ import {
   useReplyReader,
 } from "@/components/learn/teach-voice"
 import type { FunctionReturnType } from "convex/server"
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
 import { useMinuteClock } from "@/hooks/use-minute-clock"
 
 import type {
@@ -156,6 +159,12 @@ export function TeachSession({
 /** Unit data returned by `units.get`. */
 type LoadedUnit = NonNullable<FunctionReturnType<typeof api.units.get>>
 
+/**
+ * A spoken question for the side chat. `before` is set once it is sent: the messages already in the
+ * chat then, so the first reply not among them is its answer.
+ */
+type VoiceAsk = NonNullable<LessonVoice["ask"]> & { before?: string[] }
+
 /** Runs the session for a loaded unit, sending `ask` once when it is provided. */
 function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
   const router = useRouter()
@@ -263,7 +272,6 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
   }, [unit.outline, messages])
   // Hands-free: new replies are read aloud while the learner has it on.
   const [readReplies, setReadReplies] = useReadRepliesSetting()
-  const replyReader = useReplyReader(readReplies, messages, outline)
 
   // The latest section marker is the current section; every marker seen is a
   // taught section. Reading them from messages keeps progress live while a
@@ -330,8 +338,8 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
 
   /** Sends a quick reply or resumes a paused reply. */
   const send = useCallback(
-    async (message: string, continuationOf?: string) => {
-      if (!activeChatId || sending || chat?.status === "running") return
+    async (message: string, continuationOf?: string, spoken = false) => {
+      if (!activeChatId || sending || chat?.status === "running") return false
       setSending(true)
       setError("")
       revealNextReplyRef.current = true
@@ -339,6 +347,7 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
       abortRef.current = controller
       const result = await sendTeachTurn({
         chatId: activeChatId,
+        spoken,
         message,
         ...(continuationOf ? { continuationOf } : {}),
         signal: controller.signal,
@@ -346,6 +355,7 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
       abortRef.current = undefined
       setSending(false)
       if (!result.ok && !result.paused) setError(result.error)
+      return result.ok || Boolean(result.paused)
     },
     [activeChatId, sending, chat?.status]
   )
@@ -554,6 +564,103 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
     return text ? { title: title ?? unit.title, text } : undefined
   }, [askedReply, outline, unit.title])
 
+  // A voice lesson. The tutor reads the lesson aloud as it writes it, and "next" moves on. Anything
+  // else the learner says goes to the side chat, so the lesson holds only lesson content; its answer
+  // is read, then the lesson carries on from the sentence it was stopped at.
+  const [voiceAsk, setVoiceAsk] = useState<VoiceAsk | null>(null)
+  /** The learner said "next" while this message was the latest; nothing is read until a newer one. */
+  const [nextFrom, setNextFrom] = useState<string | null>(null)
+  const nextHeld = nextFrom !== null && lastMessage?.id === nextFrom
+  /** The "next" already sent, so it goes once. */
+  const nextSent = useRef<string | null>(null)
+  const askCount = useRef(0)
+  /** The side chat had been open before voice asked something, so it stays open afterwards. */
+  const keepSideChat = useRef(false)
+  // The answer is read from the saved side chat, so it carries on if the panel is closed meanwhile.
+  const sideChat = useQuery(
+    api.workspaceChats.get,
+    voiceAsk?.before && chat?.teachSideChatId ? { chatId: chat.teachSideChatId } : "skip"
+  )
+  const sideAnswer = voiceAsk?.before
+    ? sideChat?.messages.find((message) => message.role === "assistant" && !voiceAsk.before?.includes(message.id))
+    : undefined
+  const lessonReply: VoiceReply =
+    lastMessage?.role === "assistant"
+      ? { id: lastMessage.id, text: spokenReplyText(lastMessage.content, outline), complete: lastMessage.status !== "running" }
+      : null
+  const voice = useVoiceSession({
+    busy: false,
+    readOnStart: true,
+    onTurn: async (text, cut) => {
+      if (text === TEACH_QUICK_REPLIES.next || /^(next|next section|go on|continue|carry on)[.!?]?$/i.test(text.trim())) {
+        setVoiceAsk(null); setNextFrom(lastMessage?.id ?? "")
+        return
+      }
+      if (!voiceAsk) keepSideChat.current = sideChatOpen
+      const note = !cut?.heard ? "" : voiceAsk
+        ? voiceCutNote(cut)
+        : `The learner paused the lesson being read aloud to ask this, just after hearing: "${cut.heard.slice(-1500)}".`
+      setVoiceAsk({ id: ++askCount.current, text, note })
+      openSideChat()
+    },
+    // After "next", nothing is read until the next section starts.
+    reply: nextHeld
+      ? null
+      : voiceAsk
+        ? sideAnswer ? { id: sideAnswer.id, text: sideAnswer.content, complete: sideAnswer.status !== "running" } : null
+        : lessonReply,
+    onReplyDone: (id) => {
+      if (!voiceAsk || id !== sideAnswer?.id) return
+      // The answer has been read: back to the lesson. A phone's full-screen side chat closes so the
+      // lesson shows again, unless the learner had it open already.
+      setVoiceAsk(null)
+      if (!keepSideChat.current && !window.matchMedia("(min-width: 1024px)").matches) closeSidePanel()
+    },
+  })
+  /** The side chat sent the question, or couldn't, in which case the lesson carries on. */
+  const report = voice.report
+  const currentAsk = useRef(voiceAsk)
+  // A layout effect, so it is current before the side chat's own effect sends the ask and reports back.
+  useLayoutEffect(() => { currentAsk.current = voiceAsk })
+  const onAsked = useCallback((id: number, sent: boolean, before?: string[]) => {
+    // A send settles only when its reply stream ends, by which time the answer may have been read.
+    if (currentAsk.current?.id !== id) return
+    setVoiceAsk((ask) => (ask?.id !== id ? ask : sent ? { ...ask, before: before ?? [] } : null))
+    if (!sent) report("Your question didn't reach the side chat. Ask it again.")
+  }, [report])
+  const voiceOn = voice.phase !== "off"
+  const replyReader = useReplyReader(readReplies && !voiceOn, messages, outline)
+  const say = voice.say
+  const nextByVoice = useCallback(() => say(TEACH_QUICK_REPLIES.next), [say])
+  const voiceBar = (
+    <VoiceBar
+      session={voice}
+      hint={'Questions go to the side chat. Say "next" for the next section.'}
+      onNext={activeChatId ? nextByVoice : undefined}
+    />
+  )
+  // While the side chat shows, the bar sits under it, beside the conversation it is having.
+  const voiceBarInChat = voiceOn && sideChatOpen && (!source || sideTab === "chat")
+  // "Next" goes to the tutor once the section being written has finished.
+  useEffect(() => {
+    if (!nextHeld || !voiceOn || running || sending || nextSent.current === nextFrom) return
+    nextSent.current = nextFrom
+    void send(TEACH_QUICK_REPLIES.next, undefined, true)
+      .then((sent) => {
+        if (sent) return
+        // Saying "next" again retries it; the dock that shows send errors is hidden during voice.
+        nextSent.current = null
+        report("The next section didn't start. Say next again.")
+      })
+      .finally(() => setNextFrom(null))
+  }, [nextHeld, nextFrom, voiceOn, running, sending, send, report])
+  /** Starts voice afresh, without a question or "next" left from an earlier session. */
+  const startVoice = voice.start
+  const voiceStarter = useMemo(
+    () => ({ ...voice, start: () => { setVoiceAsk(null); setNextFrom(null); startVoice() } }),
+    [voice, startVoice]
+  )
+
   /** Scrolls to a section already taught. */
   const openSection = useCallback(
     (index: number) => {
@@ -720,8 +827,14 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
               </Link>
             </Button>
             <div className="min-w-0 flex-1">
-              <h1 className="truncate font-heading text-lg font-semibold">
-                {unit.title}
+              <h1 className="flex items-center gap-2 truncate font-heading text-lg font-semibold">
+                {voiceOn ? (
+                  <span
+                    className="size-2 shrink-0 rounded-full bg-destructive motion-safe:animate-pulse"
+                    aria-label="Voice lesson on"
+                  />
+                ) : null}
+                <span className="truncate">{unit.title}</span>
               </h1>
               {progressLabel ? (
                 <p className="truncate text-xs text-muted-foreground">
@@ -737,6 +850,16 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
               >
                 +{sitting.xp} XP
               </p>
+            ) : null}
+            {chat && !voiceOn ? (
+              <TalkButton
+                session={voiceStarter}
+                disabled={!activeChatId}
+                className="h-10 min-h-10 max-sm:w-10 max-sm:px-0"
+              >
+                {/* On a phone the icon alone leaves the unit title room. */}
+                <span className="max-sm:sr-only">Voice</span>
+              </TalkButton>
             ) : null}
             {chat ? (
               <Button
@@ -856,7 +979,11 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
           <div
             ref={scrollRef}
             onScroll={onScroll}
-            className="relative h-full overflow-y-auto"
+            className={cn(
+              "relative h-full overflow-y-auto transition-opacity duration-300",
+              // While the learner talks, the lesson steps back so the caption is the focus.
+              (voice.phase === "hearing" || voice.phase === "thinking") && "opacity-55"
+            )}
           >
             <div
               ref={columnRef}
@@ -948,20 +1075,29 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
               messageId={lastMessage.id}
               providerId={chat.providerId}
               disabled={sending}
-              onContinue={() => send("", lastMessage.id)}
+              onContinue={async () => { await send("", lastMessage.id) }}
             />
           </div>
         ) : null}
-        <TeachDock
-          state={dockState}
-          error={error}
-          onSend={(message) => void send(message)}
-          onResume={() =>
-            lastMessage?.role === "assistant"
-              ? void send("", lastMessage.id)
-              : undefined
-          }
-        />
+        {(voiceOn && !voiceBarInChat) || voice.error ? (
+          // The same width and padding as the lesson column, like the dock it replaces.
+          <div className="mx-auto w-full max-w-3xl px-4 pt-2 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:px-6">
+            <VoiceError session={voice} />
+            {voiceOn && !voiceBarInChat ? voiceBar : null}
+          </div>
+        ) : null}
+        {voiceOn ? null : (
+          <TeachDock
+            state={dockState}
+            error={error}
+            onSend={(message) => void send(message)}
+            onResume={() =>
+              lastMessage?.role === "assistant"
+                ? void send("", lastMessage.id)
+                : undefined
+            }
+          />
+        )}
       </div>
 
       {sideOpen ? (
@@ -983,6 +1119,15 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
               ...(askedSection ? { section: askedSection } : {}),
               onQuoteCleared: clearQuote,
               onChatStarted: rememberSideChat,
+              ...(voiceOn
+                ? {
+                    voice: {
+                      ask: voiceAsk && !voiceAsk.before ? { id: voiceAsk.id, text: voiceAsk.text, note: voiceAsk.note } : null,
+                      onAsked,
+                      bar: voiceBarInChat ? voiceBar : null,
+                    },
+                  }
+                : {}),
             }}
             lessonChatId={chat?.teachSideChatId ?? undefined}
             activeTab={source ? sideTab : "chat"}

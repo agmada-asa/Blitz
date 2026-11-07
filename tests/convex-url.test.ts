@@ -49,6 +49,18 @@ test("uses the Tailscale DNS hostname instead of the phone's loopback", () => {
   assert.equal(isLocalHostname("study-mac.tail123abc.ts.net.example.com"), false)
 })
 
+test("an HTTPS page reaches local Convex through its own origin, not plain ws", () => {
+  const origin = "https://study-mac.tail123abc.ts.net:8443"
+  assert.equal(
+    resolveBrowserConvexUrl("http://127.0.0.1:3212", "study-mac.tail123abc.ts.net", origin),
+    `${origin}/convex`
+  )
+  assert.equal(
+    resolveBrowserConvexUrl("https://happy-otter-123.convex.cloud", "study-mac.tail123abc.ts.net", origin),
+    "https://happy-otter-123.convex.cloud"
+  )
+})
+
 test("leaves hosted deployments and server rendering unchanged", () => {
   assert.equal(
     resolveBrowserConvexUrl("https://happy-otter-123.convex.cloud", "localhost"),

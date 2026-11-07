@@ -58,6 +58,14 @@ class TestContext {
   async decodeAudioData() {
     return { duration: 2 }
   }
+  /** Stands in for the output-level analyser every section plays through. */
+  createAnalyser() {
+    return { fftSize: 0, connect() {}, getFloatTimeDomainData() {} }
+  }
+  /** Stands in for the volume speech is ducked with. */
+  createGain() {
+    return { gain: { setTargetAtTime() {} }, connect() {} }
+  }
   /** Records one prepared source. */
   createBufferSource() {
     const source = new TestSource()

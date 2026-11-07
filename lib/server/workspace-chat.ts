@@ -65,6 +65,13 @@ export interface WorkspaceChatAnnotation {
 
 /** Validated input accepted by the workspace chat route. */
 export interface WorkspaceChatRequest {
+  /** Spoken conversation requests use concise speech-friendly replies. */
+  spoken?: boolean
+  /**
+   * What happened to the last spoken reply, such as how much the learner heard before cutting in.
+   * Given to the model with this turn only; the saved message stays the learner's words.
+   */
+  voiceNote?: string
   message: string
   /** Optional learner guidance provided to steer an interrupted response. */
   steeringPrompt?: string
@@ -170,7 +177,6 @@ function parseCardReference(value: unknown): WorkspaceChatCardReference {
   if (!value || typeof value !== "object" || Array.isArray(value))
     throw new Error("Card reference is invalid")
   const input = value as Record<string, unknown>
-
   return {
     projectId: requiredString(
       input.projectId,
@@ -192,6 +198,11 @@ export function parseWorkspaceChatRequest(
   if (!value || typeof value !== "object" || Array.isArray(value))
     throw new Error("Chat request is invalid")
   const input = value as Record<string, unknown>
+  if (input.spoken !== undefined && typeof input.spoken !== "boolean")
+    throw new Error("Spoken must be on or off")
+  if (input.voiceNote !== undefined && (typeof input.voiceNote !== "string" || input.voiceNote.length > 2_500))
+    throw new Error("Voice note is invalid")
+  const voiceNote = input.spoken === true && typeof input.voiceNote === "string" ? input.voiceNote.trim() : ""
   const autonomy = input.autonomy
   if (
     autonomy !== undefined &&
@@ -436,6 +447,8 @@ export function parseWorkspaceChatRequest(
     : undefined
 
   return {
+    spoken: input.spoken === true,
+    ...(voiceNote ? { voiceNote } : {}),
     ...(autonomy === undefined ? {} : { autonomy }),
     ...(additionalInstructions === undefined ? {} : { additionalInstructions }),
     ...(workingProjectId === undefined ? {} : { workingProjectId }),

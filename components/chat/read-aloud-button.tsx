@@ -11,8 +11,9 @@ import { LoadingIcon } from "@/components/ui/icon"
 import { api } from "@/convex/_generated/api"
 import { spokenMarkdownText } from "@/lib/spoken-markdown"
 import { splitSpeechText } from "@/lib/speech-text"
+import { StreamingSpeech } from "@/lib/client/streaming-speech"
+import { unlockSpeech } from "@/lib/client/speech-playback"
 import {
-  playSpeechSections,
   prepareSpeechOpening,
 } from "@/lib/client/speech-playback"
 
@@ -43,9 +44,11 @@ export function claimReadAloud(stop: () => void): () => void {
 export function ReadAloudButton({
   text,
   prepare = false,
+  streaming = false,
 }: {
   text: string
   prepare?: boolean
+  streaming?: boolean
 }) {
   const savedSettings = useQuery(api.audioSettings.get)
   const voiceId = savedSettings?.voiceIds?.[0] ?? "af_heart"
@@ -60,10 +63,14 @@ export function ReadAloudButton({
   const releasePreparationRef = useRef<(() => void) | undefined>(undefined)
   const requestRef = useRef<AbortController | undefined>(undefined)
   const ownerRef = useRef<symbol | undefined>(undefined)
+  const streamRef = useRef<StreamingSpeech | undefined>(undefined)
+  useEffect(() => { streamRef.current?.update(text, !streaming) }, [text, streaming])
 
   /** Stops playing and scheduled sections and drops this control's pending speech requests. */
   const stopPlayback = useCallback(() => {
     requestRef.current?.abort()
+    streamRef.current?.stop()
+    streamRef.current = undefined
     requestRef.current = undefined
     if (activeReadAloudStop?.id === ownerRef.current) {
       activeReadAloudStop = undefined
@@ -118,7 +125,7 @@ export function ReadAloudButton({
       stopPlayback()
       releasePreparationRef.current?.()
     },
-    [text, voiceId, stopPlayback]
+    [voiceId, stopPlayback]
   )
 
   /** Requests short Kokoro WAV sections and plays each as soon as it is ready. */
@@ -132,16 +139,19 @@ export function ReadAloudButton({
     requestRef.current = controller
     ownerRef.current = ownerId
     activeReadAloudStop = { id: ownerId, stop: stopPlayback }
+    unlockSpeech()
     try {
-      await playSpeechSections(
-        chunks,
-        voiceId,
-        controller.signal,
-        (nextState) => {
-          if (!controller.signal.aborted) setState(nextState)
-        }
-      )
-      setState("idle")
+      const reader = new StreamingSpeech(voiceId, nextState => {
+        if (!controller.signal.aborted) setState(nextState)
+      }, caught => {
+        setError(caught instanceof Error ? caught.message : "Audio could not be played.")
+        setState("error")
+      })
+      streamRef.current = reader
+      controller.signal.addEventListener("abort", () => reader.stop(), { once: true })
+      reader.update(text, !streaming)
+      await reader.done()
+      if (!controller.signal.aborted && !reader.failed) setState("idle")
     } catch (caught) {
       if (controller.signal.aborted) return
       setError(

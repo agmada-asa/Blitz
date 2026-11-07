@@ -13,7 +13,10 @@ const configuredConvexUrl = process.env.NEXT_PUBLIC_CONVEX_URL
 const convexUrl = configuredConvexUrl
   ? resolveBrowserConvexUrl(
       configuredConvexUrl,
-      typeof window === "undefined" ? undefined : window.location.hostname
+      typeof window === "undefined" ? undefined : window.location.hostname,
+      typeof window !== "undefined" && window.location.protocol === "https:"
+        ? window.location.origin
+        : undefined
     )
   : undefined
 const convexClient = convexUrl ? new ConvexReactClient(convexUrl) : null

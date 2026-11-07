@@ -18,7 +18,7 @@ class StalledModel:
         """Allow readiness and advertise the stalled inference before releasing the GIL."""
         if text == "Ready.":
             return None
-        print('{"busy": true}', flush=True)
+        print('{"busy": true}', file=sys.__stdout__, flush=True)
         time.sleep(60)
         raise RuntimeError("Parent watchdog did not stop the worker.")
 
@@ -29,4 +29,5 @@ def initialize(_data_dir):
 
 
 worker["main"].__globals__["initialize"] = initialize
+worker["main"].__globals__["synthesize"] = lambda model, text, voice: model.create(text, voice=voice)
 worker["main"]()

@@ -3,6 +3,10 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 
+test("spoken requests reject nonboolean flags", () => {
+  assert.throws(() => parseWorkspaceChatRequest({ spoken: "yes" }), /Spoken must be on or off/)
+})
+
 import {
   buildWorkspaceChatPrompt,
   combineWorkspaceChatContinuation,

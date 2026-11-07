@@ -30,6 +30,7 @@ export function createClientMessageId(): string {
  * @param input.signal Aborts the browser request; the server keeps the saved partial reply.
  */
 export async function sendTeachTurn(input: {
+  spoken?: boolean
   chatId: string
   message: string
   continuationOf?: string
@@ -42,6 +43,7 @@ export async function sendTeachTurn(input: {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         chatId: input.chatId,
+        spoken: input.spoken === true,
         message: input.message,
         clientMessageId: createClientMessageId(),
         projectIds: [],

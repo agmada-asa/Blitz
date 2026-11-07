@@ -1,6 +1,7 @@
 "use client"
 
 /** Owns persisted Blitz chat selection, streaming, and mixed-context attachments. */
+import { TalkButton, useVoiceSession, VoiceBar, VoiceError, voiceCutNote } from "@/components/voice/voice-conversation"
 
 import {
   Archive02Icon,
@@ -40,6 +41,7 @@ import {
   type ClipboardEvent,
   type DragEvent,
   type KeyboardEvent,
+  type ReactNode,
 } from "react"
 
 import {
@@ -65,6 +67,8 @@ import {
   DictationButton,
   DictationStatus,
   useDictation,
+  useReplyReader,
+  useReadRepliesSetting,
 } from "@/components/learn/teach-voice"
 import { InteractiveBlocksProvider } from "@/components/ui/interactive-blocks"
 import { ReadAloudButton } from "@/components/chat/read-aloud-button"
@@ -226,6 +230,21 @@ export type ChatLessonContext = {
   onQuoteCleared: () => void
   /** A new chat was saved, so the lesson can reopen it next time. */
   onChatStarted: (chatId: Id<"workspaceChats">) => void
+  /** A Teach voice lesson asking questions here: the lesson owns the microphone and reads answers. */
+  voice?: LessonVoice
+}
+
+/** Spoken questions from a Teach voice lesson. The lesson reads their answers from the saved chat. */
+export type LessonVoice = {
+  /** A spoken question not yet sent; a new id is a new question. */
+  ask: { id: number; text: string; note: string } | null
+  /**
+   * The question was sent, with the messages already in the chat, whose replies aren't its answer;
+   * or it couldn't be. A reopened panel never sends it again.
+   */
+  onAsked: (id: number, sent: boolean, before?: string[]) => void
+  /** The voice bar, shown in place of the composer while voice is on. */
+  bar: ReactNode
 }
 
 /** Selected recording passages supplied as inline context, without the full project. */
@@ -242,6 +261,9 @@ export type ChatPassage = {
 
 /** Optional overrides for standard, edited, and continued chat submissions. */
 type SendMessageOptions = {
+  spoken?: boolean
+  /** Context for the model about the last spoken reply; never shown or saved as the learner's words. */
+  voiceNote?: string
   message?: string
   chatId?: Id<"workspaceChats">
   continuationOf?: Id<"workspaceChatMessages">
@@ -612,6 +634,8 @@ export function ChatWorkspace({
   >(initialCard || initialPassage ? undefined : initialChatId)
   /** Visible chat, read by stream callbacks that outlive the render that started them. */
   const activeChatIdRef = useRef(activeChatId)
+  /** The chat a new chat's first message just created, so following it keeps voice on. */
+  const createdChatIdRef = useRef<Id<"workspaceChats"> | undefined>(undefined)
   const activeChat = useQuery(
     api.workspaceChats.get,
     activeChatId ? { chatId: activeChatId } : "skip"
@@ -708,10 +732,18 @@ export function ChatWorkspace({
       initialProject?._id
   )
   const composerRef = useRef<HTMLTextAreaElement>(null)
-  // A spoken question joins whatever is already typed, ready to edit or send.
-  const dictation = useDictation((text: string) =>
-    setDraft((current) => (current.trim() ? `${current.trim()} ${text}` : text))
-  )
+  // A spoken question joins whatever was typed before it, filling in live as it is spoken,
+  // ready to edit or send. Each update is the whole dictation so far, so it replaces the last.
+  const dictationBase = useRef<string | null>(null)
+  const dictation = useDictation((text, final) => {
+    dictationBase.current ??= draft.trim()
+    const base = dictationBase.current
+    setDraft(base ? `${base} ${text}` : text)
+    if (final) dictationBase.current = null
+  })
+  useEffect(() => {
+    if (dictation.state === "idle") dictationBase.current = null
+  }, [dictation.state])
   const lessonQuoteId = lesson?.quote?.id
   // A newly quoted passage is ready for its question straight away.
   useEffect(() => {
@@ -740,6 +772,7 @@ export function ChatWorkspace({
       ) === index
   )
   const messages = activeChat?.messages ?? []
+  const [readReplies, setReadReplies] = useReadRepliesSetting()
   /** Formats the loaded conversation as Markdown with optional agent activity. */
   const exportChatMarkdown = (): string => {
     const title = activeChat?.title?.trim() || "Chat"
@@ -1633,7 +1666,10 @@ export function ChatWorkspace({
     }
   }
 
-  /** Sends a standard, edited, or continuation turn and lets Convex drive the transcript. */
+  /**
+   * Sends a standard, edited, or continuation turn and lets Convex drive the transcript.
+   * @returns Whether the turn was taken: its reply finished, or started and was then paused.
+   */
   const sendMessage = async (
     options: SendMessageOptions = {}
   ): Promise<boolean> => {
@@ -1748,6 +1784,8 @@ export function ChatWorkspace({
                   },
                 }
               : {}),
+            spoken: options.spoken === true,
+            ...(options.spoken && options.voiceNote ? { voiceNote: options.voiceNote } : {}),
             projectIds: submittedAttachments.flatMap((attachment) =>
               attachment.kind === "project" && attachment.projectId
                 ? [attachment.projectId]
@@ -1819,6 +1857,7 @@ export function ChatWorkspace({
             inFlightRepliesRef.current = [...inFlightRepliesRef.current]
             setInFlightReplies(inFlightRepliesRef.current)
             if (following) {
+              if (!targetChatId) createdChatIdRef.current = event.chatId
               revokeDraftPreviews()
               setAttachments([])
               setDraftAnnotations([])
@@ -1881,6 +1920,8 @@ export function ChatWorkspace({
         }
       } catch (sendError) {
         const paused = controller.signal.aborted || reply.pausedByUser
+        // Talking over a reply pauses it; the turn itself was still taken.
+        if (paused && started) completed = true
         // A failure in another chat is saved on its message; do not show it here.
         const visible = isVisible()
         if (!paused && visible)
@@ -2017,6 +2058,49 @@ export function ChatWorkspace({
         )
       })
   }
+
+  // Hands-free voice: the bar takes the composer's place, and the chat keeps every turn.
+  const lastAssistant = messages.findLast((message) => message.role === "assistant")
+  const voice = useVoiceSession({
+    busy: isRunning,
+    onInterrupt: pauseReply,
+    onTurn: async (text, cut) => {
+      if (!(await sendMessage({ message: text, spoken: true, voiceNote: voiceCutNote(cut) })))
+        throw new Error("That didn't send. Say it again, or end voice to type it.")
+    },
+    reply: lastAssistant
+      ? { id: lastAssistant.id, text: lastAssistant.content, complete: lastAssistant.status !== "running" }
+      : null,
+  })
+  const voiceOn = voice.phase !== "off"
+  const lessonVoice = lesson?.voice
+  const chatReader = useReplyReader(readReplies && !voiceOn && !lessonVoice, messages, null)
+  const stopVoice = voice.stop
+  // Voice belongs to one chat; switching chats ends it. A new chat getting its id from the first
+  // spoken turn is the same conversation, so voice carries on into it.
+  const voiceChatId = useRef(activeChatId)
+  useEffect(() => {
+    if (voiceChatId.current === activeChatId) return
+    const created = !voiceChatId.current && activeChatId === createdChatIdRef.current
+    voiceChatId.current = activeChatId
+    if (!created) stopVoice()
+  }, [activeChatId, stopVoice])
+
+  // A Teach voice lesson's spoken question is sent once the chat has loaded and is free.
+  const voiceAsk = lessonVoice?.ask
+  const onVoiceAsked = lessonVoice?.onAsked
+  const askedId = useRef(0)
+  const sendRef = useRef(sendMessage)
+  useEffect(() => { sendRef.current = sendMessage })
+  useEffect(() => {
+    if (!voiceAsk || askedId.current === voiceAsk.id) return
+    if ((activeChatId && activeChat === undefined) || isRunning) return
+    const id = askedId.current = voiceAsk.id
+    onVoiceAsked?.(id, true, (activeChat?.messages ?? []).map((message) => message.id))
+    void sendRef.current({ message: voiceAsk.text, spoken: true, voiceNote: voiceAsk.note }).then((sent) => {
+      if (!sent) onVoiceAsked?.(id, false)
+    })
+  }, [voiceAsk, activeChatId, activeChat, isRunning, onVoiceAsked])
 
   /** Resolves a pending agent request for the current chat message. */
   const decideAgentRequest = async (
@@ -2642,10 +2726,19 @@ export function ChatWorkspace({
                             />
                             </InteractiveBlocksProvider>
                           ) : message.status === "failed" ? (
-                            <p>
-                              {activeChat?.lastError ||
-                                "Blitz could not finish this reply."}
-                            </p>
+                            // The chat's error belongs to its latest reply. An earlier one left
+                            // empty, or one the learner stopped, such as by talking over it, just
+                            // says so rather than reporting a failure.
+                            latest && activeChat?.lastErrorReason !== "aborted" ? (
+                              <p>
+                                {activeChat?.lastError ||
+                                  "Blitz could not finish this reply."}
+                              </p>
+                            ) : (
+                              <p className="text-sm text-muted-foreground">
+                                {latest ? "Stopped." : "No reply."}
+                              </p>
+                            )
                           ) : null}
                           {latest &&
                           message.status === "failed" &&
@@ -2769,12 +2862,11 @@ export function ChatWorkspace({
                           <>
                             {message.content ? (
                               <>
-                                {message.status !== "running" ? (
                                   <ReadAloudButton
                                     text={message.content}
                                     prepare={latest}
+                                    streaming={message.status === "running"}
                                   />
-                                ) : null}
                                 <Button
                                   type="button"
                                   variant="ghost"
@@ -3026,10 +3118,23 @@ export function ChatWorkspace({
               </Button>
             </div>
           ) : null}
+          <VoiceError session={voice} onTypeInstead={() => composerRef.current?.focus()} />
+          {lessonVoice?.bar ?? null}
+          {voiceOn ? (
+            <VoiceBar
+              session={voice}
+              hint="Ask anything. Blitz answers out loud."
+              onTypeInstead={() => {
+                voice.stop()
+                window.requestAnimationFrame(() => composerRef.current?.focus())
+              }}
+            />
+          ) : null}
           <div
             className={cn(
               "rounded-[24px] border bg-card p-2 shadow-sm focus-within:ring-2 focus-within:ring-ring/40",
-              draggingFiles && "border-brand bg-brand/5 ring-2 ring-brand/30"
+              draggingFiles && "border-brand bg-brand/5 ring-2 ring-brand/30",
+              (voiceOn || lessonVoice?.bar) && "hidden"
             )}
           >
             {lesson?.quote ? (
@@ -3128,6 +3233,10 @@ export function ChatWorkspace({
                     className="max-h-[min(70svh,32rem)] w-[min(24rem,calc(100vw-2rem))] overflow-y-auto rounded-xl p-4"
                   >
                     <div className="space-y-4">
+                      <label className="flex min-h-11 items-center gap-3 text-sm">
+                        <Checkbox checked={readReplies} onCheckedChange={value => { if (!value) chatReader.stop(); setReadReplies(value === true) }} />
+                        Read replies aloud
+                      </label>
                       <section className="space-y-2">
                         <h2 className="text-sm font-medium">Reply model</h2>
                         {/* Settings are read when a turn starts, so changes made
@@ -3269,9 +3378,14 @@ export function ChatWorkspace({
                 }
                 return (
                   <>
-                    {lesson ? (
-                      <DictationButton dictation={dictation} disabled={isRunning} />
-                    ) : null}
+                    <DictationButton dictation={dictation} disabled={isRunning} />
+                    {lesson ? null : (
+                      <TalkButton
+                        session={voice}
+                        disabled={dictation.state !== "idle"}
+                        className="h-9 min-h-9 px-3"
+                      />
+                    )}
                     <Button
                       type="button"
                       size="icon"
@@ -3300,7 +3414,7 @@ export function ChatWorkspace({
             </div>
           </div>
           <div className="min-h-6 px-3 pt-1.5">
-            {lesson ? <DictationStatus dictation={dictation} /> : null}
+            {voiceOn ? null : <DictationStatus dictation={dictation} />}
             {uploadingFiles ? (
               <p role="status" className="text-xs text-muted-foreground">
                 Saving and reading files…

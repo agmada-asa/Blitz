@@ -46,7 +46,8 @@ export async function POST(request: Request): Promise<Response> {
       return Response.json({ ready: true })
     }
     const recording = await readRecording(request)
-    const text = await transcribeSpeech(recording, request.signal)
+    const prompt = decodeURIComponent(request.headers.get("x-voice-vocabulary") ?? "").slice(0, 2000)
+    const text = await transcribeSpeech(recording, request.signal, prompt)
     return Response.json({ text }, { headers: { "Cache-Control": "no-store" } })
   } catch (error) {
     if (error instanceof KokoroUnavailableError)

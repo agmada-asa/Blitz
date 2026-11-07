@@ -5,7 +5,7 @@
  * on-device model loaded, in the same private environment and data folder as
  * Kokoro, so no paid service or network call is involved once the model is
  * downloaded. The browser records and encodes 16 kHz mono WAV; this module
- * checks it, hands it to the worker through a private temporary file, and
+ * checks it, hands it to Whisper through a private temporary file, and
  * returns the transcript.
  */
 
@@ -26,7 +26,7 @@ export { MAX_SPEECH_RECORDING_BYTES, SpeechRecordingError } from "../speech-wav"
 const MAX_TRANSCRIPT_LENGTH = 4_000
 
 /** One request to the worker: the recording to read and where to write its text. */
-type TranscriptionRequest = { inputPath: string; outputPath: string }
+type TranscriptionRequest = { inputPath: string; outputPath: string; prompt?: string }
 
 const workerScript = join(process.cwd(), "scripts", "speech-to-text-worker.py")
 
@@ -42,7 +42,7 @@ const processState = globalThis as typeof globalThis & {
 const state = (processState.__blitzSpeechToText ??= { queue: new SpeechQueue() })
 
 /**
- * The shared worker. The first start may download the model (about 630 MB),
+ * The shared Whisper worker. The first start downloads its MLX model,
  * so startup gets longer than Kokoro's; it stays loaded for five idle minutes,
  * long enough to cover the pauses in a spoken lesson.
  */
@@ -65,9 +65,9 @@ if (!state.exitHandlerInstalled) {
 
 /** Starts the worker ahead of the first question, downloading the model if needed. */
 export async function warmSpeechToText(): Promise<void> {
-  if (process.platform !== "darwin")
+  if (process.platform !== "darwin" || process.arch !== "arm64")
     throw new KokoroUnavailableError(
-      "Speaking questions is currently available on macOS only."
+      "Voice input currently needs an Apple silicon Mac. You can keep studying by typing."
     )
   await worker.start()
 }
@@ -83,7 +83,8 @@ export async function warmSpeechToText(): Promise<void> {
  */
 export async function transcribeSpeech(
   recording: Uint8Array,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  prompt?: string
 ): Promise<string> {
   validateSpeechWav(recording)
   await warmSpeechToText()
@@ -97,7 +98,7 @@ export async function transcribeSpeech(
         const inputPath = join(directory, `${randomUUID()}.wav`)
         const outputPath = join(directory, `${randomUUID()}.txt`)
         await writeFile(inputPath, recording, { mode: 0o600 })
-        await worker.synthesize({ inputPath, outputPath })
+        await worker.synthesize({ inputPath, outputPath, ...(prompt ? { prompt: prompt.slice(0, 2000) } : {}) })
         const text = (await readFile(outputPath, "utf8")).replace(/\s+/g, " ").trim()
         return text.slice(0, MAX_TRANSCRIPT_LENGTH)
       } finally {
