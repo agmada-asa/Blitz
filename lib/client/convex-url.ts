@@ -38,15 +38,24 @@ export function isLocalHostname(hostname: string): boolean {
   )
 }
 
+/** Path on an HTTPS page's own origin that proxies to local Convex (see docs/voice.md). */
+export const SECURE_CONVEX_PATH = "/convex"
+
 /**
  * Rewrites a local Convex URL to the page's hostname, keeping its port.
+ *
+ * A page served over HTTPS (needed for the microphone on a phone) cannot open
+ * plain `ws://` to Convex, so it uses the same origin under {@link SECURE_CONVEX_PATH},
+ * which the HTTPS proxy forwards to local Convex.
  * @param configuredUrl The `NEXT_PUBLIC_CONVEX_URL` value from the build.
  * @param pageHostname The hostname the page was loaded from, or undefined during server rendering.
+ * @param secureOrigin The page's origin when it was loaded over HTTPS.
  * @returns The configured URL when it is hosted, unparseable, or no page hostname is known.
  */
 export function resolveBrowserConvexUrl(
   configuredUrl: string,
-  pageHostname: string | undefined
+  pageHostname: string | undefined,
+  secureOrigin?: string
 ): string {
   if (!pageHostname) return configuredUrl
   let url: URL
@@ -57,6 +66,8 @@ export function resolveBrowserConvexUrl(
   }
   if (!isLocalHostname(url.hostname) || !isLocalHostname(pageHostname))
     return configuredUrl
+  if (secureOrigin && url.protocol === "http:")
+    return secureOrigin.replace(/\/$/, "") + SECURE_CONVEX_PATH
   url.hostname = pageHostname
   return url.toString().replace(/\/$/, "")
 }

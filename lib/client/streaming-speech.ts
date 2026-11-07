@@ -1,6 +1,5 @@
 /** Feeds growing Markdown through the existing cancellable, gapless speech player. */
-import { splitSpeechText } from "../speech-text.ts"
-import { pieceEnd } from "../speech-pieces.ts"
+import { pieceEnd, speakablePieces } from "../speech-pieces.ts"
 import { spokenMarkdownText } from "../spoken-markdown.ts"
 import { playSpeechSections } from "./speech-playback.ts"
 
@@ -8,7 +7,6 @@ import { playSpeechSections } from "./speech-playback.ts"
 export class StreamingSpeech {
   private text = ""
   private consumed = 0
-  private first = true
   private tail: Promise<void> | undefined
   private queue: string[] = []
   private wake: (() => void) | undefined
@@ -22,6 +20,8 @@ export class StreamingSpeech {
   private state: (state: "loading" | "playing") => void
   private error: (error: unknown) => void
   private onHeard?: (synthesisMs: number) => void
+  /** Called with each piece's text as it starts playing, for the voice bar's caption. */
+  onSpeaking?: (text: string) => void
 
   /** Selects the saved voice and reports playback state and failures to its owning screen. */
   constructor(
@@ -43,19 +43,19 @@ export class StreamingSpeech {
     this.text = text
     while (!this.controller.signal.aborted) {
       const pending = text.slice(this.consumed)
-      const boundary = pieceEnd(pending, this.first)
+      const boundary = pieceEnd(pending)
       const end = boundary >= 0 ? boundary : complete ? pending.length : 0
       if (!end) break
       this.consumed += end
       const words = spokenMarkdownText(pending.slice(0, end))
       if (!words.trim()) continue
-      this.first = false
-      this.queue.push(...splitSpeechText(words))
+      // Whole sentences keep Kokoro's intonation intact; only overlong ones are split, at a clause.
+      this.queue.push(...speakablePieces(words))
     }
     this.complete = complete
     this.wake?.()
     this.tail ??= playSpeechSections(this.pieces(), this.voiceId, this.controller.signal, this.state, (text, ms, phase, synthesisMs) => {
-      if (phase === "playing") { this.current = { text, at: performance.now(), ms }; this.onHeard?.(synthesisMs) }
+      if (phase === "playing") { this.current = { text, at: performance.now(), ms }; this.onHeard?.(synthesisMs); this.onSpeaking?.(text) }
       else { this.completed += text + " "; this.current = undefined }
     })
       .catch((error: unknown) => {
@@ -79,11 +79,17 @@ export class StreamingSpeech {
 
   /** Estimates heard words in the current piece from actual playback time, plus completed pieces. */
   heard(): string {
+    return (this.completed + (this.split()?.heard ?? "")).trim()
+  }
+
+  /** The piece playing now, split into the words already heard and the rest; null between pieces. */
+  split(): { heard: string; unheard: string } | null {
     const current = this.current
-    if (!current) return this.completed.trim()
+    if (!current) return null
     const words = current.text.split(/\s+/)
     const fraction = Math.max(0, Math.min(1, (performance.now() - current.at) / current.ms))
-    return (this.completed + words.slice(0, Math.floor(words.length * fraction)).join(" ")).trim()
+    const at = Math.floor(words.length * fraction)
+    return { heard: words.slice(0, at).join(" "), unheard: words.slice(at).join(" ") }
   }
 
   /** Cancels queued inference and playback immediately. */

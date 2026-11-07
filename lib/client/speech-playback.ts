@@ -101,10 +101,29 @@ export function prepareSpeechOpening(
   }
 }
 
+let analyser: AnalyserNode | undefined
+let samples: Float32Array<ArrayBuffer> | undefined
+
 /** Creates the single audio context on demand; resume must happen during the user's click. */
 function speechContext(): AudioContext {
-  if (!context || context.state === "closed") context = new AudioContext()
+  if (!context || context.state === "closed") {
+    context = new AudioContext()
+    // Every section plays through one analyser, so the voice orb can move with the reply.
+    analyser = context.createAnalyser()
+    analyser.fftSize = 1024
+    analyser.connect(context.destination)
+    samples = new Float32Array(analyser.fftSize)
+  }
   return context
+}
+
+/** How loud speech playback is right now, as RMS (0..1); 0 when nothing plays. */
+export function speechOutputLevel(): number {
+  if (!analyser || !samples || !activePlaybacks) return 0
+  analyser.getFloatTimeDomainData(samples)
+  let sum = 0
+  for (const sample of samples) sum += sample * sample
+  return Math.sqrt(sum / samples.length)
 }
 
 /** Unlocks output during a microphone button's user gesture, before asynchronous model setup. */
@@ -184,7 +203,7 @@ export async function playSpeechSections(
       signal.throwIfAborted()
       const source = audioContext.createBufferSource()
       source.buffer = buffer
-      source.connect(audioContext.destination)
+      source.connect(analyser ?? audioContext.destination)
       sources.add(source)
       const ended = new Promise<void>((resolve) => {
         /** Releases each section and reports a buffer underrun only while more speech is coming. */

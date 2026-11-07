@@ -26,6 +26,8 @@ class TestContext {
   async resume() {}
   /** Returns a short fixture section regardless of its encoded bytes. */
   async decodeAudioData() { return { duration: 0.001 } }
+  /** Stands in for the output-level analyser every section plays through. */
+  createAnalyser() { return { fftSize: 0, connect() {}, getFloatTimeDomainData() {} } }
   /** Creates a cancellable fixture section. */
   createBufferSource() { return new TestSource() }
 }

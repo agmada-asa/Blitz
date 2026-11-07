@@ -19,7 +19,7 @@
  */
 
 import Link from "next/link"
-import { VoiceConversation } from "@/components/voice/voice-conversation"
+import { TalkButton, useVoiceSession, VoiceBar, VoiceError } from "@/components/voice/voice-conversation"
 import { spokenReplyText } from "@/components/learn/teach-voice"
 import { usePathname, useRouter } from "next/navigation"
 import { useMutation, useQuery } from "convex/react"
@@ -265,8 +265,6 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
   }, [unit.outline, messages])
   // Hands-free: new replies are read aloud while the learner has it on.
   const [readReplies, setReadReplies] = useReadRepliesSetting()
-  const [voiceActive, setVoiceActive] = useState(false)
-  const replyReader = useReplyReader(readReplies && !voiceActive, messages, outline)
 
   // The latest section marker is the current section; every marker seen is a
   // taught section. Reading them from messages keeps progress live while a
@@ -427,6 +425,22 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
     abortRef.current?.abort()
     if (!response?.ok) setError("The reply could not be paused. Try again.")
   }, [activeChatId, messages])
+
+  // A voice lesson: the tutor reads each section as it writes it, and saying "next" moves on.
+  const voice = useVoiceSession({
+    busy: running,
+    onInterrupt: () => void pause(),
+    onTurn: (text) =>
+      send(/^(next|next section|go on|continue)[.!?]?$/i.test(text.trim()) ? TEACH_QUICK_REPLIES.next : text, undefined, true),
+    reply:
+      lastMessage?.role === "assistant"
+        ? { id: lastMessage.id, text: spokenReplyText(lastMessage.content, outline), complete: lastMessage.status !== "running" }
+        : null,
+  })
+  const voiceOn = voice.phase !== "off"
+  const replyReader = useReplyReader(readReplies && !voiceOn, messages, outline)
+  const say = voice.say
+  const nextByVoice = useCallback(() => say(TEACH_QUICK_REPLIES.next), [say])
 
   /** Compacts the session's context now, from the context sheet. */
   const compactNow = useCallback(async () => {
@@ -724,8 +738,14 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
               </Link>
             </Button>
             <div className="min-w-0 flex-1">
-              <h1 className="truncate font-heading text-lg font-semibold">
-                {unit.title}
+              <h1 className="flex items-center gap-2 truncate font-heading text-lg font-semibold">
+                {voiceOn ? (
+                  <span
+                    className="size-2 shrink-0 rounded-full bg-destructive motion-safe:animate-pulse"
+                    aria-label="Voice lesson on"
+                  />
+                ) : null}
+                <span className="truncate">{unit.title}</span>
               </h1>
               {progressLabel ? (
                 <p className="truncate text-xs text-muted-foreground">
@@ -741,6 +761,16 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
               >
                 +{sitting.xp} XP
               </p>
+            ) : null}
+            {chat && !voiceOn ? (
+              <TalkButton
+                session={voice}
+                disabled={!activeChatId}
+                className="h-10 min-h-10 max-sm:w-10 max-sm:px-0"
+              >
+                {/* On a phone the icon alone leaves the unit title room. */}
+                <span className="max-sm:sr-only">Voice</span>
+              </TalkButton>
             ) : null}
             {chat ? (
               <Button
@@ -860,7 +890,11 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
           <div
             ref={scrollRef}
             onScroll={onScroll}
-            className="relative h-full overflow-y-auto"
+            className={cn(
+              "relative h-full overflow-y-auto transition-opacity duration-300",
+              // While the learner talks, the lesson steps back so the caption is the focus.
+              (voice.phase === "hearing" || voice.phase === "thinking") && "opacity-55"
+            )}
           >
             <div
               ref={columnRef}
@@ -956,26 +990,31 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
             />
           </div>
         ) : null}
-        <VoiceConversation
-          onActiveChange={setVoiceActive}
-          disabled={!activeChatId}
-          busy={running}
-          onInterrupt={() => void pause()}
-          onTurn={(text) => send(/^(next|next section)[.!?]?$/i.test(text.trim()) ? TEACH_QUICK_REPLIES.next : text, undefined, true)}
-          reply={lastMessage?.role === "assistant" ? {
-            id: lastMessage.id, text: spokenReplyText(lastMessage.content, outline), complete: lastMessage.status !== "running",
-          } : null}
-        />
-        <TeachDock
-          state={dockState}
-          error={error}
-          onSend={(message) => void send(message)}
-          onResume={() =>
-            lastMessage?.role === "assistant"
-              ? void send("", lastMessage.id)
-              : undefined
-          }
-        />
+        {voiceOn || voice.error ? (
+          // The same width and padding as the lesson column, like the dock it replaces.
+          <div className="mx-auto w-full max-w-3xl px-4 pt-2 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:px-6">
+            <VoiceError session={voice} />
+            {voiceOn ? (
+              <VoiceBar
+                session={voice}
+                hint={'Ask anything, or say "next".'}
+                onNext={activeChatId ? nextByVoice : undefined}
+              />
+            ) : null}
+          </div>
+        ) : null}
+        {voiceOn ? null : (
+          <TeachDock
+            state={dockState}
+            error={error}
+            onSend={(message) => void send(message)}
+            onResume={() =>
+              lastMessage?.role === "assistant"
+                ? void send("", lastMessage.id)
+                : undefined
+            }
+          />
+        )}
       </div>
 
       {sideOpen ? (

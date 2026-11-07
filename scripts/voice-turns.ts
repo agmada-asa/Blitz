@@ -1,13 +1,20 @@
 /**
  * Buffers one microphone connection's PCM and turns it into transcripts. The voice service owns sockets,
- * workers and logging; this file owns the turn rules, so muting, stopping and speculative transcription
- * can be tested without a microphone, Whisper or a socket.
+ * workers and logging; this file owns the turn rules, so muting, stopping, live captions and speculative
+ * transcription can be tested without a microphone, Whisper or a socket.
+ *
+ * Voice mode: each turn is one segment. Captions show that turn's words so far; `user` carries the final
+ * words. Dictation: a detected end of turn commits the segment and listening carries on, so a long
+ * dictation is transcribed in pieces. Captions show the whole dictation so far; `user` arrives on stop.
  */
 
 /** Side effects a turn needs from the owning connection. */
 export type VoiceTurnHost = {
-  /** Transcribes a PCM16 snapshot; rejects on failure. */
-  transcribe(pcm: Buffer): Promise<string>
+  /**
+   * Transcribes a PCM16 snapshot; rejects on failure.
+   * @param context Words already dictated just before this audio, to keep segments continuous.
+   */
+  transcribe(pcm: Buffer, context?: string): Promise<string>
   /** Sends one protocol message to the browser. */
   send(value: object): void
   /** Tells the turn detector the current turn has ended. */
@@ -20,30 +27,69 @@ export type VoiceTurnHost = {
   closed(): boolean
 }
 
-/** Longest turn kept in memory: two minutes of 16 kHz PCM16. */
-const MAX_TURN_BYTES = 16000 * 2 * 120
-/** Pre-roll kept before speech starts in voice mode: half a second. */
-const PRE_ROLL_BYTES = 16000
+/** Tuning that tests can shorten. */
+export type VoiceTurnOptions = {
+  /** Time between live caption transcriptions while speech continues. */
+  captionMs?: number
+}
 
-/** Turn state for one connection. A reset bumps the generation so in-flight transcripts are never emitted. */
+/** Bytes per second of 16 kHz PCM16. */
+const BYTES_PER_SECOND = 16000 * 2
+/** Longest segment kept in memory: two minutes. */
+const MAX_TURN_BYTES = BYTES_PER_SECOND * 120
+/** Pre-roll kept before speech starts: half a second. */
+const PRE_ROLL_BYTES = BYTES_PER_SECOND / 2
+/** Shortest audio worth a live caption; less than this is usually a syllable Whisper guesses at. */
+const MIN_CAPTION_BYTES = BYTES_PER_SECOND * 0.4
+/** Live captions transcribe at most the last 20 s, so each stays well under a second of Whisper. */
+const MAX_CAPTION_BYTES = BYTES_PER_SECOND * 20
+/** A dictation segment this long without a pause is committed anyway, bounding each transcription. */
+const FORCE_COMMIT_BYTES = BYTES_PER_SECOND * 25
+/** Committed words passed to Whisper as context for the next segment. */
+const CONTEXT_CHARS = 300
+
+/** Joins transcript pieces with single spaces, skipping empty ones. */
+function join(...parts: string[]): string {
+  return parts.map(part => part.trim()).filter(Boolean).join(" ")
+}
+
+/**
+ * Turn state for one connection. A reset bumps the generation so in-flight transcripts are never emitted;
+ * every new segment bumps the segment counter so a caption for audio already taken is dropped.
+ */
 export class VoiceTurns {
   mode: "voice" | "dictate" = "dictate"
-  /** True after Silero heard speech in the current turn. */
+  /** True after Silero heard speech in the current segment. */
   active = false
   private frames: Buffer[] = []
   private bytes = 0
-  /** True while the current turn is being transcribed; new audio is not buffered or sent to the detector. */
+  /** True while the final words are being transcribed; new audio is not buffered or sent to the detector. */
   transcribing = false
   private generation = 0
+  private segment = 0
   private early?: Promise<string>
   private voicedAt = 0
+  /** Dictated words from committed segments. */
+  private committed = ""
+  /** Appends committed segments in order. */
+  private commits: Promise<void> = Promise.resolve()
+  private pendingCommits = 0
+  private captioning = false
+  private ticker?: ReturnType<typeof setInterval>
   private host: VoiceTurnHost
-
-  /** @param host Side effects owned by the socket connection. */
-  constructor(host: VoiceTurnHost) { this.host = host }
+  private captionMs: number
 
   /**
-   * Adds one microphone frame. Frames that arrive while a turn is being transcribed are ignored.
+   * @param host Side effects owned by the socket connection.
+   * @param options Timing overrides for tests.
+   */
+  constructor(host: VoiceTurnHost, options: VoiceTurnOptions = {}) {
+    this.host = host
+    this.captionMs = options.captionMs ?? 900
+  }
+
+  /**
+   * Adds one microphone frame. Frames that arrive while the final words are transcribed are ignored.
    * @returns False when the frame ended the connection (bad audio or an overlong turn).
    */
   audio(frame: Buffer): boolean {
@@ -52,62 +98,125 @@ export class VoiceTurns {
     this.frames.push(frame); this.bytes += frame.length
     if (this.bytes > MAX_TURN_BYTES) { this.host.fail(new Error("Keep each turn under two minutes.")); return false }
     // Keep just pre-roll until Silero detects speech.
-    if (this.mode !== "dictate" && !this.active && this.bytes > PRE_ROLL_BYTES) {
+    if (!this.active && this.bytes > PRE_ROLL_BYTES) {
       this.frames = [Buffer.concat(this.frames).subarray(-PRE_ROLL_BYTES)]; this.bytes = PRE_ROLL_BYTES
     }
+    if (this.mode === "dictate" && this.active && this.bytes >= FORCE_COMMIT_BYTES) this.commit()
     return true
   }
 
-  /** Marks speech starting or resuming; any speculative transcript is now out of date. */
-  speech(): void { this.active = true; this.early = undefined; this.voicedAt = Date.now() }
+  /** Marks speech starting or resuming; any speculative transcript is now out of date. Starts captions. */
+  speech(): void {
+    this.active = true; this.early = undefined; this.voicedAt = Date.now()
+    if (!this.ticker && !this.transcribing) {
+      this.ticker = setInterval(() => void this.caption(), this.captionMs)
+      this.ticker.unref?.()
+    }
+  }
 
-  /** Starts a speculative transcript at a pause in speech so a confirmed turn can reply sooner. */
+  /** Starts a speculative transcript at a pause in speech so a confirmed turn can finish sooner. */
   pause(): void {
+    this.stopCaptions()
     if (this.active && Date.now() - this.voicedAt >= 96) {
-      this.early = this.host.transcribe(Buffer.concat(this.frames))
+      this.early = this.host.transcribe(Buffer.concat(this.frames), this.context())
       this.early.catch(() => undefined)
     }
   }
 
   /**
-   * Discards buffered audio and any transcript still in progress, as when the learner mutes.
-   * A transcription that finishes after this is dropped rather than sent as the learner's words.
+   * Transcribes the segment so far and sends it as a caption. Only one runs at a time, never while
+   * final words are being transcribed, and a result for audio that has since been taken is dropped.
+   */
+  async caption(): Promise<void> {
+    if (this.captioning || this.transcribing || this.pendingCommits || !this.active) return
+    if (this.bytes < MIN_CAPTION_BYTES) return
+    this.captioning = true
+    const generation = this.generation
+    const segment = this.segment
+    try {
+      const text = await this.host.transcribe(Buffer.concat(this.frames).subarray(-MAX_CAPTION_BYTES), this.context())
+      if (generation !== this.generation || segment !== this.segment || this.host.closed()) return
+      this.host.send({ type: "caption", text: this.mode === "dictate" ? join(this.committed, text) : text.trim() })
+    } catch {
+      // A missed caption is harmless; the final transcription reports real failures.
+    } finally {
+      if (generation === this.generation) this.captioning = false
+    }
+  }
+
+  /**
+   * Ends the current dictation segment: its words are transcribed and appended in order while
+   * listening carries on with a fresh segment.
+   */
+  commit(): void {
+    if (this.mode !== "dictate" || !this.bytes || !this.active || this.transcribing) return
+    const generation = this.generation
+    const words = this.early || this.host.transcribe(Buffer.concat(this.frames), this.context())
+    words.catch(() => undefined)
+    this.nextSegment()
+    this.pendingCommits++
+    const start = Date.now()
+    this.commits = this.commits.then(async () => {
+      try {
+        const text = await words
+        if (generation !== this.generation || this.host.closed()) return
+        this.committed = join(this.committed, text)
+        this.host.send({ type: "caption", text: this.committed })
+        this.host.log({ transcript: text, transcriptionMs: Date.now() - start, mode: this.mode, segment: true })
+      } catch (error) {
+        if (generation === this.generation && !this.host.closed()) this.host.fail(error)
+      } finally {
+        if (generation === this.generation) this.pendingCommits--
+      }
+    })
+  }
+
+  /**
+   * Discards buffered audio, committed dictation and any transcript still in progress, as when the
+   * learner mutes. A transcription that finishes after this is dropped rather than sent as their words.
    */
   reset(): void {
     this.generation++
-    this.frames = []; this.bytes = 0; this.active = false; this.early = undefined
+    this.nextSegment()
+    this.committed = ""; this.commits = Promise.resolve(); this.pendingCommits = 0; this.captioning = false
     // New audio is accepted at once; the stale transcription can no longer finish this turn,
     // so the browser stops showing it as thinking.
     if (this.transcribing && !this.host.closed()) this.host.send({ type: "state", state: "listening" })
     this.transcribing = false
-    this.host.endTurn()
   }
 
   /**
-   * Takes the buffered turn and sends its transcript. In dictation an empty recording still answers,
-   * with empty text, so the composer leaves its transcribing state instead of waiting forever.
+   * Takes the buffered turn and sends its transcript. In dictation this is the stop: it waits for
+   * committed segments, adds the rest, and always answers, with empty text when nothing was heard,
+   * so the composer leaves its transcribing state instead of waiting forever.
    */
   async take(): Promise<void> {
     if (this.transcribing) return
-    if (!this.bytes) {
-      if (this.mode === "dictate" && !this.host.closed()) this.host.send({ type: "user", text: "" })
+    const dictating = this.mode === "dictate"
+    if (!this.bytes && !(dictating && (this.committed || this.pendingCommits))) {
+      if (dictating && !this.host.closed()) this.host.send({ type: "user", text: "" })
       return
     }
     this.transcribing = true
     const generation = this.generation
-    const pcm = Buffer.concat(this.frames)
-    const early = this.early
-    this.frames = []; this.bytes = 0; this.active = false; this.early = undefined
-    this.host.endTurn()
+    // After committed segments, a remainder without detected speech is only silence.
+    const rest = this.bytes && (!dictating || this.active || !(this.committed || this.pendingCommits))
+      ? this.early || this.host.transcribe(Buffer.concat(this.frames), this.context())
+      : Promise.resolve("")
+    rest.catch(() => undefined)
+    this.nextSegment()
     const start = Date.now()
     this.host.send({ type: "state", state: "thinking" })
     try {
-      const text = await (early || this.host.transcribe(pcm))
+      const last = await rest
+      if (dictating) await this.commits
       if (generation !== this.generation || this.host.closed()) return
-      if (text.trim() || this.mode === "dictate") {
+      const text = dictating ? join(this.committed, last) : last
+      if (text.trim() || dictating) {
         this.host.send({ type: "user", text })
-        this.host.log({ transcript: text, transcriptionMs: Date.now() - start, mode: this.mode })
+        this.host.log({ transcript: last, transcriptionMs: Date.now() - start, mode: this.mode })
       } else this.host.send({ type: "state", state: "listening" })
+      if (dictating) this.committed = ""
     } catch (error) {
       if (generation === this.generation && !this.host.closed()) this.host.fail(error)
     } finally {
@@ -115,6 +224,28 @@ export class VoiceTurns {
     }
   }
 
-  /** Drops all audio when the connection closes. */
-  clear(): void { this.generation++; this.frames = []; this.bytes = 0; this.early = undefined }
+  /** Drops all audio and stops captions when the connection closes. */
+  clear(): void {
+    this.generation++
+    this.nextSegment()
+    this.committed = ""; this.commits = Promise.resolve(); this.pendingCommits = 0
+  }
+
+  /** Words already dictated, as context for the next transcription. */
+  private context(): string {
+    return this.mode === "dictate" ? this.committed.slice(-CONTEXT_CHARS) : ""
+  }
+
+  /** Starts a fresh segment: forgets its audio, stops captions and tells the detector the turn is over. */
+  private nextSegment(): void {
+    this.segment++
+    this.frames = []; this.bytes = 0; this.active = false; this.early = undefined
+    this.stopCaptions()
+    this.host.endTurn()
+  }
+
+  /** Stops the live caption timer. */
+  private stopCaptions(): void {
+    clearInterval(this.ticker); this.ticker = undefined
+  }
 }

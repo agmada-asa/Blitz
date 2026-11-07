@@ -1,7 +1,7 @@
 "use client"
 
 /** Owns persisted Blitz chat selection, streaming, and mixed-context attachments. */
-import { VoiceConversation } from "@/components/voice/voice-conversation"
+import { TalkButton, useVoiceSession, VoiceBar, VoiceError } from "@/components/voice/voice-conversation"
 
 import {
   Archive02Icon,
@@ -712,10 +712,18 @@ export function ChatWorkspace({
       initialProject?._id
   )
   const composerRef = useRef<HTMLTextAreaElement>(null)
-  // A spoken question joins whatever is already typed, ready to edit or send.
-  const dictation = useDictation((text: string) =>
-    setDraft((current) => (current.trim() ? `${current.trim()} ${text}` : text))
-  )
+  // A spoken question joins whatever was typed before it, filling in live as it is spoken,
+  // ready to edit or send. Each update is the whole dictation so far, so it replaces the last.
+  const dictationBase = useRef<string | null>(null)
+  const dictation = useDictation((text, final) => {
+    dictationBase.current ??= draft.trim()
+    const base = dictationBase.current
+    setDraft(base ? `${base} ${text}` : text)
+    if (final) dictationBase.current = null
+  })
+  useEffect(() => {
+    if (dictation.state === "idle") dictationBase.current = null
+  }, [dictation.state])
   const lessonQuoteId = lesson?.quote?.id
   // A newly quoted passage is ready for its question straight away.
   useEffect(() => {
@@ -745,8 +753,6 @@ export function ChatWorkspace({
   )
   const messages = activeChat?.messages ?? []
   const [readReplies, setReadReplies] = useReadRepliesSetting()
-  const [voiceActive, setVoiceActive] = useState(false)
-  const chatReader = useReplyReader(readReplies && !voiceActive, messages, null)
   /** Formats the loaded conversation as Markdown with optional agent activity. */
   const exportChatMarkdown = (): string => {
     const title = activeChat?.title?.trim() || "Chat"
@@ -2026,6 +2032,22 @@ export function ChatWorkspace({
       })
   }
 
+  // Hands-free voice: the bar takes the composer's place, and the chat keeps every turn.
+  const lastAssistant = messages.findLast((message) => message.role === "assistant")
+  const voice = useVoiceSession({
+    busy: isRunning,
+    onInterrupt: pauseReply,
+    onTurn: (text) => sendMessage({ message: text, spoken: true }),
+    reply: lastAssistant
+      ? { id: lastAssistant.id, text: lastAssistant.content, complete: lastAssistant.status !== "running" }
+      : null,
+  })
+  const voiceOn = voice.phase !== "off"
+  const chatReader = useReplyReader(readReplies && !voiceOn, messages, null)
+  const stopVoice = voice.stop
+  // Voice belongs to one chat; switching chats ends it.
+  useEffect(() => stopVoice, [activeChatId, stopVoice])
+
   /** Resolves a pending agent request for the current chat message. */
   const decideAgentRequest = async (
     request: AgentRequest,
@@ -3033,10 +3055,22 @@ export function ChatWorkspace({
               </Button>
             </div>
           ) : null}
+          <VoiceError session={voice} onTypeInstead={() => composerRef.current?.focus()} />
+          {voiceOn ? (
+            <VoiceBar
+              session={voice}
+              hint="Ask anything. Blitz answers out loud."
+              onTypeInstead={() => {
+                voice.stop()
+                window.requestAnimationFrame(() => composerRef.current?.focus())
+              }}
+            />
+          ) : null}
           <div
             className={cn(
               "rounded-[24px] border bg-card p-2 shadow-sm focus-within:ring-2 focus-within:ring-ring/40",
-              draggingFiles && "border-brand bg-brand/5 ring-2 ring-brand/30"
+              draggingFiles && "border-brand bg-brand/5 ring-2 ring-brand/30",
+              voiceOn && "hidden"
             )}
           >
             {lesson?.quote ? (
@@ -3281,6 +3315,13 @@ export function ChatWorkspace({
                 return (
                   <>
                     <DictationButton dictation={dictation} disabled={isRunning} />
+                    {lesson ? null : (
+                      <TalkButton
+                        session={voice}
+                        disabled={dictation.state !== "idle"}
+                        className="h-9 min-h-9 px-3"
+                      />
+                    )}
                     <Button
                       type="button"
                       size="icon"
@@ -3309,19 +3350,7 @@ export function ChatWorkspace({
             </div>
           </div>
           <div className="min-h-6 px-3 pt-1.5">
-            <DictationStatus dictation={dictation} />
-            <VoiceConversation
-              key={activeChatId ?? "new"}
-              onActiveChange={setVoiceActive}
-              busy={isRunning}
-              onInterrupt={pauseReply}
-              onTurn={(text) => sendMessage({ message: text, spoken: true })}
-              reply={messages.findLast(message => message.role === "assistant") ? {
-                id: messages.findLast(message => message.role === "assistant")!.id,
-                text: messages.findLast(message => message.role === "assistant")!.content,
-                complete: messages.findLast(message => message.role === "assistant")!.status !== "running",
-              } : null}
-            />
+            {voiceOn ? null : <DictationStatus dictation={dictation} />}
             {uploadingFiles ? (
               <p role="status" className="text-xs text-muted-foreground">
                 Saving and reading files…

@@ -20,6 +20,8 @@ export class VoiceConnection {
   private readyTimer?: ReturnType<typeof setTimeout>
   private receive: (event: VoiceEvent) => void
   private open: MicOpener
+  /** Latest microphone loudness (RMS, 0..1), read each frame by the voice orb; 0 while muted. */
+  level = 0
   /** Ends the session as soon as the page is hidden, including while models warm or permission is pending. */
   private visibility = () => { if (document.hidden) { this.hidden = true; this.close() } }
 
@@ -85,7 +87,7 @@ export class VoiceConnection {
         this.receive({ type: "error", message: "Voice connection is too slow. Reconnect." }); this.close(); return
       }
       this.socket.send(packet.buffer as ArrayBuffer)
-    }, () => {})
+    }, rms => { this.level = this.muted ? 0 : rms })
     // A permission prompt can outlast a tab switch; release a late grant instead of recording in the background.
     if (this.closed || document.hidden) { mic.stop(); this.close(); this.ensureVisible(); return }
     this.mic = mic

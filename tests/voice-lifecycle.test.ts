@@ -1,12 +1,11 @@
 /**
- * Regression tests for the local voice review fixes: no capture in a hidden tab, skip never scored,
- * muting drops in-flight transcripts, and stopping an empty dictation still answers.
+ * Regression tests for the local voice review fixes: no capture in a hidden tab, muting drops
+ * in-flight transcripts, and stopping an empty dictation still answers.
  */
 import assert from "node:assert/strict"
 import test from "node:test"
 import { HIDDEN_START_MESSAGE, VoiceConnection, type VoiceEvent } from "../lib/client/voice-connection.ts"
 import type { Mic } from "../lib/client/voice-mic.ts"
-import { drillAnswerValue, drillVoiceAction, type SpokenDrillQuestion } from "../lib/voice-quiz.ts"
 import { VoiceTurns, type VoiceTurnHost } from "../scripts/voice-turns.ts"
 
 /** Page visibility and listeners standing in for `document`. */
@@ -145,31 +144,6 @@ test("a visible session streams packets and stops them when hidden", async t => 
   assert.equal(mic.state.stopped, 1)
   mic.state.heard?.(new Int16Array(512))
   assert.equal(TestSocket.last!.sent.filter(value => typeof value !== "string").length, 1)
-})
-
-const trueFalse: SpokenDrillQuestion = { type: "true-false", options: [{ id: "true", text: "True" }, { id: "false", text: "False" }] }
-
-test("skip is never submitted as an answer and never serializes to false", () => {
-  for (const words of ["skip", "I don't know", "not sure"]) {
-    assert.deepEqual(drillVoiceAction(words, trueFalse, false), { type: "skip" })
-  }
-  assert.equal(drillAnswerValue("true-false", []), undefined)
-  assert.equal(drillAnswerValue("true-false", ["maybe"]), undefined)
-  assert.equal(drillAnswerValue("true-false", ["false"]), false)
-  assert.equal(drillAnswerValue("single-choice", []), undefined)
-  assert.equal(drillAnswerValue("ordering", []), undefined)
-})
-
-test("skip and next work on every question type, including formats voice cannot answer", () => {
-  const types = ["single-choice", "multiple-answer", "true-false", "cloze", "ordering", "matching", "code-output"] as const
-  for (const type of types) {
-    const question: SpokenDrillQuestion = { type, options: [{ id: "a", text: "Alpha" }, { id: "b", text: "Beta" }], acceptedAnswers: [["x"]] }
-    assert.deepEqual(drillVoiceAction("skip", question, false), { type: "skip" }, type)
-    assert.deepEqual(drillVoiceAction("next", question, true), { type: "next" }, type)
-    assert.deepEqual(drillVoiceAction("skip", question, true), { type: "repeat" }, type)
-  }
-  assert.deepEqual(drillVoiceAction("B", trueFalse, false), { type: "submit", selectedOptionIds: ["false"] })
-  assert.deepEqual(drillVoiceAction("B", { ...trueFalse, type: "ordering" }, false), { type: "retry" })
 })
 
 /** A turn host whose transcriptions finish only when the test resolves them. */

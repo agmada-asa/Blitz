@@ -87,10 +87,13 @@ sockets.on("connection", socket => {
     socket.close()
   }
   /** Transcribes a snapshot without saving raw audio beyond the request. */
-  async function transcribe(pcm: Buffer): Promise<string> {
+  async function transcribe(pcm: Buffer, context = ""): Promise<string> {
+    // Whisper reads the end of its prompt most closely, so the words just dictated go last.
+    // The route keeps only the first 2000 characters, so trim the vocabulary rather than the context.
+    const vocabulary = context ? prompt.slice(-Math.max(0, 1999 - context.length)) + "\n" + context : prompt
     const response = await fetch(appOrigin + "/api/audio/transcribe", {
       method: "POST", body: new Uint8Array(wav(pcm)), signal: lifetime.signal,
-      headers: { "x-voice-vocabulary": encodeURIComponent(prompt) },
+      headers: { "x-voice-vocabulary": encodeURIComponent(vocabulary.slice(-2000)) },
     })
     const result = await response.json()
     if (!response.ok) throw new Error(result.error || "Transcription failed.")
@@ -99,7 +102,7 @@ sockets.on("connection", socket => {
   // Muting resets the turn, so a transcript still in flight is dropped rather than sent later.
   const turns = new VoiceTurns({
     transcribe, send, log, fail,
-    endTurn: () => worker?.stdin?.write('{"end":true}\n'),
+    endTurn: () => { if (!closed && worker?.stdin?.writable) worker.stdin.write('{"end":true}\n') },
     closed: () => closed,
   })
   socket.on("message", (data, binary) => {
@@ -107,7 +110,7 @@ sockets.on("connection", socket => {
       if (!started || turns.transcribing) return
       const frame = Buffer.from(data as Buffer)
       if (!turns.audio(frame)) return
-      if (turns.mode !== "dictate") worker?.stdin?.write(JSON.stringify({ pcm: frame.toString("base64") }) + "\n")
+      worker?.stdin?.write(JSON.stringify({ pcm: frame.toString("base64") }) + "\n")
       return
     }
     try {
@@ -120,7 +123,8 @@ sockets.on("connection", socket => {
         void (async () => {
           const warm = await fetch(appOrigin + "/api/audio/transcribe?warm=1", { method: "POST", signal: lifetime.signal })
           if (!warm.ok) throw new Error("Speech is not ready. Run scripts/setup-kokoro.sh and retry.")
-          if (mode === "dictate") { send({ type: "ready" }); return }
+          // Both modes listen with Silero and Smart Turn: voice mode to end turns, dictation to
+          // commit segments so live captions and the final words stay quick on long dictations.
           await (models ??= ensureModels().catch(error => { models = undefined; throw error }))
           if (closed) return
           worker = spawn(python, [join(process.cwd(), "scripts", "voice-listen-worker.py"), directory], { stdio: ["pipe", "pipe", "pipe"] })
@@ -134,15 +138,21 @@ sockets.on("connection", socket => {
               if (event.ready) send({ type: "ready" })
               if (event.event === "speech" || event.event === "resume") {
                 turns.speech()
-                clearTimeout(bargeTimer)
-                bargeTimer = setTimeout(() => send({ type: "interrupt" }), 300)
-                send({ type: "state", state: "hearing" })
+                // Dictation never interrupts anything; only a voice conversation has a reply to cut off.
+                if (mode === "voice") {
+                  clearTimeout(bargeTimer)
+                  bargeTimer = setTimeout(() => send({ type: "interrupt" }), 300)
+                  send({ type: "state", state: "hearing" })
+                }
               }
               if (event.event === "pause") {
                 clearTimeout(bargeTimer)
                 turns.pause()
               }
-              if (event.event === "turn" && (event.p >= 0.5 || event.silence_ms >= 1400)) void turns.take()
+              if (event.event === "turn" && (event.p >= 0.5 || event.silence_ms >= 1400)) {
+                if (mode === "voice") void turns.take()
+                else turns.commit()
+              }
               if (event.event === "turn") log({ detectionMs: event.ms, silenceMs: event.silence_ms, mode })
             } catch (error) { fail(error) }
           })

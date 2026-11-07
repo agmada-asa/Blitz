@@ -246,14 +246,15 @@ function dictationError(error: unknown): string {
 }
 
 /**
- * Records a spoken question and hands its text over.
+ * Records a spoken question and hands its text over as it is spoken.
  *
- * `toggle` starts listening and, pressed
- * again, stops and transcribes. The model is warmed as recording starts.
+ * `toggle` starts listening and, pressed again, stops and finishes the transcript. The model is
+ * warmed as recording starts. Words arrive about once a second while the learner talks, each time
+ * as the whole dictation so far, so the caller can replace rather than append.
  *
- * @param onText - Receives the transcript of each question.
+ * @param onText - Receives the dictation so far; `final` is true once, for the finished transcript.
  */
-export function useDictation(onText: (text: string) => void): Dictation {
+export function useDictation(onText: (text: string, final: boolean) => void): Dictation {
   const [state, setState] = useState<DictationState>("idle")
   const [error, setError] = useState("")
   const connection = useRef<VoiceConnection | undefined>(undefined)
@@ -277,8 +278,9 @@ export function useDictation(onText: (text: string) => void): Dictation {
     setState("starting")
     const current = new VoiceConnection(event => {
       if (!mounted.current || connection.current !== current) return
+      if (event.type === "caption" && event.text?.trim()) callback.current(event.text.trim(), false)
       if (event.type === "user") {
-        if (event.text?.trim()) callback.current(event.text)
+        if (event.text?.trim()) callback.current(event.text.trim(), true)
         else setError("Nothing was heard. Try again closer to the mic.")
         current.close()
       }
@@ -334,9 +336,9 @@ export function DictationButton({
 export function DictationStatus({ dictation }: { dictation: Dictation }) {
   const text =
     dictation.state === "listening"
-      ? "Listening… tap the mic to stop, then send or edit"
+      ? "Listening… tap stop when you're done, then send or edit"
       : dictation.state === "transcribing"
-        ? "Turning your question into text…"
+        ? "Finishing the last words…"
         : dictation.state === "starting"
           ? "Opening the microphone…"
           : ""
