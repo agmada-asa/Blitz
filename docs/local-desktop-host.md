@@ -1,10 +1,15 @@
 # Local desktop host
 
-[Blitz.app](#blitzapp) is the Mac-only Electron shell for Blitz. The shell starts
-the same local services as the LAN launcher on loopback: Convex on the port pair
+[Blitz.app](#blitzapp) is the Mac-only Electron shell for Blitz. It opens the
+Blitz that is already serving: the background server on `3007`, which it
+starts when it is installed but stopped (see [local server](local-server.md)),
+or `npm run dev:lan`. Only when neither exists does the shell start the same
+local services itself, in production mode, on loopback: Convex on the port pair
 saved in `.convex/local/default/config.json` (or the next free pair from
-`3220`), Next at `3008` (`dev:lan` uses `3007`), and the background worker
-(`scripts/worker.ts`). The packaged app's icon is drawn from `app/icon.svg` at install
+`3220`), `next start` at `3008`, and the background worker
+(`scripts/worker.ts`). Run from a release it also checks for updates; run from
+a checkout it builds that checkout into `.next-production` first, which takes
+about a minute after a change. The packaged app's icon is drawn from `app/icon.svg` at install
 time on Apple's icon grid; the shared square PNG is only used when running the shell
 unpackaged. The window opens straight away and shows that Blitz is starting
 until Next answers.
@@ -54,11 +59,18 @@ while the BrowserWindow continues to use loopback.
 ## Blitz.app
 
 `npm run desktop:install` builds `Blitz.app` and copies it to `~/Applications`.
-The bundle holds Electron, the icon and a small entry point, and runs Blitz from
-the checkout it was built in. It therefore runs whatever that checkout holds,
-including the current branch and uncommitted edits: changes need only a relaunch,
-and moving the checkout or changing Electron's version needs a new install. It is
-unsigned and for the Mac that built it, not an installer to share.
+The bundle holds Electron, the icon and a small entry point. The entry loads
+`electron/main.mjs` from the background server's current release
+(`~/.blitz/current`) when there is one, so the app runs released code rather
+than whatever branch the checkout is on. Without a release it runs from the
+checkout it was built in, including uncommitted edits. Changing Electron's
+version, or moving the checkout when there is no release, needs a new install.
+It is unsigned and for the Mac that built it, not an installer to share.
+
+The Blitz menu has `Check for updates…` and `Rebuild Blitz now`. They ask the
+background server (or the app's own updater when it hosts the stack) and report
+the outcome; a failed build offers its log. Updates and failures that happen in
+the background appear as notifications.
 
 Opened from Finder, the app reads `PATH` and the other variables from the login
 shell, because macOS starts apps with a minimal environment. Service output goes
@@ -66,9 +78,10 @@ to `~/Library/Logs/Blitz/blitz.log`, with the last launch's beside it as
 `blitz.log.previous`. Next is bound to loopback unless `BLITZ_LAN_ADDRESS` is set,
 which a Finder launch only picks up from the login shell.
 
-If Convex and Next already answer, from `npm run dev:lan` (preferred) or a host
-that crashed, the window loads that stack instead of starting a second one over
-the same database. Quitting then leaves that stack running.
+If Convex and Next already answer, from the background server (preferred),
+`npm run dev:lan`, or a host that crashed, the window loads that stack instead
+of starting a second one over the same database. Quitting then leaves that stack
+running.
 
 ## Source files and retrieval
 

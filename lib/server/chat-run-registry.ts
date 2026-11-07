@@ -113,3 +113,12 @@ export function hasChatRun(chatId: string, messageId: string): boolean {
   removeExpired()
   return registry().has(key(chatId, messageId))
 }
+
+/**
+ * Counts unexpired runs in this server process. The local updater waits for
+ * zero before it restarts the server, so an update does not cut a reply short.
+ */
+export function activeChatRunCount(): number {
+  removeExpired()
+  return registry().size
+}

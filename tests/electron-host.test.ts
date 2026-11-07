@@ -81,6 +81,7 @@ function harness(options: Record<string, unknown> = {}) {
       child.command = command
       child.args = args
       child.kill = () => child.emit("exit", 0, null)
+      child.once("exit", () => byPid.delete(child.pid))
       children.push(child)
       byPid.set(child.pid, child)
       return child
@@ -93,17 +94,24 @@ function harness(options: Record<string, unknown> = {}) {
     restartMaxDelayMs: 8,
     healthIntervalMs: 1,
     shutdownGraceMs: 5,
-    killProcess: (pid: number) =>
-      byPid.get(Math.abs(pid))?.emit("exit", 0, null),
+    killProcess: (pid: number, signal?: string | number) => {
+      // A group lives until its child exits; signal 0 only checks that.
+      const child = byPid.get(Math.abs(pid))
+      if (!child) throw Object.assign(new Error("No such process"), { code: "ESRCH" })
+      if (signal !== 0) child.emit("exit", 0, null)
+      return true
+    },
     onStatus: (name: string, status: { state: string }) =>
       statusEvents.push([name, status.state]),
     ...options,
   })
-  /** Returns the newest child spawned for a service, identified by its script file. */
-  const latest = (service: "next" | "worker") => {
-    const script = service === "next" ? "scripts/dev.mjs" : "scripts/worker.ts"
-    return children.findLast((child) => child.args.includes(script))
-  }
+  /** Returns the newest child spawned for a service: `next dev` or the worker script. */
+  const latest = (service: "next" | "worker") =>
+    children.findLast((child) =>
+      service === "next"
+        ? child.args[0]?.endsWith(join("next", "dist", "bin", "next")) && child.args[1] === "dev"
+        : child.args.includes("scripts/worker.ts")
+    )
   return { manager, children, healthUrls, statusEvents, latest }
 }
 
