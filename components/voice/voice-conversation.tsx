@@ -51,6 +51,8 @@ export type VoiceSession = {
   mute: (value: boolean) => void
   /** Sends words as a spoken turn, interrupting a reply in progress. */
   say: (text: string) => void
+  /** A turn sent through the owning screen failed: shows why and carries on with the reply it stopped. */
+  report: (message: string) => void
   dismissError: () => void
   levels: () => { mic: number; out: number }
 }
@@ -107,6 +109,8 @@ export function useVoiceSession({ onTurn, onInterrupt, reply, busy, readOnStart 
   /** A turn went out and its reply hasn't started being read. */
   const awaiting = useRef(false)
   const watched = useRef<StreamingSpeech | null>(null)
+  /** Bumped to rebuild a stopped reader, so its reply carries on from saved progress. */
+  const [resumed, setResumed] = useState(0)
   const turnAt = useRef(0)
   const wakeLock = useRef<WakeLockSentinel | null>(null)
   // Event callbacks see the current turn state without reopening the microphone.
@@ -135,17 +139,45 @@ export function useVoiceSession({ onTurn, onInterrupt, reply, busy, readOnStart 
 
   useEffect(() => {
     mounted.current = true
-    return () => { mounted.current = false; connection.current?.close(); reader.current?.stop(); duckSpeech(false); release.current?.(); void wakeLock.current?.release() }
+    return () => {
+      mounted.current = false
+      // Cleared so a start still waiting on the permission prompt doesn't take a wake lock afterwards.
+      connection.current?.close(); connection.current = null
+      reader.current?.stop(); duckSpeech(false); release.current?.(); void wakeLock.current?.release()
+    }
   }, [])
+
+  /**
+   * Carries on with a reply that was stopped for words that never became a sent turn: noise after
+   * all, words thrown away by muting, or a turn that failed to send.
+   */
+  const resume = useCallback(() => {
+    cutOff.current = null; awaiting.current = false
+    const current = reader.current
+    if (current?.stopped && !current.failed) { readingId.current = ""; setResumed(count => count + 1) }
+  }, [])
+
+  /** Shows why a turn didn't go out and goes back to listening. */
+  const turnFailed = useCallback((caught: unknown) => {
+    setError(caught instanceof Error && caught.message ? caught.message : "Your turn failed. Try again.")
+    setHeard(""); setPhase("listening")
+    resume()
+  }, [resume])
 
   /** Sends a turn now, or holds it until the reply being written has finished or stopped. */
   const sendTurn = useCallback((text: string, cut: VoiceCut | null) => {
     turnAt.current = performance.now()
     awaiting.current = true
+    setError("")
     stopReading()
-    if (callbacks.current.busy) { pending.current = { text, cut }; return }
-    void callbacks.current.onTurn(text, cut).catch(caught => setError(caught instanceof Error ? caught.message : "Your turn failed. Try again."))
-  }, [stopReading])
+    if (callbacks.current.busy) {
+      // A second turn while the first is held joins it rather than replacing it.
+      const held = pending.current
+      pending.current = held ? { text: `${held.text} ${text}`, cut: held.cut ?? cut } : { text, cut }
+      return
+    }
+    void callbacks.current.onTurn(text, cut).catch(turnFailed)
+  }, [stopReading, turnFailed])
 
   // Reads the reply as it grows; a new reply id starts a new reader, resuming where that reply was cut.
   useEffect(() => {
@@ -181,15 +213,15 @@ export function useVoiceSession({ onTurn, onInterrupt, reply, busy, readOnStart 
         connection.current?.send({ type: "reply", text: reply.text.slice(0, 6000) })
       }
     }
-  }, [reply, settings, phase, stopReading])
+  }, [reply, settings, phase, stopReading, resumed])
 
   // A turn held while the last reply was being written or stopped goes out once it has.
   useEffect(() => {
     if (!busy && pending.current && connection.current) {
       const { text, cut } = pending.current; pending.current = null
-      void onTurn(text, cut).catch(caught => setError(caught instanceof Error ? caught.message : "Your turn failed. Try again."))
+      void onTurn(text, cut).catch(turnFailed)
     }
-  }, [busy, onTurn, phase])
+  }, [busy, onTurn, phase, turnFailed])
 
   /** Opens audio on the learner's gesture, then starts one microphone session. */
   const start = useCallback(() => {
@@ -211,6 +243,8 @@ export function useVoiceSession({ onTurn, onInterrupt, reply, busy, readOnStart 
         else if (event.state === "thinking") { if (!reading) setPhase("thinking") }
         else {
           duckSpeech(false)
+          // Back to listening with no turn sent after words stopped the reply: they were dropped.
+          if (cutOff.current && !awaiting.current) resume()
           setPhase(reading ? "speaking" : awaiting.current ? "thinking" : "listening")
           if (!reading) setHeard("")
         }
@@ -248,18 +282,22 @@ export function useVoiceSession({ onTurn, onInterrupt, reply, busy, readOnStart 
         if (generation === session.current) { stop(); setError(startError(caught)) }
       }
     })()
-  }, [readOnStart, reply?.id, reply?.text, sendTurn, stop, stopReading])
+  }, [readOnStart, reply?.id, reply?.text, sendTurn, stop, stopReading, resume])
 
   const mute = useCallback((value: boolean) => {
     setMuted(value); connection.current?.mute(value)
-    if (value) setHeard("")
-  }, [])
+    if (!value) return
+    // Muting throws away a turn being heard: the reply comes back up, and carries on if it was stopped.
+    setHeard(""); duckSpeech(false)
+    if (cutOff.current && !awaiting.current) resume()
+  }, [resume])
 
   const say = useCallback((text: string) => { setHeard(""); setPhase("thinking"); cutOff.current = null; sendTurn(text, null) }, [sendTurn])
+  const report = useCallback((message: string) => turnFailed(new Error(message)), [turnFailed])
   const levels = useCallback(() => ({ mic: connection.current?.level ?? 0, out: speechOutputLevel() }), [])
   const dismissError = useCallback(() => setError(""), [])
 
-  return { phase, muted, error, heard, speaking, cut, start, stop, mute, say, dismissError, levels }
+  return { phase, muted, error, heard, speaking, cut, start, stop, mute, say, report, dismissError, levels }
 }
 
 /** Whether the viewport is phone-sized, so the bar stacks around a larger bolt. */
@@ -291,8 +329,9 @@ function boltState(session: VoiceSession): BoltState {
 
 /** The caption under the label: what's being said, by whom, or a hint for what to say. */
 function Caption({ session, hint }: { session: VoiceSession; hint: string }) {
-  const { phase, heard, speaking, cut, muted } = session
+  const { phase, heard, speaking, cut, muted, error } = session
   if (muted) return <>Tap the mic to talk again.</>
+  if (error && phase === "listening") return <span className="text-destructive">{error}</span>
   if (phase === "starting") return <>Loading the speech models. The first time in a while takes a few seconds.</>
   if (phase === "hearing")
     return (

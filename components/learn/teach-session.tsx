@@ -339,7 +339,7 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
   /** Sends a quick reply or resumes a paused reply. */
   const send = useCallback(
     async (message: string, continuationOf?: string, spoken = false) => {
-      if (!activeChatId || sending || chat?.status === "running") return
+      if (!activeChatId || sending || chat?.status === "running") return false
       setSending(true)
       setError("")
       revealNextReplyRef.current = true
@@ -355,6 +355,7 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
       abortRef.current = undefined
       setSending(false)
       if (!result.ok && !result.paused) setError(result.error)
+      return result.ok || Boolean(result.paused)
     },
     [activeChatId, sending, chat?.status]
   )
@@ -617,9 +618,11 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
     },
   })
   /** The side chat sent the question, or couldn't, in which case the lesson carries on. */
+  const report = voice.report
   const onAsked = useCallback((id: number, sent: boolean, before?: string[]) => {
     setVoiceAsk((ask) => (ask?.id !== id ? ask : sent ? { ...ask, before: before ?? [] } : null))
-  }, [])
+    if (!sent) report("Your question didn't reach the side chat. Ask it again.")
+  }, [report])
   const voiceOn = voice.phase !== "off"
   const replyReader = useReplyReader(readReplies && !voiceOn, messages, outline)
   const say = voice.say
@@ -637,8 +640,15 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
   useEffect(() => {
     if (!nextHeld || !voiceOn || running || sending || nextSent.current === nextFrom) return
     nextSent.current = nextFrom
-    void send(TEACH_QUICK_REPLIES.next, undefined, true).finally(() => setNextFrom(null))
-  }, [nextHeld, nextFrom, voiceOn, running, sending, send])
+    void send(TEACH_QUICK_REPLIES.next, undefined, true)
+      .then((sent) => {
+        if (sent) return
+        // Saying "next" again retries it; the dock that shows send errors is hidden during voice.
+        nextSent.current = null
+        report("The next section didn't start. Say next again.")
+      })
+      .finally(() => setNextFrom(null))
+  }, [nextHeld, nextFrom, voiceOn, running, sending, send, report])
   /** Starts voice afresh, without a question or "next" left from an earlier session. */
   const startVoice = voice.start
   const voiceStarter = useMemo(
@@ -1060,7 +1070,7 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
               messageId={lastMessage.id}
               providerId={chat.providerId}
               disabled={sending}
-              onContinue={() => send("", lastMessage.id)}
+              onContinue={async () => { await send("", lastMessage.id) }}
             />
           </div>
         ) : null}

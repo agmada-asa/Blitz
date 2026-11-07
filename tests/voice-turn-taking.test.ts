@@ -121,6 +121,34 @@ test("muting drops a held opener", async () => {
   assert.equal(fake.sent.some(message => message.type === "user"), false)
 })
 
+test("a detector event that lags behind a taken turn doesn't hold an empty turn open", async () => {
+  const fake = host()
+  const turns = new VoiceTurns(fake.value, { captionMs: 60_000 })
+  turns.mode = "voice"
+  turns.speech()
+  turns.audio(Buffer.alloc(SECOND))
+  const taken = turns.take()
+  assert.equal(turns.speech(), false)
+  fake.pending[0]("What is a heuristic?")
+  await taken
+  assert.equal(turns.active, false)
+})
+
+test("two minutes without a turn boundary ends the turn in conversation, not the session", async () => {
+  const fake = host()
+  let failed = false
+  fake.value.fail = () => { failed = true }
+  const turns = new VoiceTurns(fake.value, { captionMs: 60_000 })
+  turns.mode = "voice"
+  turns.speech()
+  for (let second = 0; second <= 120; second++) assert.equal(turns.audio(Buffer.alloc(SECOND)), true)
+  assert.equal(failed, false)
+  assert.equal(turns.transcribing, true)
+  fake.pending.at(-1)!("And that is everything I wanted to say.")
+  await settle()
+  assert.deepEqual(types(fake.sent), ["state", "interrupt", "user"])
+})
+
 test("a voice note reaches the model only with a spoken turn", () => {
   const base = { message: "Why?", clientMessageId: "voice-note-test", projectIds: [], attachments: [] }
   const spoken = parseWorkspaceChatRequest({ ...base, spoken: true, voiceNote: "They heard only the first line." })

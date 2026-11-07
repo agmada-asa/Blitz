@@ -76,7 +76,8 @@ sockets.on("connection", socket => {
   let prompt = ""
   let closed = false
   const lifetime = new AbortController()
-  const limit = setTimeout(() => socket.close(1000, "Session limit reached. Reconnect."), 30 * 60_000)
+  // A session ends after 30 minutes without microphone audio, such as left muted; audio restarts the clock.
+  const limit = setTimeout(() => socket.close(1000, "Voice ended after 30 minutes without the microphone."), 30 * 60_000)
 
   /** Sends one protocol message only while the owning connection is live. */
   function send(value: object): void { if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(value)) }
@@ -92,7 +93,7 @@ sockets.on("connection", socket => {
     const vocabulary = context ? prompt.slice(-Math.max(0, 1999 - context.length)) + "\n" + context : prompt
     const response = await fetch(appOrigin + "/api/audio/transcribe", {
       method: "POST", body: new Uint8Array(wav(pcm)), signal: lifetime.signal,
-      headers: { "x-voice-vocabulary": encodeURIComponent(vocabulary.slice(-2000)) },
+      headers: { "x-voice-vocabulary": encodeURIComponent(vocabulary.slice(-2000).toWellFormed()) },
     })
     const result = await response.json()
     if (!response.ok) throw new Error(result.error || "Transcription failed.")
@@ -106,6 +107,7 @@ sockets.on("connection", socket => {
   })
   socket.on("message", (data, binary) => {
     if (binary) {
+      limit.refresh()
       if (!started || turns.transcribing) return
       const frame = Buffer.from(data as Buffer)
       if (!turns.audio(frame)) return
@@ -135,12 +137,10 @@ sockets.on("connection", socket => {
             try {
               const event = JSON.parse(line)
               if (event.ready) send({ type: "ready" })
-              if (event.event === "speech" || event.event === "resume") {
-                turns.speech()
-                // Hearing only turns a reply down; the turn logic stops it once it has caught real
-                // words, so noise or a voice across the room never cuts the reply off.
-                if (mode === "voice") send({ type: "state", state: "hearing" })
-              }
+              // Hearing only turns a reply down; the turn logic stops it once it has caught real
+              // words, so noise or a voice across the room never cuts the reply off.
+              if ((event.event === "speech" || event.event === "resume") && turns.speech() && mode === "voice")
+                send({ type: "state", state: "hearing" })
               if (event.event === "pause") turns.pause()
               if (event.event === "turn" && (event.p >= 0.5 || event.silence_ms >= 1400)) {
                 if (mode === "voice") void turns.take()

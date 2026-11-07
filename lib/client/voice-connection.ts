@@ -60,11 +60,12 @@ export class VoiceConnection {
           reject(new Error("Speech took too long to start. Check the local speech setup and retry."))
           this.close()
         }, 20 * 60_000)
-        socket.onopen = () => socket.send(JSON.stringify({ type: "start", mode, prompt: prompt.slice(-2000) }))
+        // Whole characters only: half an emoji at the cut would make the prompt unencodable.
+        socket.onopen = () => socket.send(JSON.stringify({ type: "start", mode, prompt: prompt.slice(-2000).toWellFormed() }))
         socket.onerror = () => { reject(new Error("Voice could not connect. Start the local voice service and retry.")); this.close() }
-        socket.onclose = () => {
+        socket.onclose = event => {
           if (!ready) reject(new Error("Voice connection closed. Try again."))
-          if (!this.closed) this.receive({ type: "error", message: "Lost the connection to your Mac. Reconnect or continue by typing." })
+          if (!this.closed) this.receive({ type: "error", message: event.reason || "Lost the connection to your Mac. Reconnect or continue by typing." })
           this.close()
         }
         socket.onmessage = event => {

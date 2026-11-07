@@ -14,6 +14,8 @@ export class StreamingSpeech {
   failed = false
   private completed = ""
   private current: { text: string; at: number; ms: number } | undefined
+  /** Playback has ended, by finishing, failing or being stopped. */
+  private finished = false
   private controller = new AbortController()
   /** Pieces still to pass over, when resuming a reply part-way through. */
   private skip: number
@@ -67,11 +69,16 @@ export class StreamingSpeech {
     this.wake?.()
     this.tail ??= playSpeechSections(this.pieces(), this.voiceId, this.controller.signal, this.state, (text, ms, phase, synthesisMs) => {
       if (phase === "playing") { this.current = { text, at: performance.now(), ms }; this.onHeard?.(synthesisMs); this.onSpeaking?.(text) }
-      else { this.completed += text + " "; this.current = undefined; this.played++ }
+      else {
+        this.completed += text + " "; this.played++
+        // Back-to-back pieces can report the next one playing before this one ends; keep that one.
+        if (this.current?.text === text) this.current = undefined
+      }
     })
       .catch((error: unknown) => {
         if (!this.controller.signal.aborted) { this.failed = true; this.error(error); this.stop() }
       })
+      .finally(() => { this.finished = true })
   }
 
   /** Yields pieces as generation advances, keeping the player's bounded synthesis lookahead. */
@@ -85,8 +92,8 @@ export class StreamingSpeech {
 
   /** Resolves when every queued piece has finished playing. */
   done(): Promise<void> { return this.tail ?? Promise.resolve() }
-  /** Whether this reply still has speech to generate or play. */
-  get active(): boolean { return !this.controller.signal.aborted && (!this.complete || !!this.current || this.queue.length > 0) }
+  /** Whether this reply still has speech to generate or play, including a last piece still being synthesised. */
+  get active(): boolean { return !this.controller.signal.aborted && !this.finished }
 
   /** Estimates heard words in the current piece from actual playback time, plus completed pieces. */
   heard(): string {

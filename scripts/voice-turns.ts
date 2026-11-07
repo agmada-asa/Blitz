@@ -138,8 +138,12 @@ export class VoiceTurns {
   audio(frame: Buffer): boolean {
     if (this.transcribing) return true
     if (frame.length % 2) { this.host.fail(new Error("Invalid microphone audio.")); return false }
+    if (this.bytes + frame.length > MAX_TURN_BYTES) {
+      // In conversation, two minutes without a turn boundary ends the turn rather than the session.
+      if (this.mode === "voice") { void this.take(); return true }
+      this.host.fail(new Error("Keep each turn under two minutes.")); return false
+    }
     this.frames.push(frame); this.bytes += frame.length
-    if (this.bytes > MAX_TURN_BYTES) { this.host.fail(new Error("Keep each turn under two minutes.")); return false }
     // Keep just pre-roll until Silero detects speech.
     if (!this.active && this.bytes > PRE_ROLL_BYTES) {
       this.frames = [Buffer.concat(this.frames).subarray(-PRE_ROLL_BYTES)]; this.bytes = PRE_ROLL_BYTES
@@ -148,15 +152,21 @@ export class VoiceTurns {
     return true
   }
 
-  /** Marks speech starting or resuming; any speculative transcript is now out of date. Starts captions. */
-  speech(): void {
+  /**
+   * Marks speech starting or resuming; any speculative transcript is now out of date. Starts captions.
+   * @returns False for a detector event that lagged behind a turn already being transcribed: that
+   * audio is not kept, and marking it as speech would hold an empty turn open.
+   */
+  speech(): boolean {
+    if (this.transcribing) return false
     this.active = true; this.early = undefined; this.voicedAt = Date.now()
     // The learner carried on after an opener: it starts this turn instead of being sent alone.
     clearTimeout(this.heldTimer); this.heldTimer = undefined
-    if (!this.ticker && !this.transcribing) {
+    if (!this.ticker) {
       this.ticker = setInterval(() => void this.caption(), this.captionMs)
       this.ticker.unref?.()
     }
+    return true
   }
 
   /** Starts a speculative transcript at a pause in speech so a confirmed turn can finish sooner. */

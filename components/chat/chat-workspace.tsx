@@ -2059,7 +2059,10 @@ export function ChatWorkspace({
   const voice = useVoiceSession({
     busy: isRunning,
     onInterrupt: pauseReply,
-    onTurn: (text, cut) => sendMessage({ message: text, spoken: true, voiceNote: voiceCutNote(cut) }),
+    onTurn: async (text, cut) => {
+      if (!(await sendMessage({ message: text, spoken: true, voiceNote: voiceCutNote(cut) })))
+        throw new Error("That didn't send. Say it again, or end voice to type it.")
+    },
     reply: lastAssistant
       ? { id: lastAssistant.id, text: lastAssistant.content, complete: lastAssistant.status !== "running" }
       : null,
