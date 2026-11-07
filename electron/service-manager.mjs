@@ -14,7 +14,11 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs"
 import { readFile } from "node:fs/promises"
 import { createServer } from "node:net"
 import { dirname, join } from "node:path"
-import { processGroupExists, terminateProcessGroups } from "../scripts/process-groups.mjs"
+import {
+  processGroupExists,
+  processStartTime,
+  terminateProcessGroups,
+} from "../scripts/process-groups.mjs"
 
 /** @typedef {import("node:events").EventEmitter & {pid?: number, kill?: (signal?: string) => void}} ManagedChild */
 /** @typedef {(command: string, args: string[], options: object) => ManagedChild} SpawnProcess */
@@ -252,9 +256,6 @@ export class ServiceManager {
     livenessIntervalMs = 5_000,
     livenessGraceMs = 30_000,
     livenessFailureLimit = 3,
-    // Longer than the launchers' own 3 s grace (scripts/process-groups.mjs), so
-    // `scripts/dev.mjs` can force-kill a hung Next group before it is killed itself.
-    // Killing the launcher first would orphan Next with the port still bound.
     shutdownGraceMs = 5_000,
     onStatus = () => undefined,
   }) {
@@ -283,8 +284,14 @@ export class ServiceManager {
     this.killReasons = new Map()
     /** Children stopped on purpose by `relocate`, which must not be restarted. */
     this.retired = new WeakSet()
-    /** Process groups by service name, mirrored to `pidFile`. */
+    /**
+     * Process groups by service name, mirrored to `pidFile`. Groups that are
+     * not services, such as builds and trial servers, use `temporary:<pid>`.
+     * @type {Record<string, {pid: number, startedAt?: string, match?: string}>}
+     */
     this.recordedGroups = {}
+    /** Process groups started by `trackGroup`, killed with the services by `killNow`. */
+    this.temporaryGroups = new Set()
     this.stopping = false
     this.spawnProcess = spawnProcess
     this.fetchImpl = fetchImpl
@@ -417,13 +424,17 @@ export class ServiceManager {
           ...portArgs,
         ])
     }
-    this.define(
-      "next",
-      "node",
-      this.production
-        ? [NEXT_CLI, "start", "--hostname", this.host, "--port", String(this.port)]
-        : ["scripts/dev.mjs", "--hostname", this.host, "--port", String(this.port)]
-    )
+    // Next runs directly in the group this supervisor records, not through a
+    // launcher such as `scripts/dev.mjs` that would move it into a group of
+    // its own, which orphan cleanup after a crash could not find.
+    this.define("next", "node", [
+      NEXT_CLI,
+      this.production ? "start" : "dev",
+      "--hostname",
+      this.host,
+      "--port",
+      String(this.port),
+    ])
     for (const name of this.definitions.keys()) this.startService(name)
     await this.waitForHealth({ stopOnFailure })
     clearInterval(this.livenessTimer)
@@ -483,6 +494,8 @@ export class ServiceManager {
         detached: process.platform !== "win32",
       }
     )
+    // Recorded so a launcher killed during the trial does not leave it running.
+    if (child.pid) this.trackGroup(child.pid)
     let exited = false
     child.once("exit", () => {
       exited = true
@@ -509,7 +522,41 @@ export class ServiceManager {
       }
     } finally {
       await this.stopChild(child)
+      if (child.pid) this.untrackGroup(child.pid)
     }
+  }
+
+  /**
+   * Records a process group that is not a service, such as a release build or
+   * a trial server, so `killNow` and a later launch's `reapOrphans` stop it if
+   * this launcher dies first. `ReleaseManager` calls this for every command it runs.
+   * @param {number} pid The group's leader, started with `detached: true`.
+   */
+  trackGroup(pid) {
+    this.temporaryGroups.add(pid)
+    this.recordGroup(`temporary:${pid}`, pid)
+  }
+
+  /**
+   * Forgets a group from `trackGroup` once it has ended.
+   * @param {number} pid The group's leader.
+   */
+  untrackGroup(pid) {
+    this.temporaryGroups.delete(pid)
+    delete this.recordedGroups[`temporary:${pid}`]
+    this.writePidFile()
+  }
+
+  /**
+   * Records a process group in `pidFile` with its leader's start time, which
+   * `reapOrphans` compares to tell it from a later process that reused the ID.
+   * @param {string} key The service name, or `temporary:<pid>`.
+   * @param {number} pid The group's leader.
+   */
+  recordGroup(key, pid) {
+    if (!this.pidFile) return
+    this.recordedGroups[key] = { pid, startedAt: processStartTime(pid) }
+    this.writePidFile()
   }
 
   /** Returns each service's current status for diagnostics and the preload bridge. */
@@ -563,13 +610,23 @@ export class ServiceManager {
         else child.kill("SIGKILL")
       } catch {}
     }
+    if (process.platform === "win32") return
+    for (const pid of this.temporaryGroups)
+      try {
+        this.killProcess(-pid, "SIGKILL")
+      } catch {}
   }
 
   /**
    * Stops process groups recorded in `pidFile` by an earlier launcher that was
-   * killed before it could clean up (`SIGKILL` skips every exit hook). A group
-   * is stopped only if one of its commands still matches the service, so a
-   * process ID reused after a restart is left alone.
+   * killed before it could clean up (`SIGKILL` skips every exit hook),
+   * including builds and trial servers it had started.
+   *
+   * A group is ours when its leader is gone, since an ID cannot be reused
+   * while its group still has members, or when the leader has the start time
+   * recorded with it. A process that reused the ID has a different start time
+   * and is left alone. Entries without a start time, written before it was
+   * recorded, fall back to matching a word in the group's command lines.
    */
   async reapOrphans() {
     if (!this.pidFile || process.platform === "win32") return
@@ -579,14 +636,20 @@ export class ServiceManager {
     } catch {
       return
     }
-    const groups = listProcessGroups()
-    const orphans = Object.values(recorded ?? {}).filter(
-      (entry) =>
-        Number.isInteger(entry?.pid) &&
-        typeof entry.match === "string" &&
-        processGroupExists(entry.pid, this.killProcess) &&
-        (groups.get(entry.pid) ?? []).some((command) => command.includes(entry.match))
-    )
+    let groups
+    /** Reports whether a recorded group is still the one this supervisor started. */
+    const isOurs = (entry) => {
+      if (!Number.isInteger(entry?.pid) || !processGroupExists(entry.pid, this.killProcess))
+        return false
+      if (typeof entry.startedAt === "string") {
+        const leaderStartedAt = processStartTime(entry.pid)
+        return !leaderStartedAt || leaderStartedAt === entry.startedAt
+      }
+      if (typeof entry.match !== "string") return false
+      groups ??= listProcessGroups()
+      return (groups.get(entry.pid) ?? []).some((command) => command.includes(entry.match))
+    }
+    const orphans = Object.values(recorded ?? {}).filter(isOurs)
     if (orphans.length > 0)
       await terminateProcessGroups(
         orphans.map((entry) => entry.pid),
@@ -628,12 +691,7 @@ export class ServiceManager {
     this.livenessFailures.set(name, 0)
     this.restartTimers.delete(name)
     this.children.set(name, child)
-    if (child.pid) {
-      // Match on a word every process of the service has in its command line.
-      const match = name === "next" || name === "convex" ? name : definition.args.at(-1)
-      this.recordedGroups[name] = { pid: child.pid, match }
-      this.writePidFile()
-    }
+    if (child.pid) this.recordGroup(name, child.pid)
     let handled = false
     /** Handles the first of `error` or `exit`; Node may emit both for one failure. */
     const onEnded = (reason) => {
@@ -789,28 +847,59 @@ export class ServiceManager {
     )
   }
 
-  /** Terminates one process group, escalating after a bounded grace period. */
+  /**
+   * Terminates one process group and waits until every member is gone, killing
+   * survivors after `shutdownGraceMs`. The leader exiting is not enough: a
+   * descendant that ignores `SIGTERM` could keep a port or the database open
+   * into the next start. Then waits briefly for the leader's `exit` event, so
+   * its handler runs before a replacement starts under the same name.
+   * @param {ManagedChild} child The group's leader, started with `detached: true`.
+   */
   async stopChild(child) {
     if (!child.pid) return
-    try {
-      if (process.platform !== "win32") this.killProcess(-child.pid, "SIGTERM")
-      else child.kill("SIGTERM")
-    } catch {
-      return
-    }
-    await new Promise((resolve) => {
+    const alreadyExited = child.exitCode != null || child.signalCode != null
+    const exited = alreadyExited
+      ? Promise.resolve()
+      : new Promise((resolve) => child.once("exit", resolve))
+    if (process.platform === "win32") {
+      try {
+        child.kill("SIGTERM")
+      } catch {
+        return
+      }
       const timer = setTimeout(() => {
         try {
-          if (process.platform !== "win32")
-            this.killProcess(-child.pid, "SIGKILL")
-          else child.kill("SIGKILL")
+          child.kill("SIGKILL")
         } catch {}
-        resolve()
       }, this.shutdownGraceMs)
-      child.once("exit", () => {
-        clearTimeout(timer)
-        resolve()
+      await exited
+      clearTimeout(timer)
+      return
+    }
+    try {
+      await terminateProcessGroups([child.pid], {
+        graceMs: this.shutdownGraceMs,
+        killProcess: this.killProcess,
       })
-    })
+    } catch {
+      // Not permitted to signal the group; nothing more can be done from here.
+      return
+    }
+    // A killed process disappears a moment after `SIGKILL` is sent.
+    const deadline = Date.now() + 1_000
+    while (Date.now() < deadline) {
+      let gone
+      try {
+        gone = !processGroupExists(child.pid, this.killProcess)
+      } catch {
+        gone = true
+      }
+      if (gone) break
+      await new Promise((resolve) => setTimeout(resolve, 20))
+    }
+    await Promise.race([
+      exited,
+      new Promise((resolve) => setTimeout(resolve, Math.max(0, deadline - Date.now())).unref?.()),
+    ])
   }
 }

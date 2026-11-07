@@ -1,6 +1,30 @@
 /** Owns bounded, testable shutdown for child process groups started by local launchers. */
 
+import { execFileSync } from "node:child_process"
 import { setTimeout as pause } from "node:timers/promises"
+
+/**
+ * Returns when a process started, as `ps` prints it. Two processes that share
+ * an ID one after the other have different start times, so a recorded start
+ * time tells a launcher's own process from an unrelated one that reused its ID.
+ * @param {number} pid The process ID.
+ * @returns {string | undefined} The start time, or nothing when the process is gone or `ps` fails.
+ */
+export function processStartTime(pid) {
+  if (!Number.isInteger(pid) || pid <= 0 || process.platform === "win32")
+    return undefined
+  try {
+    const output = execFileSync("ps", ["-o", "lstart=", "-p", String(pid)], {
+      encoding: "utf8",
+      // A fixed locale keeps the format identical between the writer and the reader.
+      env: { ...process.env, LC_ALL: "C" },
+      stdio: ["ignore", "pipe", "ignore"],
+    })
+    return output.trim() || undefined
+  } catch {
+    return undefined
+  }
+}
 
 /** Returns positive integer process-group IDs and drops missing or invalid child PIDs. */
 function validGroupIds(groupIds) {

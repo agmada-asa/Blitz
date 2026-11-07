@@ -61,8 +61,12 @@ export const CHECKOUT_DIST_DIR = ".next-production"
  * @typedef {{repository: string, branch: string, sharedRoot: string}} ServerConfig
  * @typedef {Record<string, string | undefined>} BuildEnvironment Variables inlined into the browser bundle, at least `NEXT_PUBLIC_CONVEX_URL`.
  * @typedef {{commit: string, id: string, builtAt: string, convexUrl: string, convexSiteUrl?: string, lockfileHash: string}} ReleaseMetadata
- * @typedef {{cwd?: string, env?: NodeJS.ProcessEnv, logPath?: string, timeoutMs?: number, label?: string}} RunOptions
+ * @typedef {{trackGroup: (pid: number) => void, untrackGroup: (pid: number) => void}} ProcessTracker
+ *   Records running command groups so a crashed launcher's builds are stopped
+ *   on its next start; `ServiceManager` implements it.
+ * @typedef {{cwd?: string, env?: NodeJS.ProcessEnv, logPath?: string, timeoutMs?: number, label?: string, processes?: ProcessTracker}} RunOptions
  *   `label` names the command in errors, such as `next build` for a `nice` wrapper.
+ *   `processes` is told when the command's process group starts and ends.
  * @typedef {(command: string, args: string[], options?: RunOptions) => Promise<string>} RunCommand
  */
 
@@ -169,6 +173,7 @@ export function runCommand(command, args, options = {}) {
     logPath,
     timeoutMs = 10 * 60_000,
     label = `${command} ${args[0] ?? ""}`.trim(),
+    processes,
   } = options
   return new Promise((resolvePromise, reject) => {
     const log = logPath ? createWriteStream(logPath, { flags: "a" }) : undefined
@@ -179,6 +184,8 @@ export function runCommand(command, args, options = {}) {
       stdio: ["ignore", "pipe", "pipe"],
       detached: process.platform !== "win32",
     })
+    const pid = child.pid
+    if (pid) processes?.trackGroup(pid)
     let stdout = ""
     let tail = ""
     let firstError
@@ -204,6 +211,7 @@ export function runCommand(command, args, options = {}) {
     /** Settles once, after the log has flushed. */
     const finish = (error) => {
       clearTimeout(timer)
+      if (pid) processes?.untrackGroup(pid)
       const settle = () => (error ? reject(error) : resolvePromise(stdout))
       if (log) log.end(settle)
       else settle()
@@ -325,20 +333,24 @@ export async function buildCheckout(directory, buildEnvironment, options = {}) {
  */
 export class ReleaseManager {
   /**
-   * @param {{home: string, config: ServerConfig, environment?: NodeJS.ProcessEnv, run?: RunCommand, now?: () => Date}} options
+   * @param {{home: string, config: ServerConfig, environment?: NodeJS.ProcessEnv, run?: RunCommand, processes?: ProcessTracker, now?: () => Date}} options
+   *   `processes` records every command's process group; pass the supervisor,
+   *   so builds stop with it and a crashed launcher's builds are reaped.
    */
   constructor({
     home,
     config,
     environment = process.env,
     run = runCommand,
+    processes,
     now = () => new Date(),
   }) {
     this.home = home
     this.config = config
     this.paths = homePaths(home)
     this.environment = environment
-    this.run = run
+    /** @type {RunCommand} */
+    this.run = (command, args, options = {}) => run(command, args, { processes, ...options })
     this.now = now
   }
 
