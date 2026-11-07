@@ -6,6 +6,7 @@ import { mkdir, access, writeFile, rename, appendFile, stat } from "node:fs/prom
 import { homedir } from "node:os"
 import { join } from "node:path"
 import { WebSocketServer, WebSocket } from "ws"
+import { VoiceTurns } from "./voice-turns.ts"
 
 const appPort = Number(process.env.BLITZ_PORT ?? 3007)
 const port = Number(process.env.BLITZ_VOICE_PORT ?? appPort + 100)
@@ -71,17 +72,10 @@ function log(value: object): void {
 
 sockets.on("connection", socket => {
   let worker: ReturnType<typeof spawn> | undefined
-  let frames: Buffer[] = []
-  let bytes = 0
   let started = false
-  let active = false
-  let mode = "dictate"
   let prompt = ""
   let closed = false
-  let transcribing = false
-  let voicedAt = 0
   let bargeTimer: ReturnType<typeof setTimeout> | undefined
-  let early: Promise<string> | undefined
   const lifetime = new AbortController()
   const limit = setTimeout(() => socket.close(1000, "Session limit reached. Reconnect."), 30 * 60_000)
 
@@ -102,48 +96,26 @@ sockets.on("connection", socket => {
     if (!response.ok) throw new Error(result.error || "Transcription failed.")
     return result.text
   }
-  /** Takes one completed turn; speech resuming before acceptance invalidates speculative words. */
-  async function take(): Promise<void> {
-    if (transcribing || !bytes) return
-    transcribing = true
-    const pcm = Buffer.concat(frames)
-    frames = []; bytes = 0; active = false
-    worker?.stdin?.write('{"end":true}\n')
-    const start = Date.now()
-    send({ type: "state", state: "thinking" })
-    try {
-      const text = await (early || transcribe(pcm))
-      early = undefined
-      if (!closed && (text.trim() || mode === "dictate")) {
-        send({ type: "user", text })
-        log({ transcript: text, transcriptionMs: Date.now() - start, mode })
-      } else send({ type: "state", state: "listening" })
-    } catch (error) { if (!closed) fail(error) }
-    finally { transcribing = false }
-  }
+  // Muting resets the turn, so a transcript still in flight is dropped rather than sent later.
+  const turns = new VoiceTurns({
+    transcribe, send, log, fail,
+    endTurn: () => worker?.stdin?.write('{"end":true}\n'),
+    closed: () => closed,
+  })
   socket.on("message", (data, binary) => {
     if (binary) {
-      if (!started || transcribing) return
+      if (!started || turns.transcribing) return
       const frame = Buffer.from(data as Buffer)
-      if (frame.length % 2) return fail(new Error("Invalid microphone audio."))
-      frames.push(frame); bytes += frame.length
-      if (bytes > 16000 * 2 * 120) return fail(new Error("Keep each turn under two minutes."))
-      if (mode !== "dictate") worker?.stdin?.write(JSON.stringify({ pcm: frame.toString("base64") }) + "\n")
-      // Keep just pre-roll until Silero detects speech.
-      if (mode !== "dictate" && !active && bytes > 16000) {
-        frames = [Buffer.concat(frames).subarray(-16000)]; bytes = 16000
-      }
+      if (!turns.audio(frame)) return
+      if (turns.mode !== "dictate") worker?.stdin?.write(JSON.stringify({ pcm: frame.toString("base64") }) + "\n")
       return
     }
     try {
       const message = JSON.parse(data.toString())
-      if (message.type === "reset") {
-        frames = []; bytes = 0; active = false; early = undefined
-        clearTimeout(bargeTimer); worker?.stdin?.write('{"end":true}\n')
-      }
+      if (message.type === "reset") { clearTimeout(bargeTimer); turns.reset() }
       if (message.type === "start" && !started) {
         started = true
-        mode = message.mode === "voice" ? "voice" : "dictate"
+        const mode = turns.mode = message.mode === "voice" ? "voice" : "dictate"
         prompt = typeof message.prompt === "string" ? message.prompt.slice(-2000) : ""
         void (async () => {
           const warm = await fetch(appOrigin + "/api/audio/transcribe?warm=1", { method: "POST", signal: lifetime.signal })
@@ -161,33 +133,32 @@ sockets.on("connection", socket => {
               const event = JSON.parse(line)
               if (event.ready) send({ type: "ready" })
               if (event.event === "speech" || event.event === "resume") {
-                active = true; early = undefined; voicedAt = Date.now()
+                turns.speech()
                 clearTimeout(bargeTimer)
                 bargeTimer = setTimeout(() => send({ type: "interrupt" }), 300)
                 send({ type: "state", state: "hearing" })
               }
               if (event.event === "pause") {
                 clearTimeout(bargeTimer)
-                if (active && Date.now() - voicedAt >= 96) early = transcribe(Buffer.concat(frames))
-                early?.catch(() => undefined)
+                turns.pause()
               }
-              if (event.event === "turn" && (event.p >= 0.5 || event.silence_ms >= 1400)) void take()
+              if (event.event === "turn" && (event.p >= 0.5 || event.silence_ms >= 1400)) void turns.take()
               if (event.event === "turn") log({ detectionMs: event.ms, silenceMs: event.silence_ms, mode })
             } catch (error) { fail(error) }
           })
         })().catch(fail)
       }
-      if (message.type === "stop" && mode === "dictate") void take()
+      if (message.type === "stop" && turns.mode === "dictate") void turns.take()
       if (message.type === "reply" && typeof message.text === "string")
-        log({ reply: message.text.slice(0, 24000), mode })
+        log({ reply: message.text.slice(0, 24000), mode: turns.mode })
       if (message.type === "timing" && Number.isFinite(message.heardMs) && Number.isFinite(message.synthesisMs))
-        log({ heardMs: message.heardMs, synthesisMs: message.synthesisMs, mode })
+        log({ heardMs: message.heardMs, synthesisMs: message.synthesisMs, mode: turns.mode })
     } catch { fail(new Error("Invalid voice message.")) }
   })
   socket.on("error", () => socket.close())
   socket.on("close", () => {
     closed = true; clearTimeout(limit); clearTimeout(bargeTimer)
-    lifetime.abort(); worker?.kill(); frames = []; early = undefined
+    lifetime.abort(); worker?.kill(); turns.clear()
   })
 })
 server.listen(port, "127.0.0.1", () => console.log(`Voice service listening on loopback port ${port}`))

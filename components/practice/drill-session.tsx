@@ -10,7 +10,7 @@
 
 import Link from "next/link"
 import { VoiceConversation } from "@/components/voice/voice-conversation"
-import { spokenQuizAnswer } from "@/lib/voice-quiz"
+import { drillAnswerValue, drillVoiceAction } from "@/lib/voice-quiz"
 import { useConvex } from "convex/react"
 import type { FunctionReturnType } from "convex/server"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
@@ -36,8 +36,26 @@ type DrillQuestion = FunctionReturnType<typeof api.practice.drill>[number]
 /** Questions asked in one drill. */
 const DRILL_LENGTH = 10
 
-/** Result of one answered question. */
-type DrillResult = { correct: boolean; selectedOptionIds?: string[] }
+/** Result of one answered question. A skipped question is never correct and has no selection. */
+type DrillResult = { correct: boolean; selectedOptionIds?: string[]; skipped?: boolean }
+
+/**
+ * Records a spoken skip as a passive event, which leaves the concept's review state unchanged.
+ * Best effort: the drill moves on even if the event cannot be saved.
+ */
+async function recordSkip(projectId: string, question: DrillQuestion): Promise<void> {
+  await fetch("/api/learning/event", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      projectId,
+      itemId: question.itemId,
+      clientEventId: `drill-skip:${createClientMessageId()}`,
+      occurredAt: Date.now(),
+      eventType: "skip",
+    }),
+  }).catch(() => undefined)
+}
 
 /**
  * Posts an answer to the shared learning endpoint, which scores it and
@@ -50,13 +68,9 @@ async function submitAnswer(
   selectedOptionIds: string[],
   confidence?: "guess"
 ): Promise<{ correct: boolean }> {
-  const [first] = selectedOptionIds
-  const answer =
-    question.quiz.type === "true-false"
-      ? first === "true"
-      : question.quiz.type === "single-choice"
-        ? first
-        : selectedOptionIds
+  const answer = drillAnswerValue(question.quiz.type, selectedOptionIds)
+  // An empty selection must never be scored: for true-false it would read as "false".
+  if (answer === undefined) throw new Error("Choose an answer first.")
   const response = await fetch("/api/learning/answer", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -147,6 +161,13 @@ export function DrillSession({ projectId, unitId }: { projectId: string; unitId?
     },
     [current, projectId]
   )
+  /** Reveals the current question's answer without scoring it, so the learner can say next. */
+  const skipQuestion = useCallback(async () => {
+    if (!current) return
+    setResults((previous) => ({ ...previous, [current.itemId]: { correct: false, skipped: true, selectedOptionIds: [] } }))
+    window.requestAnimationFrame(() => nextRef.current?.focus())
+    await recordSkip(projectId, current)
+  }, [current, projectId])
   const interactive = useMemo(
     () => ({ onQuizAnswer, acceptsConfidence: true, answeredQuizzes: current && answered ? {
       [current.quiz.id]: { selectedOptionIds: answered.selectedOptionIds ?? [], correct: answered.correct },
@@ -280,32 +301,26 @@ export function DrillSession({ projectId, unitId }: { projectId: string; unitId?
             reply={{
               id: current.itemId + ":" + voiceRevision + ":" + Boolean(answered),
               text: voiceFeedback || (answered
-                ? (answered.correct ? "Correct. " : "Not quite. ") + current.quiz.explanation + " Say next for the next question."
+                ? (answered.skipped ? "Skipped. " : answered.correct ? "Correct. " : "Not quite. ") + current.quiz.explanation + " Say next for the next question."
                 : current.quiz.question + "\n" + current.quiz.options.map((option, at) => String.fromCharCode(65 + at) + ". " + option.text).join("\n")),
               complete: true,
             }}
             onTurn={async text => {
-              const answer = spokenQuizAnswer(text, current.quiz.options)
+              const action = drillVoiceAction(text, current.quiz, Boolean(answered))
               setVoiceFeedback("")
-              if (answer === "repeat") { setVoiceRevision(value => value + 1); return }
-              if (answer === "next" && answered) { setIndex(value => value + 1); return }
-              if (answer === "skip") {
-                if (!answered) await onQuizAnswer(current.quiz, [], "guess")
-                setVoiceRevision(value => value + 1); return
-              }
-              if (answered) { setVoiceFeedback("Say next to move on, or repeat to hear the feedback."); setVoiceRevision(value => value + 1); return }
-              if (current.quiz.type === "code-output" || (current.quiz.type === "cloze" && current.quiz.acceptedAnswers?.length === 1)) {
-                setVoiceBusy(true)
-                try { await onQuizAnswer(current.quiz, [text]) }
-                finally { setVoiceBusy(false) }
-                return
-              }
-              if (typeof answer !== "number" || !["single-choice", "true-false"].includes(current.quiz.type)) {
-                setVoiceFeedback("Say one option letter or its number, or answer on screen.")
+              if (action.type === "repeat") { setVoiceRevision(value => value + 1); return }
+              if (action.type === "next") { setIndex(value => value + 1); return }
+              // Skip reveals the answer unscored on every question type, then waits for next.
+              if (action.type === "skip") { await skipQuestion(); return }
+              if (action.type === "remind") { setVoiceFeedback("Say next to move on, or repeat to hear the feedback."); setVoiceRevision(value => value + 1); return }
+              if (action.type === "retry") {
+                setVoiceFeedback(current.quiz.type === "single-choice" || current.quiz.type === "true-false"
+                  ? "Say one option letter or its number, or answer on screen."
+                  : "Answer this one on screen, or say skip.")
                 setVoiceRevision(value => value + 1); return
               }
               setVoiceBusy(true)
-              try { await onQuizAnswer(current.quiz, [current.quiz.options[answer].id]) }
+              try { await onQuizAnswer(current.quiz, action.selectedOptionIds) }
               finally { setVoiceBusy(false) }
             }}
           />
