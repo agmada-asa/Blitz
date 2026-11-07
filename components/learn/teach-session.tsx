@@ -37,7 +37,7 @@ import {
   useReplyReader,
 } from "@/components/learn/teach-voice"
 import type { FunctionReturnType } from "convex/server"
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
 import { useMinuteClock } from "@/hooks/use-minute-clock"
 
 import type {
@@ -620,7 +620,8 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
   /** The side chat sent the question, or couldn't, in which case the lesson carries on. */
   const report = voice.report
   const currentAsk = useRef(voiceAsk)
-  useEffect(() => { currentAsk.current = voiceAsk })
+  // A layout effect, so it is current before the side chat's own effect sends the ask and reports back.
+  useLayoutEffect(() => { currentAsk.current = voiceAsk })
   const onAsked = useCallback((id: number, sent: boolean, before?: string[]) => {
     // A send settles only when its reply stream ends, by which time the answer may have been read.
     if (currentAsk.current?.id !== id) return

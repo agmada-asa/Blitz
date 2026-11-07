@@ -105,8 +105,10 @@ sockets.on("connection", socket => {
   const turns = new VoiceTurns({
     transcribe, send, log, fail,
     endTurn: () => {
+      // Counted only when the worker hears it, or a mute before it starts would strand it on an old epoch.
+      if (closed || !worker?.stdin?.writable) return
       epoch++
-      if (!closed && worker?.stdin?.writable) worker.stdin.write(JSON.stringify({ end: true, epoch }) + "\n")
+      worker.stdin.write(JSON.stringify({ end: true, epoch }) + "\n")
     },
     closed: () => closed,
   })
