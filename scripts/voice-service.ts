@@ -75,6 +75,8 @@ sockets.on("connection", socket => {
   let started = false
   let prompt = ""
   let closed = false
+  /** Turns taken so far; the worker stamps its events with it, so ones about a taken turn are dropped. */
+  let epoch = 0
   const lifetime = new AbortController()
   // A session ends after 30 minutes without microphone audio, such as left muted; audio restarts the clock.
   const limit = setTimeout(() => socket.close(1000, "Voice ended after 30 minutes without the microphone."), 30 * 60_000)
@@ -102,7 +104,10 @@ sockets.on("connection", socket => {
   // Muting resets the turn, so a transcript still in flight is dropped rather than sent later.
   const turns = new VoiceTurns({
     transcribe, send, log, fail,
-    endTurn: () => { if (!closed && worker?.stdin?.writable) worker.stdin.write('{"end":true}\n') },
+    endTurn: () => {
+      epoch++
+      if (!closed && worker?.stdin?.writable) worker.stdin.write(JSON.stringify({ end: true, epoch }) + "\n")
+    },
     closed: () => closed,
   })
   socket.on("message", (data, binary) => {
@@ -137,6 +142,8 @@ sockets.on("connection", socket => {
             try {
               const event = JSON.parse(line)
               if (event.ready) send({ type: "ready" })
+              // Speech or an ending for a turn already taken: it would reopen an empty turn.
+              if (event.event && event.epoch !== epoch) return
               // Hearing only turns a reply down; the turn logic stops it once it has caught real
               // words, so noise or a voice across the room never cuts the reply off.
               if ((event.event === "speech" || event.event === "resume") && turns.speech() && mode === "voice")

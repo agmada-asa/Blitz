@@ -91,6 +91,24 @@ test("only a caption with real words stops a reply", async () => {
   assert.deepEqual(types(fake.sent), ["interrupt", "caption", "state", "user"])
 })
 
+test("words that stopped the reply but came to nothing let it carry on; a held opener doesn't", async () => {
+  for (const [last, expected] of [["you", ["interrupt", "caption", "state", "dropped", "state"]], ["Okay.", ["interrupt", "caption", "state", "state"]]] as const) {
+    const fake = host()
+    const turns = new VoiceTurns(fake.value, { captionMs: 60_000, openerMs: 60_000 })
+    turns.mode = "voice"
+    turns.speech()
+    turns.audio(Buffer.alloc(SECOND))
+    const caption = turns.caption()
+    fake.pending[0]("Wait, so")
+    await caption
+    const taken = turns.take()
+    fake.pending[1](last)
+    await taken
+    assert.deepEqual(types(fake.sent), expected, last)
+    turns.reset()
+  }
+})
+
 test("a lone opener joins the words that follow it", async () => {
   const fake = host()
   const turns = new VoiceTurns(fake.value, { captionMs: 60_000, openerMs: 50 })

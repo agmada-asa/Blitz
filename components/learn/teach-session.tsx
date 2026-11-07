@@ -619,7 +619,11 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
   })
   /** The side chat sent the question, or couldn't, in which case the lesson carries on. */
   const report = voice.report
+  const currentAsk = useRef(voiceAsk)
+  useEffect(() => { currentAsk.current = voiceAsk })
   const onAsked = useCallback((id: number, sent: boolean, before?: string[]) => {
+    // A send settles only when its reply stream ends, by which time the answer may have been read.
+    if (currentAsk.current?.id !== id) return
     setVoiceAsk((ask) => (ask?.id !== id ? ask : sent ? { ...ask, before: before ?? [] } : null))
     if (!sent) report("Your question didn't reach the side chat. Ask it again.")
   }, [report])

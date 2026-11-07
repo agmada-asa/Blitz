@@ -1666,7 +1666,10 @@ export function ChatWorkspace({
     }
   }
 
-  /** Sends a standard, edited, or continuation turn and lets Convex drive the transcript. */
+  /**
+   * Sends a standard, edited, or continuation turn and lets Convex drive the transcript.
+   * @returns Whether the turn was taken: its reply finished, or started and was then paused.
+   */
   const sendMessage = async (
     options: SendMessageOptions = {}
   ): Promise<boolean> => {
@@ -1917,6 +1920,8 @@ export function ChatWorkspace({
         }
       } catch (sendError) {
         const paused = controller.signal.aborted || reply.pausedByUser
+        // Talking over a reply pauses it; the turn itself was still taken.
+        if (paused && started) completed = true
         // A failure in another chat is saved on its message; do not show it here.
         const visible = isVisible()
         if (!paused && visible)

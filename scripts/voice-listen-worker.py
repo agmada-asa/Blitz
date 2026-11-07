@@ -7,7 +7,10 @@ turn; the speech-to-text and Kokoro workers handle recognition and synthesis.
 In:
   {"pcm": "<base64>"}   16 kHz, 16-bit mono audio, any length, in order.
   {"config": {...}}     any of "start_ms", "pause_ms", "recheck_ms", "threshold".
-  {"end": true}         the host took the turn: forget its audio and listen afresh.
+  {"end": true, "epoch": n}
+                        the host took the turn: forget its audio and listen afresh. Every later
+                        event carries "epoch": n, so the host can drop events about the old turn
+                        that were already on their way.
 
 Out:
   {"ready": true}                              once both models are loaded.
@@ -114,9 +117,12 @@ def turn_probability(audio):
     return float(out[0].reshape(-1)[0])
 
 
+epoch = 0  # turns the host has taken; stamped on every event
+
+
 def emit(message):
-    """Writes one JSON line to the voice service."""
-    print(json.dumps(message), flush=True)
+    """Writes one JSON line to the voice service, stamped with the current turn epoch."""
+    print(json.dumps({**message, "epoch": epoch}), flush=True)
 
 
 silero = Silero()
@@ -142,6 +148,7 @@ for line in sys.stdin:
         settings.update({key: float(value) for key, value in request["config"].items() if key in settings})
         continue
     if request.get("end"):
+        epoch = int(request.get("epoch", epoch + 1))
         turn, in_turn, speaking, voiced_ms, silence_ms = [], False, False, 0.0, 0.0
         continue
     samples = np.frombuffer(base64.b64decode(request["pcm"]), dtype="<i2").astype(np.float32) / 32768

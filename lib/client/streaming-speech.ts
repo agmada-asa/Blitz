@@ -13,7 +13,10 @@ export class StreamingSpeech {
   private complete = false
   failed = false
   private completed = ""
-  private current: { text: string; at: number; ms: number } | undefined
+  private current: { text: string; at: number; ms: number; index: number } | undefined
+  /** Pieces that have started and finished playing, counted to pair up their events. */
+  private starts = 0
+  private ends = 0
   /** Playback has ended, by finishing, failing or being stopped. */
   private finished = false
   private controller = new AbortController()
@@ -68,11 +71,16 @@ export class StreamingSpeech {
     this.complete = complete
     this.wake?.()
     this.tail ??= playSpeechSections(this.pieces(), this.voiceId, this.controller.signal, this.state, (text, ms, phase, synthesisMs) => {
-      if (phase === "playing") { this.current = { text, at: performance.now(), ms }; this.onHeard?.(synthesisMs); this.onSpeaking?.(text) }
-      else {
+      // Pieces play in order, so the nth "playing" and the nth "played" are the same piece. Matching
+      // them by position keeps the piece playing now even when its neighbour's events land out of order.
+      if (phase === "playing") {
+        const index = ++this.starts
+        if (index > this.ends) this.current = { text, at: performance.now(), ms, index }
+        this.onHeard?.(synthesisMs); this.onSpeaking?.(text)
+      } else {
         this.completed += text + " "; this.played++
-        // Back-to-back pieces can report the next one playing before this one ends; keep that one.
-        if (this.current?.text === text) this.current = undefined
+        const index = ++this.ends
+        if (this.current && this.current.index <= index) this.current = undefined
       }
     })
       .catch((error: unknown) => {

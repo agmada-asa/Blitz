@@ -302,6 +302,9 @@ export class VoiceTurns {
     this.host.log({ transcript: last, transcriptionMs: Date.now() - start, mode: this.mode, ...(real ? {} : { dropped: true }) })
     if (!real || (opener(last) && !this.held)) {
       if (real) this.held = last
+      // Words that stopped the reply came to nothing, so it can carry on. A held opener still
+      // becomes a turn, so the reply stays stopped for it.
+      else if (interrupted && !this.held) this.host.send({ type: "dropped" })
       this.host.send({ type: "state", state: "listening" })
       // A held opener goes out alone if nothing follows it.
       if (this.held) {

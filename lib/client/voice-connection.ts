@@ -60,8 +60,9 @@ export class VoiceConnection {
           reject(new Error("Speech took too long to start. Check the local speech setup and retry."))
           this.close()
         }, 20 * 60_000)
-        // Whole characters only: half an emoji at the cut would make the prompt unencodable.
-        socket.onopen = () => socket.send(JSON.stringify({ type: "start", mode, prompt: prompt.slice(-2000).toWellFormed() }))
+        // Whole characters only: half an emoji left at the cut would make the prompt unencodable.
+        // (A regex rather than toWellFormed(), which Safari before 16.4 lacks.)
+        socket.onopen = () => socket.send(JSON.stringify({ type: "start", mode, prompt: prompt.slice(-2000).replace(/^[\uDC00-\uDFFF]/, "") }))
         socket.onerror = () => { reject(new Error("Voice could not connect. Start the local voice service and retry.")); this.close() }
         socket.onclose = event => {
           if (!ready) reject(new Error("Voice connection closed. Try again."))
