@@ -5,14 +5,14 @@
  */
 
 import assert from "node:assert/strict"
-import { execFileSync } from "node:child_process"
+import { type ChildProcess, execFileSync, spawn } from "node:child_process"
 import { EventEmitter } from "node:events"
 import { existsSync, readlinkSync } from "node:fs"
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
-import { AutoUpdater } from "../electron/auto-update.mjs"
+import { AutoUpdater, requestUpdate, waitForCheck } from "../electron/auto-update.mjs"
 import {
   currentRelease,
   RELEASE_MARKER,
@@ -23,6 +23,7 @@ import {
   DatabaseInUseError,
   ServiceManager,
 } from "../electron/service-manager.mjs"
+import { processGroupExists, processStartTime } from "../scripts/process-groups.mjs"
 
 /** Runs Git in a directory for fixture setup. */
 function git(cwd: string, ...args: string[]) {
@@ -194,8 +195,9 @@ function updaterFixture(home: string, overrides: Record<string, unknown> = {}) {
     },
     ...overrides,
   }
-  const services = {
+  const services: Record<string, unknown> & { cwd: string } = {
     port: 4007,
+    cwd: current.directory,
     environment: { BLITZ_CONVEX_URL: "http://127.0.0.1:4100" },
     prepareEnvironment: async () => ({
       NEXT_PUBLIC_CONVEX_URL: "http://127.0.0.1:4100",
@@ -206,6 +208,7 @@ function updaterFixture(home: string, overrides: Record<string, unknown> = {}) {
     },
     relocate: async (directory: string) => {
       steps.push(`relocate ${directory}`)
+      services.cwd = directory
     },
     ...((overrides.services as object) ?? {}),
   }
@@ -223,8 +226,175 @@ function updaterFixture(home: string, overrides: Record<string, unknown> = {}) {
     }) as never,
   })
   updater.recordRelease(current)
-  return { updater, steps }
+  return { updater, steps, services }
 }
+
+/** Reads the state the updater wrote. */
+async function readState(home: string) {
+  return JSON.parse(await readFile(join(home, "run", "state.json"), "utf8"))
+}
+
+test("a push that fails after the backend may have taken it restores the old functions", async () => {
+  const home = await mkdtemp(join(tmpdir(), "blitz-update-"))
+  try {
+    const { updater, steps } = updaterFixture(home, {
+      pushConvexFunctions: async (directory: string) => {
+        steps.push(`push ${directory}`)
+        if (directory === "/releases/b") throw new Error("The Convex function push was stopped (SIGKILL).")
+      },
+    })
+    const result = await updater.check()
+    assert.equal(result.status, "failed")
+    assert.deepEqual(steps.slice(-3), ["push /releases/b", "push /releases/a", "remove /releases/b"])
+    assert.equal((await readState(home)).release.commit, "a".repeat(40))
+  } finally {
+    await rm(home, { recursive: true, force: true })
+  }
+})
+
+test("when the old functions cannot be pushed back, the old release restarts to push them", async () => {
+  const home = await mkdtemp(join(tmpdir(), "blitz-update-"))
+  try {
+    const { updater, steps, services } = updaterFixture(home, {
+      pushConvexFunctions: async (directory: string) => {
+        steps.push(`push ${directory}`)
+        throw new Error("timed out")
+      },
+    })
+    assert.equal((await updater.check()).status, "failed")
+    assert.deepEqual(steps.slice(-4), [
+      "push /releases/b",
+      "push /releases/a",
+      "relocate /releases/a",
+      "remove /releases/b",
+    ])
+    assert.equal(services.cwd, "/releases/a")
+  } finally {
+    await rm(home, { recursive: true, force: true })
+  }
+})
+
+test("a failed activation moves the services back, so what runs matches what is recorded", async () => {
+  const home = await mkdtemp(join(tmpdir(), "blitz-update-"))
+  try {
+    const { updater, steps, services } = updaterFixture(home, {
+      activate: async () => {
+        throw new Error("EACCES: permission denied, rename")
+      },
+    })
+    const result = await updater.check()
+    assert.equal(result.status, "failed")
+    assert.match(result.message, /still running aaaaaaa/)
+    assert.deepEqual(steps.slice(-3), ["relocate /releases/b", "relocate /releases/a", "remove /releases/b"])
+    assert.equal(services.cwd, "/releases/a")
+    assert.equal((await readState(home)).release.commit, "a".repeat(40))
+  } finally {
+    await rm(home, { recursive: true, force: true })
+  }
+})
+
+test("when the old release will not start again, the new one is kept and recorded", async () => {
+  const home = await mkdtemp(join(tmpdir(), "blitz-update-"))
+  try {
+    const fixture = updaterFixture(home, {
+      activate: async () => {
+        throw new Error("EACCES: permission denied, rename")
+      },
+      services: {
+        relocate: async (directory: string) => {
+          fixture.steps.push(`relocate ${directory}`)
+          // Going back fails, and the supervisor starts the new release again.
+          if (directory === "/releases/a") throw new Error("Blitz did not become healthy: timeout")
+          fixture.services.cwd = directory
+        },
+      },
+    })
+    const result = await fixture.updater.check()
+    assert.equal(result.status, "failed")
+    assert.equal(fixture.services.cwd, "/releases/b")
+    assert.ok(!fixture.steps.includes("remove /releases/b"))
+    assert.equal((await readState(home)).release.commit, "b".repeat(40))
+  } finally {
+    await rm(home, { recursive: true, force: true })
+  }
+})
+
+test("a rebuild asked for during a check runs after it and gets its own answer", async () => {
+  const home = await mkdtemp(join(tmpdir(), "blitz-update-"))
+  try {
+    let releaseFetch = () => undefined as unknown
+    const { updater, steps } = updaterFixture(home, {
+      fetchTarget: () =>
+        new Promise((resolve) => {
+          releaseFetch = () => resolve("a".repeat(40))
+        }),
+    })
+    const scheduled = updater.check({ reason: "scheduled" })
+    const rebuild = updater.check({ rebuild: true, reason: "manual", requestId: "r1" })
+    const plain = updater.check({ reason: "manual", requestId: "r2" })
+    assert.notEqual(scheduled, rebuild)
+    assert.equal(rebuild, plain, "a check asked for while a rebuild waits joins the rebuild")
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    releaseFetch()
+    assert.equal((await scheduled).status, "up-to-date")
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    releaseFetch()
+    assert.equal((await rebuild).status, "updated")
+    assert.equal(steps[0], "build")
+    const answers = (await readState(home)).answers
+    assert.equal(answers.r1.status, "updated")
+    assert.equal(answers.r2.status, "updated")
+  } finally {
+    await rm(home, { recursive: true, force: true })
+  }
+})
+
+test("requests sent while the server starts wait for it instead of ending it", async () => {
+  const home = await mkdtemp(join(tmpdir(), "blitz-update-"))
+  const listeners = process.listeners("SIGUSR2")
+  // The test runner writes a diagnostic report on SIGUSR2; Blitz's server does not.
+  const reportOnSignal = process.report.reportOnSignal
+  process.report.reportOnSignal = false
+  try {
+    const { updater, steps } = updaterFixture(home)
+    // As the launcher does: listen before the state names this process.
+    updater.listenForRequests()
+    await updater.writeState()
+    const rebuildId = await requestUpdate(home, "rebuild")
+    const checkId = await requestUpdate(home, "check")
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    assert.deepEqual(steps, [], "nothing runs before start")
+    assert.equal(updater.waitingRequests.length, 2)
+
+    updater.start()
+    const [rebuilt, checked] = await Promise.all([
+      waitForCheck(home, rebuildId, { pollMs: 5, timeoutMs: 5_000 }),
+      waitForCheck(home, checkId, { pollMs: 5, timeoutMs: 5_000 }),
+    ])
+    updater.stop()
+    assert.equal(rebuilt.status, "updated")
+    assert.ok(["updated", "up-to-date"].includes(checked.status))
+  } finally {
+    process.report.reportOnSignal = reportOnSignal
+    for (const listener of process.listeners("SIGUSR2"))
+      if (!listeners.includes(listener)) process.off("SIGUSR2", listener)
+    await rm(home, { recursive: true, force: true })
+  }
+})
+
+test("a request to a process that only reused the server's ID is refused", async () => {
+  const home = await mkdtemp(join(tmpdir(), "blitz-update-"))
+  try {
+    await mkdir(join(home, "run"), { recursive: true })
+    await writeFile(
+      join(home, "run", "state.json"),
+      JSON.stringify({ pid: process.pid, processStartedAt: "Thu Jan  1 00:00:00 1970" })
+    )
+    await assert.rejects(requestUpdate(home, "check"), /not running/)
+  } finally {
+    await rm(home, { recursive: true, force: true })
+  }
+})
 
 test("an update builds, tries, waits for replies, pushes, then switches", async () => {
   const home = await mkdtemp(join(tmpdir(), "blitz-update-"))
@@ -338,6 +508,7 @@ function productionHarness(cwd: string, options: Record<string, unknown> = {}) {
       child.command = command
       child.args = args
       child.cwd = (spawnOptions as { cwd: string }).cwd
+      child.once("exit", () => byPid.delete(child.pid))
       children.push(child)
       byPid.set(child.pid, child)
       return child
@@ -345,11 +516,103 @@ function productionHarness(cwd: string, options: Record<string, unknown> = {}) {
     fetchImpl: async () => ({ ok: true, status: 200 }),
     healthIntervalMs: 1,
     shutdownGraceMs: 5,
-    killProcess: (pid: number) => byPid.get(Math.abs(pid))?.emit("exit", 0, null),
+    killProcess: (pid: number, signal?: string | number) => {
+      // A group lives until its child exits; signal 0 only checks that.
+      const child = byPid.get(Math.abs(pid))
+      if (!child) throw Object.assign(new Error("No such process"), { code: "ESRCH" })
+      if (signal !== 0) child.emit("exit", 0, null)
+      return true
+    },
     ...options,
   })
   return { manager, children }
 }
+
+test("stopping a service waits for its whole group, not just the first process", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "blitz-production-"))
+  try {
+    // The leader exits on SIGTERM, but a descendant keeps the group alive until SIGKILL.
+    const survivors = new Set<number>()
+    const signals: string[] = []
+    const harness = productionHarness(cwd, {
+      killProcess: (pid: number, signal?: string | number) => {
+        const group = Math.abs(pid)
+        const child = harness.children.find((candidate) => candidate.pid === group)
+        if (!child || !survivors.has(group)) throw Object.assign(new Error("gone"), { code: "ESRCH" })
+        if (signal === 0) return true
+        signals.push(`${group} ${signal}`)
+        child.emit("exit", 0, null)
+        if (signal === "SIGKILL") survivors.delete(group)
+        return true
+      },
+    })
+    const { manager, children } = harness
+    const spawn = manager.spawnProcess
+    manager.spawnProcess = (command: string, args: string[], options: object) => {
+      const child = spawn(command, args, options)
+      survivors.add(child.pid as number)
+      return child
+    }
+    await manager.start()
+    await manager.stop()
+    for (const child of children) {
+      assert.ok(signals.includes(`${child.pid} SIGTERM`))
+      assert.ok(signals.includes(`${child.pid} SIGKILL`), "the surviving group is killed")
+    }
+    assert.equal(survivors.size, 0)
+  } finally {
+    await rm(cwd, { recursive: true, force: true })
+  }
+})
+
+test("orphan cleanup stops recorded groups and spares a process that reused an ID", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "blitz-production-"))
+  const sleepers: ChildProcess[] = []
+  try {
+    const start = () => {
+      const child = spawn("sleep", ["30"], { detached: true, stdio: "ignore" })
+      sleepers.push(child)
+      return child.pid as number
+    }
+    const orphan = start()
+    const stranger = start()
+    const pidFile = join(cwd, "services.json")
+    await writeFile(
+      pidFile,
+      JSON.stringify({
+        next: { pid: orphan, startedAt: processStartTime(orphan) },
+        // Recorded for an earlier process with the same ID.
+        worker: { pid: stranger, startedAt: "Thu Jan  1 00:00:00 1970" },
+      })
+    )
+    const manager = new ServiceManager({ cwd, production: true, pidFile, shutdownGraceMs: 500 })
+    await manager.reapOrphans()
+    assert.equal(processGroupExists(orphan), false)
+    assert.equal(processGroupExists(stranger), true)
+    assert.deepEqual(JSON.parse(await readFile(pidFile, "utf8")), {})
+
+    // Builds and trial servers are recorded too, so the next launch can stop them.
+    manager.trackGroup(stranger)
+    assert.equal(JSON.parse(await readFile(pidFile, "utf8"))[`temporary:${stranger}`].pid, stranger)
+    manager.untrackGroup(stranger)
+    assert.deepEqual(JSON.parse(await readFile(pidFile, "utf8")), {})
+  } finally {
+    for (const child of sleepers) child.kill("SIGKILL")
+    await rm(cwd, { recursive: true, force: true })
+  }
+})
+
+test("release commands report their process groups while they run", async () => {
+  const events: string[] = []
+  await runCommand("true", [], {
+    processes: {
+      trackGroup: (pid: number) => events.push(`track ${pid}`),
+      untrackGroup: (pid: number) => events.push(`untrack ${pid}`),
+    },
+  })
+  assert.equal(events.length, 2)
+  assert.equal(events[0].replace("track", "untrack"), events[1])
+})
 
 test("production mode runs next start and skips workers the release lacks", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "blitz-production-"))

@@ -322,13 +322,18 @@ async function hostStack() {
   await services.reapOrphans()
   if (release && config) {
     updater = new AutoUpdater({
-      releases: new ReleaseManager({ home, config }),
+      releases: new ReleaseManager({ home, config, processes: services }),
       services,
       home,
       host: "desktop",
     })
+    // Before `prepare` publishes this process's ID; requests wait for `start`.
+    updater.listenForRequests()
     await mainWindow?.loadURL(statusPage("Preparing Blitz…"))
-    await updater.prepare()
+    await updater.prepare().catch(async (error) => {
+      await updater?.failWaitingRequests(error instanceof Error ? error.message : String(error))
+      throw error
+    })
   } else {
     const environment = await services.prepareEnvironment()
     await mainWindow?.loadURL(statusPage("Building Blitz. This takes about a minute the first time…"))
@@ -339,7 +344,6 @@ async function hostStack() {
   }
   await mainWindow?.loadURL(statusPage("Starting Blitz…"))
   await services.start()
-  updater?.listenForRequests()
   updater?.start()
 }
 

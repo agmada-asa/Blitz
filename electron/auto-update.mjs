@@ -12,17 +12,25 @@
  * 4. Push the new Convex functions to the running backend. The push is
  *    atomic, so a schema the stored data does not match changes nothing.
  * 5. Restart every service from the new release (a few seconds offline).
- *    If it does not become healthy, the previous release starts again.
+ * 6. Point `current` at the new release.
+ *
+ * Steps 4 to 6 are one handover. If any of them fails, including a push that
+ * times out after the backend may already have taken the new functions, the
+ * services, the functions, and `current` are all returned to the previous
+ * release (see `rollBack`). A crash during the handover needs no record of
+ * it: the next launch serves `current`, still the previous release, and
+ * starting its Convex service pushes that release's functions again.
  *
  * A failed commit is not retried every 15 minutes; a newer commit or
  * "Rebuild now" tries again. The outcome is written to `run/state.json`, which
- * the desktop app and `npm run server` read, and a `SIGUSR2` asks the process
- * hosting the updater to check now (see `requestUpdate`).
+ * the desktop app and `npm run server` read. `requestUpdate` asks the process
+ * hosting the updater to check now: it writes a request file and sends `SIGUSR2`.
  */
 
-import { createHash } from "node:crypto"
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises"
+import { createHash, randomUUID } from "node:crypto"
+import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises"
 import { join } from "node:path"
+import { processStartTime } from "../scripts/process-groups.mjs"
 import { currentRelease, homePaths, readServerConfig } from "./release-manager.mjs"
 
 /** How often the tracked branch is fetched. */
@@ -42,10 +50,20 @@ export const RUNNER_FILES = [
   "scripts/process-groups.mjs",
 ]
 
+/** Answers to `requestUpdate` kept in the state, newest last, for `waitForCheck`. */
+const KEPT_ANSWERS = 20
+
 /**
  * @typedef {"up-to-date" | "updated" | "failed" | "skipped" | "offline"} CheckStatus
  * @typedef {{status: CheckStatus, message: string, commit?: string, target?: string, logPath?: string, at: string, reason: string}} CheckResult
- * @typedef {{pid: number, host: string, port: number, branch: string, startedAt: string, release?: {commit: string, id: string, builtAt: string, directory: string}, phase?: {name: string, target?: string, since: string}, lastCheck?: CheckResult, failure?: {commit?: string, message: string, logPath?: string, at: string} | null}} ServerState
+ * @typedef {{pid: number, processStartedAt?: string, host: string, port: number, branch: string, startedAt: string, release?: {commit: string, id: string, builtAt: string, directory: string}, phase?: {name: string, target?: string, since: string}, lastCheck?: CheckResult, answers?: Record<string, CheckResult>, failure?: {commit?: string, message: string, logPath?: string, at: string} | null}} ServerState
+ *   `processStartedAt` tells the updater's process from a later one that reused
+ *   its ID. `answers` holds the results of recent requests by request ID.
+ * @typedef {{id?: string, action: "check" | "rebuild"}} UpdateRequest
+ * @typedef {"trial" | "push" | "relocate" | "activate"} HandoverStep
+ *   The update step that was under way when the switch-over failed.
+ * @typedef {{rebuild: boolean, reason: string, requestIds: string[], settled: boolean, promise: Promise<CheckResult>}} CheckRun
+ *   One check, shared by every caller that joins it before it records its result.
  */
 
 /**
@@ -72,41 +90,68 @@ export async function readServerState(home) {
 /**
  * Asks the process hosting the updater to check for updates now, or to
  * rebuild the newest commit even when it is already running or failed before.
+ * Each request is its own file, so two requests in quick succession are both
+ * answered, and one that arrives while the updater is starting waits for it.
  * @param {string} home The Blitz home directory.
  * @param {"check" | "rebuild"} action What to do.
- * @returns {Promise<string>} The request time, to pass to `waitForCheck`.
+ * @returns {Promise<string>} The request ID, to pass to `waitForCheck`.
  * @throws When no updater is running.
  */
 export async function requestUpdate(home, action) {
   const state = await readServerState(home)
-  if (!state?.pid || !isAlive(state.pid))
+  if (!state || !isUpdaterProcess(state))
     throw new Error("The Blitz server is not running, so there is nothing to update.")
-  const requestedAt = new Date().toISOString()
-  const run = homePaths(home).run
-  await mkdir(run, { recursive: true })
-  await writeAtomically(join(run, "request.json"), { action, requestedAt })
+  const id = randomUUID()
+  const requests = requestDirectory(home)
+  await mkdir(requests, { recursive: true })
+  await writeAtomically(join(requests, `${id}.json`), {
+    id,
+    action,
+    requestedAt: new Date().toISOString(),
+  })
   process.kill(state.pid, "SIGUSR2")
-  return requestedAt
+  return id
 }
 
 /**
- * Waits until the updater records a check that finished after `since`.
+ * Waits until the updater answers a request from `requestUpdate`.
  * @param {string} home The Blitz home directory.
- * @param {string} since An ISO time from `requestUpdate`.
+ * @param {string} requestId The ID `requestUpdate` returned.
  * @param {{timeoutMs?: number, pollMs?: number}} [options] A build can take a few minutes.
- * @returns {Promise<CheckResult>} The finished check.
+ * @returns {Promise<CheckResult>} The check that answered the request.
  * @throws When the updater stops or does not finish in time.
  */
-export async function waitForCheck(home, since, { timeoutMs = 20 * 60_000, pollMs = 1_000 } = {}) {
+export async function waitForCheck(home, requestId, { timeoutMs = 20 * 60_000, pollMs = 1_000 } = {}) {
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
     const state = await readServerState(home)
-    if (state?.lastCheck && state.lastCheck.at >= since) return state.lastCheck
-    if (state?.pid && !isAlive(state.pid))
+    const answer = state?.answers?.[requestId]
+    if (answer) return answer
+    if (state && !isUpdaterProcess(state))
       throw new Error("The Blitz server stopped before it finished.")
     await new Promise((resolve) => setTimeout(resolve, pollMs))
   }
   throw new Error("Blitz is still updating. Check again in a few minutes.")
+}
+
+/**
+ * Returns the folder `requestUpdate` writes requests to.
+ * @param {string} home The Blitz home directory.
+ */
+function requestDirectory(home) {
+  return join(homePaths(home).run, "requests")
+}
+
+/**
+ * Reports whether the process that wrote a state is still running. The start
+ * time recorded with it rules out an unrelated process that reused the ID,
+ * which a `SIGUSR2` would terminate.
+ * @param {ServerState} state A state from `readServerState`.
+ */
+function isUpdaterProcess(state) {
+  if (!Number.isInteger(state.pid) || !isAlive(state.pid)) return false
+  // States written before the start time was recorded are trusted on the ID alone.
+  return !state.processStartedAt || processStartTime(state.pid) === state.processStartedAt
 }
 
 /**
@@ -123,14 +168,20 @@ function isAlive(pid) {
 }
 
 /**
- * Writes JSON through a temporary file and rename, so readers never see half a file.
+ * Writes JSON through a temporary file and rename, so readers never see half
+ * a file. The temporary name is unique, so concurrent writes cannot mix.
  * @param {string} path The destination.
  * @param {unknown} value The JSON value.
  */
 async function writeAtomically(path, value) {
-  const pending = `${path}.${process.pid}.tmp`
-  await writeFile(pending, JSON.stringify(value, null, 2))
-  await rename(pending, path)
+  const pending = `${path}.${process.pid}.${randomUUID()}.tmp`
+  try {
+    await writeFile(pending, JSON.stringify(value, null, 2))
+    await rename(pending, path)
+  } catch (error) {
+    await rm(pending, { force: true })
+    throw error
+  }
 }
 
 /**
@@ -187,9 +238,20 @@ export class AutoUpdater {
     this.fetchImpl = fetchImpl
     this.log = log
     this.onRunnerChanged = onRunnerChanged
+    /** @type {CheckRun | undefined} The check under way. */
+    this.running = undefined
+    /** @type {CheckRun | undefined} A check waiting for `running` to finish. */
+    this.next = undefined
+    /** Whether `start` ran; requests before then wait in `waitingRequests`. */
+    this.started = false
+    /** @type {UpdateRequest[]} */
+    this.waitingRequests = []
+    /** @type {(() => void) | undefined} Ends a `waitForRequest` early. */
+    this.wake = undefined
     /** @type {ServerState} */
     this.state = {
       pid: process.pid,
+      processStartedAt: processStartTime(process.pid),
       host,
       port: services.port,
       branch: releases.config.branch,
@@ -207,8 +269,12 @@ export class AutoUpdater {
    */
   async prepare() {
     const previous = await readServerState(this.home)
-    // Keep the last failure, so a restart does not retry a commit that is known to fail.
+    // Keep the last failure, so a restart does not retry a commit that is known
+    // to fail, and recent answers, so a request answered just before a restart
+    // for new runner code still finds its result.
     if (previous?.failure) this.state.failure = previous.failure
+    if (previous?.answers) this.state.answers = previous.answers
+    if (previous?.lastCheck) this.state.lastCheck = previous.lastCheck
     const buildEnvironment = await this.buildEnvironment()
     let release = await currentRelease(this.home)
     if (!release || release.convexUrl !== buildEnvironment.NEXT_PUBLIC_CONVEX_URL) {
@@ -235,14 +301,19 @@ export class AutoUpdater {
     return release
   }
 
-  /** Starts the launch check and the 15-minute schedule. */
+  /**
+   * Starts the launch check and the 15-minute schedule, then answers the
+   * requests that arrived while the services were starting.
+   */
   start() {
+    this.started = true
     clearInterval(this.timer)
     this.timer = setInterval(
       () => void this.check({ reason: "scheduled" }),
       this.intervalMs
     )
     void this.check({ reason: "launch" })
+    for (const request of this.waitingRequests.splice(0)) this.answer(request)
   }
 
   /** Stops the schedule. A check in progress finishes on its own. */
@@ -252,42 +323,159 @@ export class AutoUpdater {
   }
 
   /**
-   * Answers `SIGUSR2` from `requestUpdate` by reading `run/request.json`.
-   * Without a request file it checks for updates.
+   * Answers `SIGUSR2` from `requestUpdate`. Call it before `prepare`, which
+   * publishes this process's ID: without a handler, `SIGUSR2` would end the
+   * process. Requests that arrive before `start` wait for it, and also end a
+   * `waitForRequest`, so a launch that is retrying tries again at once.
    */
   listenForRequests() {
-    process.on("SIGUSR2", () => {
-      void (async () => {
-        const path = join(homePaths(this.home).run, "request.json")
-        let action = "check"
-        try {
-          action = JSON.parse(await readFile(path, "utf8")).action
-          await rm(path, { force: true })
-        } catch {}
-        await this.check({ rebuild: action === "rebuild", reason: "manual" })
-      })()
+    process.on("SIGUSR2", () => void this.takeRequests())
+  }
+
+  /**
+   * Reads and removes every waiting request file, then answers each request
+   * or holds it until `start`. A signal without a file is treated as a check.
+   */
+  async takeRequests() {
+    const directory = requestDirectory(this.home)
+    /** @type {UpdateRequest[]} */
+    const requests = []
+    let names = []
+    try {
+      names = (await readdir(directory)).filter((name) => name.endsWith(".json"))
+    } catch {}
+    for (const name of names) {
+      const path = join(directory, name)
+      try {
+        const request = JSON.parse(await readFile(path, "utf8"))
+        await rm(path, { force: true })
+        requests.push({
+          id: typeof request?.id === "string" ? request.id : undefined,
+          action: request?.action === "rebuild" ? "rebuild" : "check",
+        })
+      } catch {
+        // Taken by an earlier signal's handler, or unreadable.
+      }
+    }
+    if (requests.length === 0) requests.push({ action: "check" })
+    for (const request of requests) {
+      if (this.started) this.answer(request)
+      else this.waitingRequests.push(request)
+    }
+    if (!this.started) this.wake?.()
+  }
+
+  /**
+   * Runs the check a request asked for, recording its result under the request's ID.
+   * @param {UpdateRequest} request
+   */
+  answer(request) {
+    void this.check({
+      rebuild: request.action === "rebuild",
+      reason: "manual",
+      requestId: request.id,
     })
   }
 
   /**
-   * Fetches the branch and updates when it moved. Concurrent calls share the
-   * check already running.
-   * @param {{rebuild?: boolean, reason?: string}} [options] `rebuild` builds the newest commit even when it is running or failed before.
+   * Answers the requests held before `start` with a failure, when the launch
+   * itself failed and will only be retried later.
+   * @param {string} message Why Blitz could not start.
+   */
+  async failWaitingRequests(message) {
+    const waiting = this.waitingRequests.splice(0)
+    const at = new Date().toISOString()
+    for (const request of waiting)
+      if (request.id) this.recordAnswer(request.id, { status: "failed", message, at, reason: "manual" })
+    if (waiting.length > 0) await this.writeState()
+  }
+
+  /**
+   * Waits up to `ms`, ending early when a request arrives, for a launch that is
+   * waiting to try again.
+   * @param {number} ms The longest wait.
+   */
+  waitForRequest(ms) {
+    return new Promise((resolve) => {
+      /** Ends the wait, from the timer or a request. */
+      const done = () => {
+        clearTimeout(timer)
+        if (this.wake === done) this.wake = undefined
+        resolve(undefined)
+      }
+      const timer = setTimeout(done, ms)
+      this.wake = done
+    })
+  }
+
+  /**
+   * Fetches the branch and updates when it moved. A call joins the check
+   * under way when that check does what it asks; a rebuild asked for during a
+   * plain check runs after it instead, so it is never answered by a check that
+   * did not rebuild. A call after a check has recorded its result starts a new
+   * one, so its request ID is never missed.
+   * @param {{rebuild?: boolean, reason?: string, requestId?: string}} [options]
+   *   `rebuild` builds the newest commit even when it is running or failed
+   *   before. `requestId` records the result for `waitForCheck`.
    * @returns {Promise<CheckResult>}
    */
-  check({ rebuild = false, reason = "manual" } = {}) {
-    this.inFlight ??= this.runCheck({ rebuild, reason }).finally(() => {
-      this.inFlight = undefined
-    })
-    return this.inFlight
+  check({ rebuild = false, reason = "manual", requestId } = {}) {
+    let run = this.next ?? (this.running && !this.running.settled ? this.running : undefined)
+    if (run && rebuild && !run.rebuild) {
+      if (run === this.next) {
+        // It has not started, so it can still become a rebuild.
+        run.rebuild = true
+        run.reason = reason
+      } else run = undefined
+    }
+    if (!run) {
+      run = this.createRun({ rebuild, reason }, this.running?.promise)
+      if (this.running) this.next = run
+      else this.running = run
+    }
+    if (requestId) run.requestIds.push(requestId)
+    return run.promise
   }
 
   /**
-   * Runs one check and records its outcome.
+   * Creates a check that starts once `after` settles, so checks never overlap.
    * @param {{rebuild: boolean, reason: string}} options
+   * @param {Promise<unknown>} [after] The check that must finish first.
+   * @returns {CheckRun}
+   */
+  createRun({ rebuild, reason }, after) {
+    /** @type {CheckRun} */
+    const run = { rebuild, reason, requestIds: [], settled: false, promise: Promise.resolve(/** @type {never} */ (undefined)) }
+    run.promise = (async () => {
+      await after?.catch(() => undefined)
+      this.running = run
+      if (this.next === run) this.next = undefined
+      try {
+        return await this.runCheck(run)
+      } finally {
+        if (this.running === run) this.running = undefined
+      }
+    })()
+    return run
+  }
+
+  /**
+   * Records a request's result for `waitForCheck`, keeping the newest few.
+   * @param {string} requestId The request's ID.
+   * @param {CheckResult} result Its result.
+   */
+  recordAnswer(requestId, result) {
+    const answers = { ...this.state.answers, [requestId]: result }
+    this.state.answers = Object.fromEntries(Object.entries(answers).slice(-KEPT_ANSWERS))
+  }
+
+  /**
+   * Runs one check and records its outcome, including for every request that joined it.
+   * @param {CheckRun} run
    * @returns {Promise<CheckResult>}
    */
-  async runCheck({ rebuild, reason }) {
+  async runCheck(run) {
+    const { rebuild, reason } = run
     this.setPhase("checking")
     await this.writeState()
     // Pick up edits to config.json, such as another branch, without a restart.
@@ -309,6 +497,10 @@ export class AutoUpdater {
       }
     }
     const result = { ...outcome, at: new Date().toISOString(), reason }
+    // From here a caller starts a new check instead of joining this one, so
+    // every request that joined is in `requestIds` now.
+    run.settled = true
+    for (const requestId of run.requestIds) this.recordAnswer(requestId, result)
     this.state.lastCheck = result
     if (result.status === "updated") this.state.failure = null
     if (result.status === "failed" && !outcome.repeated)
@@ -329,7 +521,9 @@ export class AutoUpdater {
    * Fetches, builds, and switches to the newest commit. See the file comment
    * for the order of steps.
    * @param {{rebuild: boolean}} options
-   * @throws With `target` and `logPath` when the update failed; the running release is unchanged.
+   * @throws With `target` and `logPath` when the update failed. The previous
+   * release is serving again, unless it would not start, in which case the new
+   * one stays and is recorded (see `rollBack`).
    */
   async update({ rebuild }) {
     const current = this.state.release
@@ -377,8 +571,8 @@ export class AutoUpdater {
       })
     }
 
-    const convexUrl = this.services.environment.BLITZ_CONVEX_URL
-    let pushed = false
+    /** @type {HandoverStep} How far the handover got, for `rollBack`. */
+    let step = "trial"
     try {
       this.setPhase("trying the new version", target)
       await this.writeState()
@@ -388,24 +582,36 @@ export class AutoUpdater {
       await this.waitForIdle()
       this.setPhase("switching", target)
       await this.writeState()
-      await this.releases.pushConvexFunctions(built.directory, convexUrl, built.logPath)
-      pushed = true
+      // From here the backend may hold the new functions, even when the push
+      // reports a failure: it can time out after the backend took them.
+      step = "push"
+      await this.releases.pushConvexFunctions(
+        built.directory,
+        this.services.environment.BLITZ_CONVEX_URL,
+        built.logPath
+      )
+      step = "relocate"
       await this.services.relocate(built.directory)
+      step = "activate"
+      await this.releases.activate(built.directory)
     } catch (error) {
-      // `relocate` already restarted the old release, whose Convex start pushes
-      // its functions; this covers a failure between the push and the restart.
-      if (pushed && current)
-        await this.releases
-          .pushConvexFunctions(current.directory, convexUrl)
-          .catch((pushError) => this.log(`Could not restore the previous functions: ${firstLine(pushError)}`))
+      await this.rollBack(step, current)
+      const reason = firstLine(error)
+      if (this.services.cwd === built.directory) {
+        // The previous release would not start again, so the new one stays.
+        this.recordRelease(built)
+        throw Object.assign(
+          new Error(`Blitz switched to ${shortCommit(target)} but could not finish the update or go back to ${shortCommit(current?.commit)}. It restarts on ${shortCommit(current?.commit)} next time. ${reason}`),
+          { target, logPath: built.logPath }
+        )
+      }
       await this.releases.remove(built.directory)
       throw Object.assign(
-        new Error(`Blitz built ${shortCommit(target)} but could not switch to it, so it is still running ${shortCommit(current?.commit)}. ${firstLine(error)}`),
+        new Error(`Blitz built ${shortCommit(target)} but could not switch to it, so it is still running ${shortCommit(current?.commit)}. ${reason}`),
         { target, logPath: built.logPath }
       )
     }
 
-    await this.releases.activate(built.directory)
     this.recordRelease(built)
     const runnerChanged =
       Boolean(current) && (await hashRunner(current.directory)) !== (await hashRunner(built.directory))
@@ -415,6 +621,39 @@ export class AutoUpdater {
       commit: target,
       runnerChanged,
       message: `Blitz updated to ${shortCommit(target)}.`,
+    }
+  }
+
+  /**
+   * Returns the services and the Convex functions to the previous release
+   * after a failed handover. `current` was never changed: `activate` is the
+   * last step and replaces it atomically. Every step is best effort, and a
+   * failure is logged; the caller reads `services.cwd` for what is served.
+   * @param {HandoverStep} step The step that failed.
+   * @param {ServerState["release"]} previous The release that was serving before.
+   */
+  async rollBack(step, previous) {
+    if (step === "trial" || !previous) return
+    const convexUrl = this.services.environment.BLITZ_CONVEX_URL
+    if (step === "activate") {
+      // Every service already runs the new release. Restarting them from the
+      // previous one also pushes its functions, since Convex pushes on start.
+      await this.services
+        .relocate(previous.directory)
+        .catch((error) => this.log(`Could not go back to the previous release: ${firstLine(error)}`))
+      return
+    }
+    // "push" or "relocate": the services run the previous release (`relocate`
+    // starts it again when the new one fails), but the backend may hold the
+    // new functions. Pushing the previous ones is harmless if it does not.
+    try {
+      await this.releases.pushConvexFunctions(previous.directory, convexUrl)
+    } catch (error) {
+      this.log(`Could not restore the previous functions, so Blitz is restarting it: ${firstLine(error)}`)
+      // Convex pushes the release's functions whenever it starts.
+      await this.services
+        .relocate(previous.directory)
+        .catch((relocateError) => this.log(`Could not restart the previous release: ${firstLine(relocateError)}`))
     }
   }
 
@@ -466,15 +705,22 @@ export class AutoUpdater {
     this.state.phase = name ? { name, target, since: new Date().toISOString() } : undefined
   }
 
-  /** Writes `run/state.json`. A failed write only hides status from the desktop app. */
-  async writeState() {
-    try {
-      const run = homePaths(this.home).run
-      await mkdir(run, { recursive: true })
-      await writeAtomically(join(run, "state.json"), this.state)
-    } catch (error) {
-      this.log(`Could not save the server state: ${firstLine(error)}`)
-    }
+  /**
+   * Writes `run/state.json`. Writes run one at a time, each with the state as
+   * it is then, so an older state never replaces a newer one. A failed write
+   * only hides status from the desktop app and `npm run server`.
+   */
+  writeState() {
+    this.writing = (this.writing ?? Promise.resolve()).then(async () => {
+      try {
+        const run = homePaths(this.home).run
+        await mkdir(run, { recursive: true })
+        await writeAtomically(join(run, "state.json"), this.state)
+      } catch (error) {
+        this.log(`Could not save the server state: ${firstLine(error)}`)
+      }
+    })
+    return this.writing
   }
 }
 

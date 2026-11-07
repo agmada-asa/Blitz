@@ -202,9 +202,9 @@ async function status() {
  * @param {"check" | "rebuild"} action What to ask for.
  */
 async function update(action) {
-  const requestedAt = await requestUpdate(home, action)
+  const requestId = await requestUpdate(home, action)
   console.log(action === "rebuild" ? "Rebuilding Blitz…" : "Checking for updates…")
-  const result = await waitForCheck(home, requestedAt)
+  const result = await waitForCheck(home, requestId)
   console.log(result.message)
   if (result.logPath) console.log(`Build log: ${result.logPath}`)
   if (result.status === "failed") process.exitCode = 1

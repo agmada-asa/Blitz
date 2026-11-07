@@ -190,7 +190,9 @@ async function runService() {
     stdio: ["ignore", log.fd, log.fd],
     onStatus: reportStatus,
   })
-  const releases = new ReleaseManager({ home, config, environment })
+  // Builds report their process groups to the supervisor, so a crash
+  // mid-build does not leave them running past the next start.
+  const releases = new ReleaseManager({ home, config, environment, processes: services })
   const updater = new AutoUpdater({
     releases,
     services,
@@ -198,6 +200,9 @@ async function runService() {
     host: "server",
     onRunnerChanged: () => void restartForNewRunner(),
   })
+  // Before `prepare` publishes this process's ID, so a request never meets a
+  // process without a handler, which `SIGUSR2` would end.
+  updater.listenForRequests()
   await services.reapOrphans()
   for (;;) {
     try {
@@ -207,15 +212,15 @@ async function runService() {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       const waitMs = error instanceof DatabaseInUseError ? 30_000 : CHECK_INTERVAL_MS
-      console.error(`[blitz] ${message} Trying again in ${Math.round(waitMs / 60_000) || 0.5} min.`)
+      console.error(`[blitz] ${message} Trying again in ${Math.round(waitMs / 60_000) || 0.5} min, or sooner when asked to check.`)
       updater.state.failure = { message, at: new Date().toISOString() }
+      await updater.failWaitingRequests(message)
       await updater.writeState()
-      await new Promise((resolve) => setTimeout(resolve, waitMs))
+      await updater.waitForRequest(waitMs)
       if (stopping) return
     }
   }
   await services.start()
-  updater.listenForRequests()
   updater.start()
   setInterval(() => log.rotate(), 60 * 60_000).unref()
   console.log(`[blitz] Ready at http://localhost:${configuredPort}`)
