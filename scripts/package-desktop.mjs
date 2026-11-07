@@ -1,8 +1,9 @@
 /**
  * Builds Blitz.app under the ignored `out` folder and, with `--install`, copies
  * it to `~/Applications`. The bundle holds Electron, the icon and a small entry
- * point; it runs `electron/main.mjs` and the rest of Blitz from this checkout,
- * so code changes need only a relaunch. It is unsigned and for this Mac only.
+ * point; it runs `electron/main.mjs` and the rest of Blitz from the background
+ * server's current release, or from this checkout when no server is installed.
+ * It is unsigned and for this Mac only.
  */
 
 import { packager } from "@electron/packager"
@@ -11,7 +12,6 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { cp, mkdir, mkdtemp, rm } from "node:fs/promises"
 import { homedir, tmpdir } from "node:os"
 import { join, resolve } from "node:path"
-import { pathToFileURL } from "node:url"
 import sharp from "sharp"
 
 /** Display name, bundle name and executable name. */
@@ -96,7 +96,13 @@ async function buildIcns(sourceSvg, workDirectory) {
   return icns
 }
 
-/** Writes the bundle's own app: package metadata and an entry point into this checkout. */
+/**
+ * Writes the bundle's own app: package metadata and an entry point. The entry
+ * loads the background server's current release (`$BLITZ_HOME/current`, by
+ * default `~/.blitz/current`) when one exists, so the app runs reviewed code
+ * from the tracked branch rather than whatever this checkout has checked out.
+ * Without a release it falls back to this checkout.
+ */
 function writeEntryPoint(directory, checkout) {
   const shell = join(directory, "app")
   mkdirSync(shell)
@@ -111,19 +117,24 @@ function writeEntryPoint(directory, checkout) {
       main: "main.mjs",
     })
   )
-  const main = JSON.stringify(
-    pathToFileURL(join(checkout, "electron", "main.mjs")).href
-  )
+  const checkoutMain = JSON.stringify(join(checkout, "electron", "main.mjs"))
   writeFileSync(
     join(shell, "main.mjs"),
     `import { app, dialog } from "electron"
+import { existsSync } from "node:fs"
+import { homedir } from "node:os"
+import { join } from "node:path"
+import { pathToFileURL } from "node:url"
+const home = process.env.BLITZ_HOME?.trim() || join(homedir(), ".blitz")
+const release = join(home, "current", "electron", "main.mjs")
+const main = existsSync(release) ? release : ${checkoutMain}
 try {
-  await import(${main})
+  await import(pathToFileURL(main).href)
 } catch (error) {
   await app.whenReady()
   dialog.showErrorBox(
     "Blitz could not start",
-    "Could not load Blitz from " + ${JSON.stringify(checkout)} + ". Run npm run desktop:install from the checkout again.\\n\\n" + error.message
+    "Could not load Blitz from " + main + ". Run npm run desktop:install from the checkout again.\\n\\n" + error.message
   )
   app.quit()
 }

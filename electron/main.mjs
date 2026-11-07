@@ -1,6 +1,23 @@
-/** Boots the Mac desktop shell, local Blitz services, and project-scoped native bridge. */
+/**
+ * Boots the Mac desktop shell, local Blitz services, and project-scoped native bridge.
+ *
+ * The window prefers a Blitz that is already serving: the background server
+ * (`npm run server -- install`), which it starts if it is installed but not
+ * running, or `npm run dev:lan`. Only when neither exists does the app host
+ * the stack itself, in production mode: from the current release with the
+ * updater when the app runs from `~/.blitz`, or from a production build of
+ * its checkout otherwise. The Blitz menu checks for updates or rebuilds.
+ */
 
-import { app, BrowserWindow, dialog, ipcMain, Notification, shell } from "electron"
+import {
+  app,
+  BrowserWindow,
+  dialog,
+  ipcMain,
+  Menu,
+  Notification,
+  shell,
+} from "electron"
 import { ConvexHttpClient } from "convex/browser"
 import { anyApi } from "convex/server"
 import {
@@ -12,35 +29,60 @@ import {
   writeFileSync,
 } from "node:fs"
 import { join } from "node:path"
+import {
+  AutoUpdater,
+  readServerState,
+  requestUpdate,
+  shortCommit,
+  waitForCheck,
+} from "./auto-update.mjs"
+import { isServerInstalled, startServer } from "./background-server.mjs"
 import { loadLoginEnvironment } from "./login-environment.mjs"
+import {
+  blitzHome,
+  buildCheckout,
+  CHECKOUT_DIST_DIR,
+  homePaths,
+  readRelease,
+  readServerConfig,
+  ReleaseManager,
+} from "./release-manager.mjs"
 import { startStudyReminders } from "./reminders.mjs"
 import { findRunningStack, ServiceManager } from "./service-manager.mjs"
 import { assertProjectPath, repositoryRoot } from "./paths.mjs"
 
 const desktopPort = Number(process.env.BLITZ_PORT || 3008)
-/** Where `npm run dev:lan` serves Blitz, which the desktop app can share. */
+/** Where the background server and `npm run dev:lan` serve Blitz, which the desktop app can share. */
 const lanPort = 3007
 const host = process.env.BLITZ_LAN_ADDRESS ? "0.0.0.0" : "127.0.0.1"
+/** How long to wait for the background server, which may be building its first release. */
+const serverStartTimeoutMs = 3 * 60_000
 /** Shared native icon used by the macOS Dock and non-macOS window chrome. */
 const appIconPath = join(repositoryRoot(), "app", "apple-icon.png")
-/** Shown from launch until the local services answer. */
-const startingPage = `data:text/html;charset=utf-8,${encodeURIComponent(
-  `<!doctype html><title>Blitz</title><style>html{color-scheme:dark;height:100%}body{height:100%;margin:0;display:grid;place-items:center;background:#111;color:#999;font:14px -apple-system,sans-serif}</style><p>Starting Blitz…</p>`
-)}`
 const logPath = app.isPackaged ? join(app.getPath("logs"), "blitz.log") : undefined
 const isOnlyInstance = app.requestSingleInstanceLock()
-const services = new ServiceManager({
-  cwd: repositoryRoot(),
-  port: desktopPort,
-  host,
-  // A second launch only hands over to the first, so it must not rotate its log.
-  stdio: isOnlyInstance ? serviceOutput() : "ignore",
-})
+const launchedAt = new Date().toISOString()
+/** @type {ServiceManager | undefined} Set only when this app hosts the stack. */
+let services
+/** @type {AutoUpdater | undefined} Set only when this app hosts a release. */
+let updater
 /** The port the window loads, which differs when sharing a running stack. */
 let port = desktopPort
 let mainWindow
 let shutdownStarted
 let shutdownFinished = false
+let updateRunning = false
+
+/**
+ * Returns a plain page that says what Blitz is doing while services start.
+ * @param {string} message One short sentence.
+ */
+function statusPage(message) {
+  const text = message.replaceAll("&", "&amp;").replaceAll("<", "&lt;")
+  return `data:text/html;charset=utf-8,${encodeURIComponent(
+    `<!doctype html><title>Blitz</title><style>html{color-scheme:dark;height:100%}body{height:100%;margin:0;display:grid;place-items:center;background:#111;color:#999;font:14px -apple-system,sans-serif}</style><p>${text}</p>`
+  )}`
+}
 
 /**
  * A packaged app has no terminal, so its services write to a log that starts
@@ -74,7 +116,7 @@ async function createWindow() {
     mainWindow = undefined
     app.quit()
   })
-  await mainWindow.loadURL(startingPage)
+  await mainWindow.loadURL(statusPage("Starting Blitz…"))
 }
 
 /** Rejects renderer calls that do not originate from the loopback Next app. */
@@ -95,7 +137,7 @@ function assertTrustedSender(event) {
 function registerIpc() {
   ipcMain.handle("desktop:service-status", (event) => {
     assertTrustedSender(event)
-    return services.snapshot()
+    return services?.snapshot() ?? {}
   })
   ipcMain.handle("desktop:open-file", async (event, { projectId, path }) => {
     assertTrustedSender(event)
@@ -110,7 +152,202 @@ function registerIpc() {
   })
 }
 
-/** Ensures a single desktop host, starts local services, and opens the app. */
+/** Installs the app menu with the update actions beside the standard macOS items. */
+function installMenu() {
+  Menu.setApplicationMenu(
+    Menu.buildFromTemplate([
+      {
+        label: app.name,
+        submenu: [
+          { role: "about" },
+          { type: "separator" },
+          { label: "Check for updates…", click: () => void runUpdate("check") },
+          { label: "Rebuild Blitz now", click: () => void runUpdate("rebuild") },
+          { type: "separator" },
+          { role: "services" },
+          { type: "separator" },
+          { role: "hide" },
+          { role: "hideOthers" },
+          { role: "unhide" },
+          { type: "separator" },
+          { role: "quit" },
+        ],
+      },
+      { role: "editMenu" },
+      { role: "viewMenu" },
+      { role: "windowMenu" },
+    ])
+  )
+}
+
+/**
+ * Checks for updates or rebuilds, through this app's own updater or the
+ * background server's, and reports the outcome in a dialog.
+ * @param {"check" | "rebuild"} action What the learner chose.
+ */
+async function runUpdate(action) {
+  if (updateRunning) return
+  updateRunning = true
+  try {
+    new Notification({
+      title: action === "rebuild" ? "Rebuilding Blitz" : "Checking for updates",
+      body:
+        action === "rebuild"
+          ? "This takes about a minute. Blitz keeps working until the new build is ready."
+          : "Blitz keeps working while it checks.",
+    }).show()
+    const result = updater
+      ? await updater.check({ rebuild: action === "rebuild", reason: "manual" })
+      : await waitForCheck(blitzHome(), await requestUpdate(blitzHome(), action))
+    if (result.status === "failed") lastFailureAt = result.at
+    await showUpdateResult(result)
+  } catch (error) {
+    await dialog.showMessageBox({
+      type: "warning",
+      message: "Couldn't check for updates",
+      detail: error instanceof Error ? error.message : String(error),
+    })
+  } finally {
+    updateRunning = false
+  }
+}
+
+/**
+ * Shows one update outcome, offering to reload after an update or to open the build log after a failure.
+ * @param {import("./auto-update.mjs").CheckResult} result The finished check.
+ */
+async function showUpdateResult(result) {
+  if (result.status === "updated") {
+    const { response } = await dialog.showMessageBox({
+      type: "info",
+      message: "Blitz updated",
+      detail: result.message,
+      buttons: ["Reload now", "Later"],
+    })
+    if (response === 0) mainWindow?.reload()
+    return
+  }
+  if (result.status === "failed") {
+    const { response } = await dialog.showMessageBox({
+      type: "warning",
+      message: "Blitz couldn't update",
+      detail: `${result.message}\n\nThe current version keeps running.`,
+      buttons: result.logPath ? ["Show build log", "OK"] : ["OK"],
+    })
+    if (response === 0 && result.logPath) shell.showItemInFolder(result.logPath)
+    return
+  }
+  await dialog.showMessageBox({
+    type: result.status === "offline" ? "warning" : "info",
+    message:
+      result.status === "up-to-date"
+        ? "Blitz is up to date"
+        : result.status === "offline"
+          ? "Couldn't check for updates"
+          : "No update to install",
+    detail: result.message,
+  })
+}
+
+/** The last update failure already shown, so each one is announced once. */
+let lastFailureAt = launchedAt
+/** The release the window last loaded, to announce background updates. */
+let shownRelease
+
+/**
+ * Announces background updates and failed builds every minute: an update
+ * offers a reload, and a failure links to its build log.
+ */
+function watchServerState() {
+  const timer = setInterval(async () => {
+    const state = await readServerState(blitzHome())
+    if (!state) return
+    const failure = state.failure
+    if (failure?.at && failure.at > lastFailureAt) {
+      lastFailureAt = failure.at
+      const notification = new Notification({
+        title: "Blitz couldn't update",
+        body: "The current version keeps running. Click to see the build log.",
+      })
+      notification.on("click", () => {
+        if (failure.logPath) shell.showItemInFolder(failure.logPath)
+      })
+      notification.show()
+    }
+    const release = state.release?.commit
+    if (release && shownRelease && release !== shownRelease) {
+      const notification = new Notification({
+        title: "Blitz updated",
+        body: `Now running ${shortCommit(release)}. Click to reload.`,
+      })
+      notification.on("click", () => mainWindow?.reload())
+      notification.show()
+    }
+    if (release) shownRelease = release
+  }, 60_000)
+  timer.unref?.()
+}
+
+/**
+ * Waits for a running Blitz stack, such as the background server starting.
+ * @param {number} timeoutMs How long to wait.
+ */
+async function waitForStack(timeoutMs) {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    const running = await findRunningStack(repositoryRoot(), [lanPort, desktopPort])
+    if (running) return running
+    await new Promise((resolve) => setTimeout(resolve, 1_000))
+  }
+  return undefined
+}
+
+/**
+ * Starts the stack inside this app: the current release with the updater, or
+ * a production build of this checkout.
+ */
+async function hostStack() {
+  const home = blitzHome()
+  const config = await readServerConfig(home)
+  const release = await readRelease(repositoryRoot())
+  services = new ServiceManager({
+    cwd: repositoryRoot(),
+    port: desktopPort,
+    host,
+    production: true,
+    distDir: release ? undefined : CHECKOUT_DIST_DIR,
+    pidFile: join(homePaths(home).run, "desktop-services.json"),
+    stdio: serviceOutput(),
+  })
+  await services.reapOrphans()
+  if (release && config) {
+    updater = new AutoUpdater({
+      releases: new ReleaseManager({ home, config, processes: services }),
+      services,
+      home,
+      host: "desktop",
+    })
+    // Before `prepare` publishes this process's ID; requests wait for `start`.
+    updater.listenForRequests()
+    await mainWindow?.loadURL(statusPage("Preparing Blitz…"))
+    await updater.prepare().catch(async (error) => {
+      await updater?.failWaitingRequests(error instanceof Error ? error.message : String(error))
+      throw error
+    })
+  } else {
+    const environment = await services.prepareEnvironment()
+    await mainWindow?.loadURL(statusPage("Building Blitz. This takes about a minute the first time…"))
+    await buildCheckout(repositoryRoot(), {
+      NEXT_PUBLIC_CONVEX_URL: environment.NEXT_PUBLIC_CONVEX_URL,
+      NEXT_PUBLIC_CONVEX_SITE_URL: environment.NEXT_PUBLIC_CONVEX_SITE_URL,
+    })
+  }
+  await mainWindow?.loadURL(statusPage("Starting Blitz…"))
+  await services.start()
+  updater?.start()
+}
+
+/** Ensures a single desktop host, finds or starts local services, and opens the app. */
 async function boot() {
   if (
     process.platform !== "darwin" &&
@@ -136,16 +373,20 @@ async function boot() {
     mainWindow?.focus()
   })
   registerIpc()
+  installMenu()
   await createWindow()
   if (app.isPackaged) Object.assign(process.env, await loadLoginEnvironment())
-  const running = await findRunningStack(repositoryRoot(), [
-    lanPort,
-    desktopPort,
-  ])
+  let running = await findRunningStack(repositoryRoot(), [lanPort, desktopPort])
+  if (!running && isServerInstalled()) {
+    await startServer().catch(() => undefined)
+    running = await waitForStack(serverStartTimeoutMs)
+  }
   if (running) port = running.port
-  else await services.start()
+  else await hostStack()
   // The learner may have closed the window while the services were starting.
   if (!mainWindow) return
+  shownRelease = (await readServerState(blitzHome()))?.release?.commit
+  watchServerState()
   await mainWindow.loadURL(`http://127.0.0.1:${port}`)
   startReminders(running?.convexUrl ?? services.environment.BLITZ_CONVEX_URL)
 }
@@ -195,9 +436,10 @@ function startReminders(convexUrl) {
   })
 }
 
-/** Stops every managed process group before the Electron process exits. */
+/** Stops the hosted stack, if any, before the Electron process exits. */
 function shutdown() {
-  shutdownStarted ??= services.stop().finally(() => {
+  updater?.stop()
+  shutdownStarted ??= (services?.stop() ?? Promise.resolve()).finally(() => {
     shutdownFinished = true
   })
   return shutdownStarted
@@ -224,4 +466,4 @@ app.on("before-quit", (event) => {
 })
 app.on("window-all-closed", () => app.quit())
 // Detached service groups must not outlive a crashed desktop host.
-process.once("exit", () => services.killNow())
+process.once("exit", () => services?.killNow())
