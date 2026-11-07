@@ -65,14 +65,29 @@ On launch and every 15 minutes the server fetches `main`. When it has moved:
 4. The new Convex functions are pushed to the running backend. The push is
    atomic: if the schema does not match the stored data, nothing changes.
 5. Every service restarts from the new release, so Blitz is offline for a few
-   seconds. If the new stack does not become healthy, the previous release
-   starts again and its functions are pushed back.
+   seconds.
+6. `current` is pointed at the new release.
+
+Steps 4 to 6 succeed or are undone together. If any of them fails, including a
+push that times out after the backend may already have taken the new
+functions, the previous release's functions are pushed back and its services
+run again; if that push fails too, the previous release restarts, which pushes
+them as Convex starts. If the previous release will not start again either,
+the new one keeps running and is recorded as the release being served. A crash
+during these steps needs no recovery: the next launch serves `current`, still
+the previous release, and Convex pushes its functions as it starts.
 
 A commit that fails is not retried every 15 minutes; a newer commit, `rebuild`,
 or `Rebuild Blitz now` tries again. The desktop app shows a notification with
 the build log. When an update changes the server code itself
 (`RUNNER_FILES` in `electron/auto-update.mjs`), the server exits after
 switching and launchd starts it again from the new release.
+
+`check` and `rebuild` write a request file to `run/requests/` and signal the
+server, which answers each request by ID in `run/state.json`. A request sent
+while the server is starting waits until it is serving, and one sent while a
+launch is waiting to retry makes it retry now. A rebuild asked for during a
+plain check runs after that check, instead of being answered by it.
 
 A commit that does not contain `electron/release-manager.mjs` is never served,
 since it could not update itself again.
@@ -88,7 +103,12 @@ update pushes the new release's functions just before switching (step 4).
 Only one Convex backend may open the database. Every launcher checks the saved
 port's `/instance_name` first and refuses to start a second backend, and each
 records its process groups in `~/.blitz/run/*-services.json` so the next launch
-stops any it left behind after being killed.
+stops any it left behind after being killed. That includes release builds and
+trial servers, and `next dev`, which the supervisor runs directly rather than
+through `scripts/dev.mjs`. Each group is recorded with its leader's start time,
+so a process that later reuses the ID is never stopped. Stopping a service
+waits until every process in its group is gone, killing survivors after five
+seconds, so nothing keeps a port or the database open into the next start.
 
 ## Phone access
 
