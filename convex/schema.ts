@@ -9,6 +9,9 @@ import {
   contextCompactionFields,
   contextUsageFields,
   teachOutlineFields,
+  teachPendingSectionFields,
+  teachUpdateRecordFields,
+  teachUpdateRunFields,
   teachRedoStyleField,
   teachSectionPlanFields,
   turnNoticeFields,
@@ -851,6 +854,21 @@ export default defineSchema({
     teachSectionIndex: v.optional(v.number()),
     /** Ids of the outline sections actually taught. */
     teachTaughtSectionIds: v.optional(v.array(v.string())),
+    /**
+     * Unit sources this session's outline reflects. Absent on sessions planned
+     * before lesson updates existed, which fall back to the session's start date.
+     */
+    teachCoveredSourceIds: v.optional(v.array(v.id("sources"))),
+    /** The latest lesson update, while it runs or after it failed. */
+    teachUpdateRun: v.optional(teachUpdateRunFields),
+    /** Sections to teach because new files changed or added them. */
+    teachPendingSections: v.optional(v.array(teachPendingSectionFields)),
+    /** Finished lesson updates, oldest first. */
+    teachUpdates: v.optional(v.array(teachUpdateRecordFields)),
+    /** New sources a finished update found that the live session has not yet been sent. */
+    teachUnsentSourceIds: v.optional(v.array(v.id("sources"))),
+    /** Summaries of the updates the live session has not yet been told about. */
+    teachUnsentSummaries: v.optional(v.array(v.string())),
     /**
      * Ordinary chat holding the learner's questions beside this Teach session,
      * kept apart so asking never disturbs the lesson's own conversation.

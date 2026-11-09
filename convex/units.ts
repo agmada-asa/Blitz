@@ -15,6 +15,8 @@ import { passageScore } from "../lib/citations"
 import { teachTurnFocus } from "../lib/teach-focus"
 import { searchTerms } from "../lib/search-terms"
 import { conceptStrength } from "../lib/drill"
+import { MAX_UPDATED_TEACH_SECTIONS } from "../lib/teach-limits"
+import { teachNewSources, teachUpdateInstruction } from "../lib/teach-updates"
 import { teachOutlineFields, teachSectionPlanFields } from "./teachFields"
 
 /** Reference-book passages added to one Teach turn. */
@@ -113,8 +115,41 @@ async function knownConcepts(
   return { strong, shaky }
 }
 
-/** Summarises a Teach session's position in its outline. */
-function teachSummary(chat: Doc<"workspaceChats"> | null) {
+/**
+ * Summarises what is waiting for a lesson: files it has not seen, a running or
+ * failed update, and sections queued by an earlier one. Null before the lesson
+ * has an outline, when a first turn will read every file anyway.
+ */
+function teachUpdateSummary(
+  chat: Doc<"workspaceChats">,
+  sources: ReturnType<typeof sourceSummary>[]
+) {
+  if (!chat.teachOutline) return null
+  const run = chat.teachUpdateRun
+  return {
+    newSources: teachNewSources(chat.teachCoveredSourceIds, chat.createdAt, sources).map(
+      (source) => ({ id: source.id, filename: source.filename })
+    ),
+    run: run
+      ? {
+          status: run.status,
+          startedAt: run.startedAt,
+          sourceCount: run.sourceIds.length,
+          error: run.error ?? null,
+        }
+      : null,
+    pendingSections: chat.teachPendingSections ?? [],
+  }
+}
+
+/**
+ * Summarises a Teach session's position in its outline.
+ * @param sources The unit's sources, when the caller wants its update state.
+ */
+function teachSummary(
+  chat: Doc<"workspaceChats"> | null,
+  sources?: ReturnType<typeof sourceSummary>[]
+) {
   if (!chat) return null
   const total = chat.teachOutline?.sections.length ?? 0
   const reached = chat.teachSectionIndex ?? (total ? 0 : -1)
@@ -139,6 +174,8 @@ function teachSummary(chat: Doc<"workspaceChats"> | null) {
         ? chat.teachOutline!.sections[reached].title
         : null,
     updatedAt: chat.updatedAt,
+    /** New files and lesson update state; null when the caller did not ask or there is no outline. */
+    update: sources ? teachUpdateSummary(chat, sources) : null,
   }
 }
 
@@ -190,17 +227,20 @@ export const listForProject = query({
       } else byUnit.set(source.unitId, [...(byUnit.get(source.unitId) ?? []), source])
     }
     const result = await Promise.all(
-      units.map(async (unit) => ({
-        id: unit._id,
-        title: unit.title,
-        titleSource: unit.titleSource,
-        order: unit.order,
-        createdAt: unit.createdAt,
-        sources: (byUnit.get(unit._id) ?? [])
+      units.map(async (unit) => {
+        const unitSources = (byUnit.get(unit._id) ?? [])
           .sort((a, b) => a.createdAt - b.createdAt)
-          .map(sourceSummary),
-        teach: teachSummary(await latestTeachChat(ctx, unit._id)),
-      }))
+          .map(sourceSummary)
+        return {
+          id: unit._id,
+          title: unit.title,
+          titleSource: unit.titleSource,
+          order: unit.order,
+          createdAt: unit.createdAt,
+          sources: unitSources,
+          teach: teachSummary(await latestTeachChat(ctx, unit._id), unitSources),
+        }
+      })
     )
     return {
       units: result,
@@ -233,15 +273,16 @@ export const get = query({
       .withIndex("by_project_order", (q) => q.eq("projectId", unit.projectId))
       .collect()
     const position = siblings.findIndex((item) => item._id === unitId)
+    const summaries = sources
+      .sort((a, b) => a.createdAt - b.createdAt)
+      .map(sourceSummary)
     return {
       id: unit._id,
       projectId: unit.projectId,
       projectTitle: project.title,
       title: unit.title,
-      sources: sources
-        .sort((a, b) => a.createdAt - b.createdAt)
-        .map(sourceSummary),
-      teach: teachSummary(chat),
+      sources: summaries,
+      teach: teachSummary(chat, summaries),
       outline: chat?.teachOutline ?? null,
       plan: chat?.teachSectionPlan ?? null,
       nextUnit:
@@ -470,10 +511,22 @@ export const teachContext = query({
         .withIndex("by_unit", (q) => q.eq("unitId", unit._id))
         .collect()
     ).sort((a, b) => a.createdAt - b.createdAt)
+    // Once a lesson has been updated, Blitz decides what `Next section` teaches.
+    const instruction =
+      chat.teachOutline && chat.teachUpdates?.length
+        ? teachUpdateInstruction(message ?? "", {
+            outline: chat.teachOutline,
+            plan: chat.teachSectionPlan ?? null,
+            taughtSectionIds: new Set(chat.teachTaughtSectionIds ?? []),
+            pending: chat.teachPendingSections ?? [],
+            sectionIndex: chat.teachSectionIndex ?? 0,
+          })
+        : undefined
     const focus = teachTurnFocus(
       message ?? "",
       chat.teachOutline,
-      chat.teachSectionIndex
+      chat.teachSectionIndex,
+      instruction?.focus
     )
     // Every chunk is citable when the unit is small; otherwise the passages
     // closest to this turn's focus win, with document order as the tiebreak.
@@ -551,6 +604,15 @@ export const teachContext = query({
           })
       }
     }
+    const readableSources = sources
+      .filter((source) => source.extractedText.trim())
+      .map((source) => ({
+        id: source._id,
+        filename: source.filename,
+        ...(source.relativeKey ? { relativeKey: source.relativeKey } : {}),
+        text: source.extractedText.slice(0, MAX_TEACH_SOURCE_TEXT),
+        truncated: source.extractedText.length > MAX_TEACH_SOURCE_TEXT,
+      }))
     const chunkIds = [
       ...candidates
         .sort((a, b) => b.score - a.score || a.order - b.order)
@@ -569,15 +631,21 @@ export const teachContext = query({
       sectionIndex: chat.teachSectionIndex ?? null,
       plan: chat.teachSectionPlan ?? null,
       knownConcepts: await knownConcepts(ctx, unit.projectId, unit._id),
-      sources: sources
-        .filter((source) => source.extractedText.trim())
-        .map((source) => ({
-          id: source._id,
-          filename: source.filename,
-          ...(source.relativeKey ? { relativeKey: source.relativeKey } : {}),
-          text: source.extractedText.slice(0, MAX_TEACH_SOURCE_TEXT),
-          truncated: source.extractedText.length > MAX_TEACH_SOURCE_TEXT,
-        })),
+      sources: readableSources,
+      /** Replaces the learner's message for the tutor when an update decided the next section. */
+      updateInstruction: instruction?.message ?? null,
+      /** An update this session has not been told about yet; cleared when a turn delivers it. */
+      update:
+        chat.teachOutline && chat.teachUnsentSummaries?.length
+          ? {
+              outline: chat.teachOutline,
+              ...(chat.teachSectionPlan ? { plan: chat.teachSectionPlan } : {}),
+              summaries: chat.teachUnsentSummaries,
+              sources: readableSources.filter((source) =>
+                chat.teachUnsentSourceIds?.includes(source.id)
+              ),
+            }
+          : null,
       citationChunkIds: chunkIds,
       /**
        * What this turn teaches, for ranking citable passages. A quick reply
@@ -591,7 +659,8 @@ export const teachContext = query({
 
 /**
  * Records outline progress parsed from a finished Teach reply. The first
- * outline is kept; later outlines are ignored so section ids stay stable.
+ * outline is kept; later outlines are ignored so section ids stay stable, and
+ * only a lesson update (`teachUpdates.apply`) may revise it.
  * Progress only moves forward, and an `auto` unit title takes the tutor's
  * topic title.
  */
@@ -605,6 +674,8 @@ export const recordTeachProgress = mutation({
     sectionId: v.optional(v.string()),
     /** Replacement title for an `auto` unit, derived from the outline. */
     unitTitle: v.optional(v.string()),
+    /** Sources the turn that wrote the first outline was given. */
+    coveredSourceIds: v.optional(v.array(v.id("sources"))),
   },
   handler: async (ctx, args) => {
     const chat = await ctx.db.get(args.chatId)
@@ -612,7 +683,7 @@ export const recordTeachProgress = mutation({
       throw new Error("Teach session not found")
     const outline = chat.teachOutline ?? args.outline
     if (!outline) return
-    if (outline.sections.length > 12 || !outline.sections.length)
+    if (outline.sections.length > MAX_UPDATED_TEACH_SECTIONS || !outline.sections.length)
       throw new Error("Outline is invalid")
     // The index is the section being taught now (a jump moves it anywhere);
     // `taught` records which sections were actually taught.
@@ -643,6 +714,18 @@ export const recordTeachProgress = mutation({
       teachSectionIndex: index,
       teachTaughtSectionIds: [...taught],
       ...(plan ? { teachSectionPlan: plan } : {}),
+      // The first outline fixes what the lesson has seen; later files are new to it.
+      ...(!chat.teachOutline && args.coveredSourceIds
+        ? { teachCoveredSourceIds: args.coveredSourceIds }
+        : {}),
+      // Teaching a queued section takes it off the queue.
+      ...(args.sectionId && chat.teachPendingSections?.some((entry) => entry.id === args.sectionId)
+        ? {
+            teachPendingSections: chat.teachPendingSections.filter(
+              (entry) => entry.id !== args.sectionId
+            ),
+          }
+        : {}),
     })
     const startedUnit = await ctx.db.get(chat.unitId)
     if (startedUnit && !startedUnit.startedAt)

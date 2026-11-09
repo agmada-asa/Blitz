@@ -285,6 +285,7 @@ const finishTurnContext = makeFunctionReference<
     messageId: Id<"workspaceChatMessages">
     usage?: NonNullable<CardChatResult["contextUsage"]> & { updatedAt: number }
     restated: boolean
+    updateDelivered?: boolean
   },
   null
 >("workspaceChats:finishTurnContext")
@@ -888,7 +889,7 @@ export async function POST(request: Request): Promise<Response> {
         const teachMessage =
           turn.redo && input.redo
             ? teachRedoMessage(turn.redo.originalMessage, input.redo.style)
-            : input.message
+            : (teach?.updateInstruction ?? input.message)
         /**
          * Builds a Teach turn's prompt, with the unit material when the
          * session needs it. After a compaction the material, outline, and
@@ -922,6 +923,7 @@ export async function POST(request: Request): Promise<Response> {
               ? { sectionIndex: teach!.sectionIndex }
               : {}),
             ...(teach!.plan ? { plan: teach!.plan } : {}),
+            ...(teach!.update ? { update: teach!.update } : {}),
             ...(precheck ? { precheck } : {}),
             knownConcepts: teach!.knownConcepts,
             references: teach!.referenceExcerpts,
@@ -1389,6 +1391,7 @@ export async function POST(request: Request): Promise<Response> {
               // restatement, unless the runtime compacted after it.
               restated:
                 (replay || restate || requestedCompacted) && !runtimeCompacted,
+              updateDelivered: Boolean(teach.update),
             })
             .catch((error: unknown) => {
               console.warn("Teach could not save context usage", {
@@ -1412,6 +1415,10 @@ export async function POST(request: Request): Promise<Response> {
                 : {}),
               ...(outline && teach.unitTitleSource === "auto"
                 ? { unitTitle: teachUnitTitle(teach.unitTitle, outline.title) }
+                : {}),
+              // Fixes the files this outline was written from, for spotting later ones.
+              ...(outline && !teach.outline
+                ? { coveredSourceIds: teach.sources.map((source) => source.id) }
                 : {}),
             })
             .catch((error: unknown) => {

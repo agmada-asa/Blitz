@@ -33,6 +33,7 @@ import type * as sources from "../sources.js";
 import type * as study from "../study.js";
 import type * as teach from "../teach.js";
 import type * as teachFields from "../teachFields.js";
+import type * as teachUpdates from "../teachUpdates.js";
 import type * as units from "../units.js";
 import type * as workspaceChats from "../workspaceChats.js";
 import type * as writing from "../writing.js";
@@ -69,6 +70,7 @@ declare const fullApi: ApiFromModules<{
   study: typeof study;
   teach: typeof teach;
   teachFields: typeof teachFields;
+  teachUpdates: typeof teachUpdates;
   units: typeof units;
   workspaceChats: typeof workspaceChats;
   writing: typeof writing;
