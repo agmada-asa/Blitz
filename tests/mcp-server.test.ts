@@ -45,6 +45,7 @@ test("a plain client sees the agent tools, each with its risk", async (t) => {
     read_module: true,
     create_module: false,
     add_material: false,
+    update_unit: false,
   })
   for (const tool of tools)
     assert.equal(tool.annotations?.openWorldHint, false, tool.name)
