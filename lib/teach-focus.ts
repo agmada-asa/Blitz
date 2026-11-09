@@ -3,8 +3,8 @@
  * offered as citations. Kept dependency-free so Convex queries can import it.
  */
 
-/** Quick-reply wording that advances to the next section. Mirrors `TEACH_QUICK_REPLIES.next`. */
-const NEXT_SECTION = "next section"
+/** Quick-reply wording that advances to the next section, lower-cased. Mirrors `TEACH_QUICK_REPLIES.next`. */
+export const NEXT_SECTION = "next section"
 
 /** Outline shape needed to resolve a turn's focus. */
 type FocusOutline = { title: string; sections: Array<{ id: string; title: string }> }
@@ -20,13 +20,16 @@ type FocusOutline = { title: string; sections: Array<{ id: string; title: string
  * @param message The learner's message for this turn.
  * @param outline The session outline, when the tutor has proposed one.
  * @param sectionIndex Zero-based furthest section taught so far.
+ * @param target Section this turn is known to teach, when a lesson update already decided it.
  */
 export function teachTurnFocus(
   message: string,
   outline: FocusOutline | undefined,
-  sectionIndex: number | undefined
+  sectionIndex: number | undefined,
+  target?: string
 ): string | undefined {
   if (!outline) return undefined
+  if (target) return target
   const current = outline.sections[Math.min(sectionIndex ?? 0, outline.sections.length - 1)]
   const trimmed = message.trim()
   if (trimmed.toLowerCase() === NEXT_SECTION) {
