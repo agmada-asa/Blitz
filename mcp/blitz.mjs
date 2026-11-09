@@ -1,6 +1,7 @@
 /**
  * The Blitz operations behind the MCP tools: reading the Library, Today and a
- * module's units, creating modules, and adding material to a unit. It talks to
+ * module's units, creating modules, adding material to a unit, and updating a
+ * unit's lesson from files that arrived after it was planned. It talks to
  * the running app the same way the web client does: Convex queries and
  * mutations for data, and the Next upload routes for files, so every source
  * goes through the usual extraction, chunking and Teach preparation.
@@ -260,6 +261,28 @@ export async function listModules(blitz) {
   }
 }
 
+/** Mirrors `TEACH_UPDATE_LEASE_MS` in `lib/teach-updates.ts`, which plain Node can't import. */
+const UPDATE_LEASE_MS = 10 * 60 * 1000
+
+/**
+ * What a unit's lesson is waiting for, as `readModule` reports it.
+ *
+ * @param teach The unit's Teach summary.
+ * @returns New files, whether an update is running and why one failed; null for a unit with no outline yet.
+ */
+function updateItem(teach) {
+  const update = teach?.update
+  if (!update) return null
+  return {
+    newFiles: update.newSources.map((source) => source.filename),
+    running:
+      update.run?.status === "running" &&
+      update.run.startedAt > Date.now() - UPDATE_LEASE_MS,
+    waitingSections: update.pendingSections.length,
+    error: update.run?.status === "failed" ? (update.run.error ?? "") : null,
+  }
+}
+
 /** One source of a module, as `readModule` reports it. */
 function sourceItem(source) {
   return {
@@ -305,6 +328,7 @@ export async function readModule(blitz, name) {
         answered: drill?.answeredCount ?? 0,
         correct: drill?.correctCount ?? 0,
         sources: unit.sources.map(sourceItem),
+        update: updateItem(unit.teach),
       }
     }),
     unsorted: path.unsortedSources.map(sourceItem),
@@ -331,6 +355,16 @@ export async function readModule(blitz, name) {
       `- ${unit.title} (${unit.taught}% taught${teach}) · id ${unit.id} · ${blitz.links}/projects/${data.id}/learn/${unit.id}`
     )
     lines.push(...unit.sources.map(source))
+    if (unit.update?.running) lines.push("  The lesson is being updated from new material.")
+    else if (unit.update?.newFiles.length)
+      lines.push(
+        `  Not in the lesson yet: ${unit.update.newFiles.join(", ")}. Update it with update_unit.`
+      )
+    if (unit.update?.error) lines.push(`  The last update failed: ${unit.update.error}`)
+    if (unit.update?.waitingSections)
+      lines.push(
+        `  ${unit.update.waitingSections} section${unit.update.waitingSections === 1 ? "" : "s"} waiting to be taught from new material.`
+      )
   }
   if (data.unsorted.length)
     lines.push("Not in a unit yet:", ...data.unsorted.map(source))
@@ -558,6 +592,10 @@ export async function addMaterial(blitz, input) {
 
   const added = results.filter((result) => result.ok).length
   const unitTitle = existing?.title ?? unitName
+  const outcome = [
+    `${added} of ${results.length} added to ${found.title} › ${unitTitle}${existing ? "" : " (new unit)"}. Teach it: ${blitz.links}/projects/${found.id}/learn/${unitId}`,
+    ...results.map((result) => `- ${result.filename}: ${result.note}`),
+  ]
   // A new unit that received nothing is empty; remove it, as the web dialog does.
   if (!existing && !added) {
     await blitz.convex
@@ -568,8 +606,82 @@ export async function addMaterial(blitz, input) {
       ...results.map((result) => `- ${result.filename}: ${result.note}`),
     ].join("\n")
   }
-  return [
-    `${added} of ${results.length} added to ${found.title} › ${unitTitle}${existing ? "" : " (new unit)"}. Teach it: ${blitz.links}/projects/${found.id}/learn/${unitId}`,
-    ...results.map((result) => `- ${result.filename}: ${result.note}`),
-  ].join("\n")
+  // A unit that already has a lesson doesn't use new files until it is updated.
+  if (existing && added) {
+    if (input.update_lesson)
+      // The material is already in; a failed update mustn't read as a failed upload.
+      outcome.push(
+        await startUpdate(blitz, unitId, unitTitle).catch(
+          (error) =>
+            `The lesson update didn't start: ${error instanceof Error ? error.message : String(error)}`
+        )
+      )
+    else {
+      const after = await blitz.convex.query(anyApi.units.listForProject, {
+        projectId: found.id,
+      })
+      const fresh = after.units.find((unit) => unit.id === unitId)?.teach?.update?.newSources
+      if (fresh?.length)
+        outcome.push(
+          `This unit already has a lesson, and ${fresh.length === 1 ? "this file isn't" : "these files aren't"} in it yet. Call update_unit to update it, or ask the user first if they'd rather choose.`
+        )
+    }
+  }
+  return outcome.join("\n")
+}
+
+/**
+ * Asks Blitz to update a unit's lesson and says what happened. The update runs in
+ * the app; this returns as soon as it has started, so a slow analysis can't time out.
+ *
+ * @returns A sentence for the agent.
+ * @throws BlitzError when the request itself fails.
+ */
+async function startUpdate(blitz, unitId, unitTitle) {
+  const response = await fetch(`${blitz.app}/api/teach/update`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ unitId }),
+  })
+  if (!response.ok)
+    throw new BlitzError(
+      await responseError(response, "Blitz couldn't start the lesson update.")
+    )
+  const { status } = await response.json()
+  const messages = {
+    started: `Updating ${unitTitle}'s lesson from its new files. It runs in the background: read_module shows when it has finished, and progress and past answers are kept.`,
+    running: `${unitTitle}'s lesson is already being updated.`,
+    busy: `${unitTitle}'s tutor is writing a reply. Try update_unit again in a moment.`,
+    "up-to-date": `${unitTitle}'s lesson already covers every file in the unit.`,
+    "no-lesson": `${unitTitle} has no lesson yet. It will use every file in the unit when it's first taught, so there's nothing to update.`,
+  }
+  return messages[status] ?? `Blitz reported "${status}".`
+}
+
+/**
+ * Updates a unit's lesson from the files added since it was planned: changed
+ * sections are queued to be taught again and new topics become new sections.
+ *
+ * @param input The module and the unit, each named by title or id.
+ * @returns A sentence for the agent.
+ * @throws BlitzError when the module or unit can't be identified.
+ */
+export async function updateUnit(blitz, input) {
+  const found = await findModule(blitz, input.module)
+  const wanted = String(input.unit ?? "").trim()
+  const { units } = await blitz.convex.query(anyApi.units.listForProject, {
+    projectId: found.id,
+  })
+  const exact = units.filter(
+    (unit) => unit.id === wanted || unit.title.toLowerCase() === wanted.toLowerCase()
+  )
+  const partial = units.filter((unit) =>
+    unit.title.toLowerCase().includes(wanted.toLowerCase())
+  )
+  const unit = exact[0] ?? (wanted && partial.length === 1 ? partial[0] : null)
+  if (!unit)
+    throw new BlitzError(
+      `No single unit in ${found.title} matches "${wanted}". Units: ${units.map((item) => `"${item.title}"`).join(", ")}.`
+    )
+  return startUpdate(blitz, unit.id, unit.title)
 }

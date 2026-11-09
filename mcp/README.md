@@ -13,8 +13,11 @@ node mcp/server.mjs
 | `read_module`   | One module's units, each with its sources and Teach progress, plus unsorted and reference sources.                 |
 | `create_module` | Creates an empty module.                                                                                           |
 | `add_material`  | Adds local files, public links and written notes to a unit, creating the unit when no existing one has that title. |
+| `update_unit`   | Updates a unit's lesson from files added after it was planned, keeping progress and past answers.                  |
 
 Material goes through the same upload and extraction routes as the web app's Add material dialog, so it is ready to teach afterwards. A new unit that ends up with nothing in it is removed again. Links that redirect to a sign-in page are refused: download those to a file first.
+
+A lesson already planned doesn't use new files until it is updated. `add_material` and `read_module` say when a unit needs that; `update_unit`, or `update_lesson: true` on `add_material`, starts it. The update runs in the app in the background, so the tool returns straight away and `read_module` shows when it has finished.
 
 The server keeps no state and needs Blitz running on the same Mac. It finds the app on `3007` (`npm run dev:lan`) or `3008` (the desktop shell) and the Convex deployment from `.convex/local/default/config.json`. `BLITZ_URL` and `BLITZ_CONVEX_URL` override them. Links in its answers use the Mac's Tailscale name when it has one, so they open on a phone too; `BLITZ_PUBLIC_URL` overrides that.
 

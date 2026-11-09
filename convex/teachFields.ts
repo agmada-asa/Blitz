@@ -3,7 +3,8 @@
  * the schema and the mutation that records Teach progress. The shapes mirror
  * `TeachOutline` and `TeachSectionPlan` in `lib/teach.ts`.
  *
- * Also the records a long session keeps about its model context (usage after
+ * Also the state of a lesson update (`lib/teach-updates.ts`) and the records a
+ * long session keeps about its model context (usage after
  * each turn and every compaction, mirroring `lib/context-usage.ts`), the style
  * a redone Teach reply was asked for, and the runtime notices saved on any
  * chat reply (`lib/turn-notices.ts`).
@@ -31,6 +32,37 @@ export const teachSectionPlanFields = v.array(
     mode: v.union(v.literal("skip"), v.literal("skim"), v.literal("teach")),
   })
 )
+
+/** A section waiting to be taught because new files changed or added it. */
+export const teachPendingSectionFields = v.object({
+  id: v.string(),
+  change: v.union(v.literal("updated"), v.literal("added")),
+  /** What the new files change, passed to the tutor when it teaches the section. */
+  note: v.string(),
+})
+
+/** One finished lesson update, shown as a divider where it happened. */
+export const teachUpdateRecordFields = v.object({
+  at: v.number(),
+  filenames: v.array(v.string()),
+  summary: v.string(),
+  sections: v.array(
+    v.object({
+      id: v.string(),
+      change: v.union(v.literal("updated"), v.literal("added")),
+    })
+  ),
+})
+
+/** A lesson update in progress, or the one that last failed. */
+export const teachUpdateRunFields = v.object({
+  status: v.union(v.literal("running"), v.literal("failed")),
+  /** Identifies the run, so a late finish from an expired run changes nothing. */
+  token: v.string(),
+  startedAt: v.number(),
+  sourceIds: v.array(v.id("sources")),
+  error: v.optional(v.string()),
+})
 
 /** How a redone Teach reply was asked to explain the section again. */
 export const teachRedoStyleField = v.union(

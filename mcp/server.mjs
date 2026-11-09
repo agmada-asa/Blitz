@@ -2,7 +2,8 @@
 /**
  * Serves Blitz to agents outside the app (Codex, Claude and Gemini agents) over
  * MCP stdio, using the official SDK: what's due today, the Library, a module's
- * units, creating modules and adding material to a unit. Each tool declares how
+ * units, creating modules, adding material to a unit and updating a unit's
+ * lesson from files that arrived after it was planned. Each tool declares how
  * risky it is through annotations. The three reads also return their data as
  * `structuredContent`, so a client with a UI can use the tool an agent reads.
  * It needs Blitz running on this Mac and holds no state of its own.
@@ -27,6 +28,7 @@ import {
   listModules,
   readModule,
   today,
+  updateUnit,
 } from "./blitz.mjs"
 
 /** The MCP Apps extension's name in a client's capabilities. */
@@ -38,6 +40,7 @@ const INSTRUCTIONS =
   "A module is a course (e.g. a university module); a unit is a week or a lecture within it. " +
   "To put new material in Blitz: list_modules, read_module to see the existing units, then add_material with an existing unit's title or a new one. " +
   "Downloads that need a sign-in (Canvas, Blackboard) must be saved to a local file first and added as files. " +
+  "A unit that has already been taught doesn't use new files until its lesson is updated: add_material and read_module say when that's needed, and update_unit does it, keeping progress and past answers. " +
   "Every tool needs Blitz running on the Mac; if it isn't, say so rather than retrying."
 
 /** Annotations for a tool that only reads Blitz. */
@@ -121,6 +124,14 @@ const MODULE_OUTPUT = {
       answered: z.number(),
       correct: z.number(),
       sources: z.array(SOURCE),
+      update: z
+        .object({
+          newFiles: z.array(z.string()),
+          running: z.boolean(),
+          waitingSections: z.number(),
+          error: z.string().nullable(),
+        })
+        .nullable(),
     })
   ),
   unsorted: z.array(SOURCE),
@@ -283,10 +294,31 @@ server.registerTool(
         .string()
         .optional()
         .describe("A title for the notes. Optional: their first line."),
+      update_lesson: z
+        .boolean()
+        .optional()
+        .describe(
+          "Also update the unit's lesson from what was added, if it already has one. Optional: otherwise the reply says when an update is needed."
+        ),
     },
     annotations: WRITES,
   },
   tool((blitz, args) => addMaterial(blitz, args))
+)
+
+server.registerTool(
+  "update_unit",
+  {
+    description:
+      "Updates a unit's lesson from files added after it was planned: works out which sections they change, adds sections for new topics, and queues only those to be taught. Progress, answers and past lessons are kept. " +
+      "Starts in the background and returns at once; read_module shows when it has finished.",
+    inputSchema: {
+      module: z.string().describe("The module's title or id."),
+      unit: z.string().describe("The unit's title (or part of it, if only one matches) or id."),
+    },
+    annotations: WRITES,
+  },
+  tool((blitz, args) => updateUnit(blitz, args))
 )
 
 // The local module's tools stay off until the client has introduced itself. Their `enabled` flag

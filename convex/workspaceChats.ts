@@ -6,6 +6,7 @@ import { v } from "convex/values"
 import { AI_PROVIDER_IDS } from "../lib/ai-model-settings"
 import { shouldCompactBeforeTurn } from "../lib/context-usage"
 import { providerThreadFeatures } from "../lib/provider-thread-features"
+import { isTeachUpdateRunning } from "../lib/teach-updates"
 import { addTurnNotice } from "../lib/turn-notices"
 import {
   contextUsageFields,
@@ -607,6 +608,7 @@ export const get = query({
       contextUsage: chat.contextUsage ?? null,
       contextCompactions: chat.contextCompactions ?? [],
       compactingSince: chat.compactingSince ?? null,
+      teachUpdates: chat.teachUpdates ?? [],
       messages: messages.map((message) => ({
         id: message._id,
         clientMessageId: message.clientMessageId ?? null,
@@ -804,6 +806,8 @@ export const startTurn = mutation({
     if (chat) chat = await ctx.db.get(chat._id)
     if (chat?.compactingSince && chat.compactingSince > now - COMPACTION_LEASE_MS)
       throw new Error("Blitz is compacting this session. Try again in a moment.")
+    if (isTeachUpdateRunning(chat?.teachUpdateRun, now))
+      throw new Error("Blitz is updating this lesson. Try again in a moment.")
     const storedProvider = chat ? persistedChatProvider(chat) : undefined
     if (
       storedProvider &&
@@ -1778,6 +1782,8 @@ export const recordCompaction = mutation({
 /**
  * Saves how full the context is after a finished turn, and, when the turn
  * restated the Teach context after a compaction, that it no longer needs to.
+ * A turn that told the session about a lesson update clears it the same way;
+ * a failed turn never reaches here, so the update is simply sent again.
  */
 export const finishTurnContext = mutation({
   args: {
@@ -1785,6 +1791,8 @@ export const finishTurnContext = mutation({
     messageId: v.id("workspaceChatMessages"),
     usage: v.optional(contextUsageFields),
     restated: v.boolean(),
+    /** The turn told the session about a lesson update. */
+    updateDelivered: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const chat = await ctx.db.get(args.chatId)
@@ -1794,6 +1802,9 @@ export const finishTurnContext = mutation({
       ...(args.usage ? { contextUsage: args.usage } : {}),
       ...(args.restated
         ? { contextRestatePending: false, contextRestatedMessageId: message._id }
+        : {}),
+      ...(args.updateDelivered
+        ? { teachUnsentSourceIds: undefined, teachUnsentSummaries: undefined }
         : {}),
     })
   },
