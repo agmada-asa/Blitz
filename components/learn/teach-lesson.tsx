@@ -4,8 +4,10 @@
  * Renders a Teach session as a lesson: tutor replies become section pages with
  * citations and interactive blocks, quick replies become quiet dividers, and
  * the learner's own questions stay visible as chat bubbles. Compactions show
- * as dividers where they happened, a redone reply says how it was redone, and
- * a reply that stopped short because of a refusal or a blocked tool says so.
+ * and lesson updates as dividers where they happened, a redone reply says how
+ * it was redone, a section taught again after an update says so and keeps the
+ * earlier version above it, and a reply that stopped short because of a refusal
+ * or a blocked tool says so.
  */
 
 import type { FunctionReturnType } from "convex/server"
@@ -37,6 +39,13 @@ import {
   type PlacedTeachCompaction,
   type TeachCompactionRecord,
 } from "@/lib/teach-compactions"
+import {
+  teachReplyUpdateLabels,
+  teachUpdateDividerText,
+  type TeachReplyMarker,
+  type TeachReplyUpdateLabel,
+  type TeachUpdateRecord,
+} from "@/lib/teach-updates"
 import { cn } from "@/lib/utils"
 
 /** One saved message from the Teach session. */
@@ -75,20 +84,41 @@ type TeachLessonProps = {
   sourceOpen: boolean
   /** The session's compactions, shown as dividers where they happened. */
   compactions: readonly TeachCompactionRecord[]
+  /** The session's finished lesson updates, shown as dividers where they happened. */
+  updates: readonly TeachUpdateRecord[]
+  /** Each reply's section marker, in lesson order. */
+  replyMarkers: readonly TeachReplyMarker[]
 }
 
-/** A quiet divider marking where the session's context was compacted. */
-function CompactionDivider({ compaction }: { compaction: PlacedTeachCompaction }) {
+/** A quiet divider marking something that happened to the session itself. */
+function LessonDivider({ text }: { text: string }) {
   return (
     <div className="flex items-center gap-3" role="note">
       <span aria-hidden="true" className="h-px flex-1 bg-border" />
       <span className="flex max-w-[85%] items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1 text-xs text-muted-foreground">
         <SparklesIcon aria-hidden="true" className="size-3.5 shrink-0" />
-        {teachCompactionText(compaction)}
+        {text}
       </span>
       <span aria-hidden="true" className="h-px flex-1 bg-border" />
     </div>
   )
+}
+
+/** A divider marking a lesson update, with what the new files changed. */
+function UpdateDivider({ update }: { update: TeachUpdateRecord }) {
+  return (
+    <div className="space-y-2">
+      <LessonDivider text={teachUpdateDividerText(update)} />
+      <p className="text-center text-sm text-balance text-muted-foreground">{update.summary}</p>
+    </div>
+  )
+}
+
+/** The wording beside a section heading for each update label. */
+const UPDATE_LABEL_TEXT: Record<TeachReplyUpdateLabel, string> = {
+  updated: "Updated with new material",
+  added: "New section",
+  superseded: "Earlier version. The updated one is further down.",
 }
 
 /**
@@ -106,6 +136,8 @@ export function TeachLesson({
   busy,
   sourceOpen,
   compactions,
+  updates,
+  replyMarkers,
 }: TeachLessonProps) {
   // A reply still being finished after it ran out of room says so in place;
   // its divider appears once it is done.
@@ -122,10 +154,27 @@ export function TeachLesson({
     ),
     outline
   )
-  const dividers = (key: string) =>
-    (placed.get(key) ?? []).map((compaction) => (
-      <CompactionDivider key={`compaction-${compaction.at}`} compaction={compaction} />
-    ))
+  // A lesson update shows before the first message written after it.
+  const placedUpdates = new Map<string, TeachUpdateRecord[]>()
+  for (const update of updates) {
+    const key = messages.find((message) => message.createdAt > update.at)?.id ?? AFTER_LAST_MESSAGE
+    placedUpdates.set(key, [...(placedUpdates.get(key) ?? []), update])
+  }
+  const dividers = (key: string) => [
+    ...(placed.get(key) ?? []).map((compaction: PlacedTeachCompaction) => (
+      <LessonDivider key={`compaction-${compaction.at}`} text={teachCompactionText(compaction)} />
+    )),
+    ...(placedUpdates.get(key) ?? []).map((update) => (
+      <UpdateDivider key={`update-${update.at}`} update={update} />
+    )),
+  ]
+  const updateLabels = teachReplyUpdateLabels(replyMarkers, updates)
+  // A section taught twice keeps one anchor, so the outline scrolls to the latest version.
+  const anchoredReplies = new Set(
+    new Map(
+      replyMarkers.map((marker) => [marker.done ? "done" : marker.sectionId, marker.id])
+    ).values()
+  )
   return (
     <div className="space-y-10">
       {messages.flatMap((message, index) => [
@@ -147,6 +196,8 @@ export function TeachLesson({
             onFollowUp={busy ? undefined : onFollowUp}
             sourceOpen={sourceOpen}
             finishingAfterOverflow={finishing.has(message.id)}
+            updateLabel={updateLabels.get(message.id)}
+            anchored={anchoredReplies.has(message.id)}
           />
         ),
       ])}
@@ -187,6 +238,10 @@ type TutorReplyProps = {
   sourceOpen: boolean
   /** The reply ran out of room and is being finished after a compaction. */
   finishingAfterOverflow: boolean
+  /** How a lesson update affected this reply, when it did. */
+  updateLabel: TeachReplyUpdateLabel | undefined
+  /** This is the latest reply for its section, so the outline scrolls to it. */
+  anchored: boolean
 }
 
 /**
@@ -204,6 +259,8 @@ const TutorReply = memo(function TutorReply({
   onFollowUp,
   sourceOpen,
   finishingAfterOverflow,
+  updateLabel,
+  anchored,
 }: TutorReplyProps) {
   const streaming = message.status === "running"
   const marker = useMemo(() => parseTeachSectionMarker(message.content), [message.content])
@@ -229,11 +286,13 @@ const TutorReply = memo(function TutorReply({
   return (
     <article
       id={
-        marker?.kind === "section"
-          ? `teach-section-${marker.id}`
-          : marker?.kind === "done"
-            ? "teach-section-done"
-            : undefined
+        !anchored
+          ? undefined
+          : marker?.kind === "section"
+            ? `teach-section-${marker.id}`
+            : marker?.kind === "done"
+              ? "teach-section-done"
+              : undefined
       }
       aria-label={
         sectionNumber >= 0
@@ -245,7 +304,8 @@ const TutorReply = memo(function TutorReply({
       data-message-id={message.id}
       className="scroll-mt-6"
     >
-      {plan ? <LessonPlan outline={plan} sourceOpen={sourceOpen} /> : null}
+      {/* The saved outline, so a lesson update's new sections show here too. */}
+      {plan ? <LessonPlan outline={outline ?? plan} sourceOpen={sourceOpen} /> : null}
       {sectionNumber >= 0 ? (
         <header className="mb-5 flex items-start gap-3">
           <span
@@ -261,7 +321,7 @@ const TutorReply = memo(function TutorReply({
             <h2 className="mt-0.5 font-heading text-2xl font-semibold tracking-tight text-balance">
               {outline!.sections[sectionNumber].title}
             </h2>
-            {body.trim() || message.redoStyle ? (
+            {body.trim() || message.redoStyle || updateLabel ? (
               <div className="mt-2 -ml-2.5 flex flex-wrap items-center gap-2 sm:-ml-2">
                 {body.trim() ? (
                   <ReadAloudButton
@@ -272,6 +332,18 @@ const TutorReply = memo(function TutorReply({
                 {message.redoStyle ? (
                   <span className="rounded-full bg-brand/10 px-2.5 py-0.5 text-xs font-medium text-brand">
                     {TEACH_REDO_STYLES[message.redoStyle].eyebrow}
+                  </span>
+                ) : null}
+                {updateLabel ? (
+                  <span
+                    className={cn(
+                      "rounded-full px-2.5 py-0.5 text-xs font-medium",
+                      updateLabel === "superseded"
+                        ? "bg-muted text-muted-foreground"
+                        : "bg-brand/10 text-brand"
+                    )}
+                  >
+                    {UPDATE_LABEL_TEXT[updateLabel]}
                   </span>
                 ) : null}
               </div>

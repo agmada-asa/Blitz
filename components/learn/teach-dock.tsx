@@ -26,6 +26,8 @@ export type TeachDockState =
   | { kind: "writing" }
   /** Compact now is running; nothing can be sent until it finishes. */
   | { kind: "compacting" }
+  /** A lesson update is revising the outline; nothing can be sent until it finishes. */
+  | { kind: "updating" }
   | { kind: "paused"; hasText: boolean }
   /** The opening check is on screen; `answered` counts its answered quizzes. */
   | { kind: "precheck"; answered: number }
@@ -170,7 +172,9 @@ export function TeachDock({ state, error, onSend, onResume }: TeachDockProps) {
                   ? "Preparing your lesson…"
                   : state.kind === "compacting"
                     ? "Compacting the session…"
-                    : "Working…"}
+                    : state.kind === "updating"
+                      ? "Updating the lesson…"
+                      : "Working…"}
               </span>
             </Button>
           </div>

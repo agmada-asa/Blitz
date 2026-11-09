@@ -16,6 +16,7 @@ import {
   type PathState,
 } from "@/components/progress/progress-path"
 import type { TeachOutline, TeachSectionMode, TeachSectionPlan } from "@/lib/teach"
+import type { TeachPendingSection, TeachSectionChange } from "@/lib/teach-updates"
 import { cn } from "@/lib/utils"
 
 /** Outline plus the learner's position and navigation callbacks. */
@@ -27,6 +28,8 @@ export type TeachOutlineProps = {
   taughtSectionIds: ReadonlySet<string>
   /** Skip, skim, or teach per section from the pre-check, once agreed. */
   plan?: TeachSectionPlan | null
+  /** Sections a lesson update is waiting to teach. */
+  pending?: readonly TeachPendingSection[]
   /** Disables jumping ahead while a reply is being written. */
   busy: boolean
   /** Scrolls to a section already taught. */
@@ -58,6 +61,12 @@ function modeOf(plan: TeachSectionPlan | null | undefined, id: string) {
 const MODE_LABELS: Partial<Record<TeachSectionMode, string>> = {
   skip: "Known",
   skim: "Quick",
+}
+
+/** Short labels and spoken detail for sections waiting because of new files. */
+const UPDATE_LABELS: Record<TeachSectionChange, { label: string; detail: string }> = {
+  updated: { label: "Updated", detail: ": new material changes this section" },
+  added: { label: "New", detail: ": added from new material" },
 }
 
 /**
@@ -97,13 +106,15 @@ export function TeachProgressBar({
  *
  * Taught sections scroll to their place in the lesson. Sections not taught yet,
  * including ones skipped by jumping ahead, ask the tutor to teach them, which
- * is disabled while a reply is in progress.
+ * is disabled while a reply is in progress. A section waiting because of new
+ * files is taught again when chosen, however far the learner has got.
  */
 export function TeachOutlineList({
   outline,
   sectionIndex,
   taughtSectionIds,
   plan,
+  pending,
   busy,
   onOpenSection,
   onJumpToSection,
@@ -114,10 +125,16 @@ export function TeachOutlineList({
         const mode = modeOf(plan, section.id)
         const taught = taughtSectionIds.has(section.id)
         const state = sectionState(index, sectionIndex, taught, mode)
-        const label = taught ? undefined : mode && MODE_LABELS[mode]
+        const waiting = pending?.find((entry) => entry.id === section.id)
+        const label = waiting
+          ? UPDATE_LABELS[waiting.change].label
+          : taught
+            ? undefined
+            : mode && MODE_LABELS[mode]
         // Only taught sections have a place in the lesson to scroll to; a
-        // known section the tutor skipped is taught in full when chosen.
-        const reached = state === "current" || taught
+        // known section the tutor skipped is taught in full when chosen, and
+        // a section waiting for new material is taught again.
+        const reached = (state === "current" || taught) && !waiting
         const last = index === outline.sections.length - 1
         return (
           <li key={section.id} className="relative">
@@ -149,7 +166,11 @@ export function TeachOutlineList({
                   <span className="ml-2 inline-block rounded-full bg-muted px-2 py-px align-[1px] text-[11px] text-muted-foreground">
                     {label}
                     <span className="sr-only">
-                      {mode === "skip" ? ": the check showed you know this" : ": taught briefly"}
+                      {waiting
+                        ? UPDATE_LABELS[waiting.change].detail
+                        : mode === "skip"
+                          ? ": the check showed you know this"
+                          : ": taught briefly"}
                     </span>
                   </span>
                 ) : null}

@@ -56,6 +56,9 @@ import {
 import { Skeleton } from "@/components/ui/skeleton"
 import { api } from "@/convex/_generated/api"
 import type { Doc, Id } from "@/convex/_generated/dataModel"
+import { useMinuteClock } from "@/hooks/use-minute-clock"
+import { startTeachUpdate } from "@/lib/client/teach-update"
+import { isTeachUpdateRunning } from "@/lib/teach-updates"
 import { cn } from "@/lib/utils"
 
 /** One unit as listed on the module page. */
@@ -413,6 +416,14 @@ function UnitListItem({
   const [busy, setBusy] = useState(false)
   const segments = unitSegments(unit)
   const fileCount = unit.sources.length
+  const now = useMinuteClock()
+  const [updateError, setUpdateError] = useState<string | null>(null)
+  const lessonUpdate = unit.teach?.update ?? null
+  const updating = isTeachUpdateRunning(lessonUpdate?.run, now)
+  const failure =
+    updateError ??
+    (lessonUpdate?.run?.status === "failed" ? `Lesson update failed. ${lessonUpdate.run.error ?? ""}`.trim() : null)
+  const newFiles = lessonUpdate?.newSources.length ?? 0
 
   /** Saves a new title from the rename dialog. */
   async function saveTitle() {
@@ -480,6 +491,19 @@ function UnitListItem({
         </Link>
         <p className="mt-0.5 text-xs text-muted-foreground">{unitStatus(unit)}</p>
         <SegmentedBar size="sm" segments={segments} className="mt-2 max-w-sm" />
+        {updating ? (
+          <p role="status" className="mt-1.5 text-xs text-muted-foreground">
+            Updating the lesson…
+          </p>
+        ) : failure ? (
+          <p role="alert" className="mt-1.5 text-xs text-destructive">
+            {failure}
+          </p>
+        ) : newFiles ? (
+          <p className="mt-1.5 text-xs font-medium text-brand">
+            {newFiles} new file{newFiles === 1 ? "" : "s"} not in this lesson yet
+          </p>
+        ) : null}
       </div>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
@@ -493,6 +517,16 @@ function UnitListItem({
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end">
           <DropdownMenuItem onSelect={onAddMaterial}>Add material</DropdownMenuItem>
+          {newFiles && !updating ? (
+            <DropdownMenuItem
+              onSelect={() => {
+                setUpdateError(null)
+                void startTeachUpdate(String(unit.id)).then(setUpdateError)
+              }}
+            >
+              Update lesson
+            </DropdownMenuItem>
+          ) : null}
           <DropdownMenuItem asChild>
             <Link href={findSourcesHref}>Find sources</Link>
           </DropdownMenuItem>

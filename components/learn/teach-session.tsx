@@ -12,6 +12,10 @@
  * supports it, Unit options shows how full the session's context is (with
  * Compact now in its dialog).
  *
+ * When files arrive after the lesson was planned, the header offers to update
+ * it (`teach-update-notice.tsx`). The update queues the sections it changes, so
+ * `Next section` works through them with no extra controls.
+ *
  * Questions go to a side chat on the right rather than into the lesson: an
  * ordinary chat of its own, so the lesson's conversation stays on its plan and
  * a question can be asked while the tutor is writing. A passage picked from
@@ -50,6 +54,7 @@ import {
 } from "@/components/learn/teach-context-meter"
 import { TeachDock, type TeachDockState } from "@/components/learn/teach-dock"
 import { TeachLesson } from "@/components/learn/teach-lesson"
+import { TeachUpdateNotice } from "@/components/learn/teach-update-notice"
 import {
   TeachOutlineList,
   TeachProgressBar,
@@ -92,6 +97,7 @@ import {
   prewarmTeachSession,
   sendTeachTurn,
 } from "@/lib/client/teach-turn"
+import { startTeachUpdate } from "@/lib/client/teach-update"
 import { providerThreadFeatures } from "@/lib/provider-thread-features"
 import type { QuizBlock } from "@/lib/interactive-blocks"
 import {
@@ -105,6 +111,12 @@ import {
   type TeachOutline,
   type TeachSectionPlan,
 } from "@/lib/teach"
+import {
+  followTeachReplies,
+  isTeachUpdateRunning,
+  nextTeachTarget,
+  type TeachReplyMarker,
+} from "@/lib/teach-updates"
 
 /** How long a Compact now request holds a session, matching the server's lease. */
 const COMPACTION_LEASE_MS = 5 * 60 * 1_000
@@ -254,6 +266,18 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
     compactRequested ||
     Boolean(chat?.compactingSince && chat.compactingSince > now - COMPACTION_LEASE_MS)
   const hasReadableMaterial = unit.sources.some((source) => source.hasText)
+  const lessonUpdate = unit.teach?.update ?? null
+  const updating = isTeachUpdateRunning(lessonUpdate?.run, now)
+  const [startingUpdate, setStartingUpdate] = useState(false)
+  const [updateStartError, setUpdateStartError] = useState<string | null>(null)
+
+  /** Starts updating the lesson from its new files; progress arrives from Convex. */
+  const updateLesson = useCallback(async () => {
+    setStartingUpdate(true)
+    setUpdateStartError(null)
+    setUpdateStartError(await startTeachUpdate(String(unit.id)))
+    setStartingUpdate(false)
+  }, [unit.id])
 
   // Starts the reply provider while the session opens, so the first reply
   // comes sooner. The server prewarms only a session with no thread yet.
@@ -273,29 +297,51 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
   // Hands-free: new replies are read aloud while the learner has it on.
   const [readReplies, setReadReplies] = useReadRepliesSetting()
 
+  const lessonUpdates = useMemo(() => chat?.teachUpdates ?? [], [chat?.teachUpdates])
+  const lastUpdateAt = lessonUpdates.at(-1)?.at ?? 0
+  // Each reply's section marker, read once for everything below.
+  const replyMarkers: TeachReplyMarker[] = useMemo(
+    () =>
+      messages.flatMap((message) => {
+        if (message.role !== "assistant") return []
+        const marker = parseTeachSectionMarker(message.content)
+        if (!marker) return []
+        return [
+          marker.kind === "done"
+            ? { id: message.id, createdAt: message.createdAt, done: true }
+            : { id: message.id, createdAt: message.createdAt, sectionId: marker.id },
+        ]
+      }),
+    [messages]
+  )
   // The latest section marker is the current section; every marker seen is a
   // taught section. Reading them from messages keeps progress live while a
-  // reply streams; the saved values cover anything not loaded.
-  const { sectionIndex, taughtSectionIds } = useMemo(() => {
-    const taught = new Set(unit.teach?.taughtSectionIds ?? [])
-    let index = Math.max(0, unit.teach?.sectionIndex ?? 0)
-    if (!outline) return { sectionIndex: 0, taughtSectionIds: taught }
-    for (const message of messages) {
-      if (message.role !== "assistant") continue
-      const marker = parseTeachSectionMarker(message.content)
-      if (marker?.kind === "done") index = outline.sections.length
-      else if (marker) {
-        const found = outline.sections.findIndex(
-          (section) => section.id === marker.id
-        )
-        if (found >= 0) {
-          index = found
-          taught.add(marker.id)
-        }
+  // reply streams; the saved values cover anything not loaded. Markers older
+  // than the latest lesson update no longer move the learner.
+  const savedPending = unit.teach?.update?.pendingSections
+  const { sectionIndex, taughtSectionIds, pendingSections } = useMemo(() => {
+    if (!outline)
+      return {
+        sectionIndex: 0,
+        taughtSectionIds: new Set(unit.teach?.taughtSectionIds ?? []),
+        pendingSections: [],
       }
+    const followed = followTeachReplies(
+      {
+        sectionIndex: Math.max(0, unit.teach?.sectionIndex ?? 0),
+        taughtSectionIds: unit.teach?.taughtSectionIds ?? [],
+        pending: savedPending ?? [],
+        lastUpdateAt,
+        sections: outline.sections,
+      },
+      replyMarkers
+    )
+    return {
+      sectionIndex: followed.sectionIndex,
+      taughtSectionIds: followed.taughtSectionIds,
+      pendingSections: followed.pending,
     }
-    return { sectionIndex: index, taughtSectionIds: taught }
-  }, [outline, messages, unit.teach?.sectionIndex, unit.teach?.taughtSectionIds])
+  }, [outline, replyMarkers, lastUpdateAt, savedPending, unit.teach?.sectionIndex, unit.teach?.taughtSectionIds])
   const complete =
     Boolean(outline) && sectionIndex >= (outline?.sections.length ?? 0)
 
@@ -310,14 +356,25 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
     }
     return null
   }, [unit.plan, outline, messages])
-  // Sections after the current one that the tutor will still teach.
-  const sectionsLeft = outline
-    ? outline.sections.filter(
-        (section, index) =>
-          index > sectionIndex &&
-          plan?.find((entry) => entry.id === section.id)?.mode !== "skip"
-      ).length
-    : 0
+  // Sections after the current one that the tutor will still teach. Once a
+  // lesson has been updated, the queue decides what is left, as it does on the server.
+  const sectionsLeft = !outline
+    ? 0
+    : lessonUpdates.length
+      ? nextTeachTarget({
+          outline,
+          plan,
+          taughtSectionIds,
+          pending: pendingSections,
+          sectionIndex,
+        }).kind === "done"
+        ? 0
+        : 1
+      : outline.sections.filter(
+          (section, index) =>
+            index > sectionIndex &&
+            plan?.find((entry) => entry.id === section.id)?.mode !== "skip"
+        ).length
   // Celebrate only when the recap arrived in this sitting, not on every revisit.
   const finishedThisSitting =
     complete &&
@@ -702,6 +759,8 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
         ? { kind: outline ? "writing" : "starting" }
         : compacting
           ? { kind: "compacting" }
+        : updating
+          ? { kind: "updating" }
         : lastMessage?.role === "assistant" && lastMessage.status === "failed"
           ? { kind: "paused", hasText: Boolean(lastMessage.content.trim()) }
           : awaitingPlan
@@ -741,7 +800,8 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
       sectionIndex={sectionIndex}
       taughtSectionIds={taughtSectionIds}
       plan={plan}
-      busy={running}
+      pending={pendingSections}
+      busy={running || updating}
       onOpenSection={openSection}
       onJumpToSection={jumpToSection}
     />
@@ -972,6 +1032,21 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
               </Popover>
             </>
           ) : null}
+          {lessonUpdate ? (
+            <TeachUpdateNotice
+              className="mt-3"
+              newFileCount={lessonUpdate.newSources.length}
+              runningFileCount={lessonUpdate.run?.sourceCount ?? 0}
+              running={updating}
+              error={
+                updateStartError ??
+                (lessonUpdate.run?.status === "failed" ? lessonUpdate.run.error : null)
+              }
+              blocked={running || compacting}
+              starting={startingUpdate}
+              onUpdate={() => void updateLesson()}
+            />
+          ) : null}
         </header>
 
         <div className="relative min-h-0 flex-1">
@@ -998,9 +1073,11 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
                   onCitation={openCitation}
                   onQuizAnswer={answerQuiz}
                   onFollowUp={(text) => void send(text)}
-                  busy={running || compacting}
+                  busy={running || compacting || updating}
                   sourceOpen={sideOpen}
                   compactions={chat.contextCompactions}
+                  updates={lessonUpdates}
+                  replyMarkers={replyMarkers}
                 />
               ) : (
                 <div className="space-y-3" aria-hidden="true">
