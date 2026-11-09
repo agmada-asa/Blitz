@@ -386,9 +386,12 @@ export function nextTeachTarget(state: {
     return { kind: "section", index: overdue, section, pending: pending.get(section.id) }
   }
   const modes = new Map(state.plan?.map((entry) => [entry.id, entry.mode]))
+  // Until something is taught, the learner is at the section, not past it. A
+  // lesson opened by a question has an outline and nothing taught yet.
+  const firstAhead = state.taughtSectionIds.size ? state.sectionIndex + 1 : state.sectionIndex
   const ahead = state.outline.sections.findIndex(
     (section, index) =>
-      index > state.sectionIndex &&
+      index >= firstAhead &&
       !state.taughtSectionIds.has(section.id) &&
       modes.get(section.id) !== "skip"
   )

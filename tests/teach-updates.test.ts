@@ -330,6 +330,16 @@ test("Next section skips known sections and ends with the recap", () => {
   assert.equal(known.kind, "done")
 })
 
+test("Next section starts at the first section when nothing has been taught", () => {
+  const first = nextTeachTarget({
+    outline,
+    taughtSectionIds: new Set(),
+    pending: [],
+    sectionIndex: 0,
+  })
+  assert.equal(first.kind === "section" && first.section.id, "s1")
+})
+
 test("an instruction replaces Next section and carries what changed", () => {
   const instruction = teachUpdateInstruction("Next section", merged())
   assert.ok(instruction)
