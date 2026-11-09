@@ -86,11 +86,13 @@ export const begin = mutation({
     const now = Date.now()
     if (isTeachUpdateRunning(chat.teachUpdateRun, now)) return { status: "running" as const }
     if (chat.status === "running") return { status: "busy" as const }
+    // A run only claims what its analysis will read, because a finished run
+    // marks its files as covered. Any beyond the limit stay new for the next one.
     const sources = teachNewSources(
       chat.teachCoveredSourceIds,
       chat.createdAt,
       await unitSources(ctx, unitId)
-    )
+    ).slice(0, MAX_UPDATE_SOURCES)
     if (!sources.length) return { status: "up-to-date" as const }
     const token = crypto.randomUUID()
     const sourceIds = sources.map(({ source }) => source._id)
@@ -127,7 +129,6 @@ export const runContext = query({
         .map((entry) => entry.filename),
       newSources: all
         .filter((entry) => newIds.has(entry.id))
-        .slice(0, MAX_UPDATE_SOURCES)
         .map(({ source }) => ({
           filename: source.filename,
           text: source.extractedText.slice(0, MAX_UPDATE_SOURCE_TEXT),
