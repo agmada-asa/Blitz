@@ -86,6 +86,8 @@ function refusedThreadMethods(provider: string): RefusedThreadMethods {
     reloadPlugins: no("reload plugins"),
     export: no("export a thread"),
     realtime: no("open a realtime session"),
+    settings: no("list session settings"),
+    setSetting: no("change a session setting"),
   }
 }
 
