@@ -23,6 +23,14 @@ function progressFor(job: Doc<"preparationJobs">) {
   }
 }
 
+/**
+ * Most sources one job-status read may cover. The Sources page asks for every
+ * source in the project at once, so this must exceed any real module. Each
+ * source costs one indexed read, which keeps 500 well inside Convex's
+ * per-query read limits.
+ */
+export const MAX_JOB_STATUS_SOURCES = 500
+
 /** Lists preparation jobs for a project so source progress survives page reloads. */
 export const listJobsForProject = query({
   args: {
@@ -31,8 +39,10 @@ export const listJobsForProject = query({
   },
   handler: async (ctx, args) => {
     const sourceIds = args.sourceIds ?? []
-    if (sourceIds.length > 20)
-      throw new Error("Job status may include at most 20 sources")
+    if (sourceIds.length > MAX_JOB_STATUS_SOURCES)
+      throw new Error(
+        `Job status may include at most ${MAX_JOB_STATUS_SOURCES} sources`
+      )
     const jobs = (
       await Promise.all(
         sourceIds.map((sourceId) =>
