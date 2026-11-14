@@ -1,9 +1,13 @@
 "use client"
 
-/** Lazily renders Mermaid diagrams locally, with sanitized SVG and an always available source view. */
+/**
+ * Lazily renders Mermaid diagrams locally, with sanitized SVG, an "Open larger" view, and an always
+ * available source view.
+ */
 import { useEffect, useId, useState, type ReactNode } from "react"
 import { useTheme } from "next-themes"
 import DOMPurify from "dompurify"
+import { ExpandFigureButton } from "@/components/ui/interactive-blocks/expand-figure"
 
 /** Serializes theme initialization and drawing because Mermaid has global configuration. */
 let renderQueue: Promise<unknown> = Promise.resolve()
@@ -96,14 +100,25 @@ export function MarkdownMermaid({
     // Lesson questions quote a diagram by its source, which says what it shows.
     <div className="markdown-diagram" data-ask-text={source}>
       {current?.svg ? (
-        <div
-          className="markdown-diagram-canvas"
-          role="region"
-          aria-label="Mermaid diagram"
-          tabIndex={0}
-          // Only library-generated SVG sanitized above reaches this HTML boundary.
-          dangerouslySetInnerHTML={{ __html: current.svg }}
-        />
+        <div className="relative">
+          <div
+            className="markdown-diagram-canvas"
+            role="region"
+            aria-label="Diagram"
+            tabIndex={0}
+            // Only library-generated SVG sanitized above reaches this HTML boundary.
+            dangerouslySetInnerHTML={{ __html: current.svg }}
+          />
+          <div className="absolute top-0 right-0">
+            <ExpandFigureButton title="Diagram">
+              <div
+                className="markdown-diagram-canvas markdown-diagram-expanded"
+                // The same sanitized SVG, drawn to fill the dialog.
+                dangerouslySetInnerHTML={{ __html: current.svg }}
+              />
+            </ExpandFigureButton>
+          </div>
+        </div>
       ) : (
         <p className="text-sm text-muted-foreground" role="status">
           {current?.failed

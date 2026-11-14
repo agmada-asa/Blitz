@@ -27,10 +27,13 @@ import {
   type VizTheme,
 } from "@/lib/interactive-blocks"
 import { Skeleton } from "@/components/ui/skeleton"
+import { ExpandFigureButton } from "@/components/ui/interactive-blocks/expand-figure"
 
 /** Iframe height bounds in CSS pixels; taller content scrolls inside the frame. */
 const MIN_HEIGHT = 120
 const MAX_HEIGHT = 900
+/** Taller limit for the "Open larger" view, which scrolls inside the dialog beyond it. */
+const EXPANDED_MAX_HEIGHT = 2400
 /** Height used if the frame never reports one, for example when its HTML breaks the bridge script. */
 const FALLBACK_HEIGHT = 320
 /** How long to wait for the first height report before showing the frame at the fallback height. */
@@ -101,7 +104,8 @@ function useVizTheme(): VizTheme | undefined {
 }
 
 /**
- * Renders one sandboxed visualisation with its title, a loading state, and an inspectable source view.
+ * Renders one sandboxed visualisation with its title, an "Open larger" view, and an inspectable source
+ * view.
  * @param block Validated visualisation block.
  * @param children Source view, normally the highlighted HTML code block.
  * @returns The titled, auto-sized visualisation frame.
@@ -113,6 +117,36 @@ export function VizBlockView({
   block: VizBlock
   children: ReactNode
 }) {
+  const title = block.title ?? "Interactive visualisation"
+  return (
+    <figure className="interactive-block min-w-0">
+      <div className="mb-2 flex items-center justify-between gap-2">
+        {block.title ? (
+          <figcaption className="font-medium">{block.title}</figcaption>
+        ) : (
+          <span />
+        )}
+        {/* The larger view is a fresh frame, so it starts from the visualisation's initial state. */}
+        <ExpandFigureButton title={title}>
+          <VizFrame block={block} maxHeight={EXPANDED_MAX_HEIGHT} />
+        </ExpandFigureButton>
+      </div>
+      <VizFrame block={block} maxHeight={MAX_HEIGHT} />
+      <details className="markdown-diagram-source">
+        <summary>View source</summary>
+        {children}
+      </details>
+    </figure>
+  )
+}
+
+/**
+ * Runs one visualisation in its sandboxed, auto-sized frame with a loading state.
+ * @param block Validated visualisation block.
+ * @param maxHeight Tallest the frame grows before its content scrolls inside it.
+ * @returns The bordered frame.
+ */
+function VizFrame({ block, maxHeight }: { block: VizBlock; maxHeight: number }) {
   const iframeRef = useRef<HTMLIFrameElement>(null)
   const theme = useVizTheme()
   const themeCss = theme ? vizThemeDeclarations(theme) : ""
@@ -157,7 +191,7 @@ export function VizBlockView({
       const reported = (data as { height?: unknown }).height
       if (typeof reported !== "number" || !Number.isFinite(reported)) return
       const next = Math.min(
-        MAX_HEIGHT,
+        maxHeight,
         Math.max(MIN_HEIGHT, Math.ceil(reported))
       )
       setMeasured((current) =>
@@ -180,7 +214,7 @@ export function VizBlockView({
       window.removeEventListener("message", receiveHeight)
       window.clearTimeout(timeout)
     }
-  }, [srcdoc])
+  }, [srcdoc, maxHeight])
 
   /** Re-sends the current theme after load, in case it changed while the frame was loading. */
   function syncThemeOnLoad() {
@@ -192,11 +226,7 @@ export function VizBlockView({
   }
 
   return (
-    <figure className="interactive-block min-w-0">
-      {block.title ? (
-        <figcaption className="mb-2 font-medium">{block.title}</figcaption>
-      ) : null}
-      <div className="relative overflow-hidden rounded-xl border border-border bg-background">
+    <div className="relative overflow-hidden rounded-xl border border-border bg-background">
         {srcdoc ? (
           <iframe
             ref={iframeRef}
@@ -223,11 +253,6 @@ export function VizBlockView({
             <Skeleton className="h-20 w-full" />
           </div>
         ) : null}
-      </div>
-      <details className="markdown-diagram-source">
-        <summary>View source</summary>
-        {children}
-      </details>
-    </figure>
+    </div>
   )
 }
