@@ -4,7 +4,7 @@
 
 Blitz teaches you your own course material. Drop in a week's lecture slides, transcripts, and notes, and it teaches them back in short sessions, quizzes you, and keeps returning to what hasn't stuck. In exam season, import past papers and sit mock exams marked against the mark scheme.
 
-It runs on your Mac and uses the AI coding agent you already pay for (Codex, Claude Code, or OpenCode) instead of an API key. Your material and progress stay in a local database.
+It runs on your Mac and uses the AI coding agent you already pay for (Codex, Claude Code, OpenCode, or Antigravity) instead of an API key. Your material and progress stay in a local database.
 
 ## Quick start
 
@@ -43,7 +43,7 @@ Use `Find sources` within a project to ask Blitz for a proposed learning scope a
 
 ## Run locally in detail
 
-Use Node.js 22.13 or newer, with at least one supported local provider installed and signed in. Codex is the default provider and needs Codex CLI 0.164.0 or newer within v0. Claude Code 2.1.248 or newer can run replies and card generation with tools disabled. OpenCode v1.18.21 or newer within v1 supports native tool permissions. Development has been verified with Node.js 24 on macOS.
+Use Node.js 22.13 or newer, with at least one supported local provider installed and signed in. Codex is the default provider and needs Codex CLI 0.164.0 or newer within v0. Claude Code 2.1.248 or newer can run replies and card generation with tools disabled. OpenCode 2.3.0 or newer within v2 supports native tool permissions; v1 is no longer supported. Antigravity CLI 1.5.0 or newer runs through its own `agy acp` server, signed in with the same Google account as `agy`. Development has been verified with Node.js 24 on macOS.
 
 ```bash
 npm ci
@@ -75,6 +75,7 @@ Provider access is saved separately for each provider. Chat's **Provider policy*
 | Codex           | Read-only sandbox, approvals `never`                    | `on-request`, or `untrusted`                                  | `danger-full-access`, approvals `never`          |
 | Claude Code     | Restricted mode with all tools disabled                 | Explicit tool ask rules and the SDK's stdin approval protocol | `bypassPermissions`                              |
 | OpenCode        | Dedicated agent with `permission["*"] = "deny"`         | Dedicated agent with `permission["*"] = "ask"`                | Dedicated agent with `permission["*"] = "allow"` |
+| Antigravity     | `--sandbox`, every permission request refused           | The CLI's own requests before edits and commands              | Every permission request allowed once            |
 
 Claude and ACP requests use the composer request panel. Codex approvals,
 native provider tool asks, Blitz-owned Codex questions and confirmation
@@ -83,19 +84,21 @@ above the message field. Decisions grant
 one operation or turn only; Blitz never sends persistent permission updates or
 ACP `allow_always`. Missing handlers, oversized requests, cancellation, and
 failed reviews use safe denial responses. Modes are reasserted on resumed
-sessions. Claude disables local customizations and MCP servers. OpenCode uses
-`--pure`, disables project configuration, and creates a distinct agent per
-process so saved agents cannot override its selected policy. Agent delegation
-and mode switching tools stay disabled in OpenCode.
+sessions. Claude disables local customizations and MCP servers. OpenCode
+disables project configuration and defines Blitz's own agent in each process
+so saved agents cannot override its selected policy. Agent delegation
+and mode switching tools stay disabled in OpenCode. Antigravity sessions open
+in the CLI's configured mode, which out of the box asks before edits and
+commands.
 
 Interactive chat treats attached project material as its primary evidence. If
 that material cannot resolve a question or a tool would materially improve the
 answer, Codex chat can use live web search when the provider allows it. External
 findings stay separate from attached source citations.
 
-Background card preparation and card replies always use restricted policies regardless of saved full access. Claude removes all tools; OpenCode denies all native tools.
+Background card preparation and card replies always use restricted policies regardless of saved full access. Claude removes all tools; OpenCode denies all native tools; Antigravity runs sandboxed and every permission request is refused.
 
-Claude passes supported reasoning selections with `--effort`. Haiku and OpenCode expose only the provider default. Legacy unsupported effort selections are normalized to the provider default. Native permission references: [Claude CLI](https://code.claude.com/docs/en/cli-reference), [Claude SDK approvals](https://code.claude.com/docs/en/agent-sdk/user-input), [OpenCode permissions](https://opencode.ai/docs/permissions/). Saved settings that name the removed Antigravity provider fall back to Codex.
+Claude passes supported reasoning selections with `--effort`. Haiku, OpenCode and Antigravity expose only the provider default. Legacy unsupported effort selections are normalized to the provider default. Native permission references: [Claude CLI](https://code.claude.com/docs/en/cli-reference), [Claude SDK approvals](https://code.claude.com/docs/en/agent-sdk/user-input), [OpenCode permissions](https://opencode.ai/docs/permissions/). Settings saved under Blitz's first Antigravity integration move to Gemini 3.8 Flash.
 
 The ACP client negotiates `session/load` and `session/resume`. If neither is supported, it fails before accepting a turn so workspace chat can rebuild its saved history in a new session. Historical load notifications are excluded from the new answer. Both adapters bound stdout and assistant output, decode split UTF-8 safely, and terminate on transport failures or deadlines.
 
@@ -115,7 +118,7 @@ npm run build
 npm run check:runtimes
 ```
 
-`npm run check:runtimes` reports when OpenCode or the Codex model catalogue no longer matches what Blitz relies on; Codex and Claude Code compatibility is checked by [agent-engines](docs/agent-engines.md). See [AI model settings](docs/ai-model-settings.md).
+`npm run check:runtimes` reports when OpenCode, Antigravity or the Codex model catalogue no longer matches what Blitz relies on; Codex and Claude Code compatibility is checked by [agent-engines](docs/agent-engines.md). See [AI model settings](docs/ai-model-settings.md).
 
 The [overhaul plan](docs/overhaul-plan.md) records the current direction. Implementation details are in [Teach](docs/teach.md), [source ingestion](docs/source-ingestion.md), [learning API](docs/learning-api.md), [provider text turns and legacy card chat](docs/card-chat.md), and [providers through agent-engines](docs/agent-engines.md).
 

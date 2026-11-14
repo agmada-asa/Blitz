@@ -8,16 +8,17 @@ import {
   openCodeVersionGuidance,
 } from "../lib/server/providers/runtime-compat.ts"
 
-/** Keeps the OpenCode gate identical to the original registry check. */
+/** Accepts OpenCode v2 from the checked release, and refuses v1 and unreviewed majors. */
 test("applies the OpenCode version gate", () => {
-  assert.equal(checkOpenCodeVersion("1.18.20").supported, false)
-  assert.equal(checkOpenCodeVersion("1.18.21").supported, true)
-  assert.equal(checkOpenCodeVersion("opencode 1.19.0").supported, true)
-  assert.equal(checkOpenCodeVersion("2.0.0").supported, false)
+  assert.equal(checkOpenCodeVersion("2.2.9").supported, false)
+  assert.equal(checkOpenCodeVersion("2.3.0").supported, true)
+  assert.equal(checkOpenCodeVersion("opencode v2.4.1").supported, true)
+  assert.equal(checkOpenCodeVersion("1.18.21").supported, false)
+  assert.equal(checkOpenCodeVersion("3.0.0").supported, false)
   assert.deepEqual(checkOpenCodeVersion("unknown"), { supported: false })
   assert.equal(
     openCodeVersionGuidance(),
-    "Update OpenCode to version 1.18.21 or newer within v1 for native permissions."
+    "Update OpenCode to version 2.3.0 or newer within v2 for native permissions."
   )
 })
 

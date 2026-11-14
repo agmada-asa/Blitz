@@ -5,19 +5,16 @@
  * The library owns the ACP protocol: the agent process, sessions, streaming,
  * permission and elicitation requests, and cleanup. Blitz keeps what is its
  * own policy: the per-turn OpenCode environment from `opencode-policy.ts`
- * (native permissions and a dedicated Blitz agent), how Blitz's access setting
- * maps onto the engine's access levels, and how application instructions
- * reach an agent that has no instruction channel.
+ * (native permissions and a dedicated Blitz agent). What OpenCode shares with
+ * Antigravity, the other ACP provider, is in `acp-providers.ts`.
  */
 
 import {
   ACP_AGENTS,
   AcpEngine,
   type AcpEngineOptions,
-  type ThreadOptions,
 } from "agent-engines"
 
-import { CardChatError } from "../card-chat.ts"
 import { openCodeEnvironment, type OpenCodePolicyRequest } from "./opencode-policy.ts"
 import { providerCommand } from "./registry.ts"
 
@@ -31,9 +28,6 @@ import { providerCommand } from "./registry.ts"
  * and the chat replays their history into a new session instead.
  */
 export const OPENCODE_AGENT_NAME = "blitz-turn"
-
-/** Longest application instructions sent ahead of an OpenCode prompt. */
-export const MAX_OPENCODE_INSTRUCTIONS_LENGTH = 16_000
 
 /** Process seam for tests; omitted, the configured `opencode` CLI is started. */
 export type OpenCodeSpawn = AcpEngineOptions["spawnProcess"]
@@ -64,47 +58,4 @@ export function createOpenCodeEngine(
     clientName: "blitz",
     ...(spawnProcess ? { spawnProcess } : {}),
   })
-}
-
-/**
- * Maps Blitz's access settings onto the engine's access level, which answers
- * the permission requests OpenCode still sends after its native rules.
- *
- * Full access allows each request once. Background turns, read-only turns and
- * turns with approvals off refuse; their native rules already deny everything
- * but reading. Approval turns ask, and the chat answers through its composer.
- */
-export function openCodeAccess(
-  policy: OpenCodePolicyRequest
-): NonNullable<ThreadOptions["access"]> {
-  const background =
-    policy.ephemeral ||
-    policy.webSearchMode === "disabled" ||
-    !policy.approvalPolicy
-  if (background) return "read-only"
-  if (policy.approvalPolicy === "full-access") return "full"
-  if (policy.sandbox === "read-only" || policy.approvalPolicy === "never")
-    return "read-only"
-  return "ask"
-}
-
-/**
- * Puts Blitz's application instructions ahead of the learner's prompt.
- *
- * ACP has no instruction channel, so the instructions travel in a tagged block
- * the model can tell apart from the learner's own words.
- *
- * @throws CardChatError (`invalid-input`) when the instructions are over
- *   {@link MAX_OPENCODE_INSTRUCTIONS_LENGTH} characters.
- */
-export function openCodePrompt(prompt: string, instructions: string): string {
-  const context = instructions.trim()
-  if (context.length > MAX_OPENCODE_INSTRUCTIONS_LENGTH)
-    throw new CardChatError(
-      "invalid-input",
-      `Provider application instructions exceed the ${MAX_OPENCODE_INSTRUCTIONS_LENGTH.toLocaleString("en-GB")} character limit`
-    )
-  return context
-    ? `<blitz_application_context>\n${context}\n</blitz_application_context>\n\n${prompt}`
-    : prompt
 }

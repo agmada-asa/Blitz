@@ -5,18 +5,36 @@ import test from "node:test"
 import assert from "node:assert/strict"
 import {
   checkProviderAvailability,
-  parseOpenCodeAccounts,
+  parseOpenCodeIntegrations,
 } from "../lib/server/providers/registry.ts"
 import { providerAvailabilityFromEngine } from "../lib/server/providers/engines.ts"
 
-/** Extracts only account labels from OpenCode's ANSI-formatted credential list. */
-test("parses configured OpenCode accounts without credential data", () => {
-  assert.deepEqual(
-    parseOpenCodeAccounts(
-      "\u001b[0m●  Google \u001b[90mapi\u001b[0m\n●  OpenAI \u001b[90moauth\u001b[0m\n"
-    ),
-    ["Google", "OpenAI"]
-  )
+/** Reads OpenCode v2's JSON credential list into names and credential IDs only. */
+test("parses configured OpenCode integrations without credential data", () => {
+  const output = JSON.stringify([
+    {
+      id: "google",
+      name: "Google",
+      connections: [
+        { type: "credential", id: "cred_a", label: "API key", method: "key" },
+      ],
+    },
+    {
+      id: "openai",
+      name: "OpenAI",
+      connections: [
+        { type: "credential", id: "cred_b", label: "OAuth", method: "oauth" },
+      ],
+    },
+    // An integration with nothing saved is not an account.
+    { id: "github", name: "GitHub", connections: [] },
+  ])
+  assert.deepEqual(parseOpenCodeIntegrations(output), [
+    { id: "google", name: "Google", credentialIds: ["cred_a"] },
+    { id: "openai", name: "OpenAI", credentialIds: ["cred_b"] },
+  ])
+  assert.deepEqual(parseOpenCodeIntegrations("Google  API key  stored"), [])
+  assert.deepEqual(parseOpenCodeIntegrations("{}"), [])
 })
 
 /** Engine sign-in states map onto the settings page's setup states. */

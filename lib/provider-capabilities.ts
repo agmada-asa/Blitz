@@ -87,6 +87,17 @@ export const CHAT_PROVIDER_CAPABILITIES: Readonly<
     structuredInput: "unsupported",
     interactiveTypes: ["approval"],
   },
+  // Runs on the same ACP engine as OpenCode, so it has the same support.
+  antigravity: {
+    ...common,
+    webSearch: false,
+    images: "negotiated",
+    sandboxModes: [],
+    approvalPolicies: AI_PROVIDER_APPROVAL_POLICIES.antigravity,
+    approvalChoices: "provider-options",
+    structuredInput: "unsupported",
+    interactiveTypes: ["approval"],
+  },
 }
 
 /** Returns current adapter support plus valid reasoning values for a specific model; unknown models use existing conservative defaults. */
@@ -160,6 +171,23 @@ export function providerAccessChoice(
         label: "Ask",
         description:
           "Tool requests require permission. No OS sandbox is configured.",
+      },
+      "full-access": {
+        label: "Allow",
+        description:
+          "Available tools run without approval. No OS sandbox is configured.",
+      },
+    },
+    antigravity: {
+      never: {
+        label: "Deny tools",
+        description:
+          "Edits and commands are denied, and commands run in Antigravity's sandbox.",
+      },
+      "on-request": {
+        label: "Ask",
+        description:
+          "Edits and commands require permission. No OS sandbox is configured.",
       },
       "full-access": {
         label: "Allow",

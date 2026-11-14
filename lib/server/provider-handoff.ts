@@ -19,7 +19,10 @@ import {
 
 import type { AiProviderId } from "../ai-model-settings.ts"
 import { createProviderEngine } from "./providers/engines.ts"
-import { createOpenCodeEngine } from "./providers/opencode.ts"
+import {
+  createAcpProviderEngine,
+  isAcpProvider,
+} from "./providers/acp-providers.ts"
 
 /** Most transcript text carried into a new session, in characters. */
 export const MAX_HANDOFF_CHARACTERS = 120_000
@@ -88,12 +91,12 @@ export function fitTranscript(
 /**
  * Opens the engine that can read a provider's saved session.
  *
- * OpenCode runs with background permissions, since reading its session back
+ * ACP providers run with background permissions, since reading a session back
  * needs no tools.
  */
 function readerEngine(providerId: AiProviderId, cwd: string): Engine {
-  return providerId === "opencode"
-    ? createOpenCodeEngine({ ephemeral: true }, cwd)
+  return isAcpProvider(providerId)
+    ? createAcpProviderEngine(providerId, { ephemeral: true }, cwd)
     : createProviderEngine(providerId)
 }
 

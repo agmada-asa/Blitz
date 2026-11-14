@@ -10,7 +10,6 @@ import {
   CODEX_MODEL_OPTIONS,
   DEFAULT_AI_MODEL_SETTINGS,
   DEFAULT_AI_MODELS,
-  DEFAULT_AI_REASONING_EFFORTS,
   getDefaultAiModelOption,
   getAiProviderOptionsForTask,
   getSupportedAiReasoningEfforts,
@@ -103,6 +102,7 @@ test("selects a provider-owned default model", () => {
   assert.equal(getDefaultAiModelOption("codex").id, "gpt-6-luna")
   assert.equal(getDefaultAiModelOption("claude-code").id, "sonnet")
   assert.equal(getDefaultAiModelOption("opencode").id, "opencode/big-pickle")
+  assert.equal(getDefaultAiModelOption("antigravity").id, "gemini-3.8-flash")
 })
 
 /** Confirms research stays on providers whose reviewed capabilities include web search. */
@@ -113,7 +113,7 @@ test("filters providers by task capability", () => {
   )
   assert.deepEqual(
     getAiProviderOptionsForTask("reply").map((option) => option.id),
-    ["codex", "claude-code", "opencode"]
+    ["codex", "claude-code", "opencode", "antigravity"]
   )
 })
 
@@ -287,7 +287,7 @@ test("validates and resolves provider approval policies", () => {
 
 /** All providers expose native access choices while unsupported background assignments remain unsavable. */
 test("validates native provider access choices and task restrictions", () => {
-  for (const provider of ["claude-code", "opencode"] as const) {
+  for (const provider of ["claude-code", "opencode", "antigravity"] as const) {
     for (const policy of ["never", "on-request", "full-access"] as const) {
       assert.equal(
         validateProviderApprovalPolicies({ [provider]: policy })[provider],
@@ -297,24 +297,21 @@ test("validates native provider access choices and task restrictions", () => {
   }
   assert.deepEqual(
     getAiProviderOptionsForTask("cardGeneration").map((option) => option.id),
-    ["codex", "claude-code", "opencode"]
+    ["codex", "claude-code", "opencode", "antigravity"]
   )
 })
 
-/** A saved provider Blitz no longer offers falls back to Codex, with its model and effort reset, instead of failing to load. */
-test("moves a saved removed provider back to Codex", () => {
+/** A model the first Antigravity integration saved moves to the CLI's own model, instead of a turn the CLI refuses. */
+test("moves a saved retired Antigravity model to its replacement", () => {
   const legacy = validateAiModelSettings({
     ...DEFAULT_AI_MODEL_SETTINGS,
     cardGenerationProvider: "antigravity",
     cardGenerationModel: "antigravity/default",
-    cardGenerationEffort: "default",
+    cardGenerationEffort: "high",
   })
-  assert.equal(legacy.cardGenerationProvider, "codex")
-  assert.equal(legacy.cardGenerationModel, DEFAULT_AI_MODELS.cardGenerationModel)
-  assert.equal(
-    legacy.cardGenerationEffort,
-    DEFAULT_AI_REASONING_EFFORTS.cardGenerationEffort
-  )
+  assert.equal(legacy.cardGenerationProvider, "antigravity")
+  assert.equal(legacy.cardGenerationModel, "gemini-3.8-flash")
+  assert.equal(legacy.cardGenerationEffort, "default")
   assert.doesNotThrow(() => validateAiTaskProviders(legacy))
 })
 

@@ -261,7 +261,7 @@ export function genericApprovalRequest(
 }
 
 /** Runtime a request came from, which decides the grants Blitz may offer. */
-export type AgentRequestProvider = "codex" | "claude" | "opencode"
+export type AgentRequestProvider = "codex" | "claude" | "opencode" | "antigravity"
 
 /**
  * Returns whether an ACP permission request offers one kind of choice.
@@ -349,9 +349,12 @@ function approvalRequest(
     !request.changes?.length
   )
     return undefined
-  // Allowing must never fall through to an "always" grant, so OpenCode
-  // requests without an allow-once choice are refused unseen.
-  if (provider === "opencode" && !offersChoice(request.raw, "allow_once"))
+  // Allowing must never fall through to an "always" grant, so ACP requests
+  // without an allow-once choice are refused unseen.
+  if (
+    (provider === "opencode" || provider === "antigravity") &&
+    !offersChoice(request.raw, "allow_once")
+  )
     return undefined
   const method = APPROVAL_METHODS[request.action] ?? "approval/tool"
   if (method === PLAN_METHOD) return planRequest(request.plan ?? "")
@@ -369,7 +372,8 @@ function approvalRequest(
     prompt: approvalPrompt(request),
     // A session grant stays inside Codex's own session. OpenCode keeps the
     // allow-always choice Blitz has always offered it. Claude would write a
-    // grant to a settings file, which Blitz never does on the learner's behalf.
+    // grant to a settings file, which Blitz never does on the learner's behalf,
+    // and Antigravity's allow-always is kept in its own settings the same way.
     ...((provider === "codex" &&
       (request.action === "command" || request.action === "file-change")) ||
     (provider === "opencode" && offersChoice(request.raw, "allow_always"))
@@ -617,13 +621,13 @@ function mcpRequest(request: NativeRequest): AgentRequestSpec {
 }
 
 /**
- * Normalizes one Codex, Claude Code or OpenCode request from agent-engines into a
- * composer interaction.
+ * Normalizes one Codex, Claude Code, OpenCode or Antigravity request from
+ * agent-engines into a composer interaction.
  *
  * @param request - Request event from the running turn.
  * @param provider - Runtime that raised it; session grants are offered on
- *   Codex and OpenCode only, and an OpenCode approval with no allow-once
- *   choice is refused unseen.
+ *   Codex and OpenCode only, and an OpenCode or Antigravity approval with no
+ *   allow-once choice is refused unseen.
  * @returns The interaction, or undefined when Blitz refuses it unseen (an
  *   unreviewable file change). Throws when the request is too large or malformed.
  */

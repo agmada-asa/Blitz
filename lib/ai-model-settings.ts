@@ -1,7 +1,12 @@
 /** Defines task-specific provider, model, and reasoning settings shared by Blitz. */
 
 /** Provider integrations Blitz can route local AI work through. */
-export const AI_PROVIDER_IDS = ["codex", "claude-code", "opencode"] as const
+export const AI_PROVIDER_IDS = [
+  "codex",
+  "claude-code",
+  "opencode",
+  "antigravity",
+] as const
 
 /** Stable identifier for one local provider integration. */
 export type AiProviderId = (typeof AI_PROVIDER_IDS)[number]
@@ -27,6 +32,7 @@ export const AI_PROVIDER_APPROVAL_POLICIES: Readonly<
   codex: ["on-request", "untrusted", "full-access"],
   "claude-code": ["never", "on-request", "full-access"],
   opencode: ["never", "on-request", "full-access"],
+  antigravity: ["never", "on-request", "full-access"],
 }
 
 /** Validates persisted policies and fills legacy records with conservative defaults. */
@@ -82,6 +88,11 @@ export const AI_PROVIDER_OPTIONS: readonly AiProviderOption[] = [
     label: "OpenCode",
     description: "Use a local OpenCode ACP installation.",
   },
+  {
+    id: "antigravity",
+    label: "Antigravity",
+    description: "Use a local Antigravity CLI installation.",
+  },
 ]
 
 /** Names the task-specific provider field stored beside the legacy model fields. */
@@ -113,6 +124,7 @@ export const AI_PROVIDER_TASKS: Readonly<
   codex: ["research", "reply", "cardGeneration"],
   "claude-code": ["reply", "cardGeneration"],
   opencode: ["reply", "cardGeneration"],
+  antigravity: ["reply", "cardGeneration"],
 }
 
 /** Names the persisted model field used for each kind of AI work. */
@@ -263,6 +275,30 @@ export const AI_PROVIDER_MODEL_OPTIONS: Readonly<
     {
       id: "opencode/big-pickle",
       label: "OpenCode Big Pickle",
+      reasoningEfforts: ["default"],
+    },
+  ],
+  // The models `agy acp` offers as of CLI 1.5.9; the signed-in CLI's own list
+  // replaces these once Settings has checked it.
+  antigravity: [
+    {
+      id: "gemini-3.8-flash",
+      label: "Gemini 3.8 Flash",
+      reasoningEfforts: ["default"],
+    },
+    {
+      id: "claude-sonnet-4-6",
+      label: "Claude Sonnet 4.6 (Thinking)",
+      reasoningEfforts: ["default"],
+    },
+    {
+      id: "claude-opus-4-6-thinking",
+      label: "Claude Opus 4.6 (Thinking)",
+      reasoningEfforts: ["default"],
+    },
+    {
+      id: "gpt-oss-120b-medium",
+      label: "GPT-OSS 120B (Medium)",
       reasoningEfforts: ["default"],
     },
   ],
@@ -463,7 +499,7 @@ export function getSupportedAiReasoningEffortsForProvider(
   model: string,
   runtimeOptions?: readonly AiProviderModelOption[]
 ): readonly AiReasoningEffort[] {
-  if (provider === "opencode") return ["default"]
+  if (provider === "opencode" || provider === "antigravity") return ["default"]
   const normalizedModel =
     provider === "claude-code"
       ? model.replace(/^claude-(sonnet|opus|haiku)$/, "$1")
@@ -475,9 +511,14 @@ export function getSupportedAiReasoningEffortsForProvider(
   )
 }
 
-/** Provider IDs Blitz no longer offers, each mapped to the default provider that replaces it. */
-const REMOVED_PROVIDER_FALLBACKS: Readonly<Record<string, AiProviderId>> = {
-  antigravity: "codex",
+/**
+ * Model IDs an earlier provider integration saved that no runtime serves now,
+ * each mapped to the model that replaces it. Blitz's first Antigravity
+ * integration ran a separate ACP package with one `antigravity/default` model;
+ * the CLI's own `agy acp` names its models directly.
+ */
+const RETIRED_MODEL_REPLACEMENTS: Readonly<Record<string, string>> = {
+  "antigravity/default": "gemini-3.8-flash",
 }
 
 /** Provider, model, and effort field names for each task, in settings order. */
@@ -488,21 +529,20 @@ const TASK_SETTING_FIELDS = [
 ] as const
 
 /**
- * Moves a task that saved a removed provider back to the default provider. The
- * model and effort saved for that provider no longer apply, so they reset to
- * Blitz's defaults. Settings read from storage keep loading instead of erroring.
+ * Moves a task that saved a retired model onto its replacement, resetting the
+ * effort, which belonged to the old model. Settings read from storage keep
+ * loading and their next turn starts, instead of the runtime refusing a model
+ * it no longer offers.
  */
-function replaceRemovedProviders(
+function replaceRetiredModels(
   settings: AiModelSettingsInput
 ): AiModelSettingsInput {
   const next = { ...settings }
-  for (const [providerField, modelField, effortField] of TASK_SETTING_FIELDS) {
-    const saved = next[providerField]?.trim()
-    const replacement = saved ? REMOVED_PROVIDER_FALLBACKS[saved] : undefined
+  for (const [, modelField, effortField] of TASK_SETTING_FIELDS) {
+    const replacement = RETIRED_MODEL_REPLACEMENTS[next[modelField]?.trim()]
     if (!replacement) continue
-    next[providerField] = replacement
-    next[modelField] = DEFAULT_AI_MODELS[modelField]
-    next[effortField] = DEFAULT_AI_REASONING_EFFORTS[effortField]
+    next[modelField] = replacement
+    next[effortField] = "default"
   }
   return next
 }
@@ -606,7 +646,7 @@ export function validateAiModelSettings(
   rawSettings: AiModelSettingsInput,
   modelCatalogs?: AiProviderModelCatalogs
 ): AiModelSettings {
-  const settings = replaceRemovedProviders(rawSettings)
+  const settings = replaceRetiredModels(rawSettings)
   const researchModel = validateAiModelName(
     settings.researchModel,
     "researchModel"
@@ -774,6 +814,8 @@ export const AI_MODEL_COST_RANKS: Readonly<Record<string, number>> = {
   opus: 3,
   // OpenCode
   "opencode/big-pickle": 1,
+  // Antigravity: Flash is its light model
+  "gemini-3.8-flash": 1,
 }
 
 /**

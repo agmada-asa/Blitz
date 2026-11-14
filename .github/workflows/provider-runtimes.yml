@@ -62,11 +62,14 @@ jobs:
 
       # The --ci check imports only Node built-ins, so the app's dependencies
       # are not installed. OpenCode is installed at its latest version on
-      # purpose: the point is to find drift before a local update does. It
-      # runs a postinstall script, which npm only runs for packages listed in
-      # allow-scripts.
+      # purpose: the point is to find drift before a local update does. OpenCode
+      # v2 ships through its own Homebrew tap (npm's opencode-ai is still v1),
+      # and Homebrew comes installed on GitHub's Ubuntu runners.
       - name: Install the latest OpenCode
-        run: npm install --global --allow-scripts=opencode-ai opencode-ai@latest
+        run: |
+          eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
+          brew install anomalyco/tap/opencode-v2
+          echo "$(brew --prefix)/bin" >> "$GITHUB_PATH"
 
       - name: Check provider runtimes
         run: npm run check:runtimes -- --ci

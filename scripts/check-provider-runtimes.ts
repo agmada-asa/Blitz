@@ -5,7 +5,7 @@
  * protocol, refuses runtimes older than it supports, and runs its own weekly
  * `check:runtimes` against the latest CLIs. This script covers the rest:
  *
- * - OpenCode's version against Blitz's ACP requirement
+ * - OpenCode's and Antigravity's versions against Blitz's ACP requirements
  *   (`lib/server/providers/runtime-compat.ts`);
  * - the live Codex model catalogue against Blitz's fallback model list, when
  *   Codex is signed in.
@@ -13,16 +13,21 @@
  * No model turn is started. Exits with status 1 when any check finds drift.
  *
  * Usage: npm run check:runtimes -- [--ci]
- *   --ci  Treat a missing OpenCode as a failure and skip the Codex catalogue.
- *         Used by the weekly workflow, which installs the latest OpenCode
- *         without signing in to anything.
+ *   --ci  Treat a missing OpenCode as a failure, and skip Antigravity and the
+ *         Codex catalogue. Used by the weekly workflow, which installs the
+ *         latest OpenCode without signing in to anything.
  */
 
 import { execFile } from "node:child_process"
+import { existsSync } from "node:fs"
+import { homedir } from "node:os"
+import { join } from "node:path"
 import { promisify } from "node:util"
 
 import {
+  ANTIGRAVITY_VERSION_REQUIREMENT,
   OPENCODE_VERSION_REQUIREMENT,
+  checkAntigravityVersion,
   checkOpenCodeVersion,
 } from "../lib/server/providers/runtime-compat.ts"
 
@@ -68,6 +73,40 @@ async function checkOpenCode(): Promise<void> {
     `OpenCode ${check.version ?? "(unknown version)"}: ${
       check.supported ? "supported" : "UNSUPPORTED"
     } (needs ${minimum}+${sameMajor ? ` within v${minimum.split(".")[0]}` : ""})`,
+    !check.supported
+  )
+}
+
+/**
+ * Checks Antigravity's version against Blitz's requirement. A missing CLI is
+ * only noted: Antigravity is optional, and the weekly run never installs it.
+ */
+async function checkAntigravity(): Promise<void> {
+  const installed = join(homedir(), ".local", "bin", "agy")
+  const executable =
+    process.env.BLITZ_ANTIGRAVITY_COMMAND?.trim() ||
+    (existsSync(installed) ? installed : "agy")
+  let output: string
+  try {
+    const { stdout, stderr } = await run(executable, ["--version"], {
+      timeout: COMMAND_TIMEOUT_MS,
+    })
+    output = `${stdout}${stderr}`
+  } catch (error) {
+    const missing = (error as NodeJS.ErrnoException).code === "ENOENT"
+    note(
+      missing
+        ? "Antigravity: not installed"
+        : `Antigravity: \`${executable} --version\` failed`,
+      !missing
+    )
+    return
+  }
+  const check = checkAntigravityVersion(output)
+  note(
+    `Antigravity ${check.version ?? "(unknown version)"}: ${
+      check.supported ? "supported" : "UNSUPPORTED"
+    } (needs ${ANTIGRAVITY_VERSION_REQUIREMENT.minimum}+)`,
     !check.supported
   )
 }
@@ -134,6 +173,7 @@ async function checkCodexModels(): Promise<void> {
 /** Runs every check and prints a report. */
 async function main(): Promise<void> {
   await checkOpenCode()
+  if (!ciMode) await checkAntigravity()
   if (!ciMode) await checkCodexModels()
   console.log(report.lines.join("\n"))
   console.log(

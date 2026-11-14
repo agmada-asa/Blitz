@@ -1,9 +1,14 @@
 /** Owns user-initiated connect and disconnect operations for local AI providers. */
 
 import { spawn } from "node:child_process"
+import { tmpdir } from "node:os"
 
 import type { AiProviderId } from "../../ai-model-settings.ts"
-import { checkProviderAvailability, providerCommand } from "./registry.ts"
+import {
+  checkProviderAvailability,
+  providerCommand,
+  readOpenCodeIntegrations,
+} from "./registry.ts"
 
 const AUTH_TIMEOUT_MS = 15_000
 
@@ -14,7 +19,8 @@ async function runCredentialCommand(
 ): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     let settled = false
-    const child = spawn(executable, args, { stdio: "ignore" })
+    // Credentials are global; OpenCode v2's service fails inside some project folders.
+    const child = spawn(executable, args, { cwd: tmpdir(), stdio: "ignore" })
     const finish = (error?: Error): void => {
       if (settled) return
       settled = true
@@ -64,13 +70,21 @@ function shellQuote(value: string): string {
   return `'${value.replaceAll("'", `'"'"'`)}'`
 }
 
-/** Opens OpenCode's interactive provider chooser in a visible macOS Terminal window. */
-async function openOpenCodeLogin(executable: string): Promise<void> {
+/**
+ * Runs a provider's interactive sign-in in a visible macOS Terminal window.
+ *
+ * @param executable - The provider CLI, quoted for the shell.
+ * @param args - Fixed sign-in arguments; never user input.
+ * @param manual - The command named in the error on other platforms.
+ */
+async function openTerminalLogin(
+  executable: string,
+  args: string,
+  manual: string
+): Promise<void> {
   if (process.platform !== "darwin")
-    throw new Error(
-      "Run `opencode auth login` in a terminal, then check again."
-    )
-  const command = `${shellQuote(executable)} auth login`
+    throw new Error(`Run \`${manual}\` in a terminal, then check again.`)
+  const command = `${shellQuote(executable)} ${args}`
   const script = `tell application "Terminal" to do script ${JSON.stringify(command)}`
   await runCredentialCommand("/usr/bin/osascript", ["-e", script])
 }
@@ -100,7 +114,12 @@ export async function changeProviderAuthentication(input: {
       await startNativeLogin(command.executable, ["auth", "login"])
       return
     }
-    await openOpenCodeLogin(command.executable)
+    if (input.providerId === "antigravity") {
+      // `agy acp --login` signs in with Google, then exits.
+      await openTerminalLogin(command.executable, "acp --login", "agy acp --login")
+      return
+    }
+    await openTerminalLogin(command.executable, "auth login", "opencode auth login")
     return
   }
 
@@ -112,8 +131,20 @@ export async function changeProviderAuthentication(input: {
     await runCredentialCommand(command.executable, ["auth", "logout"])
     return
   }
+  if (input.providerId === "antigravity")
+    throw new Error("Sign out of Antigravity in its own app or CLI.")
   const account = input.account?.trim()
-  if (!account || !state.accounts?.includes(account))
+  const integration = (await readOpenCodeIntegrations()).find(
+    (candidate) => candidate.name === account
+  )
+  if (!account || !integration)
     throw new Error("Choose an OpenCode account to disconnect.")
-  await runCredentialCommand(command.executable, ["auth", "logout", account])
+  // Naming each credential keeps OpenCode from opening its account picker.
+  for (const credentialId of integration.credentialIds)
+    await runCredentialCommand(command.executable, [
+      "auth",
+      "logout",
+      integration.id,
+      credentialId,
+    ])
 }
