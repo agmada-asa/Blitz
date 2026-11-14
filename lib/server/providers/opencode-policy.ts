@@ -1,4 +1,4 @@
-/** Applies OpenCode v1 native tool rules in a dedicated agent without changing user settings. */
+/** Applies OpenCode v2 native tool rules in a dedicated agent without changing user settings. */
 import type { ProviderTextTurnRequest } from "./types.ts"
 
 /** The access settings of one turn that decide OpenCode's native permissions. */
@@ -27,12 +27,18 @@ const READ_ONLY_TOOLS = [
 /**
  * Builds the per-process environment for one OpenCode turn.
  *
- * Background generation runs in pure mode with every tool denied. Chat turns
- * keep the user's global OpenCode setup, including plugins and MCP servers,
- * and map Blitz's access policy onto native permissions: full access allows
+ * Background generation runs with every tool denied. Chat turns keep the
+ * user's global OpenCode setup, including plugins and MCP servers, and map
+ * Blitz's access policy onto native permissions: full access allows
  * everything, on-request asks through Blitz, and never/read-only allow only
  * read tools. Project config stays disabled in every turn, because Blitz
  * workspaces are directories the agent itself can write to.
+ *
+ * `opencode acp` reads `OPENCODE_CONFIG_CONTENT` in its own process, so the
+ * rules reach only this turn. They are set both globally and on the Blitz
+ * agent, so a session that switches agent keeps them. OpenCode v2 has no pure
+ * mode, so background turns load the user's own plugins too; with every tool
+ * denied, those plugins have nothing to act on.
  *
  * @param request - Normalized provider turn.
  * @param agentName - Dedicated Blitz agent that carries the permissions.
@@ -77,15 +83,12 @@ export function openCodeEnvironment(
   // Project configuration can install tools or change agents before a permission request.
   delete env.OPENCODE_CONFIG
   delete env.OPENCODE_CONFIG_DIR
-  delete env.OPENCODE_PURE
   return {
     ...env,
-    // Pure mode skips the user's external plugins; chat turns keep them.
-    ...(background ? { OPENCODE_PURE: "1" } : {}),
     OPENCODE_DISABLE_PROJECT_CONFIG: "1",
     OPENCODE_DISABLE_AUTOUPDATE: "1",
-    OPENCODE_PERMISSION: JSON.stringify(permission),
     OPENCODE_CONFIG_CONTENT: JSON.stringify({
+      permission,
       default_agent: agentName,
       agent: { [agentName]: { mode: "primary", permission } },
     }),

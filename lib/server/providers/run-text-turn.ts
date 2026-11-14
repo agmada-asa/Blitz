@@ -4,13 +4,13 @@
  * Every provider runs through agent-engines: this module turns Blitz's access
  * settings into each runtime's thread options and hands the turn to
  * `engine-turn.ts`. Codex and Claude Code have their own engines; OpenCode
- * runs on the library's ACP engine (`opencode.ts`).
+ * and Antigravity run on the library's ACP engine (`acp-providers.ts`).
  *
  * The same thread settings also prewarm an engine before a Teach session's
  * first turn (`prewarmProviderTextTurn`, claimed from `engine-pool.ts`) and
  * compact a saved thread on request (`compactProviderThread`), so neither can
- * drift from what a real turn sends. Neither applies to OpenCode, whose ACP
- * engine cannot prewarm or compact.
+ * drift from what a real turn sends. Neither applies to the ACP providers,
+ * whose engine cannot prewarm or compact.
  */
 import type {
   AgentRequest,
@@ -40,7 +40,10 @@ import {
   providerExecutionInstructions,
   resolveProviderExecution,
 } from "../../provider-execution.ts"
-import { checkProviderAvailability } from "./registry.ts"
+import {
+  checkAntigravityInstalled,
+  checkProviderAvailability,
+} from "./registry.ts"
 import { validateCodexModelSelection } from "./codex-models.ts"
 import { codexRuntimeInstructionsIfInstalled } from "./codex-runtime.ts"
 import {
@@ -63,11 +66,14 @@ import {
   type ToolCallHandler,
 } from "./engine-pool.ts"
 import {
-  createOpenCodeEngine,
-  openCodeAccess,
-  openCodePrompt,
-  type OpenCodeSpawn,
-} from "./opencode.ts"
+  ACP_PROVIDER_NAMES,
+  acpAccess,
+  acpPrompt,
+  createAcpProviderEngine,
+  isAcpProvider,
+  type AcpProviderId,
+  type AcpSpawn,
+} from "./acp-providers.ts"
 import type {
   ProviderImageAttachment,
   ProviderModelOption,
@@ -209,8 +215,8 @@ export type ProviderTextTurnOptions = {
   readonly backgroundLimits?: () => Promise<TurnLimits | undefined>
   /** Runtime Codex catalog already read by the caller, so the turn need not read it again. */
   readonly codexModelCatalog?: readonly ProviderModelOption[]
-  /** Starts the OpenCode process for a turn; tests pass a fake ACP peer. */
-  readonly spawnOpenCode?: OpenCodeSpawn
+  /** Starts the OpenCode or Antigravity process for a turn; tests pass a fake ACP peer. */
+  readonly spawnOpenCode?: AcpSpawn
   /** Creates the Codex or Claude Code engine for a turn; tests pass a fake. */
   readonly createEngine?: (
     providerId: EngineProviderId,
@@ -406,12 +412,25 @@ type EngineThreadSetup = {
 }
 
 /**
- * Checks that the installed OpenCode is a supported, signed-in release before
- * its turn starts, since its ACP engine only finds out once a session opens.
+ * Checks that the installed ACP provider is a supported, signed-in release
+ * before its turn starts, since its ACP engine only finds out once a session
+ * opens.
+ *
+ * OpenCode's check reads local files and takes well under a second.
+ * Antigravity's sign-in check asks its service for the account's models,
+ * which would add about two seconds to every turn, so its turns check only
+ * that a supported CLI is installed, and a signed-out CLI asks for sign-in
+ * when the session opens.
  */
-async function checkOpenCodeReady(
+async function checkAcpProviderReady(
+  providerId: AcpProviderId,
   request: RunProviderTextTurnRequest
 ): Promise<void> {
+  if (providerId === "antigravity") {
+    const version = await checkAntigravityInstalled()
+    if (version) throw new CardChatError("transport", version)
+    return
+  }
   const availability = await checkProviderAvailability("opencode", {
     workspaceDirectory: request.workspaceDirectory,
     providerInstanceId: request.providerInstanceId,
@@ -440,7 +459,7 @@ async function engineThreadSetup(
     ThreadOptions,
     "access" | "claude" | "codex" | "limits" | "mode"
   >
-  if (providerId === "opencode") {
+  if (isAcpProvider(providerId)) {
     if (request.sandbox === "workspace-write")
       throw new CardChatError(
         "invalid-input",
@@ -451,10 +470,12 @@ async function engineThreadSetup(
     if (selection.effort && selection.effort !== "default")
       throw new CardChatError(
         "invalid-input",
-        "OpenCode reasoning level is unsupported for this model"
+        `${ACP_PROVIDER_NAMES[providerId]} reasoning level is unsupported for this model`
       )
-    // `default` reasserts the session's own mode: the Blitz agent this turn defines.
-    settings = { access: openCodeAccess(request), mode: "default" }
+    // `default` reasserts the mode the session opened in: on OpenCode, the
+    // Blitz agent this turn defines; on Antigravity, the CLI's configured
+    // default, which out of the box asks before edits and commands.
+    settings = { access: acpAccess(request), mode: "default" }
   } else if (providerId === "claude-code") {
     if (request.approvalPolicy === "untrusted")
       throw new CardChatError(
@@ -503,8 +524,8 @@ async function engineThreadSetup(
       cwd: request.workspaceDirectory,
       ...(model ? { model } : {}),
       ...(effort ? { effort } : {}),
-      // OpenCode has no instruction channel; its prompt carries them instead.
-      ...(instructions && providerId !== "opencode" ? { instructions } : {}),
+      // ACP has no instruction channel; the prompt carries them instead.
+      ...(instructions && !isAcpProvider(providerId) ? { instructions } : {}),
       ...(request.outputSchema ? { outputSchema: request.outputSchema } : {}),
       ...settings,
       // A resumed or copied session already holds its own history.
@@ -641,17 +662,17 @@ async function runEngineProviderTurn(
     instructions,
     options
   )
-  // A fake OpenCode peer in tests stands in for the installed CLI as well.
-  if (providerId === "opencode" && !options.spawnOpenCode)
-    await checkOpenCodeReady(request)
-  const engine =
-    providerId === "opencode"
-      ? createOpenCodeEngine(
-          request,
-          request.workspaceDirectory,
-          options.spawnOpenCode
-        )
-      : (claimEngine(providerId, request, setup, options) ??
+  // A fake ACP peer in tests stands in for the installed CLI as well.
+  if (isAcpProvider(providerId) && !options.spawnOpenCode)
+    await checkAcpProviderReady(providerId, request)
+  const engine = isAcpProvider(providerId)
+    ? createAcpProviderEngine(
+        providerId,
+        request,
+        request.workspaceDirectory,
+        options.spawnOpenCode
+      )
+    : (claimEngine(providerId, request, setup, options) ??
         (options.createEngine ?? defaultEngine)(providerId, {
           ...(options.codex?.onToolCall
             ? { onToolCall: options.codex.onToolCall }
@@ -677,7 +698,7 @@ async function runEngineProviderTurn(
       thread: setup.thread,
       ...(request.threadId ? { threadId: request.threadId } : {}),
       // An ACP agent reports a turn as started before it checks a reloaded session.
-      ...(providerId === "opencode" ? { confirmResume: true } : {}),
+      ...(isAcpProvider(providerId) ? { confirmResume: true } : {}),
       ...(request.fork ? { fork: request.fork } : {}),
       ...(request.mode ? { turnOptions: { mode: request.mode } } : {}),
       ...(request.compactFirst ? { compactFirst: true } : {}),
@@ -689,9 +710,9 @@ async function runEngineProviderTurn(
         : {}),
       ...(request.readContextUsage ? { readContextUsage: true } : {}),
       input: turnInput(
-        // OpenCode has no instruction channel, so its prompt carries them.
-        providerId === "opencode"
-          ? openCodePrompt(request.prompt, instructions)
+        // ACP has no instruction channel, so the prompt carries them.
+        isAcpProvider(providerId)
+          ? acpPrompt(request.prompt, instructions)
           : request.prompt,
         request
       ),

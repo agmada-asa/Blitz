@@ -1,5 +1,5 @@
 /**
- * Runs one bounded Codex, Claude Code or OpenCode turn through agent-engines
+ * Runs one bounded Codex, Claude Code, OpenCode or Antigravity turn through agent-engines
  * and reports it in Blitz's card-chat event and result shapes.
  *
  * The library owns the runtime mechanics: starting or resuming the thread,
@@ -50,6 +50,7 @@ import {
 } from "../../context-usage.ts"
 import { formatUsd } from "../../spending-limits.ts"
 import { shownTurnNotice } from "../../turn-notices.ts"
+import type { AcpProviderId } from "./acp-providers.ts"
 import type { EngineProviderId } from "./engines.ts"
 
 /** How long cleanup waits for an interrupt or engine shutdown before moving on. */
@@ -72,7 +73,7 @@ const PLAN_APPROVED_PROMPT =
   "The learner approved the plan. Carry it out now, exactly as proposed."
 
 /** Blitz providers whose turns run on an agent-engines engine. */
-export type TurnProviderId = EngineProviderId | "opencode"
+export type TurnProviderId = EngineProviderId | AcpProviderId
 
 /** Events that are the runtime's own output for a turn, confirming a resumed session. */
 const CONFIRMING_EVENTS: ReadonlySet<AgentEvent["type"]> = new Set([
@@ -367,6 +368,8 @@ async function runTurn(
   let pendingPlan: string | undefined
   // Runtime turns this reply took: more than one after a reviewed Codex plan.
   let rounds = 0
+  // Whether the runtime asked for an approval during the turn.
+  let approvalAsked = false
   let finished = false
   let cancelReason: CardChatError | undefined
   let rejectCancellation: ((error: CardChatError) => void) | undefined
@@ -453,6 +456,7 @@ async function runTurn(
       return
     }
     if (event.type === "request") {
+      if (event.request.kind === "approval") approvalAsked = true
       const answer = options.onRequest
         ? options.onRequest(event.request)
         : refuseAgentRequest(event.request)
@@ -754,6 +758,14 @@ async function runTurn(
         "transport",
         "Blitz assistant output exceeded the configured limit"
       )
+    // Antigravity ends a turn without a word once an approval is declined,
+    // where OpenCode reports it interrupted; both are the learner stopping it.
+    if (
+      !reply.trim() &&
+      approvalAsked &&
+      (request.providerId === "opencode" || request.providerId === "antigravity")
+    )
+      throw new CardChatError("turn-interrupted", "Blitz turn interrupted")
     if (!reply.trim())
       throw new CardChatError(
         "turn-failed",

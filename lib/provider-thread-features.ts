@@ -5,8 +5,9 @@
  *
  * Every provider runs through agent-engines. Codex and Claude Code have their
  * own engines, which support all of these apart from spending caps on Codex.
- * OpenCode runs on the library's ACP engine, which supports none of them and
- * throws `UnsupportedFeatureError` when one is set, so OpenCode chats keep
+ * OpenCode and Antigravity run on the library's ACP engine, which supports
+ * none of them and throws `UnsupportedFeatureError` when one is set, so their
+ * chats keep
  * their earlier behaviour: branches and edits replay the transcript, Teach
  * replies cannot be redone in place, the context meter stays hidden, no
  * compaction runs, Plan first is ignored, and background work parses plain
@@ -66,7 +67,7 @@ const FEATURES: Partial<Record<AiProviderId, ProviderThreadFeatures>> = {
   },
 }
 
-/** No runtime features: OpenCode, and any provider id Blitz does not know. */
+/** No runtime features: OpenCode, Antigravity, and any provider id Blitz does not know. */
 const NONE: ProviderThreadFeatures = {
   fork: false,
   rewind: false,
