@@ -9,6 +9,7 @@ import {
   ArrowRight01Icon,
   ArrowUp01Icon,
   ArrowUpRight01Icon,
+  ArrowExpand01Icon,
   BookOpen01Icon,
   BulbIcon,
   Cancel01Icon,
@@ -84,6 +85,8 @@ export const ComputerIconComponent = makeIcon(ComputerIcon)
 export const FileIcon = makeIcon(File01Icon)
 /** File upload glyph. */
 export const FileUploadIconComponent = makeIcon(FileUploadIcon)
+/** Open a figure at a larger size. */
+export const ExpandIcon = makeIcon(ArrowExpand01Icon)
 /** Project folder glyph. */
 export const FolderIcon = makeIcon(Folder01Icon)
 /** Recall prompt glyph. */
