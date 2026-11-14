@@ -62,6 +62,13 @@
   --input: #dedede;
   --ring: #3b82f6;
   --radius: 0.75rem;
+  /* Series colours for graphs, in fixed order: validated for colour-blind separation on this surface. */
+  --chart-1: #2a78d6;
+  --chart-2: #eb6834;
+  --chart-3: #1baf7a;
+  --chart-4: #eda100;
+  --chart-5: #e87ba4;
+  --chart-6: #008300;
 }
 
 .dark {
@@ -85,6 +92,12 @@
   --border: #303030;
   --input: #3a3a3a;
   --ring: #60a5fa;
+  --chart-1: #3987e5;
+  --chart-2: #d95926;
+  --chart-3: #199e70;
+  --chart-4: #c98500;
+  --chart-5: #d55181;
+  --chart-6: #0ca30c;
 }
 
 /* Accent choices update the existing brand, primary, and focus tokens. */
@@ -552,6 +565,8 @@
 .markdown-diagram { min-width: 0; }
 .markdown-diagram-canvas { overflow-x: auto; max-width: 100%; padding: 12px 0; }
 .markdown-diagram-canvas svg { display: block; max-width: none; height: auto; margin-inline: auto; }
+/* In the larger view, a diagram scales up to fill the dialog instead of keeping its natural width. */
+.markdown-diagram-expanded svg { width: 100% !important; height: auto; max-height: calc(100dvh - 8rem); }
 .markdown-diagram-source { margin-top: 8px; }
 .markdown-diagram-source summary { width: fit-content; cursor: pointer; color: var(--muted-foreground); font-size: .85em; border-radius: 4px; }
 .markdown-diagram-source[open] summary { margin-bottom: 8px; }

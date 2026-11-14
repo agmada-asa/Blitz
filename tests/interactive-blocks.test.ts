@@ -45,10 +45,10 @@ function invalid(info: string, source: string): string {
   return parsed.ok ? "" : parsed.error
 }
 
-test("recognizes only the four interactive languages", () => {
+test("recognizes only the five interactive languages", () => {
   assert.deepEqual(
     [...INTERACTIVE_BLOCK_LANGUAGES],
-    ["quiz", "steps", "viz", "followups"]
+    ["quiz", "steps", "graph", "viz", "followups"]
   )
   for (const language of INTERACTIVE_BLOCK_LANGUAGES)
     assert.equal(isInteractiveBlockLanguage(language), true)
@@ -178,6 +178,86 @@ test("parses viz HTML with a title and enforces size limits", () => {
   invalid("viz", "x".repeat(60_001))
 })
 
+test("parses graphs, filling defaults and clamping slider starts", () => {
+  assert.deepEqual(
+    valid(
+      "graph Growth rates",
+      JSON.stringify({
+        x: { label: "n", min: 1, max: 32 },
+        functions: [
+          { label: "n log n", expr: "x*log2(x)" },
+          "x^2/k",
+          { expr: "x", dashed: true },
+        ],
+        params: [{ name: "k", min: 1, max: 10, value: 40 }],
+      })
+    ),
+    {
+      kind: "graph",
+      title: "Growth rates",
+      x: { label: "n", min: 1, max: 32 },
+      y: {},
+      functions: [
+        { label: "n log n", expr: "x*log2(x)", dashed: false },
+        { label: "x^2/k", expr: "x^2/k", dashed: false },
+        { label: "x", expr: "x", dashed: true },
+      ],
+      points: [],
+      params: [{ name: "k", label: "k", min: 1, max: 10, step: 0.09, value: 10 }],
+    }
+  )
+})
+
+test("fits a points-only graph's x range to its data", () => {
+  const block = valid(
+    "graph",
+    '{"y":{"label":"ms","min":0},"points":[{"label":"Run time","data":[[2,5],[8,9]],"line":true}]}'
+  )
+  assert.equal(block.kind, "graph")
+  if (block.kind !== "graph") return
+  assert.ok(Math.abs(block.x.min - 1.76) < 1e-9 && Math.abs(block.x.max - 8.24) < 1e-9)
+  assert.deepEqual(block.y, { label: "ms", min: 0 })
+  assert.deepEqual(block.points[0], {
+    label: "Run time",
+    data: [
+      [2, 5],
+      [8, 9],
+    ],
+    line: true,
+  })
+})
+
+test("rejects graphs a renderer could not draw", () => {
+  assert.match(invalid("graph", "{}"), /at least one function/)
+  assert.match(
+    invalid("graph", '{"functions":["x"]}'),
+    /x.min and x.max are required/
+  )
+  assert.match(
+    invalid("graph", '{"x":{"min":0,"max":1},"functions":["2x"]}'),
+    /write multiplication with \*/
+  )
+  assert.match(
+    invalid("graph", '{"x":{"min":0,"max":1},"functions":["a*x"]}'),
+    /unknown name "a"/
+  )
+  assert.match(
+    invalid("graph", '{"x":{"min":0,"max":1},"functions":["alert(1)"]}'),
+    /unknown function "alert"/
+  )
+  invalid("graph", '{"x":{"min":1,"max":1},"functions":["x"]}')
+  invalid("graph", '{"x":{"min":0,"max":1},"y":{"min":2,"max":1},"functions":["x"]}')
+  invalid("graph", '{"x":{"min":0,"max":1},"functions":["x"],"params":[{"name":"x","min":0,"max":1}]}')
+  invalid("graph", '{"x":{"min":0,"max":1},"functions":["x"],"params":[{"name":"sin","min":0,"max":1}]}')
+  invalid("graph", '{"x":{"min":0,"max":1},"functions":["x"],"params":[{"name":"k","min":1,"max":0}]}')
+  invalid("graph", '{"points":[{"data":[[1,"2"]]}]}')
+  invalid("graph", '{"points":[{"data":[]}]}')
+  invalid(
+    "graph",
+    JSON.stringify({ x: { min: 0, max: 1 }, functions: Array(7).fill("x") })
+  )
+})
+
 test("parses follow-ups and rejects invalid lists", () => {
   assert.deepEqual(valid("followups", '[" Why? ","Show another example"]'), {
     kind: "followups",
@@ -295,6 +375,15 @@ test("speech text summarizes blocks without revealing quiz answers", () => {
   assert.equal(
     interactiveBlockSpeechText(valid("viz", "<p></p>")),
     "[Interactive visualisation]"
+  )
+  assert.equal(
+    interactiveBlockSpeechText(
+      valid(
+        "graph Growth",
+        '{"x":{"min":0,"max":1},"functions":[{"label":"n squared","expr":"x^2"}],"points":[{"label":"Measured","data":[[0,0]]}]}'
+      )
+    ),
+    "[Graph: Growth. Plots n squared; Measured.]"
   )
   assert.equal(interactiveBlockSpeechText(valid("followups", '["Why?"]')), "")
 })

@@ -3,7 +3,7 @@
 /**
  * Entry point for interactive Markdown block renderers.
  *
- * `Markdown` parses ```quiz, ```steps, ```viz, and ```followups fences with `lib/interactive-blocks.ts`
+ * `Markdown` parses ```quiz, ```steps, ```graph, ```viz, and ```followups fences with `lib/interactive-blocks.ts`
  * and renders them here. Chat surfaces import `InteractiveBlocksProvider` from this module to supply
  * quiz scoring, recorded answers, streaming state, and follow-up handling.
  */
@@ -15,6 +15,7 @@ import type {
 import { Skeleton } from "@/components/ui/skeleton"
 import type { MarkdownRenderer } from "@/components/ui/interactive-blocks/context"
 import { FollowupsBlockView } from "@/components/ui/interactive-blocks/followups-block"
+import { GraphBlockView } from "@/components/ui/interactive-blocks/graph-block"
 import { QuizBlockView } from "@/components/ui/interactive-blocks/quiz-block"
 import { StepsBlockView } from "@/components/ui/interactive-blocks/steps-block"
 import { VizBlockView } from "@/components/ui/interactive-blocks/viz-block"
@@ -33,6 +34,7 @@ const placeholderLabels: Record<
 > = {
   quiz: "Preparing question…",
   steps: "Preparing worked example…",
+  graph: "Drawing graph…",
   viz: "Preparing visualisation…",
 }
 
@@ -66,7 +68,7 @@ export function InteractiveBlockPlaceholder({
  * @param block Parsed block.
  * @param streaming Whether the containing reply is still streaming.
  * @param renderMarkdown Renders nested Markdown without further interactive blocks.
- * @param source Raw source view used by visualisations, normally a highlighted code block.
+ * @param source Raw source view used by graphs and visualisations, normally a highlighted code block.
  * @returns The block view.
  */
 export function InteractiveBlockView({
@@ -85,6 +87,8 @@ export function InteractiveBlockView({
       return <QuizBlockView block={block} renderMarkdown={renderMarkdown} />
     case "steps":
       return <StepsBlockView block={block} renderMarkdown={renderMarkdown} />
+    case "graph":
+      return <GraphBlockView block={block}>{source}</GraphBlockView>
     case "viz":
       return <VizBlockView block={block}>{source}</VizBlockView>
     case "followups":

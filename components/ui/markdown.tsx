@@ -581,7 +581,12 @@ function interactiveBlock(
           block={parsed.block}
           streaming={options.streaming}
           renderMarkdown={nestedMarkdownRenderer(options)}
-          source={<CodeBlock code={token.text} language="html" />}
+          source={
+            <CodeBlock
+              code={token.text}
+              language={parsed.block.kind === "viz" ? "html" : "json"}
+            />
+          }
         />
       </div>
     )

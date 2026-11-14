@@ -1,8 +1,9 @@
 /**
  * Defines the interactive Markdown block protocol shared by model prompts, the server, and web renderers.
  *
- * Tutors and chat replies embed quizzes, step-by-step worked examples, sandboxed visualisations, and
- * follow-up suggestions as fenced code blocks (```quiz, ```steps, ```viz, ```followups). This module
+ * Tutors and chat replies embed quizzes, step-by-step worked examples, graphs of functions and data,
+ * sandboxed visualisations, and follow-up suggestions as fenced code blocks (```quiz, ```steps, ```graph,
+ * ```viz, ```followups). This module
  * parses and validates those fences into normalized blocks, finds quizzes in stored messages for
  * server-side scoring, summarizes blocks for read-aloud, builds the sandboxed visualisation document,
  * and documents the protocol for model instructions. It has no React or browser dependencies so it can
@@ -14,11 +15,17 @@ import {
   evaluateAnswer,
   type Question,
 } from "./learning/core.ts"
+import {
+  compileExpression,
+  ExpressionError,
+  RESERVED_EXPRESSION_NAMES,
+} from "./graph-expression.ts"
 
 /** Fence languages that render as interactive blocks instead of code. */
 export const INTERACTIVE_BLOCK_LANGUAGES = [
   "quiz",
   "steps",
+  "graph",
   "viz",
   "followups",
 ] as const
@@ -76,12 +83,46 @@ export type StepsBlock = {
 /** Model-authored HTML that must only ever render inside a sandboxed iframe. */
 export type VizBlock = { kind: "viz"; title?: string; html: string }
 
+/** A slider the learner drags to change a named constant used by a graph's functions. */
+export type GraphParam = {
+  name: string
+  label: string
+  min: number
+  max: number
+  step: number
+  value: number
+}
+
+/** A curve y = f(x). `expr` has been checked to parse using `x` and the graph's parameter names. */
+export type GraphFunction = { label: string; expr: string; dashed: boolean }
+
+/** A series of data points, drawn as joined points when `line` is true and as dots otherwise. */
+export type GraphPoints = {
+  label: string
+  data: Array<[number, number]>
+  line: boolean
+}
+
+/**
+ * A graph of functions and data on one pair of axes, drawn natively rather than as model HTML. The
+ * x range is always resolved; a missing y range is fitted to the curves and points when drawn.
+ */
+export type GraphBlock = {
+  kind: "graph"
+  title?: string
+  x: { label?: string; min: number; max: number }
+  y: { label?: string; min?: number; max?: number }
+  functions: GraphFunction[]
+  points: GraphPoints[]
+  params: GraphParam[]
+}
+
 /** Suggested follow-up prompts the learner can send with one click. */
 export type FollowupsBlock = { kind: "followups"; items: string[] }
 
 /** Any validated interactive block. */
 export type InteractiveBlock =
-  QuizBlock | StepsBlock | VizBlock | FollowupsBlock
+  QuizBlock | StepsBlock | GraphBlock | VizBlock | FollowupsBlock
 
 /** Parse result; `error` explains the first validation failure for logs and debugging. */
 export type ParsedInteractiveBlock =
@@ -114,6 +155,12 @@ export const INTERACTIVE_BLOCK_LIMITS = {
   maxAcceptedAnswers: 6,
   blankAnswerChars: 200,
   outputChars: 1000,
+  /** Functions and point series together; matches the number of chart colours. */
+  maxGraphSeries: 6,
+  maxGraphParams: 4,
+  maxGraphPoints: 500,
+  graphLabelChars: 60,
+  graphParamNamePattern: /^[A-Za-z][A-Za-z0-9_]{0,15}$/,
 } as const
 
 /**
@@ -620,6 +667,211 @@ function parseViz(source: string, title: string | undefined): VizBlock {
 }
 
 /**
+ * Validates a finite number field.
+ * @param value Untrusted value from model JSON.
+ * @param field Field name used in the error message.
+ * @returns The number.
+ * @throws BlockValidationError when the value is missing, not a number, or not finite.
+ */
+function finiteNumber(value: unknown, field: string): number {
+  if (typeof value !== "number" || !Number.isFinite(value))
+    throw new BlockValidationError(`${field} must be a finite number`)
+  return value
+}
+
+/**
+ * Validates an optional finite number field.
+ * @returns The number, or undefined when missing or null.
+ * @throws BlockValidationError when present but not a finite number.
+ */
+function optionalFiniteNumber(
+  value: unknown,
+  field: string
+): number | undefined {
+  return value === undefined || value === null
+    ? undefined
+    : finiteNumber(value, field)
+}
+
+/**
+ * Validates an optional JSON array field.
+ * @returns The array, or an empty array when missing or null.
+ * @throws BlockValidationError when present but not an array.
+ */
+function optionalArray(value: unknown, field: string): unknown[] {
+  if (value === undefined || value === null) return []
+  if (!Array.isArray(value))
+    throw new BlockValidationError(`${field} must be an array`)
+  return value
+}
+
+/**
+ * Validates a graph's slider parameters.
+ * @param value Untrusted `params` value.
+ * @returns Parameters with defaults filled in and each starting value clamped to its range.
+ * @throws BlockValidationError on a bad name, range, or step.
+ */
+function parseGraphParams(value: unknown): GraphParam[] {
+  const limits = INTERACTIVE_BLOCK_LIMITS
+  const entries = optionalArray(value, "params")
+  if (entries.length > limits.maxGraphParams)
+    throw new BlockValidationError(
+      `params must contain at most ${limits.maxGraphParams} entries`
+    )
+  const names = new Set<string>()
+  return entries.map((entry, index) => {
+    const field = `params[${index}]`
+    const param = asObject(entry, field)
+    const name = requiredText(param.name, `${field}.name`, 16)
+    if (
+      !limits.graphParamNamePattern.test(name) ||
+      name === "x" ||
+      RESERVED_EXPRESSION_NAMES.has(name)
+    )
+      throw new BlockValidationError(
+        `${field}.name must be a short name other than x, a constant, or a function`
+      )
+    if (names.has(name))
+      throw new BlockValidationError(`${field}.name "${name}" is repeated`)
+    names.add(name)
+    const min = finiteNumber(param.min, `${field}.min`)
+    const max = finiteNumber(param.max, `${field}.max`)
+    if (min >= max)
+      throw new BlockValidationError(`${field}.min must be less than max`)
+    const step =
+      optionalFiniteNumber(param.step, `${field}.step`) ?? (max - min) / 100
+    if (step <= 0 || step > max - min)
+      throw new BlockValidationError(
+        `${field}.step must be positive and no larger than the range`
+      )
+    const start = optionalFiniteNumber(param.value, `${field}.value`) ?? min
+    return {
+      name,
+      label:
+        optionalText(param.label, `${field}.label`, limits.graphLabelChars) ??
+        name,
+      min,
+      max,
+      step,
+      value: Math.min(max, Math.max(min, start)),
+    }
+  })
+}
+
+/**
+ * Validates a graph body: functions and point series on shared axes, with optional sliders.
+ * @param source Raw JSON fence body.
+ * @param title Optional title from the fence info string.
+ * @returns The graph block with labels defaulted and the x range resolved.
+ * @throws BlockValidationError describing the first invalid field, including expressions that do not
+ * parse or use names other than `x`, the parameters, and the built-in constants and functions.
+ */
+function parseGraph(source: string, title: string | undefined): GraphBlock {
+  const limits = INTERACTIVE_BLOCK_LIMITS
+  const data = asObject(parseJson(source), "graph")
+  const params = parseGraphParams(data.params)
+  const variables = ["x", ...params.map((param) => param.name)]
+
+  const functions = optionalArray(data.functions, "functions").map(
+    (entry, index): GraphFunction => {
+      const field = `functions[${index}]`
+      // A bare string is accepted as shorthand for {"expr": "…"}.
+      const fn = typeof entry === "string" ? { expr: entry } : asObject(entry, field)
+      const expr = requiredText(fn.expr, `${field}.expr`, 300)
+      try {
+        compileExpression(expr, variables)
+      } catch (error) {
+        if (error instanceof ExpressionError)
+          throw new BlockValidationError(`${field}.expr: ${error.message}`)
+        throw error
+      }
+      return {
+        label:
+          optionalText(fn.label, `${field}.label`, limits.graphLabelChars) ??
+          expr.slice(0, limits.graphLabelChars),
+        expr,
+        dashed: fn.dashed === true,
+      }
+    }
+  )
+
+  const points = optionalArray(data.points, "points").map(
+    (entry, index): GraphPoints => {
+      const field = `points[${index}]`
+      const series = asObject(entry, field)
+      const values = optionalArray(series.data, `${field}.data`)
+      if (!values.length || values.length > limits.maxGraphPoints)
+        throw new BlockValidationError(
+          `${field}.data must contain 1 to ${limits.maxGraphPoints} [x, y] pairs`
+        )
+      return {
+        label:
+          optionalText(series.label, `${field}.label`, limits.graphLabelChars) ??
+          `Series ${index + 1}`,
+        data: values.map((pair, pairIndex) => {
+          if (!Array.isArray(pair) || pair.length !== 2)
+            throw new BlockValidationError(
+              `${field}.data[${pairIndex}] must be an [x, y] pair`
+            )
+          return [
+            finiteNumber(pair[0], `${field}.data[${pairIndex}][0]`),
+            finiteNumber(pair[1], `${field}.data[${pairIndex}][1]`),
+          ]
+        }),
+        line: series.line === true,
+      }
+    }
+  )
+
+  if (!functions.length && !points.length)
+    throw new BlockValidationError("graph needs at least one function or point series")
+  if (functions.length + points.length > limits.maxGraphSeries)
+    throw new BlockValidationError(
+      `graph can show at most ${limits.maxGraphSeries} functions and point series in total`
+    )
+
+  // The x range may be left out when only data is plotted; it then spans the data.
+  const xAxis = data.x === undefined || data.x === null ? {} : asObject(data.x, "x")
+  const xs = points.flatMap((series) => series.data.map(([x]) => x))
+  let xMin = optionalFiniteNumber(xAxis.min, "x.min")
+  let xMax = optionalFiniteNumber(xAxis.max, "x.max")
+  if (xMin === undefined || xMax === undefined) {
+    if (functions.length || !xs.length)
+      throw new BlockValidationError("x.min and x.max are required to plot functions")
+    // Pad a range fitted to the data so the first and last points are not cut in half at the edges.
+    const low = Math.min(...xs)
+    const high = Math.max(...xs)
+    const pad = high > low ? (high - low) * 0.04 : 1
+    xMin ??= low - pad
+    xMax ??= high + pad
+  }
+  if (xMin >= xMax)
+    throw new BlockValidationError("x.min must be less than x.max")
+
+  const yAxis = data.y === undefined || data.y === null ? {} : asObject(data.y, "y")
+  const yMin = optionalFiniteNumber(yAxis.min, "y.min")
+  const yMax = optionalFiniteNumber(yAxis.max, "y.max")
+  if (yMin !== undefined && yMax !== undefined && yMin >= yMax)
+    throw new BlockValidationError("y.min must be less than y.max")
+
+  const xLabel = optionalText(xAxis.label, "x.label", limits.graphLabelChars)
+  const yLabel = optionalText(yAxis.label, "y.label", limits.graphLabelChars)
+  return {
+    kind: "graph",
+    ...(title ? { title } : {}),
+    x: { ...(xLabel ? { label: xLabel } : {}), min: xMin, max: xMax },
+    y: {
+      ...(yLabel ? { label: yLabel } : {}),
+      ...(yMin !== undefined ? { min: yMin } : {}),
+      ...(yMax !== undefined ? { max: yMax } : {}),
+    },
+    functions,
+    points,
+    params,
+  }
+}
+
+/**
  * Validates a follow-up suggestion list.
  * @param source Raw JSON fence body.
  * @returns The follow-ups block.
@@ -645,7 +897,7 @@ function parseFollowups(source: string): FollowupsBlock {
 /**
  * Parses and validates one fenced interactive block. Never throws.
  * @param infoString Full fence info string (e.g. "viz Recursion tree"); the first word is the language
- * and the remainder is an optional title used by `steps` and `viz`.
+ * and the remainder is an optional title used by `steps`, `graph`, and `viz`.
  * @param source Fence body.
  * @returns The normalized block, or an error describing why the fence is not a valid block.
  */
@@ -660,6 +912,8 @@ export function parseInteractiveBlock(
         return { ok: true, block: parseQuiz(source) }
       case "steps":
         return { ok: true, block: parseSteps(source, title) }
+      case "graph":
+        return { ok: true, block: parseGraph(source, title) }
       case "viz":
         return { ok: true, block: parseViz(source, title) }
       case "followups":
@@ -893,6 +1147,12 @@ export function interactiveBlockSpeechText(block: InteractiveBlock): string {
       )
       return [block.title, ...steps].filter(Boolean).join("\n\n")
     }
+    case "graph": {
+      const plotted = [...block.functions, ...block.points]
+        .map((series) => series.label)
+        .join("; ")
+      return `[Graph${block.title ? `: ${block.title}` : ""}. Plots ${plotted}.]`
+    }
     case "viz":
       return block.title
         ? `[Interactive visualisation: ${block.title}]`
@@ -1065,7 +1325,7 @@ export function buildVizDocument(html: string, theme: VizTheme): string {
  */
 export const INTERACTIVE_BLOCKS_PROMPT = `## Interactive blocks
 
-You can embed interactive elements as fenced code blocks. The first word after the opening fence is the block type; for steps and viz, any words after it are a title. Bodies must match the formats below exactly. A malformed block is shown to the learner as raw code, so keep JSON valid (double quotes, no comments, no trailing commas). Never mention these block names or formats to the learner.
+You can embed interactive elements as fenced code blocks. The first word after the opening fence is the block type; for steps, graph, and viz, any words after it are a title. Bodies must match the formats below exactly. A malformed block is shown to the learner as raw code, so keep JSON valid (double quotes, no comments, no trailing commas). Never mention these block names or formats to the learner.
 
 ### quiz: check understanding
 Use after a key idea, roughly one per section. Ask about the idea, not trivia. One question per block.
@@ -1092,8 +1352,24 @@ Use for worked problems, derivations, proofs, and code traces. 1–12 steps; eac
 {"steps":[{"title":"Isolate the term","body":"Subtract 3: $2x = 8$."},{"title":"Solve","body":"Divide by 2: $x = 4$."}]}
 \`\`\`
 
+### Visuals: draw what is easier to see than read
+Pick the simplest form that shows the idea, and use one whenever the idea has a shape: a quantity that changes, a comparison, a structure, a process, or a state that evolves step by step.
+- graph: any function, rate of growth, curve, or set of measurements. Add a slider when a constant's effect is the point.
+- mermaid diagram (a mermaid fenced block): structure and flow (flowcharts, trees, graphs of nodes, state machines, sequence diagrams, ER diagrams). Quote labels that contain punctuation.
+- viz: a process the learner steps through or controls, or a picture neither of the above can draw (an algorithm running on an array, a circuit with switchable inputs, a pipeline filling up, a geometric construction).
+
+### graph: plot functions and data
+The body is JSON. Write expressions in x with + - * / ^ and brackets, always writing multiplication as * (2*x, not 2x). Available: pi, e, sin, cos, tan, asin, acos, atan, sinh, cosh, tanh, exp, log (natural), ln, log2, log10, sqrt, abs, floor, ceil, round, sign, min, max, pow.
+\`\`\`graph Growth rates
+{"x":{"label":"n","min":1,"max":32},"y":{"label":"steps","min":0,"max":200},"functions":[{"label":"n log₂ n","expr":"x*log2(x)"},{"label":"n²/k","expr":"x^2/k"}],"params":[{"name":"k","label":"Constant factor k","min":1,"max":10,"step":1,"value":4}]}
+\`\`\`
+- x: {"label", "min", "max"}; min and max are required with functions, and default to the data's range otherwise. y: {"label", "min", "max"}, all optional; set min and max when sliders change the curves, so the axes stay still.
+- functions: up to 6 of {"label", "expr", "dashed": true for a reference curve}. The variable is always x, whatever the axis label.
+- points: series of {"label", "data": [[x, y], …] (max 500), "line": true to join them}. Functions and point series total at most 6.
+- params: up to 4 sliders {"name", "label", "min", "max", "step", "value"}; use the name in expressions. Names are letters, digits or _, not x or a function name.
+
 ### viz: interactive visualisation
-Use only when interaction genuinely aids understanding (for example sliders, step controls, or toggles that reveal how something changes). The body is raw, self-contained HTML with inline <style> and <script> (SVG or canvas welcome), under about 200 lines. No external resources: no CDN scripts, fonts, images, or network requests; they are blocked. It runs in an isolated frame that sizes to its content. Use the CSS variables --background, --foreground, --muted, --muted-foreground, --border, --brand, and --font-sans so it matches light and dark themes.
+Use for a process the learner steps through or controls, or a picture a graph or mermaid diagram cannot draw. Give it controls (sliders, step and reset buttons, toggles) and show what changes. The body is raw, self-contained HTML with inline <style> and <script> (SVG or canvas welcome), under about 200 lines. No external resources: no CDN scripts, fonts, images, or network requests; they are blocked. It runs in an isolated frame that sizes to its content. Use the CSS variables --background, --foreground, --muted, --muted-foreground, --border, --brand, and --font-sans so it matches light and dark themes.
 \`\`\`viz Growth of n squared
 <label>n = <input id="n" type="range" min="1" max="20" value="5"></label>
 <p id="out"></p>
@@ -1113,8 +1389,8 @@ Optionally end a reply with up to 3 short follow-up questions the learner might 
  */
 export const CHAT_INTERACTIVE_BLOCKS_GUIDANCE = [
   "Chat replies render the same interactive blocks as Teach sessions. Use them whenever the user wants to learn, understand, or revise something: explaining a concept, working through a problem, teaching part of their material, or checking what they know.",
-  "In those replies: show a worked problem, derivation, proof, or code trace as a steps block; draw structure or flow that is easier to see than read as a ```mermaid diagram; add a viz block when exploring a quantity or process with sliders, step controls, or toggles genuinely helps; check each key idea with one or two quiz blocks after it is explained, setting each quiz's concept to the idea's name; and end with a followups block of two or three short questions the learner might ask next.",
+  "In those replies: show a worked problem, derivation, proof, or code trace as a steps block; include a visual whenever the idea has a shape, choosing as the Visuals section describes (a graph for functions and data, a ```mermaid diagram for structure and flow, a viz for a process to step through or control); check each key idea with one or two quiz blocks after it is explained, setting each quiz's concept to the idea's name; and end with a followups block of two or three short questions the learner might ask next.",
   "When the user asks to be taught a section, chapter, or topic, teach it the way a Teach section does: the intuition and why it matters, precise definitions, a worked example, then quizzes and followups. Cover a long request across several replies rather than skipping the blocks.",
-  "When the user asks for a quiz, worked example, diagram, or visualisation, always use the matching block.",
+  "When the user asks for a quiz, worked example, graph, diagram, or visualisation, always use the matching block.",
   "Leave blocks out of greetings, short factual answers, and replies about changing files, running commands, or other project tasks.",
 ].join(" ")
