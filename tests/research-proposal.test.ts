@@ -11,9 +11,19 @@ import {
   validateResearchProposal,
 } from "../lib/server/research-proposal.ts"
 import {
+  isWebSearchTool,
   runResearchProposalStep,
   type ResearchProposalQueue,
 } from "../lib/server/research-worker.ts"
+
+test("research counts each runtime's own web search tool", () => {
+  assert.equal(isWebSearchTool({ kind: "web-search", name: "WebSearch" }), true)
+  assert.equal(isWebSearchTool({ kind: "builtin", name: "search_web" }), true)
+  assert.equal(isWebSearchTool({ kind: "builtin", name: "websearch" }), true)
+  assert.equal(isWebSearchTool({ kind: "builtin", name: "grep" }), false)
+  assert.equal(isWebSearchTool({ kind: "builtin", name: "webfetch" }), false)
+  assert.equal(isWebSearchTool({ kind: "command", name: "web search" }), false)
+})
 
 /** Returns a valid proposal fixture with explicit unverified and generated labels. */
 function validProposal() {

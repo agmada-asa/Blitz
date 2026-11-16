@@ -1,4 +1,5 @@
 /** Applies OpenCode v2 native tool rules in a dedicated agent without changing user settings. */
+import { isWebResearchTurn } from "../../provider-execution.ts"
 import type { ProviderTextTurnRequest } from "./types.ts"
 
 /** The access settings of one turn that decide OpenCode's native permissions. */
@@ -27,7 +28,8 @@ const READ_ONLY_TOOLS = [
 /**
  * Builds the per-process environment for one OpenCode turn.
  *
- * Background generation runs with every tool denied. Chat turns keep the
+ * Background generation runs with every tool denied, except that research
+ * turns keep web search and page fetch. Chat turns keep the
  * user's global OpenCode setup, including plugins and MCP servers, and map
  * Blitz's access policy onto native permissions: full access allows
  * everything, on-request asks through Blitz, and never/read-only allow only
@@ -62,6 +64,10 @@ export function openCodeEnvironment(
       : "ask"
   const permission = {
     "*": action,
+    // Research turns keep OpenCode's own web search and page fetch only.
+    ...(isWebResearchTurn(request)
+      ? { webfetch: "allow", websearch: "allow" }
+      : {}),
     ...(!background && readOnly
       ? {
           ...Object.fromEntries(READ_ONLY_TOOLS.map((tool) => [tool, "allow"])),

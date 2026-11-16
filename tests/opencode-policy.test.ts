@@ -61,3 +61,25 @@ test("OpenCode read-only chats allow read tools and protect env files", () => {
     assert.equal(permission.bash, undefined)
   }
 })
+
+/** Research turns keep only OpenCode's web search and page fetch; every other tool stays denied. */
+test("OpenCode research turns allow only web search and page fetch", () => {
+  const { global, agent } = permissions(
+    openCodeEnvironment(
+      {
+        ephemeral: true,
+        webSearchMode: "live",
+        sandbox: "read-only",
+        approvalPolicy: "never",
+      },
+      "blitz-fixture"
+    ),
+    "blitz-fixture"
+  )
+  assert.equal(agent["*"], "deny")
+  assert.equal(agent.websearch, "allow")
+  assert.equal(agent.webfetch, "allow")
+  assert.equal(agent.read, undefined)
+  assert.equal(agent.task, "deny")
+  assert.deepEqual(global, agent)
+})

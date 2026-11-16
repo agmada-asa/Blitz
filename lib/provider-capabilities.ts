@@ -67,9 +67,11 @@ export const CHAT_PROVIDER_CAPABILITIES: Readonly<
     structuredInput: "supported",
     interactiveTypes: ["question", "form", "url", "approval"],
   },
+  // Every provider has its own web search and page fetch tools, which research
+  // turns keep while every other tool is off.
   "claude-code": {
     ...common,
-    webSearch: false,
+    webSearch: true,
     images: "supported",
     sandboxModes: [],
     approvalPolicies: AI_PROVIDER_APPROVAL_POLICIES["claude-code"],
@@ -79,7 +81,7 @@ export const CHAT_PROVIDER_CAPABILITIES: Readonly<
   },
   opencode: {
     ...common,
-    webSearch: false,
+    webSearch: true,
     images: "negotiated",
     sandboxModes: [],
     approvalPolicies: AI_PROVIDER_APPROVAL_POLICIES.opencode,
@@ -90,7 +92,7 @@ export const CHAT_PROVIDER_CAPABILITIES: Readonly<
   // Runs on the same ACP engine as OpenCode, so it has the same support.
   antigravity: {
     ...common,
-    webSearch: false,
+    webSearch: true,
     images: "negotiated",
     sandboxModes: [],
     approvalPolicies: AI_PROVIDER_APPROVAL_POLICIES.antigravity,
