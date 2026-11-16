@@ -151,6 +151,30 @@ export function providerModelOptions(
 }
 
 /**
+ * Maps Claude Code's catalogue into Blitz options.
+ *
+ * Claude Code labels its rows by family and version alone ("Haiku 5.5"), so
+ * each gets the "Claude" prefix Blitz's pickers use. Its `default` row is an
+ * alias for one of the listed models ("Default (recommended)"), so it is
+ * dropped rather than shown as a model of its own.
+ *
+ * @param models - Rows from the Claude engine's `models()`.
+ * @returns Selectable models, in Claude Code's own order.
+ */
+export function claudeModelOptions(
+  models: readonly ModelInfo[]
+): readonly ProviderModelOption[] {
+  return providerModelOptions(models)
+    .filter((option) => option.id !== "default")
+    .map((option) => ({
+      ...option,
+      label: /^claude\b/i.test(option.label)
+        ? option.label
+        : `Claude ${option.label}`,
+    }))
+}
+
+/**
  * Maps an engine's availability into the setup state the settings page shows.
  *
  * A signed-out runtime is installed but not connected, so the sign-in action

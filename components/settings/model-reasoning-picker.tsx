@@ -44,6 +44,7 @@ import {
   getAiProviderOptionsForTask,
   getSupportedAiReasoningEffortsForProvider,
   isLegacyAiModelOption,
+  matchesModelSearch,
   type AiApprovalPolicy,
   type AiProviderModelOption,
   type AiProviderId,
@@ -255,8 +256,6 @@ export function ModelReasoningPicker({
   }
 
   const displayedModels: EnrichedModel[] = useMemo(() => {
-    const query = searchQuery.trim().toLowerCase()
-
     if (selectedRailTab === "favorites") {
       // Gather favorited models from all available task providers
       const all: EnrichedModel[] = []
@@ -285,12 +284,8 @@ export function ModelReasoningPicker({
           }
         }
       }
-      if (!query) return all
-      return all.filter(
-        (m) =>
-          m.label.toLowerCase().includes(query) ||
-          m.id.toLowerCase().includes(query) ||
-          m.providerLabel.toLowerCase().includes(query)
+      return all.filter((m) =>
+        matchesModelSearch(searchQuery, [m.label, m.id, m.providerLabel])
       )
     }
 
@@ -310,11 +305,8 @@ export function ModelReasoningPicker({
       isLegacy: isLegacyAiModelOption(pId, opt),
     }))
 
-    if (!query) return enriched
-    return enriched.filter(
-      (m) =>
-        m.label.toLowerCase().includes(query) ||
-        m.id.toLowerCase().includes(query)
+    return enriched.filter((m) =>
+      matchesModelSearch(searchQuery, [m.label, m.id])
     )
   }, [
     selectedRailTab,

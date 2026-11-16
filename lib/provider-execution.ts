@@ -11,6 +11,22 @@ export interface ProviderExecutionRequest {
   readonly webSearchMode?: "cached" | "indexed" | "live" | "disabled"
 }
 
+/**
+ * Returns whether a turn is background web research: an ephemeral turn with
+ * web search on. Research reads no learner files and changes nothing, so on
+ * providers without Codex's hosted search it keeps every tool off except the
+ * runtime's own web search and page fetch.
+ */
+export function isWebResearchTurn(
+  request: Pick<ProviderExecutionRequest, "ephemeral" | "webSearchMode">
+): boolean {
+  return (
+    Boolean(request.ephemeral) &&
+    request.webSearchMode !== undefined &&
+    request.webSearchMode !== "disabled"
+  )
+}
+
 /** Effective facts about native execution. Unknown host restrictions are never represented as a grant. */
 export interface ProviderExecutionEnvironment {
   readonly workingDirectory: string
@@ -20,9 +36,13 @@ export interface ProviderExecutionEnvironment {
   readonly writableRoots: readonly string[] | "host-permissions"
   readonly commands:
     "sandboxed" | "permission-controlled" | "host-permissions" | "unavailable"
-  readonly network: "disabled" | "permission-controlled" | "host-permissions"
+  readonly network:
+    | "disabled"
+    | "web-search-only"
+    | "permission-controlled"
+    | "host-permissions"
   readonly approvalPolicy: AiApprovalPolicy
-  readonly tools: "native-runtime" | "disabled"
+  readonly tools: "native-runtime" | "web-search-only" | "disabled"
 }
 
 /** Resolves adapter settings to facts; rejects an OS sandbox an adapter cannot configure. */
@@ -63,6 +83,7 @@ export function resolveProviderExecution(
     request.webSearchMode === "disabled" ||
     approvalPolicy === "never"
   const bypass = approvalPolicy === "full-access"
+  const research = isWebResearchTurn(request)
   return {
     workingDirectory: request.workspaceDirectory,
     sandbox: "none",
@@ -73,13 +94,19 @@ export function resolveProviderExecution(
       : bypass
         ? "host-permissions"
         : "permission-controlled",
-    network: toolsDisabled
-      ? "disabled"
-      : bypass
-        ? "host-permissions"
-        : "permission-controlled",
+    network: research
+      ? "web-search-only"
+      : toolsDisabled
+        ? "disabled"
+        : bypass
+          ? "host-permissions"
+          : "permission-controlled",
     approvalPolicy,
-    tools: toolsDisabled ? "disabled" : "native-runtime",
+    tools: research
+      ? "web-search-only"
+      : toolsDisabled
+        ? "disabled"
+        : "native-runtime",
   }
 }
 
@@ -96,7 +123,9 @@ export function providerExecutionInstructions(
       : "The native runtime enforces the configured filesystem sandbox. Reads are subject to its policy and host permissions; the working directory alone does not restrict all reads.",
     environment.network === "disabled"
       ? "Command network access is disabled. A separately exposed hosted search tool has its own availability and is not a grant of command network access."
-      : "Network operations remain subject to the selected native permission policy and task authorization.",
+      : environment.network === "web-search-only"
+        ? "Only the runtime's web search and web page fetch tools are available. Use them to find and read sources. Files, commands and edits are unavailable."
+        : "Network operations remain subject to the selected native permission policy and task authorization.",
     environment.approvalPolicy === "never"
       ? "Requests for additional permission are denied. Do not route a denied action through another tool."
       : "When the runtime requires approval, wait for its structured response. A denied request is not permission to retry by another route.",

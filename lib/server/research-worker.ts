@@ -1,4 +1,7 @@
-/** Runs approval-first research planning jobs on the local Mac through Codex. */
+/**
+ * Runs approval-first research planning jobs on the local Mac through the
+ * provider chosen for research, using only its own web search and page fetch.
+ */
 
 import { randomUUID } from "node:crypto"
 import { mkdir } from "node:fs/promises"
@@ -26,8 +29,27 @@ function researchRecord(value: unknown): Record<string, unknown> | undefined {
 /** Reads the tool from one forwarded `tool/completed` engine event. */
 function researchTool(
   params: unknown
-): { kind?: unknown; input?: unknown } | undefined {
+): { kind?: unknown; name?: unknown; input?: unknown } | undefined {
   return researchRecord(researchRecord(params)?.tool)
+}
+
+/** Native web search tool names on ACP runtimes: `search_web` (Antigravity), `websearch` (OpenCode). */
+const ACP_WEB_SEARCH_TOOL = /web.?search|search.?web/i
+
+/**
+ * Returns whether a completed tool was a web search. Codex and Claude Code
+ * mark theirs as `web-search`; ACP runtimes report search as a plain built-in
+ * tool, so those are recognised by name.
+ */
+export function isWebSearchTool(
+  tool: { kind?: unknown; name?: unknown } | undefined
+): boolean {
+  if (tool?.kind === "web-search") return true
+  return (
+    tool?.kind === "builtin" &&
+    typeof tool.name === "string" &&
+    ACP_WEB_SEARCH_TOOL.test(tool.name)
+  )
 }
 
 /**
@@ -249,7 +271,7 @@ export async function runResearchProposalStep(
         event.notification.method === "tool/completed"
           ? researchTool(event.notification.params)
           : undefined
-      if (tool?.kind === "web-search") {
+      if (tool && isWebSearchTool(tool)) {
         webSearchCount += 1
         const input = researchRecord(tool.input)
         const action = researchRecord(input?.action)

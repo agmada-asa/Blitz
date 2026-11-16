@@ -15,8 +15,12 @@ import {
   type AcpEngineOptions,
 } from "agent-engines"
 
+import { tmpdir } from "node:os"
+
+import { providerModelOptions } from "./engines.ts"
 import { openCodeEnvironment, type OpenCodePolicyRequest } from "./opencode-policy.ts"
 import { providerCommand } from "./registry.ts"
+import type { ProviderModelOption } from "./types.ts"
 
 /**
  * Name of the OpenCode agent that carries each turn's permissions.
@@ -58,4 +62,57 @@ export function createOpenCodeEngine(
     clientName: "blitz",
     ...(spawnProcess ? { spawnProcess } : {}),
   })
+}
+
+/** Longest wait for OpenCode to open a probe session and list its models. */
+const OPENCODE_CATALOG_TIMEOUT_MS = 10_000
+
+/** How long one catalogue read is reused, so reopening a picker does not respawn OpenCode. */
+const OPENCODE_CATALOG_TTL_MS = 30_000
+
+/** The last catalogue read and when it stops being reused. */
+let cachedCatalog:
+  | { readonly expiresAt: number; readonly models: readonly ProviderModelOption[] }
+  | undefined
+
+/**
+ * Lists every model the signed-in OpenCode offers, from every provider
+ * connected to it, so Settings can show and search them all.
+ *
+ * Reads the catalogue from a probe session with every tool denied, which
+ * starts no conversation. Blitz sends ACP providers no reasoning level, so each
+ * model offers only its default.
+ *
+ * @returns OpenCode's models in its own order, reused for 30 seconds.
+ * @throws When OpenCode cannot start or does not answer in time.
+ */
+export async function listOpenCodeModels(): Promise<
+  readonly ProviderModelOption[]
+> {
+  if (cachedCatalog && cachedCatalog.expiresAt > Date.now())
+    return cachedCatalog.models
+  const engine = createOpenCodeEngine({ ephemeral: true }, tmpdir())
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    const catalog = await Promise.race([
+      engine.models(),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error("OpenCode did not list its models in time")),
+          OPENCODE_CATALOG_TIMEOUT_MS
+        )
+      }),
+    ])
+    const models = providerModelOptions(catalog).map(
+      (option): ProviderModelOption => ({
+        ...option,
+        reasoningEfforts: ["default"],
+      })
+    )
+    cachedCatalog = { expiresAt: Date.now() + OPENCODE_CATALOG_TTL_MS, models }
+    return models
+  } finally {
+    clearTimeout(timer)
+    await engine.close().catch(() => undefined)
+  }
 }

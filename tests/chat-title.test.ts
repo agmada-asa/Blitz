@@ -21,11 +21,11 @@ test("selects the cheapest model with lowest reasoning for each provider", () =>
   assert.equal(codexSelection.model, "gpt-6-luna")
   assert.equal(codexSelection.effort, "low")
 
-  // Claude Code: Haiku is the cheapest model with "default" (no) reasoning effort
+  // Claude Code: Haiku is the cheapest model, at its lowest reasoning level
   const claudeSelection = resolveCheapestAiModelSelection("claude-code")
   assert.equal(claudeSelection.providerId, "claude-code")
   assert.equal(claudeSelection.model, "haiku")
-  assert.equal(claudeSelection.effort, "default")
+  assert.equal(claudeSelection.effort, "low")
 
   // OpenCode: big-pickle with default reasoning
   const opencodeSelection = resolveCheapestAiModelSelection("opencode")
