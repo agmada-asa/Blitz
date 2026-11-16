@@ -176,6 +176,11 @@ const startWorkspaceTurn = makeFunctionReference<
     } | null
     /** Provider and session to carry over after a usage-limit handoff. */
     providerHandoff: { fromProviderId: string; fromSessionId?: string } | null
+    /**
+     * The request a continued reply answers, sent again in place of the
+     * continue instruction because the reply stopped before any text.
+     */
+    resentMessage?: string
     replyPrefix: string
     replayContext: WorkspaceChatReplayContext
   }
@@ -622,8 +627,14 @@ export async function POST(request: Request): Promise<Response> {
           turnAbort,
           Date.now() + WORKSPACE_CHAT_TIMEOUT_MS
         )
+        // A continued reply that stopped before any text resends its request
+        // in place of the continue instruction.
+        const turnInput =
+          turn.resentMessage === undefined
+            ? input
+            : { ...input, message: turn.resentMessage }
         // A redo resends the request its replaced reply answered.
-        const learnerMessage = turn.redo?.originalMessage ?? input.message
+        const learnerMessage = turn.redo?.originalMessage ?? turnInput.message
         // A Teach session is a chat with its unit's material and protocol.
         const teach = input.chatId
           ? await client.query(api.units.teachContext, {
@@ -889,7 +900,7 @@ export async function POST(request: Request): Promise<Response> {
         const teachMessage =
           turn.redo && input.redo
             ? teachRedoMessage(turn.redo.originalMessage, input.redo.style)
-            : (teach?.updateInstruction ?? input.message)
+            : (teach?.updateInstruction ?? turnInput.message)
         /**
          * Builds a Teach turn's prompt, with the unit material when the
          * session needs it. After a compaction the material, outline, and
@@ -934,7 +945,7 @@ export async function POST(request: Request): Promise<Response> {
           if (teach) return Promise.resolve(teachPrompt(true))
           replayPrompt ??= (async () => {
             await appendReplayImages()
-            const merged = mergeWorkspaceChatReplay(input, turn.replayContext)
+            const merged = mergeWorkspaceChatReplay(turnInput, turn.replayContext)
             const currentProjects = new Map(
               projects.map((project) => [project.id, project] as const)
             )
@@ -947,7 +958,7 @@ export async function POST(request: Request): Promise<Response> {
                   return (
                     await client.query(getProjectContext, {
                       projectIds: [projectId],
-                      question: input.message,
+                      question: turnInput.message,
                     })
                   )[0]
                 } catch {
@@ -1226,7 +1237,7 @@ export async function POST(request: Request): Promise<Response> {
             : undefined
         const initialPrompt = handoffSeed
           ? handoffPrompt(
-              buildWorkspaceChatPrompt(input, projects, card),
+              buildWorkspaceChatPrompt(turnInput, projects, card),
               providerLabel(turn.providerHandoff!.fromProviderId),
               turn.replyPrefix
             )
@@ -1234,7 +1245,7 @@ export async function POST(request: Request): Promise<Response> {
             ? teachPrompt(replay || restate, { afterCompaction: restate })
             : replay
               ? await promptWithReplay()
-              : buildWorkspaceChatPrompt(input, projects, card)
+              : buildWorkspaceChatPrompt(turnInput, projects, card)
         const citationProjectIds = [
           ...new Set(
             [
@@ -1329,7 +1340,7 @@ export async function POST(request: Request): Promise<Response> {
           carriedText += attemptText
           compactionOrigin = "overflow"
           const continuation = overflowContinuationMessage(
-            teach ? teachMessage : input.message,
+            teach ? teachMessage : turnInput.message,
             carriedText
           )
           result = await runTurn(continuation, threadId, [], {
