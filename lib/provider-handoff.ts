@@ -44,3 +44,26 @@ export function handoffCandidates(
     )
   })
 }
+
+/**
+ * Orders the providers a lesson update falls back to when the lesson's own
+ * provider stops at a usage limit. An update is a one-off turn that carries no
+ * conversation, so any signed-in provider can do it: the reply provider set in
+ * Settings goes first, then the rest in settings order.
+ *
+ * @param currentProviderId - Provider that hit its limit, left out.
+ * @param configuredProviderId - Reply provider chosen in Settings.
+ * @param providers - Results of the provider checks.
+ * @returns Providers to try in turn; empty when none other is signed in.
+ */
+export function updateFallbackProviders(
+  currentProviderId: string,
+  configuredProviderId: string,
+  providers: readonly HandoffAvailability[]
+): AiProviderId[] {
+  const candidates = handoffCandidates(currentProviderId, providers)
+  return [
+    ...candidates.filter((id) => id === configuredProviderId),
+    ...candidates.filter((id) => id !== configuredProviderId),
+  ]
+}
