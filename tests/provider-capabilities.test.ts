@@ -27,6 +27,11 @@ test("model switches narrow reasoning settings and retain conditional ACP image 
   )
   assert.deepEqual(
     getChatModelCapabilities("claude-code", "haiku").reasoningEfforts,
+    ["low", "medium", "high", "xhigh", "max"]
+  )
+  assert.deepEqual(
+    getChatModelCapabilities("claude-code", "claude-haiku-4-5-20251001")
+      .reasoningEfforts,
     ["default"]
   )
   assert.equal(
@@ -162,4 +167,35 @@ test("invalid saved settings fail explicitly while an unsaved installation uses 
   } as never)
   assert.equal(settings?.replyProvider, "claude-code")
   assert.equal(settings?.replyModel, "haiku")
+})
+
+/** Research on a non-Codex provider is described as web search only, with files and commands off. */
+test("research turns describe web search as the only tool", () => {
+  for (const providerId of ["claude-code", "opencode", "antigravity"] as const) {
+    const environment = resolveProviderExecution({
+      providerId,
+      workspaceDirectory: "/tmp/blitz-test",
+      sandbox: "read-only",
+      approvalPolicy: "never",
+      ephemeral: true,
+      webSearchMode: "live",
+    })
+    assert.equal(environment.tools, "web-search-only")
+    assert.equal(environment.network, "web-search-only")
+    assert.equal(environment.commands, "unavailable")
+    assert.equal(environment.filesystem, "tools-disabled")
+    assert.match(
+      providerExecutionInstructions(environment),
+      /Only the runtime's web search and web page fetch tools/
+    )
+    assert.equal(CHAT_PROVIDER_CAPABILITIES[providerId].webSearch, true)
+  }
+  const generation = resolveProviderExecution({
+    providerId: "claude-code",
+    workspaceDirectory: "/tmp/blitz-test",
+    ephemeral: true,
+    webSearchMode: "disabled",
+  })
+  assert.equal(generation.tools, "disabled")
+  assert.equal(generation.network, "disabled")
 })

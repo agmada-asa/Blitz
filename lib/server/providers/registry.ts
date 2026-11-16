@@ -26,11 +26,13 @@ import type {
   ProviderHealthOptions,
 } from "./types.ts"
 import {
+  claudeModelOptions,
   createProviderEngine,
   providerAvailabilityFromEngine,
   providerModelOptions,
   type EngineProviderId,
 } from "./engines.ts"
+import { listOpenCodeModels } from "./opencode.ts"
 import {
   antigravityVersionGuidance,
   checkAntigravityVersion,
@@ -345,7 +347,8 @@ const ENGINE_AUTH_METHODS: Readonly<
 
 /**
  * Checks Codex or Claude Code through agent-engines, adding the signed-in
- * Codex catalogue when it can be read. Never throws.
+ * runtime's model catalogue when it can be read, so Settings lists the models
+ * and reasoning levels the installed runtime actually offers. Never throws.
  */
 async function checkEngineAvailability(
   providerId: EngineProviderId,
@@ -359,9 +362,13 @@ async function checkEngineAvailability(
       await engine.availability()
     )
     let models: ProviderAvailability["models"]
-    if (providerId === "codex" && state.authenticated === true) {
+    if (state.authenticated === true) {
       try {
-        models = providerModelOptions(await engine.models())
+        const catalog = await engine.models()
+        models =
+          providerId === "claude-code"
+            ? claudeModelOptions(catalog)
+            : providerModelOptions(catalog)
       } catch {
         // Sign-in state stays useful even if this optional catalogue read fails.
         models = undefined
@@ -411,11 +418,18 @@ export async function checkProviderAvailability(
     const authentication = antigravity
       ? await antigravityAuthentication()
       : await openCodeAuthentication()
+    // OpenCode lists every model its connected providers offer; Blitz's own
+    // fallback names only one. A failed read keeps the sign-in state useful.
+    const models =
+      !antigravity && authentication.authenticated === true
+        ? await listOpenCodeModels().catch(() => undefined)
+        : undefined
     return {
       providerId,
       providerInstanceId: instanceId,
       available: true,
       ...authentication,
+      ...(models?.length ? { models } : {}),
       reason: authentication.authenticated === false ? "missing-auth" : "ready",
       message:
         authentication.authenticated === false

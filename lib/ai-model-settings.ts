@@ -117,14 +117,18 @@ export const AI_TASK_PROVIDER_FIELDS: Readonly<
   cardGeneration: "cardGenerationProvider",
 }
 
-/** Provider tasks that have passed the current capability review in Blitz. */
+/**
+ * Tasks each provider may be chosen for. Every provider can research: its
+ * research turns expose only the runtime's own web search and page fetch
+ * tools (see `isWebResearchTurn` in `provider-execution.ts`).
+ */
 export const AI_PROVIDER_TASKS: Readonly<
   Record<AiProviderId, readonly AiTask[]>
 > = {
   codex: ["research", "reply", "cardGeneration"],
-  "claude-code": ["reply", "cardGeneration"],
-  opencode: ["reply", "cardGeneration"],
-  antigravity: ["reply", "cardGeneration"],
+  "claude-code": ["research", "reply", "cardGeneration"],
+  opencode: ["research", "reply", "cardGeneration"],
+  antigravity: ["research", "reply", "cardGeneration"],
 }
 
 /** Names the persisted model field used for each kind of AI work. */
@@ -250,25 +254,45 @@ export type AiProviderModelCatalogs = Partial<
   Record<AiProviderId, readonly AiProviderModelCatalogOption[]>
 >
 
-/** Curated defaults used until a provider reports a runtime model catalog. */
+/** Reasoning levels Claude Code offers for its current models. */
+const CLAUDE_REASONING_EFFORTS = [
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+] as const satisfies readonly AiReasoningEffort[]
+
+/**
+ * Curated defaults used until a provider reports a runtime model catalog.
+ * Claude Code and Codex report their own catalogs once Settings has checked
+ * them, so these lists only show before that check or when it fails.
+ */
 export const AI_PROVIDER_MODEL_OPTIONS: Readonly<
   Record<Exclude<AiProviderId, "codex">, readonly AiProviderModelOption[]>
 > = {
+  // Claude Code's aliases follow the newest model of each family; the labels
+  // name the version each alias served as of Claude Code 2.1.325.
   "claude-code": [
     {
       id: "sonnet",
-      label: "Claude Sonnet",
-      reasoningEfforts: ["low", "medium", "high"],
+      label: "Claude Sonnet 5.5",
+      reasoningEfforts: CLAUDE_REASONING_EFFORTS,
     },
     {
       id: "opus",
-      label: "Claude Opus",
-      reasoningEfforts: ["medium", "high", "xhigh"],
+      label: "Claude Opus 5.5",
+      reasoningEfforts: CLAUDE_REASONING_EFFORTS,
+    },
+    {
+      id: "fable",
+      label: "Claude Fable 5.2",
+      reasoningEfforts: CLAUDE_REASONING_EFFORTS,
     },
     {
       id: "haiku",
-      label: "Claude Haiku",
-      reasoningEfforts: ["default"],
+      label: "Claude Haiku 5.5",
+      reasoningEfforts: CLAUDE_REASONING_EFFORTS,
     },
   ],
   opencode: [
@@ -440,7 +464,36 @@ export function isLegacyAiModelOption(
       option.id.startsWith("gpt-5.3") ||
       option.id.startsWith("gpt-4")
     )
+  // Claude Code lists each family's newest model by alias (`opus`, `haiku`)
+  // and older versions by their full pinned ID (`claude-haiku-4-5-20251001`).
+  if (provider === "claude-code") return option.id.startsWith("claude-")
   return false
+}
+
+/** Folds text for model search: lower case, with `-`, `_`, `/` and `:` read as spaces. */
+function foldModelSearchText(text: string): string {
+  return text.toLowerCase().replace(/[-_/:]+/g, " ").replace(/\s+/g, " ")
+}
+
+/**
+ * Returns whether a model matches a picker search.
+ *
+ * Every word of the query must appear somewhere in the given fields (label,
+ * ID, provider name), in any order, so "gemini flash" finds
+ * "google/Gemini 3.8 Flash" and "gpt 5.6 sol" finds "gpt-5.6-sol". An empty
+ * query matches everything.
+ *
+ * @param query - What the learner typed.
+ * @param fields - Text the model can be found by.
+ */
+export function matchesModelSearch(
+  query: string,
+  fields: readonly string[]
+): boolean {
+  const words = foldModelSearchText(query).trim().split(" ").filter(Boolean)
+  if (!words.length) return true
+  const haystack = foldModelSearchText(fields.join(" "))
+  return words.every((word) => haystack.includes(word))
 }
 
 /** Returns the curated default model for a provider when a task changes providers. */
@@ -502,7 +555,7 @@ export function getSupportedAiReasoningEffortsForProvider(
   if (provider === "opencode" || provider === "antigravity") return ["default"]
   const normalizedModel =
     provider === "claude-code"
-      ? model.replace(/^claude-(sonnet|opus|haiku)$/, "$1")
+      ? model.replace(/^claude-(sonnet|opus|haiku|fable)$/, "$1")
       : model
   return (
     getAiModelPickerOptions(provider, normalizedModel, runtimeOptions).find(

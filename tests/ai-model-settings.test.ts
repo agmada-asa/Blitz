@@ -14,6 +14,8 @@ import {
   getAiProviderOptionsForTask,
   getSupportedAiReasoningEfforts,
   groupCodexModelOptions,
+  isLegacyAiModelOption,
+  matchesModelSearch,
   resolveAiTaskSelection,
   resolveAiModel,
   resolveAiReasoningEffort,
@@ -105,11 +107,11 @@ test("selects a provider-owned default model", () => {
   assert.equal(getDefaultAiModelOption("antigravity").id, "gemini-3.8-flash")
 })
 
-/** Confirms research stays on providers whose reviewed capabilities include web search. */
+/** Confirms every provider can research, since each keeps its own web search tools. */
 test("filters providers by task capability", () => {
   assert.deepEqual(
     getAiProviderOptionsForTask("research").map((option) => option.id),
-    ["codex"]
+    ["codex", "claude-code", "opencode", "antigravity"]
   )
   assert.deepEqual(
     getAiProviderOptionsForTask("reply").map((option) => option.id),
@@ -250,16 +252,56 @@ test("groups models by major and minor generation with dividers", () => {
   assert.equal(customGroups[0]?.options[0]?.id, "custom-worker")
 })
 
-/** Confirms unsupported reasoning settings become explicit provider defaults. */
-test("does not advertise ignored ACP or Haiku reasoning controls", () => {
+/** Confirms ACP reasoning stays a provider default while current Claude models offer real levels. */
+test("does not advertise ignored ACP reasoning controls", () => {
   assert.deepEqual(
     getSupportedAiReasoningEffortsForProvider("opencode", "default"),
     ["default"]
   )
   assert.deepEqual(
     getSupportedAiReasoningEffortsForProvider("claude-code", "haiku"),
+    ["low", "medium", "high", "xhigh", "max"]
+  )
+})
+
+/** Confirms a live Claude catalogue decides an older pinned model's reasoning levels. */
+test("reads Claude reasoning levels from the runtime catalogue", () => {
+  const catalog = [
+    { id: "haiku", label: "Claude Haiku 5.5", reasoningEfforts: ["low", "max"] },
+    {
+      id: "claude-haiku-4-5-20251001",
+      label: "Claude Haiku 4.5",
+      reasoningEfforts: ["default"],
+    },
+  ] as const
+  assert.deepEqual(
+    getSupportedAiReasoningEffortsForProvider("claude-code", "haiku", catalog),
+    ["low", "max"]
+  )
+  assert.deepEqual(
+    getSupportedAiReasoningEffortsForProvider(
+      "claude-code",
+      "claude-haiku-4-5-20251001",
+      catalog
+    ),
     ["default"]
   )
+  assert.equal(
+    isLegacyAiModelOption("claude-code", catalog[1]),
+    true
+  )
+  assert.equal(isLegacyAiModelOption("claude-code", catalog[0]), false)
+})
+
+/** Confirms model search matches every typed word, ignoring order and punctuation. */
+test("matches model searches word by word", () => {
+  const fields = ["google/Gemini 3.8 Flash", "google/gemini-3.8-flash"]
+  assert.equal(matchesModelSearch("gemini flash", fields), true)
+  assert.equal(matchesModelSearch("flash 3.8", fields), true)
+  assert.equal(matchesModelSearch("google gemini", fields), true)
+  assert.equal(matchesModelSearch("gemini pro", fields), false)
+  assert.equal(matchesModelSearch("  ", fields), true)
+  assert.equal(matchesModelSearch("gpt 5.6 sol", ["GPT-5.6 Sol", "gpt-5.6-sol"]), true)
 })
 
 /** Confirms per-provider approval choices survive validation and unsupported grants fail closed. */

@@ -31,12 +31,12 @@ import {
 } from "../card-chat.ts"
 import { claudeBackgroundLimits } from "../spending-limits.ts"
 import { providerThreadFeatures } from "../../provider-thread-features.ts"
-import {
-  getSupportedAiReasoningEffortsForProvider,
-  type AiProviderId,
-  type AiReasoningEffort,
+import type {
+  AiProviderId,
+  AiReasoningEffort,
 } from "../../ai-model-settings.ts"
 import {
+  isWebResearchTurn,
   providerExecutionInstructions,
   resolveProviderExecution,
 } from "../../provider-execution.ts"
@@ -111,6 +111,9 @@ const BLITZ_CLAUDE_SDK_OPTIONS = {
 
 /** Claude Code's built-in tool that carries a schema-checked reply. */
 const STRUCTURED_OUTPUT_TOOL = "StructuredOutput"
+
+/** The only Claude Code tools a research turn gets: web search and page fetch. */
+const CLAUDE_RESEARCH_TOOLS = ["WebSearch", "WebFetch"] as const
 
 /** Provider-aware text request accepted by chat and generation callers. */
 export interface RunProviderTextTurnRequest {
@@ -292,6 +295,25 @@ export function claudeThreadSettings(
   request: RunProviderTextTurnRequest
 ): Pick<ThreadOptions, "access" | "claude"> {
   const persist = request.ephemeral ? { persistSession: false } : {}
+  // Research is background work too, but keeps Claude Code's own web search
+  // and page fetch: nothing that reads files, runs commands or edits.
+  if (isWebResearchTurn(request))
+    return {
+      access: "read-only",
+      claude: {
+        settingSources: [],
+        strictMcpConfig: true,
+        skills: [],
+        tools: [...CLAUDE_RESEARCH_TOOLS],
+        allowedTools: [...CLAUDE_RESEARCH_TOOLS],
+        permissionMode: "dontAsk",
+        extra: {
+          ...BLITZ_CLAUDE_SDK_OPTIONS,
+          extraArgs: { "safe-mode": null, restricted: null },
+          ...persist,
+        },
+      },
+    }
   const background =
     request.ephemeral ||
     !request.approvalPolicy ||
@@ -488,19 +510,16 @@ async function engineThreadSetup(
         "Claude Code cannot enforce Blitz's workspace-only OS sandbox. Choose approval mode or full access."
       )
     if (selection.model.trim() && selection.model !== "default")
-      model = selection.model.replace(/^claude-(sonnet|opus|haiku)$/, "$1")
-    if (selection.effort && selection.effort !== "default") {
-      const supported = getSupportedAiReasoningEffortsForProvider(
-        "claude-code",
-        selection.model
+      model = selection.model.replace(
+        /^claude-(sonnet|opus|haiku|fable)$/,
+        "$1"
       )
-      if (!supported.includes(selection.effort))
-        throw new CardChatError(
-          "invalid-input",
-          "Claude Code reasoning level is unsupported for this model"
-        )
+    // The Claude engine checks the model and effort against the installed
+    // runtime's own catalogue before the turn starts, and Blitz reports a
+    // mismatch as invalid input, so no stale local list can reject a valid
+    // choice here.
+    if (selection.effort && selection.effort !== "default")
       effort = selection.effort
-    }
     settings = claudeThreadSettings(request)
     // An approved plan is the learner's go-ahead for its edits, so the turn
     // continues with edits allowed instead of asking about each one.

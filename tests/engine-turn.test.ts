@@ -555,10 +555,14 @@ test("Claude normalizes saved aliases, checks effort, and rejects Codex-only pol
     approvalPolicy: "on-request",
   })
   assert.equal(haiku.started[0].effort, undefined)
-  await rejectsWith(
-    route("claude", { model: "haiku", effort: "high" }),
-    "invalid-input"
-  )
+  // The engine checks effort against the installed runtime's catalogue, so
+  // Blitz passes a level its own fallback list may not know about.
+  const haikuHigh = await route("claude", {
+    model: "haiku",
+    effort: "high",
+    approvalPolicy: "on-request",
+  })
+  assert.equal(haikuHigh.started[0].effort, "high")
   await rejectsWith(
     route("claude", { approvalPolicy: "untrusted" }),
     "invalid-input"
