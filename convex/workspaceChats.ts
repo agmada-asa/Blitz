@@ -6,6 +6,7 @@ import { v } from "convex/values"
 import { AI_PROVIDER_IDS } from "../lib/ai-model-settings"
 import { shouldCompactBeforeTurn } from "../lib/context-usage"
 import { providerThreadFeatures } from "../lib/provider-thread-features"
+import { stoppedRequestToResend } from "../lib/stopped-reply"
 import { isTeachUpdateRunning } from "../lib/teach-updates"
 import { addTurnNotice } from "../lib/turn-notices"
 import {
@@ -976,9 +977,14 @@ export const startTurn = mutation({
         lastErrorDetail: undefined,
         updatedAt: now,
       })
+      // A reply that stopped before any text has nothing to continue, so the
+      // turn sends its request again. The replay leaves that request out, so
+      // the model does not read it twice.
+      const resentMessage = stoppedRequestToResend(priorMessages)
       return {
         chatId: chat._id,
         assistantMessageId: continuation._id,
+        ...(resentMessage === undefined ? {} : { resentMessage }),
         providerId: selectedProvider,
         ...(selectedInstance ? { providerInstanceId: selectedInstance } : {}),
         ...(selectedModel ? { providerModel: selectedModel } : {}),
@@ -998,7 +1004,9 @@ export const startTurn = mutation({
         providerHandoff: chat.providerHandoff ?? null,
         replyPrefix: continuation.content,
         replayContext: {
-          messages: replayMessages(priorMessages),
+          messages: replayMessages(
+            resentMessage === undefined ? priorMessages : priorMessages.slice(2)
+          ),
           ...replayContext,
         },
       }
