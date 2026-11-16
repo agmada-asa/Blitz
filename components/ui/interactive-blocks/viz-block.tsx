@@ -28,6 +28,7 @@ import {
 } from "@/lib/interactive-blocks"
 import { Skeleton } from "@/components/ui/skeleton"
 import { ExpandFigureButton } from "@/components/ui/interactive-blocks/expand-figure"
+import { subscribeToThemeAttributes } from "@/lib/client/theme-attributes"
 
 /** Iframe height bounds in CSS pixels; taller content scrolls inside the frame. */
 const MIN_HEIGHT = 120
@@ -39,19 +40,6 @@ const FALLBACK_HEIGHT = 320
 /** How long to wait for the first height report before showing the frame at the fallback height. */
 const HEIGHT_TIMEOUT_MS = 4000
 
-/**
- * Subscribes to theme and accent changes, which next-themes and settings apply as attributes on `<html>`.
- * @param onChange Called when a theme-relevant attribute changes.
- * @returns A function that stops observing.
- */
-function subscribeToThemeAttributes(onChange: () => void): () => void {
-  const observer = new MutationObserver(onChange)
-  observer.observe(document.documentElement, {
-    attributes: true,
-    attributeFilter: ["class", "style", "data-accent", "data-theme"],
-  })
-  return () => observer.disconnect()
-}
 
 /**
  * Reads the resolved app palette and font as a string snapshot so React can compare it cheaply.
