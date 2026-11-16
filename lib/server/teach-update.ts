@@ -1,8 +1,10 @@
 /**
- * Performs a claimed lesson update: asks the configured provider what the new
+ * Performs a claimed lesson update: asks the lesson's provider what the new
  * files change and hands the checked reply to Convex to merge. Runs outside the
  * lesson's own conversation, as a one-off turn, so the analysis cannot disturb
- * what the tutor remembers and needs no learner history.
+ * what the tutor remembers and needs no learner history. Because it needs no
+ * history, it moves to another signed-in provider when the lesson's own is at
+ * a usage limit (`teach-update-fallback.ts`).
  */
 
 import { mkdtemp, rm } from "node:fs/promises"
@@ -19,7 +21,9 @@ import {
 import { loadSavedAiModelSettings } from "./ai-model-settings.ts"
 import { CardChatError } from "./card-chat.ts"
 import { serverConvexClient } from "./convex.ts"
+import { PROVIDER_DEFINITIONS } from "./providers/registry.ts"
 import { runProviderTextTurn } from "./providers/run-text-turn.ts"
+import { runWithLimitFallback } from "./teach-update-fallback.ts"
 import { chatReplySelection, savedChatReplySelection } from "./teach-turn-settings.ts"
 
 /** Longest the analysis may take; shorter than the lease in `lib/teach-updates.ts`. */
@@ -55,23 +59,38 @@ export async function runTeachUpdate(
     if (!context) throw new Error("This lesson update is no longer current")
     // The provider teaching this lesson does the analysis, so a lesson that can
     // be taught can be updated, whatever the background generation setting says.
-    const selection = savedChatReplySelection(
-      chatReplySelection(await loadSavedAiModelSettings(client)),
-      await client.query(api.workspaceChats.replySelection, { chatId })
-    )
-    const result = await runProviderTextTurn({
-      providerId: selection.providerId,
-      model: selection.model,
-      ...(selection.effort === undefined ? {} : { effort: selection.effort }),
-      workspaceDirectory: directory,
-      prompt: buildTeachUpdatePrompt(context),
-      ephemeral: true,
-      webSearchMode: "disabled",
-      sandbox: "read-only",
-      approvalPolicy: "never",
-      timeoutMs: UPDATE_TIMEOUT_MS,
-      outputSchema: TEACH_UPDATE_SCHEMA,
+    // When that provider is at its limit, another signed-in one does it instead.
+    const configured = chatReplySelection(await loadSavedAiModelSettings(client))
+    const prompt = buildTeachUpdatePrompt(context)
+    const { result, providerId } = await runWithLimitFallback({
+      lesson: savedChatReplySelection(
+        configured,
+        await client.query(api.workspaceChats.replySelection, { chatId })
+      ),
+      configuredProviderId: configured.providerId,
+      selectionFor: (providerId) => savedChatReplySelection(configured, { providerId }),
+      checkProviders: () =>
+        Promise.all(
+          PROVIDER_DEFINITIONS.map((provider) =>
+            provider.checkAvailability({ workspaceDirectory: directory })
+          )
+        ),
+      run: (selection) =>
+        runProviderTextTurn({
+          providerId: selection.providerId,
+          model: selection.model,
+          ...(selection.effort === undefined ? {} : { effort: selection.effort }),
+          workspaceDirectory: directory,
+          prompt,
+          ephemeral: true,
+          webSearchMode: "disabled",
+          sandbox: "read-only",
+          approvalPolicy: "never",
+          timeoutMs: UPDATE_TIMEOUT_MS,
+          outputSchema: TEACH_UPDATE_SCHEMA,
+        }),
     })
+    console.info("A lesson update was analysed", { providerId })
     await client.mutation(api.teachUpdates.apply, {
       chatId,
       token,
