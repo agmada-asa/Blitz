@@ -83,6 +83,24 @@ If Convex and Next already answer, from the background server (preferred),
 of starting a second one over the same database. Quitting then leaves that stack
 running.
 
+### Opening links in the app
+
+The app answers `blitz://` links: `blitz://projects/<id>/learn/<unit>` opens
+that page in the window, and `blitz://` alone opens the Library. A link that
+arrives while Blitz is starting waits until the app has loaded
+(`electron/open-links.mjs`). An app installed before this needs
+`npm run desktop:install` again, because the scheme is declared in the bundle.
+
+Ordinary `http` links keep working on a phone. When one opens in a browser on
+this Mac, the page hands itself to the app through a hidden frame, so the
+browser tab stays usable, and shows a notice with `Open again`. It does this
+only on a fresh arrival from a link (not a reload, back or forward, or a page
+reached from Blitz itself), only in a browser on the Mac that runs the server
+and finds an installed app that declares the scheme (`/api/desktop`; another
+Mac or a browser driven by an agent or test stays put), and only while
+Settings › Desktop app › `Open links in the app` is on. That choice is saved per browser and address. A browser may
+ask before it opens the app.
+
 ## Source files and retrieval
 
 Original uploads use `POST /api/sources/upload` with `x-blitz-project-id`,

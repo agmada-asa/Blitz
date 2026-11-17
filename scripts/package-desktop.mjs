@@ -3,7 +3,8 @@
  * it to `~/Applications`. The bundle holds Electron, the icon and a small entry
  * point; it runs `electron/main.mjs` and the rest of Blitz from the background
  * server's current release, or from this checkout when no server is installed.
- * It is unsigned and for this Mac only.
+ * It answers `blitz://` links (see `electron/open-links.mjs`). It is unsigned
+ * and for this Mac only.
  */
 
 import { packager } from "@electron/packager"
@@ -16,6 +17,11 @@ import sharp from "sharp"
 
 /** Display name, bundle name and executable name. */
 const APP_NAME = "Blitz"
+/** The URL scheme the app registers; matches `LINK_SCHEME` in `electron/open-links.mjs`. */
+const LINK_SCHEME = "blitz"
+/** Apple's tool for updating the Launch Services database, which maps URL schemes to apps. */
+const LSREGISTER =
+  "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
 
 /** Runs a command and throws with its output when it fails. */
 function run(command, args) {
@@ -102,6 +108,10 @@ async function buildIcns(sourceSvg, workDirectory) {
  * default `~/.blitz/current`) when one exists, so the app runs reviewed code
  * from the tracked branch rather than whatever this checkout has checked out.
  * Without a release it falls back to this checkout.
+ *
+ * The entry also queues `blitz://` links on `globalThis.blitzLinkQueue` until
+ * the loaded code takes them, because macOS can deliver the link that launched
+ * the app before that import has finished.
  */
 function writeEntryPoint(directory, checkout) {
   const shell = join(directory, "app")
@@ -128,6 +138,13 @@ import { pathToFileURL } from "node:url"
 const home = process.env.BLITZ_HOME?.trim() || join(homedir(), ".blitz")
 const release = join(home, "current", "electron", "main.mjs")
 const main = existsSync(release) ? release : ${checkoutMain}
+const links = []
+const queueLink = (event, link) => {
+  event.preventDefault()
+  links.push(link)
+}
+app.on("open-url", queueLink)
+globalThis.blitzLinkQueue = { links, stop: () => app.off("open-url", queueLink) }
 try {
   await import(pathToFileURL(main).href)
 } catch (error) {
@@ -167,6 +184,7 @@ async function main() {
       ).version,
       icon: await buildIcns(join(checkout, "app", "icon.svg"), workDirectory),
       overwrite: true,
+      protocols: [{ name: APP_NAME, schemes: [LINK_SCHEME] }],
       asar: false,
       prune: false,
       usageDescription: {
@@ -184,6 +202,11 @@ async function main() {
     await mkdir(join(homedir(), "Applications"), { recursive: true })
     await rm(destination, { recursive: true, force: true })
     await cp(built, destination, { recursive: true, verbatimSymlinks: true })
+    // Point `blitz://` links at the installed copy straight away, not at the
+    // build left in `out`, which has the same bundle ID.
+    // Unregistering a build macOS never saw fails harmlessly.
+    spawnSync(LSREGISTER, ["-u", built])
+    run(LSREGISTER, ["-f", destination])
     console.log(
       `Installed ${destination}. Quit any running copy before opening the new one.`
     )

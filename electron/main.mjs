@@ -7,6 +7,7 @@
  * the stack itself, in production mode: from the current release with the
  * updater when the app runs from `~/.blitz`, or from a production build of
  * its checkout otherwise. The Blitz menu checks for updates or rebuilds.
+ * `blitz://` links open their page in the window (`./open-links.mjs`).
  */
 
 import {
@@ -38,6 +39,7 @@ import {
 } from "./auto-update.mjs"
 import { isServerInstalled, startServer } from "./background-server.mjs"
 import { loadLoginEnvironment } from "./login-environment.mjs"
+import { LINK_SCHEME, linkTarget, takeQueuedLinks } from "./open-links.mjs"
 import {
   blitzHome,
   buildCheckout,
@@ -72,6 +74,10 @@ let mainWindow
 let shutdownStarted
 let shutdownFinished = false
 let updateRunning = false
+/** True once the window shows the app rather than a status page. */
+let appLoaded = false
+/** The newest `blitz://` link that arrived while Blitz was starting. */
+let pendingLink
 
 /**
  * Returns a plain page that says what Blitz is doing while services start.
@@ -117,6 +123,24 @@ async function createWindow() {
     app.quit()
   })
   await mainWindow.loadURL(statusPage("Starting Blitz…"))
+}
+
+/**
+ * Shows the page a `blitz://` link names, or keeps it for when Blitz has
+ * started. Links that don't name a page of the app are ignored.
+ * @param {string} link The URL macOS handed to the app.
+ */
+function openLink(link) {
+  if (!appLoaded || !mainWindow) {
+    pendingLink = link
+    return
+  }
+  const target = linkTarget(link, `http://127.0.0.1:${port}`)
+  if (!target) return
+  void mainWindow.loadURL(target)
+  if (mainWindow.isMinimized()) mainWindow.restore()
+  mainWindow.show()
+  mainWindow.focus()
 }
 
 /** Rejects renderer calls that do not originate from the loopback Next app. */
@@ -367,6 +391,9 @@ async function boot() {
   // The packaged app already has its macOS icon; this would replace it with the square one.
   if (process.platform === "darwin" && !app.isPackaged)
     app.dock?.setIcon(appIconPath)
+  // The bundle declares the scheme; this makes it the handler even when an
+  // older copy of Blitz.app is also on the Mac.
+  if (app.isPackaged) app.setAsDefaultProtocolClient(LINK_SCHEME)
   app.on("second-instance", () => {
     if (mainWindow?.isMinimized()) mainWindow.restore()
     mainWindow?.show()
@@ -387,7 +414,17 @@ async function boot() {
   if (!mainWindow) return
   shownRelease = (await readServerState(blitzHome()))?.release?.commit
   watchServerState()
-  await mainWindow.loadURL(`http://127.0.0.1:${port}`)
+  const origin = `http://127.0.0.1:${port}`
+  const firstPage = (pendingLink && linkTarget(pendingLink, origin)) || origin
+  pendingLink = undefined
+  await mainWindow.loadURL(firstPage)
+  appLoaded = true
+  // A link that arrived while the first page was loading was kept for later.
+  if (pendingLink) {
+    const link = pendingLink
+    pendingLink = undefined
+    openLink(link)
+  }
   startReminders(running?.convexUrl ?? services.environment.BLITZ_CONVEX_URL)
 }
 
@@ -444,6 +481,14 @@ function shutdown() {
   })
   return shutdownStarted
 }
+
+// macOS delivers `blitz://` links here, to the running app or, at launch,
+// before it is ready. Links the entry point queued earlier come first.
+app.on("open-url", (event, link) => {
+  event.preventDefault()
+  openLink(link)
+})
+for (const link of takeQueuedLinks()) openLink(link)
 
 app
   .whenReady()
