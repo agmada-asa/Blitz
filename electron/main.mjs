@@ -419,6 +419,12 @@ async function boot() {
   pendingLink = undefined
   await mainWindow.loadURL(firstPage)
   appLoaded = true
+  // A link that arrived while the first page was loading was kept for later.
+  if (pendingLink) {
+    const link = pendingLink
+    pendingLink = undefined
+    openLink(link)
+  }
   startReminders(running?.convexUrl ?? services.environment.BLITZ_CONVEX_URL)
 }
 
