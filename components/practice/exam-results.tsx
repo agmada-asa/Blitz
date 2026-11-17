@@ -10,7 +10,7 @@
 
 import Link from "next/link"
 import type { FunctionReturnType } from "convex/server"
-import { useState } from "react"
+import { useState, type ReactNode } from "react"
 
 import { relearnLink } from "@/components/practice/practice-hub"
 import { Button } from "@/components/ui/button"
@@ -215,7 +215,7 @@ export function ExamResults({
         <h2 id="answers-heading" className="font-heading text-lg font-semibold">
           Questions
         </h2>
-        <ol className="mt-3 space-y-4">
+        <ol className="mt-3 space-y-6">
           {review.items.map((item) => (
             <li key={item.id}>
               <ReviewedQuestion projectId={projectId} item={item} />
@@ -224,6 +224,52 @@ export function ExamResults({
         </ol>
       </section>
     </>
+  )
+}
+
+/**
+ * Panel style for each part of a reviewed written answer. Each part gets its
+ * own treatment so the learner can tell at a glance where their answer ends
+ * and the feedback, model answer and mark scheme begin: their own words sit
+ * in a plain fill, feedback has a brand tint, the model answer has a tint of
+ * the same green used for correct options, and the mark scheme is a quiet
+ * outline because it is reference material.
+ */
+const sectionTone = {
+  answer: "bg-muted/60",
+  feedback: "bg-brand/[0.07]",
+  model: "bg-emerald-500/[0.06]",
+  scheme: "border border-border",
+} as const
+
+/** Heading colour for each section, matched to its panel. */
+const sectionTitleTone = {
+  answer: "text-muted-foreground",
+  feedback: "text-brand",
+  model: toneClass.good,
+  scheme: "text-muted-foreground",
+} as const
+
+/**
+ * One labelled part of a reviewed written answer, drawn as its own panel.
+ * @param title Visible section heading, such as "Feedback".
+ * @param tone Which part this is; sets the panel and heading styles.
+ * @param children The section's content.
+ */
+function ReviewSection({
+  title,
+  tone,
+  children,
+}: {
+  title: string
+  tone: keyof typeof sectionTone
+  children: ReactNode
+}) {
+  return (
+    <div className={cn("rounded-lg px-4 py-3", sectionTone[tone])}>
+      <h4 className={cn("mb-1.5 text-xs font-semibold", sectionTitleTone[tone])}>{title}</h4>
+      <div className="min-w-0 leading-relaxed">{children}</div>
+    </div>
   )
 }
 
@@ -259,41 +305,37 @@ function ReviewedQuestion({ projectId, item }: { projectId: string; item: Review
       <div className="mt-2 min-w-0 text-sm">{plainMarkdownRenderer(item.prompt)}</div>
 
       {item.type === "written" ? (
-        <div className="mt-4 space-y-4 text-sm">
-          <div>
-            <h4 className="text-xs font-medium text-muted-foreground">Your answer</h4>
+        <div className="mt-5 space-y-3 border-t border-border pt-5 text-sm">
+          <ReviewSection title="Your answer" tone="answer">
             {item.text.trim() ? (
-              <p className="mt-1 break-words whitespace-pre-wrap">{item.text}</p>
+              <p className="break-words whitespace-pre-wrap">{item.text}</p>
             ) : (
-              <p className="mt-1 text-muted-foreground">Not answered.</p>
+              <p className="text-muted-foreground">Not answered.</p>
             )}
-          </div>
+          </ReviewSection>
           {item.feedback ? (
-            <div>
-              <h4 className="text-xs font-medium text-muted-foreground">Feedback</h4>
-              <p className="mt-1">{item.feedback}</p>
-            </div>
+            <ReviewSection title="Feedback" tone="feedback">
+              <p>{item.feedback}</p>
+            </ReviewSection>
           ) : null}
           {item.modelAnswer ? (
-            <div>
-              <h4 className="text-xs font-medium text-muted-foreground">Model answer</h4>
-              <div className="mt-1">{plainMarkdownRenderer(item.modelAnswer)}</div>
-            </div>
+            <ReviewSection title="Model answer" tone="model">
+              {plainMarkdownRenderer(item.modelAnswer)}
+            </ReviewSection>
           ) : null}
           {item.markScheme.length ? (
-            <div>
-              <h4 className="text-xs font-medium text-muted-foreground">Mark scheme</h4>
-              <ul className="mt-1 list-disc space-y-1 pl-5">
+            <ReviewSection title="Mark scheme" tone="scheme">
+              <ul className="divide-y divide-border">
                 {item.markScheme.map((point, index) => (
-                  <li key={index}>
-                    {point.point}{" "}
-                    <span className="text-muted-foreground">
-                      ({formatMarks(point.marks)} mark{point.marks === 1 ? "" : "s"})
+                  <li key={index} className="flex items-baseline gap-4 py-2 first:pt-0 last:pb-0">
+                    <span className="min-w-0 flex-1">{point.point}</span>
+                    <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
+                      {formatMarks(point.marks)} mark{point.marks === 1 ? "" : "s"}
                     </span>
                   </li>
                 ))}
               </ul>
-            </div>
+            </ReviewSection>
           ) : null}
         </div>
       ) : (
@@ -346,7 +388,11 @@ function ReviewedQuestion({ projectId, item }: { projectId: string; item: Review
             })}
           </ul>
           {item.explanation ? (
-            <div className="mt-3 text-sm">{plainMarkdownRenderer(item.explanation)}</div>
+            <div className="mt-3 text-sm">
+              <ReviewSection title="Explanation" tone="feedback">
+                {plainMarkdownRenderer(item.explanation)}
+              </ReviewSection>
+            </div>
           ) : null}
         </>
       )}
