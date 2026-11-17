@@ -174,7 +174,9 @@ export function SourceReader({
         <p className="text-sm text-muted-foreground">{citation.label}</p>
         <div className="flex flex-wrap gap-3">
           <Button asChild variant="link" className="h-auto p-0 text-xs">
-            <a href={newTabUrl} target="_blank" rel="noopener noreferrer">
+            {/* Keeps the referrer so the new tab counts as reached from Blitz
+                and stays in this browser (`lib/client/desktop-links.ts`). */}
+            <a href={newTabUrl} target="_blank" rel="noopener">
               Open in new tab
             </a>
           </Button>
