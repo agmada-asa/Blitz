@@ -4,12 +4,44 @@
  *
  * The server runs on the same Mac as the app, so it can look at the installed
  * bundles directly. A copy built before links were supported has no `blitz`
- * scheme in its Info.plist and doesn't count.
+ * scheme in its Info.plist and doesn't count. That answer only holds for a
+ * browser on this Mac: another Mac on the network or tailnet reaches the same
+ * server, but a `blitz://` link there would open its own copy of Blitz or
+ * nothing, so `isThisMachine` limits the answer to requests from here.
  */
 
 import { readFile } from "node:fs/promises"
-import { homedir } from "node:os"
+import { homedir, networkInterfaces } from "node:os"
 import { join } from "node:path"
+
+/**
+ * Returns whether a request came from this machine, through loopback or one
+ * of its own network addresses (such as its LAN or Tailscale address).
+ * @param forwardedFor The `x-forwarded-for` header. Next sets it to the
+ *   socket's address when it is missing, and a proxy such as `tailscale serve`
+ *   appends the peer it saw, so the last entry is the nearest real client. A
+ *   browser can spoof it, but that only changes what that browser is told.
+ * @param interfaces This machine's addresses, for tests.
+ * @returns False when the header is missing or names another machine.
+ */
+export function isThisMachine(
+  forwardedFor: string | null,
+  interfaces: ReturnType<typeof networkInterfaces> = networkInterfaces()
+): boolean {
+  const address = forwardedFor
+    ?.split(",")
+    .at(-1)
+    ?.trim()
+    // IPv4 clients of a dual-stack socket appear as `::ffff:a.b.c.d`.
+    .replace(/^::ffff:/i, "")
+    .replace(/%.*$/, "")
+    .toLowerCase()
+  if (!address) return false
+  if (address === "::1" || address.startsWith("127.")) return true
+  return Object.values(interfaces).some((entries) =>
+    entries?.some((entry) => entry.address.toLowerCase() === address)
+  )
+}
 
 /** Where `npm run desktop:install` puts the app, then the system-wide folder. */
 export function desktopAppCandidates(home = homedir()): string[] {

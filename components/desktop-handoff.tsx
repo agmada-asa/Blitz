@@ -34,6 +34,7 @@ export function DesktopHandoff() {
       !shouldHandOff({
         inDesktopApp: Boolean(window.blitzDesktop),
         macBrowser: isMacBrowser(navigator.userAgent, navigator.maxTouchPoints),
+        automated: navigator.webdriver,
         preference: readLinkPreference(),
         navigationType: navigation?.type,
         referrer: document.referrer,

@@ -95,9 +95,10 @@ Ordinary `http` links keep working on a phone. When one opens in a browser on
 this Mac, the page hands itself to the app through a hidden frame, so the
 browser tab stays usable, and shows a notice with `Open again`. It does this
 only on a fresh arrival from a link (not a reload, back or forward, or a page
-reached from Blitz itself), only when `/api/desktop` finds an installed app
-that declares the scheme, and only while Settings › Desktop app › `Open links
-in the app` is on. That choice is saved per browser and address. A browser may
+reached from Blitz itself), only in a browser on the Mac that runs the server
+and finds an installed app that declares the scheme (`/api/desktop`; another
+Mac or a browser driven by an agent or test stays put), and only while
+Settings › Desktop app › `Open links in the app` is on. That choice is saved per browser and address. A browser may
 ask before it opens the app.
 
 ## Source files and retrieval

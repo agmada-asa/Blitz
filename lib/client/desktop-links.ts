@@ -6,7 +6,8 @@
  * to Blitz that lands in a browser on the Mac that runs Blitz, for example one
  * an agent sent, reopens there when the app is installed and the learner has
  * not chosen to keep links in the browser (Settings › Desktop app). Phones,
- * tablets, reloads and pages reached from another Blitz page stay put.
+ * tablets, other Macs, automated browsers, reloads and pages reached from
+ * another Blitz page stay put.
  */
 
 /** Where links to Blitz open in a Mac browser. */
@@ -43,6 +44,11 @@ type PageLoad = {
   inDesktopApp: boolean
   /** True in a Mac desktop browser (`isMacBrowser`). */
   macBrowser: boolean
+  /**
+   * `navigator.webdriver`: true in a browser an agent or test drives, which
+   * should test the page it opened rather than move the real app to it.
+   */
+  automated: boolean
   /** The learner's saved choice; missing means the default, the app. */
   preference: LinkPreference | null
   /** `PerformanceNavigationTiming.type`, such as `navigate` or `reload`. */
@@ -55,12 +61,13 @@ type PageLoad = {
 
 /**
  * Returns whether this page load should reopen in the desktop app: a fresh
- * arrival from a link, in a Mac browser, with links set to open in the app.
- * Reloads, back and forward, and pages reached from Blitz itself stay in the
- * browser so a learner who chose the browser isn't pulled away again.
+ * arrival from a link, in a Mac browser a person uses, with links set to open
+ * in the app. Reloads, back and forward, and pages reached from Blitz itself
+ * stay in the browser so a learner who chose the browser isn't pulled away
+ * again.
  */
 export function shouldHandOff(load: PageLoad): boolean {
-  if (load.inDesktopApp || !load.macBrowser) return false
+  if (load.inDesktopApp || !load.macBrowser || load.automated) return false
   if (load.preference === "browser") return false
   if (load.navigationType && load.navigationType !== "navigate") return false
   return !load.referrer || !load.referrer.startsWith(`${load.origin}/`)

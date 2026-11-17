@@ -18,6 +18,7 @@ import {
 import {
   declaresLinkScheme,
   desktopAppOpensLinks,
+  isThisMachine,
 } from "../lib/server/desktop-app.ts"
 
 const origin = "http://127.0.0.1:3007"
@@ -80,6 +81,7 @@ test("only a fresh arrival from a link hands over", () => {
   const arrival = {
     inDesktopApp: false,
     macBrowser: true,
+    automated: false,
     preference: null,
     navigationType: "navigate",
     referrer: "",
@@ -91,6 +93,7 @@ test("only a fresh arrival from a link hands over", () => {
   assert.equal(shouldHandOff({ ...arrival, preference: "browser" }), false)
   assert.equal(shouldHandOff({ ...arrival, inDesktopApp: true }), false)
   assert.equal(shouldHandOff({ ...arrival, macBrowser: false }), false)
+  assert.equal(shouldHandOff({ ...arrival, automated: true }), false)
   assert.equal(shouldHandOff({ ...arrival, navigationType: "reload" }), false)
   assert.equal(shouldHandOff({ ...arrival, navigationType: "back_forward" }), false)
   assert.equal(shouldHandOff({ ...arrival, referrer: `${origin}/settings` }), false)
@@ -124,4 +127,25 @@ test("only an installed app that declares the blitz scheme opens links", async (
   } finally {
     await rm(home, { recursive: true, force: true })
   }
+})
+
+test("only a browser on this Mac is told about its app", () => {
+  const interfaces = {
+    lo0: [{ address: "127.0.0.1" }, { address: "::1" }],
+    en0: [{ address: "192.168.1.20" }, { address: "fe80::1c2b:3a4d:5e6f:7081" }],
+    utun4: [{ address: "100.64.0.7" }],
+  } as unknown as Parameters<typeof isThisMachine>[1]
+  assert.equal(isThisMachine("127.0.0.1", interfaces), true)
+  assert.equal(isThisMachine("::1", interfaces), true)
+  assert.equal(isThisMachine("::ffff:127.0.0.1", interfaces), true)
+  // The Mac opening its own LAN or Tailscale address.
+  assert.equal(isThisMachine("::ffff:192.168.1.20", interfaces), true)
+  assert.equal(isThisMachine("100.64.0.7", interfaces), true)
+  assert.equal(isThisMachine("FE80::1C2B:3A4D:5E6F:7081%en0", interfaces), true)
+  // Another device, directly or through a proxy that appends the peer.
+  assert.equal(isThisMachine("100.64.0.9", interfaces), false)
+  assert.equal(isThisMachine("127.0.0.1, 100.64.0.9", interfaces), false)
+  assert.equal(isThisMachine("100.64.0.9, 100.64.0.7", interfaces), true)
+  assert.equal(isThisMachine(null, interfaces), false)
+  assert.equal(isThisMachine("", interfaces), false)
 })
