@@ -1,4 +1,7 @@
-/** Defines the root document, global providers, fonts, and shared application shell. */
+/**
+ * Defines the root document, global providers, fonts, shared application
+ * shell, and the handoff of links to the desktop app.
+ */
 
 import type { Metadata } from "next"
 import "@fontsource-variable/instrument-sans"
@@ -8,6 +11,7 @@ import { AppShell } from "@/components/app-shell"
 import { ConvexClientProvider } from "@/components/convex-client-provider"
 import { ThemeProvider } from "@/components/theme-provider"
 import { BackgroundNotices } from "@/components/background-notices"
+import { DesktopHandoff } from "@/components/desktop-handoff"
 import { NotificationProvider } from "@/components/notifications/notification-provider"
 
 /** Default metadata used for Blitz routes. */
@@ -37,6 +41,7 @@ export default function RootLayout({
             <BackgroundNotices>
               <NotificationProvider>
                 <AppShell>{children}</AppShell>
+                <DesktopHandoff />
               </NotificationProvider>
             </BackgroundNotices>
           </ConvexClientProvider>

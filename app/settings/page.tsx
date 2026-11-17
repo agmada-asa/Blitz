@@ -1,6 +1,7 @@
 /** Presents application-wide appearance and AI settings for Blitz. */
 
 import { AppearanceSettings } from "@/components/settings/appearance-settings"
+import { DesktopLinkSettings } from "@/components/settings/desktop-link-settings"
 import { KokoroVoiceSettings } from "@/components/settings/kokoro-voice-settings"
 import { ModelSettingsForm } from "@/components/settings/model-settings-form"
 import { ProviderConnections } from "@/components/settings/provider-connections"
@@ -48,6 +49,7 @@ export default function SettingsPage() {
           </div>
           <AppearanceSettings />
         </section>
+        <DesktopLinkSettings />
         <section aria-labelledby="audio-settings-heading" className="space-y-4">
           <div>
             <h2
