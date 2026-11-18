@@ -8,7 +8,6 @@
  */
 
 import Link from "next/link"
-import { useId, useState } from "react"
 import {
   AlertCircleIcon,
   BubbleChatNotificationIcon,
@@ -26,7 +25,13 @@ import {
 } from "@/components/notifications/notification-provider"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible"
 import { ElapsedTime } from "@/components/ui/elapsed-time"
+import { useMinuteClock } from "@/hooks/use-minute-clock"
 import {
   ArrowRightIcon,
   CheckCircleIcon,
@@ -325,8 +330,6 @@ function NotificationRun({
   markAsRead,
   markAsUnread,
 }: NotificationRunProps) {
-  const [open, setOpen] = useState(false)
-  const panelId = useId()
   const unreadRows = rows.filter((row) => !isRead(row.id))
   const unread = unreadRows.length > 0
   const questions = rows.reduce(
@@ -337,7 +340,12 @@ function NotificationRun({
     ...new Set(rows.map((row) => row.context).filter(Boolean)),
   ].join(", ")
   const newest = rows[0]
-  const title = `Practice questions ready for ${rows.length} units`
+  // A unit can finish more than one run, so count units by their distinct titles.
+  const unitCount = new Set(rows.map((row) => row.title)).size
+  const title =
+    unitCount === 1
+      ? newest.title
+      : `Practice questions ready for ${unitCount} units`
   const detail = [
     questions ? `${questions} ${questions === 1 ? "question" : "questions"}` : null,
     projects || null,
@@ -346,27 +354,21 @@ function NotificationRun({
     .join(" · ")
 
   return (
-    <div>
+    <Collapsible className="group/run">
       <div
         className={cn(
-          "group relative flex items-center gap-3 px-3 py-2.5 transition-colors sm:px-4 sm:py-3",
+          "relative flex items-center gap-3 px-3 py-2.5 transition-colors sm:px-4 sm:py-3",
           unread
             ? "bg-brand/[0.03] hover:bg-brand/[0.06] dark:bg-brand/[0.06] dark:hover:bg-brand/[0.09]"
             : "hover:bg-muted/60"
         )}
       >
-        <button
-          type="button"
-          aria-expanded={open}
-          aria-controls={panelId}
-          onClick={() => setOpen((value) => !value)}
-          className="absolute inset-0 z-0 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
-        >
+        <CollapsibleTrigger className="absolute inset-0 z-0 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none">
           <span className="sr-only">
             {title}
-            {unread ? " (unread)" : ""}. {detail}. {open ? "Hide" : "Show"} each
+            {unread ? " (unread)" : ""}. {detail}
           </span>
-        </button>
+        </CollapsibleTrigger>
         <span
           className={cn(
             "pointer-events-none relative z-10 flex size-8 shrink-0 items-center justify-center rounded-lg",
@@ -408,7 +410,7 @@ function NotificationRun({
               variant="ghost"
               size="icon-xs"
               className="size-6 text-muted-foreground opacity-80 hover:text-foreground hover:opacity-100"
-              title="Mark all as read"
+              title="Mark these as read"
               aria-label={`Mark ${rows.length} practice notifications as read`}
               onClick={() => unreadRows.forEach((row) => markAsRead(row.id))}
             >
@@ -418,14 +420,11 @@ function NotificationRun({
           <ArrowRightIcon
             aria-hidden="true"
             size={14}
-            className={cn(
-              "pointer-events-none text-muted-foreground transition-transform motion-reduce:transition-none",
-              open && "rotate-90"
-            )}
+            className="pointer-events-none text-muted-foreground transition-transform group-data-[state=open]/run:rotate-90 motion-reduce:transition-none"
           />
         </div>
       </div>
-      <div id={panelId} hidden={!open} className="divide-y border-t">
+      <CollapsibleContent className="divide-y border-t">
         {rows.map((row) => (
           <NotificationItem
             key={row.id}
@@ -436,8 +435,8 @@ function NotificationRun({
             onMarkUnread={() => markAsUnread(row.id)}
           />
         ))}
-      </div>
-    </div>
+      </CollapsibleContent>
+    </Collapsible>
   )
 }
 
@@ -480,8 +479,8 @@ export function NotificationCenter() {
     markAsUnread,
     markAllRead,
   } = useNotifications()
-  // Fixed at mount: anything newer still lands under Today.
-  const [now] = useState(() => Date.now())
+  // Ticks each minute, so a page left open past midnight moves items under Yesterday.
+  const now = useMinuteClock()
 
   if (!snapshot)
     return (

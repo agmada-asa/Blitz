@@ -62,6 +62,11 @@ import {
 import { SessionSummary } from "@/components/progress/session-summary"
 import { Button } from "@/components/ui/button"
 import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible"
+import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -91,6 +96,7 @@ import type { LessonPassage } from "@/lib/client/lesson-passage-dom"
 import { consumeRelearn } from "@/lib/client/relearn"
 import { restartSitting, sittingStart } from "@/lib/client/teach-sitting"
 import { MAX_LESSON_SECTION_CHARACTERS } from "@/lib/lesson-passage"
+import { sourceDisplayName } from "@/lib/source-display"
 import {
   compactTeachSession,
   createClientMessageId,
@@ -196,8 +202,6 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
   const setTeachSideChat = useMutation(api.workspaceChats.setTeachSideChat)
   const [confirmRestart, setConfirmRestart] = useState(false)
   const [outlineOpen, setOutlineOpen] = useState(false)
-  // The unit's files fold into one line so a long list does not push the outline aside.
-  const [sourcesOpen, setSourcesOpen] = useState(false)
   const [summaryOpen, setSummaryOpen] = useState(false)
   const [contextOpen, setContextOpen] = useState(false)
   const unitOptionsRef = useRef<HTMLButtonElement>(null)
@@ -839,52 +843,48 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
           </div>
         )}
         {unit.sources.length ? (
-          <section
-            aria-label="Unit sources"
-            className="mt-6 border-t border-border/70 pt-3"
-          >
-            <h2>
-              <button
-                type="button"
-                aria-expanded={sourcesOpen}
-                aria-controls="teach-unit-sources"
-                onClick={() => setSourcesOpen((open) => !open)}
-                className="flex min-h-10 w-full items-center gap-2 rounded-lg px-3 text-left text-sm text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
-              >
-                <ArrowRightIcon
-                  aria-hidden="true"
-                  className={cn(
-                    "size-4 shrink-0 transition-transform motion-reduce:transition-none",
-                    sourcesOpen && "rotate-90"
-                  )}
-                />
-                <span className="flex-1">Sources</span>
-                <span className="text-xs tabular-nums">{unit.sources.length}</span>
-              </button>
-            </h2>
-            <ul id="teach-unit-sources" hidden={!sourcesOpen} className="mt-1 space-y-0.5">
-              {unit.sources.map((item) => (
-                <li key={item.id}>
-                  <button
-                    type="button"
-                    disabled={!item.hasText}
-                    onClick={() =>
-                      showSource({
-                        kind: "learning",
-                        projectId: unit.projectId,
-                        sourceId: item.id,
-                        filename: item.filename,
-                      })
-                    }
-                    className="flex min-h-10 w-full items-center gap-2 rounded-lg px-3 text-left text-sm text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none disabled:opacity-50"
-                  >
-                    <FileIcon aria-hidden="true" className="size-4 shrink-0" />
-                    <span className="min-w-0 truncate">{item.filename}</span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </section>
+          // The unit's files fold into one line so a long list does not push the outline aside.
+          <Collapsible asChild>
+            <section
+              aria-label="Unit sources"
+              className="mt-6 border-t border-border/70 pt-3"
+            >
+              <h2>
+                <CollapsibleTrigger className="group flex min-h-10 w-full items-center gap-2 rounded-lg px-3 text-left text-sm text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none">
+                  <ArrowRightIcon
+                    aria-hidden="true"
+                    className="size-4 shrink-0 transition-transform group-data-[state=open]:rotate-90 motion-reduce:transition-none"
+                  />
+                  <span className="flex-1">Sources</span>
+                  <span className="text-xs tabular-nums">{unit.sources.length}</span>
+                </CollapsibleTrigger>
+              </h2>
+              <CollapsibleContent asChild>
+                <ul className="mt-1 space-y-0.5">
+                  {unit.sources.map((item) => (
+                    <li key={item.id}>
+                      <button
+                        type="button"
+                        disabled={!item.hasText}
+                        onClick={() =>
+                          showSource({
+                            kind: "learning",
+                            projectId: unit.projectId,
+                            sourceId: item.id,
+                            filename: item.filename,
+                          })
+                        }
+                        className="flex min-h-10 w-full items-center gap-2 rounded-lg px-3 text-left text-sm text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none disabled:opacity-50"
+                      >
+                        <FileIcon aria-hidden="true" className="size-4 shrink-0" />
+                        <span className="min-w-0 truncate">{sourceDisplayName(item.filename)}</span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </CollapsibleContent>
+            </section>
+          </Collapsible>
         ) : null}
       </aside>
 

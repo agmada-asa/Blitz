@@ -22,6 +22,11 @@ import type {
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible"
+import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -58,7 +63,6 @@ import {
 import { api } from "@/convex/_generated/api"
 import type { Id } from "@/convex/_generated/dataModel"
 import { sourceDisplayName, sourceTypeLabel } from "@/lib/source-display"
-import { cn } from "@/lib/utils"
 
 /** Files listed before the filter box appears; short lists are easy to scan. */
 const FILTER_THRESHOLD = 6
@@ -234,7 +238,10 @@ export function SourceList({
 
   if (!sources.length) return <p className="text-sm text-muted-foreground">No sources yet.</p>
 
-  /** Whether a group's files are showing: searches open every match, short lists stay open. */
+  /**
+   * Whether a group's files are showing: short lists stay open, and a search
+   * opens every group with a match and pauses folding until it is cleared.
+   */
   const isOpen = (key: string) => Boolean(query) || (toggled[key] ?? !long)
 
   return (
@@ -260,38 +267,31 @@ export function SourceList({
       ) : null}
       {groups.length ? (
         <div className="space-y-2">
-          {groups.map((group) => {
-            const open = isOpen(group.key)
-            const listId = `source-group-${group.key}-files`
-            return (
+          {groups.map((group) => (
+            <Collapsible
+              key={group.key}
+              asChild
+              open={isOpen(group.key)}
+              onOpenChange={(open) => setToggled((current) => ({ ...current, [group.key]: open }))}
+              disabled={Boolean(query)}
+            >
               <section
-                key={group.key}
                 aria-labelledby={`source-group-${group.key}`}
                 className="rounded-xl border border-border bg-card"
               >
                 <h3 id={`source-group-${group.key}`}>
-                  <button
-                    type="button"
-                    aria-expanded={open}
-                    aria-controls={listId}
-                    disabled={Boolean(query)}
-                    onClick={() => setToggled((current) => ({ ...current, [group.key]: !open }))}
-                    className="flex min-h-12 w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none disabled:cursor-default disabled:hover:bg-transparent sm:px-4"
-                  >
+                  <CollapsibleTrigger className="group flex min-h-12 w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none disabled:cursor-default disabled:hover:bg-transparent sm:px-4">
                     <ArrowRightIcon
                       aria-hidden="true"
-                      className={cn(
-                        "size-4 shrink-0 text-muted-foreground transition-transform motion-reduce:transition-none",
-                        open && "rotate-90"
-                      )}
+                      className="size-4 shrink-0 text-muted-foreground transition-transform group-data-[state=open]:rotate-90 motion-reduce:transition-none"
                     />
                     <span className="min-w-0 flex-1 font-medium break-words">{group.title}</span>
                     <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
                       {group.sources.length} {group.sources.length === 1 ? "file" : "files"}
                     </span>
-                  </button>
+                  </CollapsibleTrigger>
                 </h3>
-                <div id={listId} hidden={!open} className="border-t border-border/70">
+                <CollapsibleContent className="border-t border-border/70">
                   {group.note ? (
                     <p className="px-3 pt-2.5 text-xs text-muted-foreground sm:px-4">{group.note}</p>
                   ) : null}
@@ -308,10 +308,10 @@ export function SourceList({
                       />
                     ))}
                   </ul>
-                </div>
+                </CollapsibleContent>
               </section>
-            )
-          })}
+            </Collapsible>
+          ))}
         </div>
       ) : (
         <p className="text-sm text-muted-foreground">No files match “{filter.trim()}”.</p>
