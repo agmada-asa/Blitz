@@ -2,9 +2,8 @@
 
 /**
  * The Exam prep section of the Practice screen: the module's past papers and
- * mock exams as compact rows with their status, size, and best score in a
- * column, actions to take, resume, review, edit, or delete each one, and the
- * two ways to add a paper.
+ * mock exams with their status, size, and best score, actions to take,
+ * resume, review, edit, or delete each one, and the two ways to add a paper.
  */
 
 import Link from "next/link"
@@ -20,7 +19,6 @@ import { LoadingIcon } from "@/components/ui/icon"
 import { Skeleton } from "@/components/ui/skeleton"
 import { api } from "@/convex/_generated/api"
 import type { Id } from "@/convex/_generated/dataModel"
-import { cn } from "@/lib/utils"
 
 /** One paper in the Exam prep list. */
 type PaperSummary = FunctionReturnType<typeof api.exam.listPapers>[number]
@@ -44,16 +42,21 @@ export function ExamPrep({ projectId }: { projectId: string }) {
 
   return (
     <section aria-labelledby="exam-heading" className="mt-10">
-      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
-        <h2 id="exam-heading" className="font-heading text-lg font-semibold">
-          Exam prep
-        </h2>
-        <div className="flex shrink-0 flex-wrap gap-1.5">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+        <div className="min-w-0">
+          <h2 id="exam-heading" className="font-heading text-lg font-semibold">
+            Exam prep
+          </h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Sit past papers and mock exams against the clock, then relearn what you missed.
+          </p>
+        </div>
+        <div className="flex shrink-0 flex-wrap gap-2">
           <Button
             type="button"
-            variant="ghost"
+            variant="outline"
             onClick={() => setPastOpen(true)}
-            className="min-h-10 rounded-full px-3.5 text-muted-foreground"
+            className="min-h-10 rounded-full px-4"
           >
             Add a past paper
           </Button>
@@ -70,9 +73,9 @@ export function ExamPrep({ projectId }: { projectId: string }) {
       </div>
 
       {papers === undefined ? (
-        <Skeleton className="mt-3 h-20 w-full rounded-2xl" aria-label="Loading exam papers" />
+        <Skeleton className="mt-3 h-20 w-full rounded-xl" aria-label="Loading exam papers" />
       ) : papers.length ? (
-        <ul className="mt-3 divide-y divide-border overflow-hidden rounded-2xl border border-border bg-card">
+        <ul className="mt-3 space-y-3">
           {papers.map((paper) => (
             <PaperRow key={paper.id} paper={paper} base={base} />
           ))}
@@ -106,6 +109,7 @@ function PaperRow({ paper, base }: { paper: PaperSummary; base: string }) {
     paper.status === "ready" ? plural(paper.questionCount, "question") : "",
     paper.status === "ready" && paper.totalMarks ? plural(paper.totalMarks, "mark") : "",
     paper.durationMinutes ? `${paper.durationMinutes} min` : "",
+    paper.bestPercentage !== null ? `Best ${paper.bestPercentage}%` : "",
   ].filter(Boolean)
 
   /** Starts preparing a failed paper again. */
@@ -121,12 +125,9 @@ function PaperRow({ paper, base }: { paper: PaperSummary; base: string }) {
     if (!response?.ok) setError("The paper could not be retried. Try again.")
   }
 
-  // Once a paper has a result, reviewing it is the likelier next step, so Review takes the outline.
-  const reviewFirst = Boolean(paper.latestAttemptId) && !paper.inProgressAttemptId
-
   return (
-    <li className="px-4 py-3 sm:px-5">
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+    <li className="rounded-xl border border-border bg-card p-4 sm:p-5">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0">
           <h3 className="font-medium break-words">{paper.title}</h3>
           <p className="mt-0.5 text-xs text-muted-foreground">{details.join(" · ")}</p>
@@ -136,34 +137,14 @@ function PaperRow({ paper, base }: { paper: PaperSummary; base: string }) {
             </p>
           ) : null}
         </div>
-        <div className="flex shrink-0 flex-wrap items-center gap-1">
+        <div className="flex shrink-0 flex-wrap gap-2">
           {paper.status === "ready" ? (
             <>
-              <span className="mr-2 min-w-[4.5rem] text-right text-sm text-muted-foreground tabular-nums max-sm:order-last max-sm:ml-auto">
-                {paper.bestPercentage !== null ? (
-                  <>
-                    <span className="sr-only">Best </span>
-                    {paper.bestPercentage}%
-                  </>
-                ) : paper.inProgressAttemptId ? (
-                  "In progress"
-                ) : (
-                  "Not taken"
-                )}
-              </span>
-              <Button
-                asChild
-                variant={reviewFirst ? "ghost" : "outline"}
-                className={cn("min-h-10 rounded-full px-4", reviewFirst && "text-muted-foreground")}
-              >
+              <Button asChild variant="outline" className="min-h-10 rounded-full px-4">
                 <Link href={href}>{paper.inProgressAttemptId ? "Resume" : "Take"}</Link>
               </Button>
               {paper.latestAttemptId ? (
-                <Button
-                  asChild
-                  variant={reviewFirst ? "outline" : "ghost"}
-                  className="min-h-10 rounded-full px-4"
-                >
+                <Button asChild variant="ghost" className="min-h-10 rounded-full px-4">
                   <Link href={`${href}?attempt=${encodeURIComponent(paper.latestAttemptId)}`}>
                     Review
                   </Link>
