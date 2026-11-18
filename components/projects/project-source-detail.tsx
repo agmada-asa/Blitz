@@ -1,10 +1,17 @@
 "use client"
 
-/** Renders original source content, summary, and extracted text as a full page. */
+/**
+ * Renders original source content, summary, and extracted text as a full page.
+ * PDFs, slides and Word documents are drawn as the original; Markdown and text
+ * are formatted from the extracted text.
+ */
 
+import dynamic from "next/dynamic"
 import Link from "next/link"
 import { useEffect, useState } from "react"
 import { useQuery } from "convex/react"
+import { PageContainer } from "@/components/page-container"
+import { formatSize } from "@/components/projects/source-list"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { PdfReader } from "@/components/ui/pdf-reader"
@@ -19,6 +26,30 @@ import {
 import { api } from "@/convex/_generated/api"
 import type { Id } from "@/convex/_generated/dataModel"
 import type {} from "@/lib/client/desktop"
+import { sourceDisplayName, sourceTypeLabel } from "@/lib/source-display"
+import { originalViewer } from "@/lib/source-viewers"
+
+/** Loading copy shared by the readers that load on demand. */
+function ReaderLoading() {
+  return (
+    <p role="status" className="p-5 text-sm text-muted-foreground">
+      Loading original…
+    </p>
+  )
+}
+
+/** Slide reader, loaded only when a PowerPoint source is opened. */
+const SlidesReader = dynamic(
+  () => import("@/components/ui/slides-reader").then((mod) => mod.SlidesReader),
+  { ssr: false, loading: ReaderLoading }
+)
+
+/** Word reader, loaded only when a Word source is opened. */
+const DocumentReader = dynamic(
+  () =>
+    import("@/components/ui/document-reader").then((mod) => mod.DocumentReader),
+  { ssr: false, loading: ReaderLoading }
+)
 
 /** Props identifying one source within its owning project. */
 type ProjectSourceDetailProps = { projectId: string; sourceId: string }
@@ -137,29 +168,61 @@ export function ProjectSourceDetail({
     typeof navigator !== "undefined" && /Mac/i.test(navigator.userAgent)
       ? "Show in Finder"
       : "Show in folder"
+  const name = sourceDisplayName(source.filename)
+  // Slides and Word documents are drawn by the same readers the chat source pane uses.
+  const viewer = originalViewer({
+    mimeType: source.mimeType,
+    filename: source.filename,
+    fileUrl: source.relativeKey ? inlineUrl : undefined,
+    textLength: source.extractedText?.length ?? 0,
+  })
+  const details = [
+    sourceTypeLabel(source),
+    formatSize(source.sizeBytes),
+    source.createdAt
+      ? `Added ${new Date(source.createdAt).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })}`
+      : undefined,
+  ]
+    .filter(Boolean)
+    .join(" · ")
 
   return (
-    <main className="mx-auto w-full max-w-6xl px-4 py-5 pb-24 sm:px-7 sm:py-8">
-      <header className="mb-6 flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0">
-          <Button asChild variant="ghost" size="sm" className="mb-3 -ml-2">
-            <Link href={`/projects/${encodeURIComponent(projectId)}/sources`}>
-              <ArrowLeftIcon size={15} className="mr-2" />
-              Sources
-            </Link>
-          </Button>
-          <h1 className="font-heading text-2xl font-semibold tracking-tight break-words sm:text-3xl">
-            {source.filename}
-          </h1>
-        </div>
+    <PageContainer>
+      <header className="mb-6 space-y-3">
+        <Button
+          asChild
+          variant="ghost"
+          size="sm"
+          className="-ml-3 min-h-9 max-w-full text-muted-foreground"
+        >
+          <Link href={`/projects/${encodeURIComponent(projectId)}/sources`}>
+            <ArrowLeftIcon aria-hidden="true" className="size-4" />
+            <span className="truncate">Sources</span>
+          </Link>
+        </Button>
+        <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-3">
+          <div className="min-w-0">
+            <h1
+              title={name === source.filename ? undefined : source.filename}
+              className="font-heading text-2xl font-medium tracking-tight break-words sm:text-3xl"
+            >
+              {name}
+            </h1>
+            {details ? (
+              <p className="mt-1 text-sm text-muted-foreground">{details}</p>
+            ) : null}
+          </div>
         <div className="flex flex-wrap items-center gap-2">
-          <Badge
-            variant={
-              needsAttention ? "destructive" : isBusy ? "outline" : "secondary"
-            }
-          >
-            {statusLabel}
-          </Badge>
+          {/* Ready is the normal state, so only states that need a look get a badge. */}
+          {statusLabel !== "Ready" ? (
+            <Badge
+              variant={
+                needsAttention ? "destructive" : isBusy ? "outline" : "secondary"
+              }
+            >
+              {statusLabel}
+            </Badge>
+          ) : null}
           <Button asChild variant="outline" size="sm">
             <a href={downloadUrl} download={source.filename}>
               <ArrowDownIcon size={15} className="mr-1" />
@@ -191,6 +254,7 @@ export function ProjectSourceDetail({
               </Button>
             </>
           ) : null}
+        </div>
         </div>
       </header>
 
@@ -236,6 +300,15 @@ export function ProjectSourceDetail({
         <TabsContent value="original" className="mt-4 min-w-0">
           {isPdf && source.relativeKey ? (
             <PdfReader url={inlineUrl} initialPage={1} quote="" />
+          ) : viewer === "slides" || viewer === "document" ? (
+            // The readers scroll inside a fixed frame, like the PDF reader's pages.
+            <div className="flex h-[75svh] min-h-[420px] flex-col overflow-hidden rounded-xl border border-border bg-card">
+              {viewer === "slides" ? (
+                <SlidesReader url={inlineUrl} quote="" />
+              ) : (
+                <DocumentReader url={inlineUrl} quote="" />
+              )}
+            </div>
           ) : isMarkdown && source.extractedText ? (
             <article className="max-w-4xl rounded-xl border border-border bg-card p-4 sm:p-7">
               <Markdown text={source.extractedText} />
@@ -296,29 +369,29 @@ export function ProjectSourceDetail({
           </article>
         </TabsContent>
       </Tabs>
-    </main>
+    </PageContainer>
   )
 }
 
 /** Keeps project context visible while the source query is loading. */
 function SourceDetailLoading() {
   return (
-    <main className="mx-auto max-w-6xl px-4 py-8" role="status">
+    <PageContainer role="status">
       Loading source…
-    </main>
+    </PageContainer>
   )
 }
 
 /** Offers a return path if this project or source no longer exists. */
 function SourceDetailNotFound({ projectId }: { projectId: string }) {
   return (
-    <main className="mx-auto max-w-6xl px-4 py-8">
+    <PageContainer>
       <h1 className="font-heading text-2xl font-semibold">Source not found</h1>
       <Button asChild variant="outline" className="mt-4">
         <Link href={`/projects/${encodeURIComponent(projectId)}/sources`}>
           Back to sources
         </Link>
       </Button>
-    </main>
+    </PageContainer>
   )
 }
