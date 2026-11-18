@@ -110,7 +110,7 @@ export function TodayPanel() {
                 <span className="mt-0.5 block text-lg leading-snug font-medium text-balance">
                   {resume.unitTitle}
                 </span>
-                <span className="block truncate text-sm text-muted-foreground">{resume.detail}</span>
+                <span className="line-clamp-2 text-sm text-muted-foreground">{resume.detail}</span>
                 <SegmentedBar
                   className="mt-3 max-w-sm"
                   segments={pathSegments(
@@ -139,7 +139,7 @@ export function TodayPanel() {
                 <span className="block font-medium">
                   Review {summary.review.count} {summary.review.count === 1 ? "question" : "questions"}
                 </span>
-                <span className="block truncate text-xs text-muted-foreground">
+                <span className="block text-xs text-muted-foreground">
                   About {summary.review.minutes} min
                   {summary.review.waiting ? ` · ${summary.review.waiting} more due after this` : ""}
                 </span>

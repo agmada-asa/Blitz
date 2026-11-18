@@ -363,8 +363,11 @@ function ProjectCard({
         href={`/projects/${project._id}`}
         className="flex h-full min-h-30 min-w-0 flex-col gap-3 rounded-2xl p-3.5 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none sm:p-4"
       >
-        {/* The full name wraps instead of being clipped; the card grows to fit it. */}
-        <h2 className="pr-8 text-sm leading-snug font-medium tracking-tight break-words sm:text-[0.95rem]">
+        {/* The full name wraps instead of being clipped; the card grows to fit it. The floated
+            spacer keeps the first line clear of the actions button while later lines use the
+            full width, so long single words still fit on a phone. */}
+        <h2 className="text-sm leading-snug font-medium tracking-tight break-words sm:text-[0.95rem]">
+          <span aria-hidden="true" className="float-right h-5 w-7" />
           {project.title}
         </h2>
         <div className="mt-auto space-y-2.5">
