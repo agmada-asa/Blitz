@@ -46,7 +46,14 @@ test("a plain client sees the agent tools, each with its risk", async (t) => {
     create_module: false,
     add_material: false,
     update_unit: false,
+    recent_material: true,
+    weak_concepts: true,
+    exams: true,
+    organise: false,
   })
+  // Nothing an agent can do deletes material.
+  for (const tool of tools)
+    assert.notEqual(tool.annotations?.destructiveHint, true, tool.name)
   for (const tool of tools)
     assert.equal(tool.annotations?.openWorldHint, false, tool.name)
 })
@@ -58,7 +65,14 @@ test("the reads declare the shape of their structured results", async (t) => {
   const shaped = tools
     .filter((tool) => tool.outputSchema)
     .map((tool) => tool.name)
-  assert.deepEqual(shaped, ["today", "list_modules", "read_module"])
+  assert.deepEqual(shaped, [
+    "today",
+    "list_modules",
+    "read_module",
+    "recent_material",
+    "weak_concepts",
+    "exams",
+  ])
 })
 
 test("the server describes itself, with an icon and how to use it", async (t) => {

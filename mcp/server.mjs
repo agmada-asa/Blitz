@@ -2,10 +2,12 @@
 /**
  * Serves Blitz to agents outside the app (Codex, Claude and Gemini agents) over
  * MCP stdio, using the official SDK: what's due today, the Library, a module's
- * units, creating modules, adding material to a unit and updating a unit's
- * lesson from files that arrived after it was planned. Each tool declares how
- * risky it is through annotations. The three reads also return their data as
- * `structuredContent`, so a client with a UI can use the tool an agent reads.
+ * units and gaps, recent material, weak concepts and exam papers; creating
+ * modules, adding material to a unit, updating a unit's lesson from files that
+ * arrived after it was planned, and tidying modules, units and sources. Each
+ * tool declares how risky it is through annotations. The reads also return
+ * their data as `structuredContent`, so a client with a UI can use the tool an
+ * agent reads.
  * It needs Blitz running on this Mac and holds no state of its own.
  *
  * An optional local module, `host-plugin.mjs`, can add what one host's mini app
@@ -25,10 +27,15 @@ import {
   BlitzError,
   connect,
   createModule,
+  exams,
   listModules,
+  ORGANISE_ACTIONS,
+  organise,
   readModule,
+  recentMaterial,
   today,
   updateUnit,
+  weakConcepts,
 } from "./blitz.mjs"
 
 /** The MCP Apps extension's name in a client's capabilities. */
@@ -41,6 +48,9 @@ const INSTRUCTIONS =
   "To put new material in Blitz: list_modules, read_module to see the existing units, then add_material with an existing unit's title or a new one. " +
   "Downloads that need a sign-in (Canvas, Blackboard) must be saved to a local file first and added as files. " +
   "A unit that has already been taught doesn't use new files until its lesson is updated: add_material and read_module say when that's needed, and update_unit does it, keeping progress and past answers. " +
+  "Adding a file that's already in the unit is skipped, so it's safe to add a week's files again. " +
+  "To help the user decide what to study: today splits what's due by module, read_module lists gaps in a module's weeks, recent_material shows what's new and untaught, and weak_concepts what isn't sticking. " +
+  "organise renames, archives and moves things, but only when the user asks. " +
   "Every tool needs Blitz running on the Mac; if it isn't, say so rather than retrying."
 
 /** Annotations for a tool that only reads Blitz. */
@@ -71,6 +81,9 @@ const TODAY_OUTPUT = {
   sections: z.number(),
   due: z.number(),
   week: z.array(z.object({ day: z.string(), xp: z.number() })),
+  dueByModule: z.array(
+    z.object({ id: z.string(), title: z.string(), due: z.number() })
+  ),
   resume: z
     .object({
       module: z.string(),
@@ -95,6 +108,8 @@ const LIBRARY_OUTPUT = {
       unsorted: z.boolean(),
       lastStudiedAt: z.number().nullable(),
       progress: z.number(),
+      due: z.number(),
+      archived: z.boolean(),
     })
   ),
 }
@@ -106,23 +121,37 @@ const SOURCE = z.object({
   status: z.string(),
   unreadable: z.boolean(),
   error: z.string().nullable(),
+  addedAt: z.number(),
 })
 
 /** Shape of `read_module`'s structured result. */
 const MODULE_OUTPUT = {
   id: z.string(),
   title: z.string(),
+  archived: z.boolean(),
   links,
+  gaps: z
+    .object({
+      first: z.number(),
+      last: z.number(),
+      missing: z.array(z.number()),
+      untaught: z.array(z.number()),
+    })
+    .nullable(),
   units: z.array(
     z.object({
       id: z.string(),
       title: z.string(),
+      week: z.number().nullable(),
       taught: z.number(),
       started: z.boolean(),
       section: z.string().nullable(),
+      sectionIndex: z.number().nullable(),
+      sectionCount: z.number(),
       questions: z.number(),
       answered: z.number(),
       correct: z.number(),
+      addedAt: z.number().nullable(),
       sources: z.array(SOURCE),
       update: z
         .object({
@@ -148,6 +177,67 @@ const MODULE_OUTPUT = {
       })
     ),
   }),
+}
+
+/** Shape of `recent_material`'s structured result. */
+const RECENT_OUTPUT = {
+  links,
+  days: z.number(),
+  items: z.array(
+    z.object({
+      module: z.string(),
+      moduleTitle: z.string(),
+      unit: z.string().nullable(),
+      unitTitle: z.string().nullable(),
+      added: z.number(),
+      addedAt: z.number(),
+      taught: z.number(),
+      started: z.boolean(),
+      notInLesson: z.number(),
+    })
+  ),
+}
+
+/** Shape of `weak_concepts`' structured result. */
+const WEAK_OUTPUT = {
+  links,
+  concepts: z.array(
+    z.object({
+      title: z.string(),
+      module: z.string(),
+      moduleTitle: z.string(),
+      unit: z.string(),
+      unitTitle: z.string(),
+      accuracy: z.number().nullable(),
+      attempts: z.number(),
+    })
+  ),
+}
+
+/** Shape of `exams`' structured result. */
+const EXAMS_OUTPUT = {
+  id: z.string(),
+  title: z.string(),
+  links,
+  readiness: z.object({
+    share: z.number(),
+    concepts: z.number(),
+    practised: z.number(),
+  }),
+  papers: z.array(
+    z.object({
+      id: z.string(),
+      title: z.string(),
+      kind: z.string(),
+      status: z.string(),
+      questions: z.number(),
+      marks: z.number().nullable(),
+      minutes: z.number().nullable(),
+      best: z.number().nullable(),
+      attempts: z.number(),
+      inProgress: z.boolean(),
+    })
+  ),
 }
 
 /**
@@ -319,6 +409,94 @@ server.registerTool(
     annotations: WRITES,
   },
   tool((blitz, args) => updateUnit(blitz, args))
+)
+
+server.registerTool(
+  "recent_material",
+  {
+    description:
+      "Material added to the Library recently: each unit that got new files, how many, and whether it's been taught or needs update_unit.",
+    inputSchema: {
+      days: z
+        .number()
+        .optional()
+        .describe("How many days back to look, 1 to 60. Optional: 7."),
+    },
+    annotations: READS,
+    outputSchema: RECENT_OUTPUT,
+  },
+  tool((blitz, args) => recentMaterial(blitz, args))
+)
+
+server.registerTool(
+  "weak_concepts",
+  {
+    description:
+      "The concepts the user keeps getting wrong, weakest first, across every module or one, with the unit each belongs to.",
+    inputSchema: {
+      module: z
+        .string()
+        .optional()
+        .describe("A module's title or id. Optional: every module."),
+      limit: z
+        .number()
+        .optional()
+        .describe("How many to list, 1 to 50. Optional: 10."),
+    },
+    annotations: READS,
+    outputSchema: WEAK_OUTPUT,
+  },
+  tool((blitz, args) => weakConcepts(blitz, args))
+)
+
+server.registerTool(
+  "exams",
+  {
+    description:
+      "A module's exam prep: how ready Blitz estimates the user is, and its past and mock papers with their best scores. Sitting a paper happens in the app.",
+    inputSchema: {
+      module: z.string().describe("The module's title or id."),
+    },
+    annotations: READS,
+    outputSchema: EXAMS_OUTPUT,
+  },
+  tool((blitz, args) => exams(blitz, args.module))
+)
+
+server.registerTool(
+  "organise",
+  {
+    description:
+      "Tidies the Library without deleting anything: rename_module, archive_module or restore_module (archiving keeps material, answers and review schedules); " +
+      "rename_unit; move_unit to a position in the learning path; move_source to another unit, or out of every unit when no unit is given. " +
+      "Use read_module first to see the names.",
+    inputSchema: {
+      action: z.enum(ORGANISE_ACTIONS).describe("What to change."),
+      module: z.string().describe("The module's title or id."),
+      unit: z
+        .string()
+        .optional()
+        .describe(
+          "rename_unit and move_unit: the unit's title or id. move_source: the unit it moves to; leave out to unsort it."
+        ),
+      title: z
+        .string()
+        .optional()
+        .describe("rename_module and rename_unit: the new title."),
+      position: z
+        .number()
+        .optional()
+        .describe("move_unit: the position to move to, counting from 1."),
+      source: z
+        .string()
+        .optional()
+        .describe(
+          "move_source: the source's id, or its file name (or part of it) when no other source shares it."
+        ),
+    },
+    annotations: WRITES,
+  },
+  tool((blitz, args) => organise(blitz, args))
 )
 
 // The local module's tools stay off until the client has introduced itself. Their `enabled` flag

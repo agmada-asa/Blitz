@@ -1,7 +1,9 @@
 /**
- * The Blitz operations behind the MCP tools: reading the Library, Today and a
- * module's units, creating modules, adding material to a unit, and updating a
- * unit's lesson from files that arrived after it was planned. It talks to
+ * The Blitz operations behind the MCP tools: reading the Library, Today, a
+ * module's units and the gaps in its weeks, recent material, weak concepts and
+ * exam papers; creating modules, adding material to a unit, updating a unit's
+ * lesson from files that arrived after it was planned, and tidying modules,
+ * units and sources without deleting anything. It talks to
  * the running app the same way the web client does: Convex queries and
  * mutations for data, and the Next upload routes for files, so every source
  * goes through the usual extraction, chunking and Teach preparation.
@@ -148,6 +150,104 @@ export async function findModule(blitz, name) {
   )
 }
 
+/**
+ * The ids of archived modules. The app's projects route leaves the archive
+ * state out, so it's read from Convex directly.
+ *
+ * @returns A set of module ids.
+ */
+async function archivedIds(blitz) {
+  const projects = await blitz.convex.query(anyApi.projects.listProjects, {})
+  return new Set(
+    projects
+      .filter((project) => project.archivedAt)
+      .map((project) => String(project._id))
+  )
+}
+
+/**
+ * Reads the week a unit covers from its title, such as "Week 4: Normalisation",
+ * "Wk 4" or "W8 NoSQL".
+ *
+ * @param title The unit's title.
+ * @returns The week number, or null when the title doesn't name one.
+ */
+export function weekOf(title) {
+  const match = String(title).match(/\b(?:week|wk|w)\s*0?(\d{1,2})\b/i)
+  return match ? Number(match[1]) : null
+}
+
+/**
+ * Finds the holes in a module's weeks: week numbers between its first and last
+ * numbered unit that have no unit, and numbered units not yet taught although
+ * a later week has been.
+ *
+ * @param units Units with `week` (or null) and `taught` (a percentage).
+ * @returns The first and last week, `missing` and `untaught` week numbers in
+ *   order; null when fewer than two units name a week.
+ */
+export function gapsOf(units) {
+  const numbered = units.filter((unit) => unit.week !== null)
+  if (numbered.length < 2) return null
+  const weeks = new Set(numbered.map((unit) => unit.week))
+  const first = Math.min(...weeks)
+  const last = Math.max(...weeks)
+  const missing = []
+  for (let week = first + 1; week < last; week += 1)
+    if (!weeks.has(week)) missing.push(week)
+  const latestTaught = Math.max(
+    -Infinity,
+    ...numbered.filter((unit) => unit.taught > 0).map((unit) => unit.week)
+  )
+  const untaught = [
+    ...new Set(
+      numbered
+        .filter((unit) => unit.taught === 0 && unit.week < latestTaught)
+        .map((unit) => unit.week)
+    ),
+  ].sort((a, b) => a - b)
+  return { first, last, missing, untaught }
+}
+
+/**
+ * Describes a list of week numbers, joining runs: [1, 2, 6, 7, 9] reads "1–2, 6–7 and 9".
+ *
+ * @param weeks Week numbers in order.
+ * @returns The description.
+ */
+export function describeWeeks(weeks) {
+  const runs = []
+  for (const week of weeks) {
+    const run = runs.at(-1)
+    if (run && week === run[1] + 1) run[1] = week
+    else runs.push([week, week])
+  }
+  const parts = runs.map(([from, to]) => (from === to ? `${from}` : `${from}–${to}`))
+  return parts.length > 1
+    ? `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}`
+    : (parts[0] ?? "")
+}
+
+/**
+ * Says what a module's gaps are, in a sentence.
+ *
+ * @param gaps The result of `gapsOf`.
+ * @returns The sentence, or an empty string when there are none.
+ */
+function gapsText(gaps) {
+  if (!gaps) return ""
+  const parts = []
+  if (gaps.missing.length)
+    parts.push(
+      `week${gaps.missing.length === 1 ? "" : "s"} ${describeWeeks(gaps.missing)} ${gaps.missing.length === 1 ? "has" : "have"} no unit`
+    )
+  if (gaps.untaught.length)
+    parts.push(
+      `week${gaps.untaught.length === 1 ? "" : "s"} ${describeWeeks(gaps.untaught)} ${gaps.untaught.length === 1 ? "isn't" : "aren't"} taught yet although later weeks are`
+    )
+  return parts.length ? `Gaps: ${parts.join("; ")}.` : ""
+}
+
 /** Share of a unit taught, from its Teach summary, as a whole percentage. */
 export function taught(teach) {
   if (!teach?.sectionCount) return 0
@@ -175,12 +275,24 @@ export function todaySummary(blitz) {
  * @returns The same reading as `text` for an agent and `data` for a client with a UI.
  */
 export async function today(blitz) {
-  const summary = await todaySummary(blitz)
+  const [summary, library] = await Promise.all([
+    todaySummary(blitz),
+    libraryState(blitz),
+  ])
+  // Where the due concepts are, most first, so a review can start where most is waiting.
+  const dueByModule = library
+    .filter((item) => item.due && !item.archived)
+    .sort((a, b) => b.due - a.due)
+    .map(({ id, title, due }) => ({ id, title, due }))
   const lines = [
     `Streak: ${summary.streak.current} day${summary.streak.current === 1 ? "" : "s"} (longest ${summary.streak.longest})${summary.streak.todayMet ? ", today's goal met" : ""}.`,
     `Today: ${summary.todayXp}/${summary.goal} XP, ${summary.answeredToday} questions answered, ${summary.sectionsToday} sections taught.`,
     `Concepts due for review: ${summary.dueConcepts}. Review: ${blitz.links}/review`,
   ]
+  if (dueByModule.length)
+    lines.push(
+      `Due by module: ${dueByModule.map((item) => `${item.title} ${item.due}`).join(", ")}.`
+    )
   if (summary.resume) {
     const { projectId, projectTitle, unitId, unitTitle, detail } =
       summary.resume
@@ -201,6 +313,7 @@ export async function today(blitz) {
       sections: summary.sectionsToday,
       due: summary.dueConcepts,
       week: summary.week,
+      dueByModule,
       resume: summary.resume
         ? {
             module: summary.resume.projectId,
@@ -222,11 +335,42 @@ export async function today(blitz) {
  * @returns The same reading as `text` for an agent and `data` for a client with a UI.
  */
 export async function listModules(blitz) {
-  const [all, progress] = await Promise.all([
+  const list = await libraryState(blitz)
+  /** One module as a line for the agent. */
+  const line = (item) => {
+    const units = item.units
+      ? `${item.units} unit${item.units === 1 ? "" : "s"}, ${item.finished} finished` +
+        (item.next ? `, next: ${item.next}` : "")
+      : item.unsorted
+        ? "sources not grouped into units yet"
+        : "no material yet"
+    const due = item.due ? `, ${item.due} due for review` : ""
+    return `- ${item.title} (${units}${due}) · id ${item.id} · ${blitz.links}/projects/${item.id}`
+  }
+  const active = list.filter((item) => !item.archived)
+  const archived = list.filter((item) => item.archived)
+  const lines = active.map(line)
+  if (archived.length) lines.push("Archived:", ...archived.map(line))
+  return {
+    text: lines.join("\n") || "The Library is empty.",
+    data: { links: blitz.links, modules: list },
+  }
+}
+
+/**
+ * Every module with its units' Teach progress, concepts due for review and
+ * archive state. Recently studied modules come first, then the rest newest
+ * first, as the Library orders them; archived modules go last.
+ *
+ * @returns The modules, in that order.
+ */
+async function libraryState(blitz) {
+  const [all, progress, archived] = await Promise.all([
     modules(blitz),
-    blitz.convex.query(anyApi.units.libraryProgress, {}),
+    blitz.convex.query(anyApi.units.libraryProgress, { now: thisMinute() }),
+    archivedIds(blitz),
   ])
-  const list = all
+  return all
     .map((item) => {
       const state = progress[item.id]
       return {
@@ -241,24 +385,15 @@ export async function listModules(blitz) {
           ? state.unitProgress.reduce((sum, share) => sum + share, 0) /
             state.unitProgress.length
           : 0,
+        due: state?.dueCount ?? 0,
+        archived: archived.has(item.id),
       }
     })
-    .sort((a, b) => (b.lastStudiedAt ?? 0) - (a.lastStudiedAt ?? 0))
-  const text = list
-    .map((item) => {
-      const units = item.units
-        ? `${item.units} unit${item.units === 1 ? "" : "s"}, ${item.finished} finished` +
-          (item.next ? `, next: ${item.next}` : "")
-        : item.unsorted
-          ? "sources not grouped into units yet"
-          : "no material yet"
-      return `- ${item.title} (${units}) · id ${item.id} · ${blitz.links}/projects/${item.id}`
-    })
-    .join("\n")
-  return {
-    text: text || "The Library is empty.",
-    data: { links: blitz.links, modules: list },
-  }
+    .sort(
+      (a, b) =>
+        Number(a.archived) - Number(b.archived) ||
+        (b.lastStudiedAt ?? 0) - (a.lastStudiedAt ?? 0)
+    )
 }
 
 /** Mirrors `TEACH_UPDATE_LEASE_MS` in `lib/teach-updates.ts`, which plain Node can't import. */
@@ -291,6 +426,7 @@ function sourceItem(source) {
     status: source.status,
     unreadable: Boolean(source.unsupported),
     error: source.error ?? null,
+    addedAt: source.createdAt,
   }
 }
 
@@ -304,33 +440,41 @@ function sourceItem(source) {
  */
 export async function readModule(blitz, name) {
   const found = await findModule(blitz, name)
-  const [path, practice] = await Promise.all([
+  const [path, practice, archived] = await Promise.all([
     blitz.convex.query(anyApi.units.listForProject, { projectId: found.id }),
     blitz.convex.query(anyApi.practice.overview, {
       projectId: found.id,
       now: thisMinute(),
     }),
+    archivedIds(blitz),
   ])
   const questions = new Map(practice.units.map((unit) => [unit.id, unit]))
+  const units = path.units.map((unit) => {
+    const drill = questions.get(unit.id)
+    return {
+      id: unit.id,
+      title: unit.title,
+      week: weekOf(unit.title),
+      taught: taught(unit.teach),
+      started: Boolean(unit.teach),
+      section: unit.teach?.currentSectionTitle ?? null,
+      sectionIndex: unit.teach?.sectionCount ? unit.teach.sectionIndex : null,
+      sectionCount: unit.teach?.sectionCount ?? 0,
+      questions: drill?.questionCount ?? 0,
+      answered: drill?.answeredCount ?? 0,
+      correct: drill?.correctCount ?? 0,
+      addedAt: Math.max(0, ...unit.sources.map((source) => source.createdAt)) || null,
+      sources: unit.sources.map(sourceItem),
+      update: updateItem(unit.teach),
+    }
+  })
   const data = {
     id: found.id,
     title: found.title,
+    archived: archived.has(found.id),
     links: blitz.links,
-    units: path.units.map((unit) => {
-      const drill = questions.get(unit.id)
-      return {
-        id: unit.id,
-        title: unit.title,
-        taught: taught(unit.teach),
-        started: Boolean(unit.teach),
-        section: unit.teach?.currentSectionTitle ?? null,
-        questions: drill?.questionCount ?? 0,
-        answered: drill?.answeredCount ?? 0,
-        correct: drill?.correctCount ?? 0,
-        sources: unit.sources.map(sourceItem),
-        update: updateItem(unit.teach),
-      }
-    }),
+    units,
+    gaps: gapsOf(units),
     unsorted: path.unsortedSources.map(sourceItem),
     references: path.referenceSources.map(sourceItem),
     practice: {
@@ -347,8 +491,12 @@ export async function readModule(blitz, name) {
 
   const source = (item) =>
     `  - ${item.name}${item.status === "ready" ? "" : ` (${item.status})`}${item.unreadable ? " (unreadable)" : ""}${item.error ? `: ${item.error}` : ""}`
-  const lines = [`${data.title} · ${blitz.links}/projects/${data.id}`]
+  const lines = [
+    `${data.title}${data.archived ? " (archived)" : ""} · ${blitz.links}/projects/${data.id}`,
+  ]
   if (!data.units.length) lines.push("No units yet.")
+  const gaps = gapsText(data.gaps)
+  if (gaps) lines.push(gaps)
   for (const unit of data.units) {
     const teach = unit.section ? `, now on "${unit.section}"` : ""
     lines.push(
@@ -373,7 +521,195 @@ export async function readModule(blitz, name) {
       "Reference books (back up every unit):",
       ...data.references.map(source)
     )
+  if (data.practice.due)
+    lines.push(`${data.practice.due} concept${data.practice.due === 1 ? "" : "s"} due for review.`)
   return { text: lines.join("\n"), data }
+}
+
+/** How far back `recent_material` looks by default, in days. */
+const RECENT_DAYS = 7
+
+/**
+ * Material added recently across the Library: each unit (or a module's
+ * unsorted pile) that received sources in the last `days`, with how many and
+ * whether the unit has been taught or is waiting for a lesson update.
+ *
+ * @param input.days How many days back to look, 1 to 60. Optional: 7.
+ * @returns The same reading as `text` for an agent and `data` for a client with a UI.
+ */
+export async function recentMaterial(blitz, input = {}) {
+  const days = Math.min(60, Math.max(1, Math.round(Number(input.days) || RECENT_DAYS)))
+  const since = Date.now() - days * 24 * 60 * 60 * 1000
+  const [all, archived] = await Promise.all([modules(blitz), archivedIds(blitz)])
+  const active = all.filter((item) => !archived.has(item.id))
+  const paths = await Promise.all(
+    active.map((item) =>
+      blitz.convex.query(anyApi.units.listForProject, { projectId: item.id })
+    )
+  )
+  const items = []
+  active.forEach((module, index) => {
+    const path = paths[index]
+    for (const unit of path.units) {
+      const fresh = unit.sources.filter((source) => source.createdAt >= since)
+      if (!fresh.length) continue
+      items.push({
+        module: module.id,
+        moduleTitle: module.title,
+        unit: unit.id,
+        unitTitle: unit.title,
+        added: fresh.length,
+        addedAt: Math.max(...fresh.map((source) => source.createdAt)),
+        taught: taught(unit.teach),
+        started: Boolean(unit.teach),
+        // Files added after the lesson was planned wait for update_unit.
+        notInLesson: unit.teach?.update?.newSources.length ?? 0,
+      })
+    }
+    const unsorted = path.unsortedSources.filter((source) => source.createdAt >= since)
+    if (unsorted.length)
+      items.push({
+        module: module.id,
+        moduleTitle: module.title,
+        unit: null,
+        unitTitle: null,
+        added: unsorted.length,
+        addedAt: Math.max(...unsorted.map((source) => source.createdAt)),
+        taught: 0,
+        started: false,
+        notInLesson: 0,
+      })
+  })
+  items.sort((a, b) => b.addedAt - a.addedAt)
+  const text = items.map((item) => {
+    const where = item.unit ? `${item.moduleTitle} › ${item.unitTitle}` : `${item.moduleTitle} (not in a unit yet)`
+    const state = !item.unit
+      ? "sort into a unit first"
+      : item.notInLesson
+        ? `${item.notInLesson} not in its lesson yet: update_unit`
+        : item.taught === 100
+          ? "taught"
+          : item.taught
+            ? `${item.taught}% taught`
+            : item.started
+              ? "lesson started"
+              : "not taught yet"
+    return `- ${where}: ${item.added} file${item.added === 1 ? "" : "s"} added, ${state}`
+  })
+  return {
+    text: text.length
+      ? [`Added in the last ${days} day${days === 1 ? "" : "s"}:`, ...text].join("\n")
+      : `Nothing added in the last ${days} day${days === 1 ? "" : "s"}.`,
+    data: { links: blitz.links, days, items },
+  }
+}
+
+/** Most weak concepts `weak_concepts` lists by default. */
+const WEAK_LIMIT = 10
+
+/**
+ * The concepts that aren't sticking, across every module or one: those Blitz
+ * rates weak from their answers, lowest accuracy first.
+ *
+ * @param input.module A module's title or id. Optional: every module that isn't archived.
+ * @param input.limit How many to list, 1 to 50. Optional: 10.
+ * @returns The same reading as `text` for an agent and `data` for a client with a UI.
+ */
+export async function weakConcepts(blitz, input = {}) {
+  const limit = Math.min(50, Math.max(1, Math.round(Number(input.limit) || WEAK_LIMIT)))
+  let scope
+  if (input.module) scope = [await findModule(blitz, input.module)]
+  else {
+    const [all, archived] = await Promise.all([modules(blitz), archivedIds(blitz)])
+    scope = all.filter((item) => !archived.has(item.id))
+  }
+  const overviews = await Promise.all(
+    scope.map((item) =>
+      blitz.convex.query(anyApi.practice.overview, {
+        projectId: item.id,
+        now: thisMinute(),
+      })
+    )
+  )
+  const concepts = scope
+    .flatMap((module, index) =>
+      overviews[index].weakConcepts.map((concept) => ({
+        title: concept.title,
+        module: module.id,
+        moduleTitle: module.title,
+        unit: concept.unitId,
+        unitTitle: concept.unitTitle,
+        accuracy: concept.accuracy,
+        attempts: concept.attempts,
+      }))
+    )
+    // Lowest accuracy first; among equals, the one answered most, since that's the surest.
+    .sort(
+      (a, b) =>
+        (a.accuracy ?? 1) - (b.accuracy ?? 1) || b.attempts - a.attempts
+    )
+    .slice(0, limit)
+  const text = concepts.map(
+    (concept) =>
+      `- ${concept.title} (${concept.moduleTitle} › ${concept.unitTitle})${concept.accuracy === null ? "" : `: ${Math.round(concept.accuracy * 100)}% right over ${concept.attempts} answer${concept.attempts === 1 ? "" : "s"}`}`
+  )
+  return {
+    text: text.length
+      ? ["Concepts not sticking yet, weakest first:", ...text].join("\n")
+      : "No weak concepts: nothing answered has been missed often enough to count.",
+    data: { links: blitz.links, concepts },
+  }
+}
+
+/**
+ * Exam preparation for a module: Blitz's readiness estimate and its past and
+ * mock papers with their best scores.
+ *
+ * @param name The module's title or id.
+ * @returns The same reading as `text` for an agent and `data` for a client with a UI.
+ */
+export async function exams(blitz, name) {
+  const found = await findModule(blitz, name)
+  const [papers, ready] = await Promise.all([
+    blitz.convex.query(anyApi.exam.listPapers, { projectId: found.id }),
+    blitz.convex.query(anyApi.progress.readiness, {
+      projectId: found.id,
+      now: thisMinute(),
+    }),
+  ])
+  const list = papers.map((paper) => ({
+    id: paper.id,
+    title: paper.title,
+    kind: paper.kind,
+    status: paper.status,
+    questions: paper.questionCount,
+    marks: paper.totalMarks,
+    minutes: paper.durationMinutes,
+    best: paper.bestPercentage,
+    attempts: paper.attemptCount,
+    inProgress: Boolean(paper.inProgressAttemptId),
+  }))
+  const readiness = {
+    share: ready.readiness,
+    concepts: ready.concepts,
+    practised: ready.practised,
+  }
+  const lines = [
+    `${found.title} exam readiness: ${Math.round(readiness.share * 100)}% (of ${readiness.concepts} concepts, ${readiness.practised} practised). Exam prep: ${blitz.links}/projects/${found.id}/practice`,
+  ]
+  if (!list.length) lines.push("No past or mock papers yet. Import past papers in exam mode.")
+  for (const paper of list)
+    lines.push(
+      `- ${paper.title} (${paper.kind === "mock" ? "mock" : "past paper"}, ${paper.questions} question${paper.questions === 1 ? "" : "s"}${paper.marks ? `, ${paper.marks} marks` : ""}${paper.status === "ready" ? "" : `, ${paper.status}`})` +
+        (paper.attempts
+          ? `: best ${paper.best ?? "?"}% over ${paper.attempts} attempt${paper.attempts === 1 ? "" : "s"}`
+          : ": not sat yet") +
+        (paper.inProgress ? ", one attempt in progress" : "")
+    )
+  return {
+    text: lines.join("\n"),
+    data: { id: found.id, title: found.title, links: blitz.links, readiness, papers: list },
+  }
 }
 
 /** Creates an empty module and returns where to find it. */
@@ -668,10 +1004,25 @@ async function startUpdate(blitz, unitId, unitTitle) {
  */
 export async function updateUnit(blitz, input) {
   const found = await findModule(blitz, input.module)
-  const wanted = String(input.unit ?? "").trim()
   const { units } = await blitz.convex.query(anyApi.units.listForProject, {
     projectId: found.id,
   })
+  const unit = findUnit(found, units, input.unit)
+  return startUpdate(blitz, unit.id, unit.title)
+}
+
+/**
+ * Resolves a unit named by id or title: an exact title first, then the only
+ * title containing the words given.
+ *
+ * @param module The module, for the message.
+ * @param units The module's units from `units.listForProject`.
+ * @param name The unit's id or title.
+ * @returns The unit.
+ * @throws BlitzError listing the units when none, or more than one, matches.
+ */
+function findUnit(module, units, name) {
+  const wanted = String(name ?? "").trim()
   const exact = units.filter(
     (unit) => unit.id === wanted || unit.title.toLowerCase() === wanted.toLowerCase()
   )
@@ -681,7 +1032,130 @@ export async function updateUnit(blitz, input) {
   const unit = exact[0] ?? (wanted && partial.length === 1 ? partial[0] : null)
   if (!unit)
     throw new BlitzError(
-      `No single unit in ${found.title} matches "${wanted}". Units: ${units.map((item) => `"${item.title}"`).join(", ")}.`
+      `No single unit in ${module.title} matches "${wanted}". Units: ${units.map((item) => `"${item.title}"`).join(", ")}.`
     )
-  return startUpdate(blitz, unit.id, unit.title)
+  return unit
+}
+
+/** The changes `organise` makes. */
+export const ORGANISE_ACTIONS = [
+  "rename_module",
+  "archive_module",
+  "restore_module",
+  "rename_unit",
+  "move_unit",
+  "move_source",
+]
+
+/**
+ * Tidies the Library without losing anything: renames, archives or restores a
+ * module; renames a unit or moves it along the learning path; moves a source
+ * into another unit or out of every unit. Archiving keeps sources, history and
+ * review schedules, and restoring undoes it.
+ *
+ * @param input.action One of `ORGANISE_ACTIONS`.
+ * @param input.module The module's title or id.
+ * @param input.unit The unit to rename or move, or the unit a source moves to.
+ * @param input.title The new title, for a rename.
+ * @param input.position Where a unit moves to, counting from 1.
+ * @param input.source The source to move, by id or by a file name (or part of
+ *   one) that only one source in the module has.
+ * @returns A sentence saying what changed.
+ * @throws BlitzError when something named can't be found or matches several
+ *   things, or an argument is missing. Nothing changes then.
+ */
+export async function organise(blitz, input) {
+  const found = await findModule(blitz, input.module)
+  const title = String(input.title ?? "").trim()
+  switch (input.action) {
+    case "rename_module": {
+      if (!title) throw new BlitzError("Give the module's new title.")
+      await blitz.convex.mutation(anyApi.projects.renameProject, {
+        projectId: found.id,
+        title,
+      })
+      return `Renamed "${found.title}" to "${title}".`
+    }
+    case "archive_module":
+    case "restore_module": {
+      const archived = input.action === "archive_module"
+      await blitz.convex.mutation(anyApi.projects.setProjectArchived, {
+        projectId: found.id,
+        archived,
+      })
+      return archived
+        ? `Archived "${found.title}". Its material, answers and review schedule are kept; restore_module brings it back.`
+        : `Restored "${found.title}" to the Library.`
+    }
+  }
+
+  const path = await blitz.convex.query(anyApi.units.listForProject, {
+    projectId: found.id,
+  })
+  switch (input.action) {
+    case "rename_unit": {
+      if (!title) throw new BlitzError("Give the unit's new title.")
+      const unit = findUnit(found, path.units, input.unit)
+      await blitz.convex.mutation(anyApi.units.rename, { unitId: unit.id, title })
+      return `Renamed "${unit.title}" to "${title}" in ${found.title}.`
+    }
+    case "move_unit": {
+      if (!Number.isFinite(Number(input.position)))
+        throw new BlitzError("Give the position to move the unit to, counting from 1.")
+      const unit = findUnit(found, path.units, input.unit)
+      const from = path.units.findIndex((item) => item.id === unit.id)
+      const to = Math.min(
+        path.units.length - 1,
+        Math.max(0, Math.round(Number(input.position)) - 1)
+      )
+      // Blitz moves a unit one place at a time, swapping it with its neighbour.
+      const direction = to < from ? "earlier" : "later"
+      for (let step = 0; step < Math.abs(to - from); step += 1)
+        await blitz.convex.mutation(anyApi.units.move, { unitId: unit.id, direction })
+      return to === from
+        ? `"${unit.title}" is already at position ${to + 1}.`
+        : `Moved "${unit.title}" to position ${to + 1} of ${path.units.length} in ${found.title}.`
+    }
+    case "move_source": {
+      const wanted = String(input.source ?? "").trim().toLowerCase()
+      if (!wanted) throw new BlitzError("Give the source's file name or id.")
+      // Each source with where it sits now, so a name shared by several weeks can be told apart.
+      const all = [
+        ...path.units.flatMap((unit) =>
+          unit.sources.map((source) => ({ source, where: unit.title }))
+        ),
+        ...path.unsortedSources.map((source) => ({ source, where: "unsorted" })),
+        ...path.referenceSources.map((source) => ({
+          source,
+          where: "reference books",
+          reference: true,
+        })),
+      ]
+      const byId = all.filter((item) => item.source.id === input.source)
+      const exact = all.filter((item) => item.source.filename.toLowerCase() === wanted)
+      const partial = all.filter((item) => item.source.filename.toLowerCase().includes(wanted))
+      // An id is unique; a file name only counts when one source has it, since
+      // weeks often reuse names like "Slides.pdf" and the wrong one must not move.
+      const candidates = byId.length ? byId : exact.length ? exact : partial
+      if (candidates.length !== 1)
+        throw new BlitzError(
+          candidates.length
+            ? `Several sources in ${found.title} match "${input.source}"; give one by id: ${candidates.map((item) => `"${item.source.filename}" in ${item.where} (id ${item.source.id})`).join(", ")}.`
+            : `No source in ${found.title} matches "${input.source}".`
+        )
+      const [{ source, reference }] = candidates
+      const target = input.unit ? findUnit(found, path.units, input.unit) : null
+      await blitz.convex.mutation(anyApi.units.moveSource, {
+        sourceId: source.id,
+        ...(target ? { unitId: target.id } : {}),
+      })
+      // Blitz drops a moved reference book's role, so it no longer backs up every unit.
+      const demoted = reference ? " It's no longer a reference book for every unit." : ""
+      return target
+        ? `Moved "${source.filename}" to ${target.title}.${demoted} If that unit already has a lesson, update_unit adds it.`
+        : `Moved "${source.filename}" out of its unit; it's now unsorted in ${found.title}.${demoted}`
+    }
+    default:
+      throw new BlitzError(`Unknown action "${input.action}". Use one of: ${ORGANISE_ACTIONS.join(", ")}.`)
+  }
 }
