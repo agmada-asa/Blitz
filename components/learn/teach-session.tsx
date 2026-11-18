@@ -76,7 +76,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { ArrowDownIcon, ArrowLeftIcon, FileIcon } from "@/components/ui/icon"
+import { ArrowDownIcon, ArrowLeftIcon, ArrowRightIcon, FileIcon } from "@/components/ui/icon"
 import {
   Popover,
   PopoverContent,
@@ -196,6 +196,8 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
   const setTeachSideChat = useMutation(api.workspaceChats.setTeachSideChat)
   const [confirmRestart, setConfirmRestart] = useState(false)
   const [outlineOpen, setOutlineOpen] = useState(false)
+  // The unit's files fold into one line so a long list does not push the outline aside.
+  const [sourcesOpen, setSourcesOpen] = useState(false)
   const [summaryOpen, setSummaryOpen] = useState(false)
   const [contextOpen, setContextOpen] = useState(false)
   const unitOptionsRef = useRef<HTMLButtonElement>(null)
@@ -794,6 +796,29 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
 
   const sideOpen = sideChatOpen || Boolean(source)
 
+  // Shown beside the footer bar, not over the lesson, once the learner has scrolled away from the end.
+  const jumpToLatest = showJump ? (
+    <Button
+      type="button"
+      variant="outline"
+      onClick={() =>
+        reveal(
+          lastAssistantId
+            ? document.querySelector(`[data-message-id="${lastAssistantId}"]`)
+            : null
+        )
+      }
+      aria-label="Jump to the latest reply"
+      title="Jump to the latest reply"
+      className="min-h-12 shrink-0 gap-1.5 rounded-full px-4 max-sm:w-12 max-sm:px-0"
+    >
+      <span aria-hidden="true" className="max-sm:hidden">
+        Latest
+      </span>
+      <ArrowDownIcon aria-hidden="true" />
+    </Button>
+  ) : null
+
   const outlineList = outline ? (
     <TeachOutlineList
       outline={outline}
@@ -839,12 +864,28 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
         {unit.sources.length ? (
           <section
             aria-label="Unit sources"
-            className="mt-8 border-t border-border/70 pt-4"
+            className="mt-6 border-t border-border/70 pt-3"
           >
-            <h2 className="px-3 text-xs font-medium text-muted-foreground">
-              Sources
+            <h2>
+              <button
+                type="button"
+                aria-expanded={sourcesOpen}
+                aria-controls="teach-unit-sources"
+                onClick={() => setSourcesOpen((open) => !open)}
+                className="flex min-h-10 w-full items-center gap-2 rounded-lg px-3 text-left text-sm text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+              >
+                <ArrowRightIcon
+                  aria-hidden="true"
+                  className={cn(
+                    "size-4 shrink-0 transition-transform motion-reduce:transition-none",
+                    sourcesOpen && "rotate-90"
+                  )}
+                />
+                <span className="flex-1">Sources</span>
+                <span className="text-xs tabular-nums">{unit.sources.length}</span>
+              </button>
             </h2>
-            <ul className="mt-2 space-y-0.5">
+            <ul id="teach-unit-sources" hidden={!sourcesOpen} className="mt-1 space-y-0.5">
               {unit.sources.map((item) => (
                 <li key={item.id}>
                   <button
@@ -1114,25 +1155,6 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
               ) : null}
             </div>
           </div>
-          {showJump ? (
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() =>
-                reveal(
-                  lastAssistantId
-                    ? document.querySelector(
-                        `[data-message-id="${lastAssistantId}"]`
-                      )
-                    : null
-                )
-              }
-              className="absolute bottom-4 left-1/2 min-h-10 -translate-x-1/2 rounded-full bg-background px-4 shadow-md dark:bg-background dark:hover:bg-muted"
-            >
-              Latest
-              <ArrowDownIcon aria-hidden="true" />
-            </Button>
-          ) : null}
           {chat ? (
             <TeachAskOverlay
               scrollRef={scrollRef}
@@ -1158,9 +1180,12 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
         ) : null}
         {(voiceOn && !voiceBarInChat) || voice.error ? (
           // The same width and padding as the lesson column, like the dock it replaces.
-          <div className="mx-auto w-full max-w-3xl px-4 pt-2 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:px-6">
-            <VoiceError session={voice} />
-            {voiceOn && !voiceBarInChat ? voiceBar : null}
+          <div className="mx-auto flex w-full max-w-3xl items-end gap-2 px-4 pt-2 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:px-6">
+            <div className="min-w-0 flex-1">
+              <VoiceError session={voice} />
+              {voiceOn && !voiceBarInChat ? voiceBar : null}
+            </div>
+            {voiceOn ? jumpToLatest : null}
           </div>
         ) : null}
         {voiceOn ? null : (
@@ -1173,6 +1198,7 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
                 ? void send("", lastMessage.id)
                 : undefined
             }
+            trailing={jumpToLatest}
           />
         )}
       </div>
