@@ -12,7 +12,10 @@
  * document's styles into a `<style>` element without escaping values taken
  * from the file (list numbering text, style names), so a crafted `.docx`
  * could otherwise restyle the whole app. In the shadow root those rules only
- * reach the document.
+ * reach the document and, through `:host`, the element holding it. A `:host`
+ * rule could still make that element `position: fixed` over the whole app,
+ * so the scroll area around it uses paint containment: fixed positioning is
+ * then relative to the reader, and anything drawn outside it is clipped.
  */
 import { useEffect, useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
@@ -207,7 +210,11 @@ export function DocumentReader({ url, quote }: { url: string; quote: string }) {
   }, [state, quote])
 
   return (
-    <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
+    // Paint containment keeps the document's `:host` styles inside the reader.
+    <div
+      ref={scrollRef}
+      className="min-h-0 flex-1 overflow-y-auto px-4 py-4 [contain:paint]"
+    >
       {state === "loading" ? (
         <p role="status" className="p-1 text-sm text-muted-foreground">
           Loading document…
