@@ -1,5 +1,5 @@
 /**
- * Starts the local web app, database, and background worker for this Mac and the LAN.
+ * Starts the local web app, database, and background worker for this computer and the LAN.
  *
  * Three modes share the supervisor in `electron/service-manager.mjs`, so a
  * crashed worker or server restarts with backoff instead of taking the stack down:
@@ -15,9 +15,10 @@
  *   `~/.blitz/current` and keeps it on the newest tracked commit
  *   (`electron/auto-update.mjs`).
  *
- * Without a network connection Blitz still runs on this Mac; phone access needs Wi-Fi.
+ * Without a network connection Blitz still runs on this computer; phone access needs Wi-Fi.
  */
 
+import { createSocket } from "node:dgram"
 import { networkInterfaces } from "node:os"
 import { isIP } from "node:net"
 import { closeSync, copyFileSync, openSync, renameSync, statSync, truncateSync } from "node:fs"
@@ -59,7 +60,7 @@ const configuredLanAddress = process.env.BLITZ_LAN_ADDRESS?.trim()
 const lanAddress =
   configuredLanAddress && isIP(configuredLanAddress) === 4
     ? configuredLanAddress
-    : findLanAddress()
+    : await findLanAddress()
 const environment = {
   ...process.env,
   ...(lanAddress ? { BLITZ_LAN_ADDRESS: lanAddress } : {}),
@@ -274,10 +275,10 @@ async function openServiceLog(directory) {
  * @param {number} port The web port.
  */
 async function printAddresses(port) {
-  console.log(`\nBlitz will be available on this Mac at http://localhost:${port}`)
+  console.log(`\nBlitz will be available on this computer at http://localhost:${port}`)
   if (!lanAddress) {
     console.log(
-      "No Wi-Fi address found, so phones cannot connect. Blitz still runs on this Mac.\n"
+      "No Wi-Fi address found, so phones cannot connect. Blitz still runs on this computer.\n"
     )
     return
   }
@@ -293,13 +294,51 @@ async function printAddresses(port) {
   }
 }
 
-/** Returns the first external IPv4 address, or undefined when no LAN is available. */
-function findLanAddress() {
+/**
+ * Returns the IPv4 address a phone on the same network can reach, or undefined
+ * when no LAN is available.
+ *
+ * Prefers the interface carrying the default route, so virtual adapters
+ * (VirtualBox, Hyper-V, WSL, VPNs) that are listed before Wi-Fi are not
+ * chosen. Offline, falls back to the first external, non-link-local address.
+ */
+async function findLanAddress() {
+  const routed = await defaultRouteAddress()
+  if (routed) return routed
   for (const interfaces of Object.values(networkInterfaces())) {
     for (const address of interfaces ?? []) {
-      if (address.family === "IPv4" && !address.internal) return address.address
+      if (
+        address.family === "IPv4" &&
+        !address.internal &&
+        !address.address.startsWith("169.254.")
+      )
+        return address.address
     }
   }
+}
+
+/**
+ * Asks the operating system which local address it would send internet
+ * traffic from. Connecting a UDP socket only selects a route; no packet is
+ * sent, so this works without contacting the address.
+ * @returns {Promise<string | undefined>} The address, or undefined when there
+ *   is no default route or it is not a usable IPv4 address.
+ */
+function defaultRouteAddress() {
+  return new Promise((resolvePromise) => {
+    const socket = createSocket("udp4")
+    /** Closes the socket once and reports the outcome. */
+    const finish = (address) => {
+      socket.close()
+      resolvePromise(address)
+    }
+    socket.once("error", () => finish(undefined))
+    socket.connect(53, "8.8.8.8", () => {
+      const { address } = socket.address()
+      const usable = address && address !== "0.0.0.0" && !address.startsWith("169.254.")
+      finish(usable ? address : undefined)
+    })
+  })
 }
 
 /** Prints restarts and recoveries so a crash is visible without stopping Blitz. */

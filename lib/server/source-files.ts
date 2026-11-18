@@ -2,7 +2,7 @@
 
 import { createHash, randomBytes } from "node:crypto"
 import { promises as fs } from "node:fs"
-import { basename, join, relative } from "node:path"
+import { basename, join } from "node:path"
 import { Readable } from "node:stream"
 
 import {
@@ -85,7 +85,7 @@ export async function storeOriginalSource(input: {
   if (existing) {
     await fs.rm(stored.path, { force: true })
     return {
-      key: relative(getProjectDirectory(input.projectId), join(sourcesDirectory, existing)),
+      key: `Sources/${existing}`,
       sha256: stored.sha256,
       size: stored.size,
       mimeType: input.mimeType?.trim() || null,

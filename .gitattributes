@@ -1,0 +1,5 @@
+# Check text files out with LF on every platform. The repository, Prettier,
+# and generated files (Convex codegen, Next's tsconfig and AGENTS.md updates)
+# all use LF, so Git for Windows' default CRLF conversion would make every
+# regenerated file look modified.
+* text=auto eol=lf

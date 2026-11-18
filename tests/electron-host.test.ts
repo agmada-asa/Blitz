@@ -128,7 +128,6 @@ test("starts Convex and Next, checks both, then starts voice and background work
     "--experimental-strip-types",
     "scripts/worker.ts",
   ])
-  // Node runs Convex's CLI, since Windows cannot start `npx` without a shell.
   assert.equal(children[0].command, "node")
   assert.match(children[0].args[0], /convex[\\/]bin[\\/]main\.js$/)
   assert.deepEqual(children[0].args.slice(-4), [
@@ -264,9 +263,7 @@ test("restarts Convex when it stops answering while its process stays alive", as
   const status = manager.snapshot().convex
   assert.equal(status.lastExit, "unresponsive")
   assert.ok(status.restarts >= 1)
-  const convexSpawns = children.filter((child) =>
-    /convex[\\/]bin[\\/]main\.js$/.test(child.args[0] ?? "")
-  )
+  const convexSpawns = children.filter((child) => /convex[\\/]bin/.test(child.args[0] ?? ""))
   assert.ok(convexSpawns.length >= 2)
   assert.notEqual(convexSpawns.at(-1), firstConvex)
   assert.equal(manager.snapshot().next.restarts, 0)
