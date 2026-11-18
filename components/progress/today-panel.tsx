@@ -200,7 +200,7 @@ export function TodayXpChip() {
 
 /**
  * Seven bars showing XP per day; days that met the goal are filled, and a day
- * a streak freeze covered shows a snowflake.
+ * a streak freeze covered shows a snowflake. Hovering a day shows its XP.
  */
 function WeekChart({
   week,
@@ -226,7 +226,7 @@ function WeekChart({
         const isToday = index === week.length - 1
         const frozen = frozenDays.includes(entry.day)
         return (
-          <li key={entry.day} className="flex h-full flex-col items-center justify-end gap-1.5">
+          <li key={entry.day} className="group flex h-full flex-col items-center justify-end gap-1.5">
             <span className="sr-only">
               {weekday(entry.day, "long")}: {entry.xp} XP{met ? ", goal met" : ""}
               {frozen ? ", covered by a streak freeze" : ""}
@@ -237,7 +237,7 @@ function WeekChart({
             <span
               aria-hidden="true"
               className={cn(
-                "w-full max-w-7 rounded-[5px]",
+                "relative w-full max-w-7 rounded-[5px]",
                 // Today is the full accent; earlier days are quieter so today reads first.
                 isToday
                   ? entry.xp
@@ -250,7 +250,13 @@ function WeekChart({
                       : "bg-muted"
               )}
               style={{ height: `${Math.max(4, (entry.xp / ceiling) * 100)}%` }}
-            />
+            >
+              {/* Hovering anywhere in the day's column shows its XP above the bar.
+                  Screen readers get the same figure from the text above. */}
+              <span className="pointer-events-none absolute bottom-full left-1/2 z-10 mb-1.5 -translate-x-1/2 rounded-md bg-popover px-2 py-1 text-xs font-medium whitespace-nowrap text-popover-foreground tabular-nums opacity-0 shadow-sm ring-1 ring-foreground/10 transition-opacity group-hover:opacity-100 motion-reduce:transition-none">
+                {entry.xp} XP
+              </span>
+            </span>
             <span aria-hidden="true" className={cn("text-[11px] leading-none text-muted-foreground", isToday && "font-medium text-foreground")}>
               {weekday(entry.day, "narrow")}
             </span>
