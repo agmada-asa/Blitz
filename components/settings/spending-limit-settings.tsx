@@ -13,6 +13,7 @@ import { useState } from "react"
 
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
 import { api } from "@/convex/_generated/api"
 import {
   TASK_STEPS_RANGE,
@@ -84,13 +85,8 @@ export function SpendingLimitSettings() {
         </p>
       </div>
       <div className="grid gap-4 sm:grid-cols-2">
-        <div className="space-y-1.5">
-          <label
-            htmlFor="spending-limit-usd"
-            className="block text-sm font-medium"
-          >
-            Most one task can spend
-          </label>
+        <div className="space-y-2">
+          <Label htmlFor="spending-limit-usd">Most one task can spend</Label>
           <p
             id="spending-limit-usd-help"
             className="text-xs text-muted-foreground"
@@ -116,13 +112,8 @@ export function SpendingLimitSettings() {
             />
           </div>
         </div>
-        <div className="space-y-1.5">
-          <label
-            htmlFor="spending-limit-steps"
-            className="block text-sm font-medium"
-          >
-            Most steps per task
-          </label>
+        <div className="space-y-2">
+          <Label htmlFor="spending-limit-steps">Most steps per task</Label>
           <p
             id="spending-limit-steps-help"
             className="text-xs text-muted-foreground"

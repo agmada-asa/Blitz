@@ -36,6 +36,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { FileIcon, LoadingIcon, RotateLeftIcon } from "@/components/ui/icon"
 import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
 import { Progress } from "@/components/ui/progress"
 import {
   Select,
@@ -516,9 +517,7 @@ function SourceRow({
                 </DialogDescription>
               </DialogHeader>
               <div className="space-y-2">
-                <label htmlFor={`source-destination-${sourceId}`} className="text-sm font-medium">
-                  Move to
-                </label>
+                <Label htmlFor={`source-destination-${sourceId}`}>Move to</Label>
                 <Select value={destination} onValueChange={setDestination}>
                   <SelectTrigger id={`source-destination-${sourceId}`} className="min-h-11 w-full">
                     <SelectValue />

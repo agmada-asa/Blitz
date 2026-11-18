@@ -19,6 +19,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 
 /** Value of the unit picker that files imports into a new unit for this research. */
@@ -764,10 +765,8 @@ export function ResearchPanel({
 
   return (
     <div className="min-w-0 space-y-5">
-      <div className="space-y-3">
-        <label htmlFor="research-request" className="text-sm text-foreground">
-          What do you want to learn?
-        </label>
+      <div className="space-y-2">
+        <Label htmlFor="research-request">What do you want to learn?</Label>
         <Textarea
           id="research-request"
           value={requestText}
@@ -951,13 +950,8 @@ export function ResearchPanel({
             </p>
           ) : null}
           <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
-            <div className="min-w-0 flex-1 space-y-1.5">
-              <label
-                htmlFor="research-unit"
-                className="text-sm font-medium text-foreground"
-              >
-                Add to
-              </label>
+            <div className="min-w-0 flex-1 space-y-2">
+              <Label htmlFor="research-unit">Add to</Label>
               <Select
                 value={target}
                 onValueChange={setUnitTarget}

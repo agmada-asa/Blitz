@@ -7,6 +7,7 @@ import { useEffect, useMemo, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
@@ -654,12 +655,12 @@ export function AgentRequestPanel({
         <div className="mt-2 space-y-3">
           {fields.length ? (
             fields.map((field) => (
-              <div key={field.id} className="space-y-1.5">
+              <div key={field.id} className="space-y-2">
                 {field.type !== "boolean" ? (
-                  <label className="text-sm font-medium text-foreground">
+                  <Label>
                     {field.label}
                     {field.required ? <span aria-hidden="true"> *</span> : null}
-                  </label>
+                  </Label>
                 ) : null}
                 {field.description ? (
                   <p className="text-xs leading-5 text-muted-foreground">
@@ -680,13 +681,8 @@ export function AgentRequestPanel({
               </div>
             ))
           ) : (
-            <div className="space-y-1.5">
-              <label
-                className="text-sm font-medium text-foreground"
-                htmlFor={`agent-request-${request.id}`}
-              >
-                Response
-              </label>
+            <div className="space-y-2">
+              <Label htmlFor={`agent-request-${request.id}`}>Response</Label>
               <Textarea
                 id={`agent-request-${request.id}`}
                 value={freeform}

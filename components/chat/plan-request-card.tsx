@@ -12,6 +12,7 @@ import { useEffect, useId, useState } from "react"
 
 import { Button } from "@/components/ui/button"
 import { Markdown } from "@/components/ui/markdown"
+import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { ChevronRightIcon } from "@/components/ai/provider-icons"
 import type { AgentRequest, AgentRequestSubmission } from "@/lib/agent-request"
@@ -156,12 +157,9 @@ export function PlanRequestCard({
 
       {sendingBack ? (
         <div className="mt-3 space-y-2">
-          <label
-            htmlFor={noteId}
-            className="block text-xs font-medium text-foreground"
-          >
+          <Label htmlFor={noteId} className="text-xs">
             What should change?
-          </label>
+          </Label>
           <Textarea
             id={noteId}
             autoFocus

@@ -6,6 +6,7 @@ import Link from "next/link"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 
 import { Button } from "@/components/ui/button"
+import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { api } from "@/convex/_generated/api"
 import type { Id } from "@/convex/_generated/dataModel"
@@ -308,10 +309,8 @@ export function WrittenActivity({ projectId, topicId }: WrittenActivityProps) {
             </section>
           </div>
         ) : (
-          <div className="mt-6 space-y-3">
-            <label htmlFor="written-answer" className="text-sm font-medium">
-              Your answer
-            </label>
+          <div className="mt-6 space-y-2">
+            <Label htmlFor="written-answer">Your answer</Label>
             <Textarea
               id="written-answer"
               value={draftAnswer}
