@@ -21,7 +21,6 @@ import { FeedCardView } from "@/components/feed/feed-card"
 import { SessionSummary } from "@/components/progress/session-summary"
 import { TodayXpChip } from "@/components/progress/today-panel"
 import { Button } from "@/components/ui/button"
-import { CancelIcon } from "@/components/ui/icon"
 import {
   Dialog,
   DialogContent,
@@ -212,12 +211,6 @@ export function Feed({ initialFilter }: { initialFilter?: FeedFilter }) {
           !draftFilter.projectId || topic.projectId === draftFilter.projectId
       ),
     [data?.topics, draftFilter.projectId]
-  )
-
-  // Each card names its project above the question, read from the filter's project list.
-  const projectTitles = useMemo(
-    () => new Map((data?.projects ?? []).map((project) => [project.id, project.title])),
-    [data?.projects]
   )
 
   const selectedProjectId =
@@ -577,16 +570,6 @@ export function Feed({ initialFilter }: { initialFilter?: FeedFilter }) {
     <main className="feed-backdrop relative isolate h-[calc(100svh-68px-env(safe-area-inset-bottom))] overflow-hidden bg-background text-foreground selection:bg-brand selection:text-brand-foreground md:h-svh">
       <div className="pointer-events-none absolute inset-x-0 top-0 z-20 flex items-center justify-end gap-3 px-4 pt-[max(1rem,env(safe-area-inset-top))] sm:px-8 sm:pt-6">
         <div className="mr-auto flex min-w-0 items-center gap-2 text-sm tabular-nums">
-          <Button
-            asChild
-            variant="ghost"
-            size="icon"
-            className="pointer-events-auto size-10 rounded-full text-muted-foreground hover:text-foreground"
-          >
-            <Link href="/" aria-label="Close Review" title="Close Review">
-              <CancelIcon aria-hidden="true" className="size-4" />
-            </Link>
-          </Button>
           {target !== null ? (
             <p className="flex h-10 items-center rounded-full border border-border/80 bg-background/80 px-3.5 text-muted-foreground backdrop-blur-md">
               {Math.min(sessionAnswered, target)} of {target}
@@ -775,7 +758,6 @@ export function Feed({ initialFilter }: { initialFilter?: FeedFilter }) {
             <FeedCardView
               key={card.key ?? card.id}
               card={card}
-              projectTitle={projectTitles.get(card.projectId)}
               onAsk={openCardChat}
               onSkip={(nextCard) => skipCard(nextCard, index)}
               onAnswer={answerCard}
