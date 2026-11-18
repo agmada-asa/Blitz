@@ -1,20 +1,27 @@
 "use client"
 
 /**
- * Results of a submitted exam attempt: the score, the state of written
- * answer marking (with a retry when it failed), a per-concept breakdown with
- * the weakest concept first and a way to relearn each one, and every
- * question with the learner's answer, the correct or model answer, and
- * feedback.
+ * Results of a submitted exam attempt: the score beside Take again, the state
+ * of written answer marking (with a retry when it failed), a per-concept
+ * breakdown with the weakest concept first and a way to relearn each one
+ * (full-mark concepts fold into one row), and every question as a row that
+ * opens to the learner's answer, the correct or model answer, and feedback
+ * (full-mark questions fold into one row).
  */
 
 import Link from "next/link"
 import type { FunctionReturnType } from "convex/server"
-import { useState, type ReactNode } from "react"
+import { useId, useState, type ReactNode } from "react"
 
 import { relearnLink } from "@/components/practice/practice-hub"
 import { Button } from "@/components/ui/button"
-import { CancelIcon, CheckCircleIcon, LoadingIcon } from "@/components/ui/icon"
+import {
+  ArrowRightIcon,
+  CancelIcon,
+  CheckCircleIcon,
+  CheckIcon,
+  LoadingIcon,
+} from "@/components/ui/icon"
 import { plainMarkdownRenderer } from "@/components/ui/markdown"
 import { Progress } from "@/components/ui/progress"
 import { api } from "@/convex/_generated/api"
@@ -94,18 +101,52 @@ export function ExamResults({
     if (!response?.ok) setRetryError("Marking could not be restarted. Try again.")
   }
 
+  const weak = review.breakdown.filter((row) => row.percentage < 100)
+  const fullMarks = review.breakdown.filter((row) => row.percentage >= 100)
+  const lost = review.items.filter((item) => !hasFullMarks(item))
+  const full = review.items.filter(hasFullMarks)
+
   return (
     <>
       <section aria-labelledby="results-heading">
-        <p className="text-sm text-muted-foreground">{title}</p>
-        <h1 id="results-heading" className="mt-1 font-heading text-3xl font-semibold tracking-tight tabular-nums sm:text-4xl">
-          {formatMarks(totals.awarded)} of {formatMarks(totals.available)} marks
-          {totals.percentage !== null ? (
-            <span className="ml-3 text-xl font-medium text-muted-foreground sm:text-2xl">
-              {totals.percentage}%
-            </span>
-          ) : null}
-        </h1>
+        {/* The score and the next actions share one row; they wrap under it on a phone. */}
+        <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-4">
+          <div className="min-w-0">
+            <p className="text-sm text-muted-foreground">{title}</p>
+            <h1 id="results-heading" className="mt-1 flex flex-wrap items-baseline gap-x-3 font-heading tabular-nums">
+              <span className="text-4xl font-semibold tracking-tight sm:text-5xl">
+                {formatMarks(totals.awarded)}
+              </span>
+              <span className="text-xl font-medium text-muted-foreground sm:text-2xl">
+                of {formatMarks(totals.available)} marks
+              </span>
+              {totals.percentage !== null ? (
+                <span className="self-center rounded-full border border-border px-2 py-0.5 text-xs font-medium text-muted-foreground">
+                  {totals.percentage}%
+                </span>
+              ) : null}
+            </h1>
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            <Button asChild variant="ghost" className="min-h-11 rounded-full px-4 text-muted-foreground">
+              <Link href={practiceHref}>Back to Practice</Link>
+            </Button>
+            <Button
+              type="button"
+              disabled={startingAgain}
+              onClick={onTakeAgain}
+              className="min-h-11 rounded-full bg-brand px-5 text-brand-foreground hover:bg-brand/85"
+            >
+              {startingAgain ? (
+                <>
+                  <LoadingIcon aria-hidden="true" className="motion-safe:animate-spin" /> Starting
+                </>
+              ) : (
+                "Take again"
+              )}
+            </Button>
+          </div>
+        </div>
         {totals.pending > 0 ? (
           <p className="mt-1 text-sm text-muted-foreground">
             So far. {formatMarks(totals.pending)} mark{totals.pending === 1 ? "" : "s"} for written
@@ -151,63 +192,43 @@ export function ExamResults({
             {retryError ? <p className="mt-2 text-destructive">{retryError}</p> : null}
           </div>
         ) : null}
-
-        <div className="mt-6 flex flex-wrap gap-2">
-          <Button
-            type="button"
-            disabled={startingAgain}
-            onClick={onTakeAgain}
-            className="min-h-11 rounded-full bg-brand px-6 text-brand-foreground hover:bg-brand/85"
-          >
-            {startingAgain ? (
-              <>
-                <LoadingIcon aria-hidden="true" className="motion-safe:animate-spin" /> Starting
-              </>
-            ) : (
-              "Take again"
-            )}
-          </Button>
-          <Button asChild variant="outline" className="min-h-11 rounded-full px-5">
-            <Link href={practiceHref}>Back to Practice</Link>
-          </Button>
-        </div>
       </section>
 
       {review.breakdown.length ? (
         <section aria-labelledby="concepts-heading" className="mt-10">
-          <h2 id="concepts-heading" className="font-heading text-lg font-semibold">
+          <h2 id="concepts-heading" className="flex flex-wrap items-baseline gap-x-2 font-heading text-lg font-semibold">
             By concept
+            <span className="text-sm font-normal text-muted-foreground">
+              weakest first
+              {totals.pending > 0 ? ". Written answers join in once they are marked." : ""}
+            </span>
           </h2>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Weakest first.
-            {totals.pending > 0 ? " Written answers join in once they are marked." : ""}
-          </p>
-          <ul className="mt-3 divide-y divide-border rounded-xl border border-border bg-card">
-            {review.breakdown.map((row) => (
-              <li
-                key={row.concept}
-                className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
+          <div className="mt-3 overflow-hidden rounded-2xl border border-border bg-card">
+            <ul className="divide-y divide-border">
+              {weak.map((row) => (
+                <ConceptRow key={row.concept} row={row} projectId={projectId} />
+              ))}
+            </ul>
+            {fullMarks.length ? (
+              <Disclosure
+                className={cn(weak.length > 0 && "border-t border-border")}
+                summary={
+                  <>
+                    <OutcomeMark tone="good" />
+                    <span className="min-w-0 flex-1 text-sm text-muted-foreground">
+                      {fullMarks.length} concept{fullMarks.length === 1 ? "" : "s"} with full marks
+                    </span>
+                  </>
+                }
               >
-                <div className="min-w-0 flex-1">
-                  <p className="font-medium break-words">{row.concept}</p>
-                  <p className="text-xs text-muted-foreground tabular-nums">
-                    {marksOf(row.awarded, row.available)} · {row.percentage}%
-                    {row.unanswered ? ` · ${row.unanswered} not answered` : ""}
-                  </p>
-                  <Progress
-                    value={row.percentage}
-                    aria-label={`${row.concept}: ${row.percentage}%`}
-                    className="mt-2 h-1 max-w-xs [&_[data-slot=progress-indicator]]:bg-brand"
-                  />
-                </div>
-                {row.unitId && row.percentage < 100 ? (
-                  <Button asChild variant="outline" className="min-h-10 shrink-0 rounded-full px-4">
-                    <Link {...relearnLink(projectId, row.unitId, row.concept)}>Relearn</Link>
-                  </Button>
-                ) : null}
-              </li>
-            ))}
-          </ul>
+                <ul className="divide-y divide-border border-t border-border">
+                  {fullMarks.map((row) => (
+                    <ConceptRow key={row.concept} row={row} projectId={projectId} />
+                  ))}
+                </ul>
+              </Disclosure>
+            ) : null}
+          </div>
         </section>
       ) : null}
 
@@ -215,15 +236,181 @@ export function ExamResults({
         <h2 id="answers-heading" className="font-heading text-lg font-semibold">
           Questions
         </h2>
-        <ol className="mt-3 space-y-6">
-          {review.items.map((item) => (
-            <li key={item.id}>
-              <ReviewedQuestion projectId={projectId} item={item} />
-            </li>
-          ))}
-        </ol>
+        {/* Each question is one row that opens to its answers; full marks fold into one row. */}
+        <div className="mt-3 divide-y divide-border overflow-hidden rounded-2xl border border-border bg-card">
+          {lost.length ? (
+            <ol className="divide-y divide-border">
+              {lost.map((item) => (
+                <li key={item.id}>
+                  <QuestionRow projectId={projectId} item={item} />
+                </li>
+              ))}
+            </ol>
+          ) : null}
+          {full.length ? (
+            <Disclosure
+              summary={
+                <>
+                  <OutcomeMark tone="good" />
+                  <span className="min-w-0 flex-1 text-sm text-muted-foreground">
+                    {full.map((item) => `Q${item.number}`).join(", ")} full marks
+                  </span>
+                </>
+              }
+            >
+              <ol className="divide-y divide-border border-t border-border">
+                {full.map((item) => (
+                  <li key={item.id}>
+                    <QuestionRow projectId={projectId} item={item} />
+                  </li>
+                ))}
+              </ol>
+            </Disclosure>
+          ) : null}
+        </div>
       </section>
     </>
+  )
+}
+
+/** Whether a question earned every mark it was worth. Unmarked written answers do not count yet. */
+function hasFullMarks(item: ReviewItem): boolean {
+  if (item.outcome === "correct") return true
+  return item.outcome === "marked" && (item.awardedMarks ?? 0) >= item.marks
+}
+
+/**
+ * A row that opens to show more under it, used for folded groups and questions.
+ * @param summary The row's visible content after the chevron.
+ * @param children What opens under the row.
+ * @param className Extra classes for the wrapper, such as a top border.
+ */
+function Disclosure({
+  summary,
+  children,
+  className,
+}: {
+  summary: ReactNode
+  children: ReactNode
+  className?: string
+}) {
+  const [open, setOpen] = useState(false)
+  const id = useId()
+  return (
+    <div className={className}>
+      <button
+        type="button"
+        aria-expanded={open}
+        aria-controls={id}
+        onClick={() => setOpen((value) => !value)}
+        className="flex min-h-12 w-full items-center gap-3 px-4 py-2.5 text-left transition-colors hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none focus-visible:ring-inset sm:px-5"
+      >
+        {summary}
+        <ArrowRightIcon
+          aria-hidden="true"
+          className={cn(
+            "size-4 shrink-0 text-muted-foreground transition-transform motion-reduce:transition-none",
+            open && "rotate-90"
+          )}
+        />
+      </button>
+      <div id={id} hidden={!open}>
+        {children}
+      </div>
+    </div>
+  )
+}
+
+/** A small round mark for an outcome: a tick, a cross, or a half for part marks. */
+function OutcomeMark({ tone }: { tone: "good" | "bad" | "neutral" }) {
+  return (
+    <span
+      aria-hidden="true"
+      className={cn(
+        "flex size-6 shrink-0 items-center justify-center rounded-full text-xs font-semibold",
+        tone === "good" && "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
+        tone === "bad" && "bg-destructive/10 text-destructive",
+        tone === "neutral" && "bg-muted text-muted-foreground"
+      )}
+    >
+      {tone === "good" ? (
+        <CheckIcon className="size-3.5" />
+      ) : tone === "bad" ? (
+        <CancelIcon className="size-3.5" />
+      ) : (
+        "½"
+      )}
+    </span>
+  )
+}
+
+/** One concept's marks with a bar, and Relearn when marks were lost. */
+function ConceptRow({ row, projectId }: { row: Review["breakdown"][number]; projectId: string }) {
+  return (
+    <li className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-5">
+      <div className="min-w-0 flex-1">
+        <p className="font-medium break-words">{row.concept}</p>
+        <p className="text-xs text-muted-foreground tabular-nums">
+          {marksOf(row.awarded, row.available)}
+          {row.unanswered ? ` · ${row.unanswered} not answered` : ""}
+        </p>
+        <Progress
+          value={row.percentage}
+          aria-label={`${row.concept}: ${row.percentage}%`}
+          className="mt-2 h-1 max-w-44 [&_[data-slot=progress-indicator]]:bg-brand"
+        />
+      </div>
+      {row.unitId && row.percentage < 100 ? (
+        <Button asChild variant="outline" className="min-h-10 shrink-0 rounded-full px-4">
+          <Link {...relearnLink(projectId, row.unitId, row.concept)}>Relearn</Link>
+        </Button>
+      ) : null}
+    </li>
+  )
+}
+
+/** A question's prompt as one plain line for its folded row: Markdown marks and line breaks removed. */
+function promptLine(prompt: string): string {
+  return prompt
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/[`*_#>]|\$+/g, "")
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/\s+/g, " ")
+    .trim()
+}
+
+/**
+ * One question as a folded row: its outcome mark, number, prompt and marks.
+ * Opening it shows the full question, the answers and any feedback.
+ */
+function QuestionRow({ projectId, item }: { projectId: string; item: ReviewItem }) {
+  const label = outcomeLabel(item)
+  const partial = item.outcome === "marked" && (item.awardedMarks ?? 0) > 0 && !hasFullMarks(item)
+  const tone = hasFullMarks(item) ? "good" : partial || item.outcome === "pending" ? "neutral" : "bad"
+  const marks =
+    item.outcome === "pending" ? label.text : marksOf(item.awardedMarks ?? 0, item.marks)
+  return (
+    <Disclosure
+      summary={
+        <>
+          <OutcomeMark tone={tone} />
+          <span className="min-w-0 flex-1">
+            <span className="block truncate text-sm font-medium">
+              Q{item.number} · {promptLine(item.prompt)}
+            </span>
+            <span className="block text-xs text-muted-foreground">
+              {marks}
+              {item.type === "written" ? " · written" : ""}
+              <span className="sr-only">. {label.text}</span>
+            </span>
+          </span>
+        </>
+      }
+    >
+      <div className="px-4 pb-5 sm:px-5 sm:pl-14">
+        <ReviewedQuestion projectId={projectId} item={item} />
+      </div>
+    </Disclosure>
   )
 }
 
@@ -282,10 +469,7 @@ function ReviewedQuestion({ projectId, item }: { projectId: string; item: Review
     (item.outcome === "marked" && (item.awardedMarks ?? 0) < item.marks)
 
   return (
-    <article
-      aria-labelledby={`review-${item.id}`}
-      className="rounded-xl border border-border bg-card p-4 sm:p-5"
-    >
+    <article aria-labelledby={`review-${item.id}`}>
       <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
         <h3 id={`review-${item.id}`} className="text-sm font-semibold">
           Question {item.number}
