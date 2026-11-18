@@ -184,7 +184,8 @@ export function openInBrowser(url) {
         ? ["cmd", ["/c", "start", "", url]]
         : ["xdg-open", [url]]
   try {
-    const child = spawn(command, args, { stdio: "ignore", detached: true })
+    // `windowsHide`: a detached `cmd` otherwise opens its own console window on Windows.
+    const child = spawn(command, args, { stdio: "ignore", detached: true, windowsHide: true })
     child.once("error", () => undefined)
     child.unref()
   } catch {}
