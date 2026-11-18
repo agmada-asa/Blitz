@@ -1,16 +1,84 @@
 "use client"
 
-/** Presents cited source passages beside chat or in a full-screen mobile dialog. */
+/**
+ * Presents cited source passages beside chat or in a full-screen mobile dialog.
+ *
+ * Every citation shows its extracted passage. When Blitz can draw the
+ * original (`originalViewer` in `lib/source-viewers.ts`), the reader opens on
+ * it instead: PDF pages, PowerPoint slides, a Word document, or formatted
+ * Markdown, each at the cited place with the passage highlighted.
+ */
 import { useEffect, useRef, useState, useSyncExternalStore } from "react"
+import dynamic from "next/dynamic"
 import { useQuery } from "convex/react"
 import { api } from "@/convex/_generated/api"
 import type { Id } from "@/convex/_generated/dataModel"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
+import { Markdown } from "@/components/ui/markdown"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { PdfReader } from "@/components/ui/pdf-reader"
 import { citationOriginalUrl } from "@/lib/citations"
+import {
+  clearQuoteHighlight,
+  highlightQuote,
+  scrollRangeIntoView,
+} from "@/lib/client/source-highlight"
 import { markdownHref } from "@/lib/markdown"
+import {
+  citedSlide,
+  ORIGINAL_VIEWER_LABELS,
+  originalViewer,
+} from "@/lib/source-viewers"
+
+/** Loading copy shared by the readers that load on demand. */
+function ReaderLoading() {
+  return (
+    <p role="status" className="p-5 text-sm text-muted-foreground">
+      Loading original…
+    </p>
+  )
+}
+
+/** Slide reader, loaded only when a PowerPoint source is opened. */
+const SlidesReader = dynamic(
+  () => import("@/components/ui/slides-reader").then((mod) => mod.SlidesReader),
+  { ssr: false, loading: ReaderLoading }
+)
+
+/** Word reader, loaded only when a Word source is opened. */
+const DocumentReader = dynamic(
+  () =>
+    import("@/components/ui/document-reader").then((mod) => mod.DocumentReader),
+  { ssr: false, loading: ReaderLoading }
+)
+
+/**
+ * Shows Markdown source text formatted, scrolled to the cited passage with it
+ * highlighted.
+ *
+ * @param text The source's extracted Markdown (or the cited section of a book).
+ * @param quote The cited passage within it.
+ */
+function FormattedReader({ text, quote }: { text: string; quote: string }) {
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const bodyRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const scroller = scrollRef.current
+    const body = bodyRef.current
+    if (!scroller || !body) return
+    const range = highlightQuote(body, quote)
+    if (range) scrollRangeIntoView(range, scroller)
+    return clearQuoteHighlight
+  }, [text, quote])
+  return (
+    <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
+      <div ref={bodyRef} className="text-sm leading-7 break-words">
+        <Markdown text={text} />
+      </div>
+    </div>
+  )
+}
 
 /** Identifies one citation through its owning saved message. */
 export type SourceSelection = {
@@ -131,12 +199,18 @@ export function SourceReader({
       : "skip"
   )
   const result = "kind" in selection ? learningResult : chatResult
-  const hasOriginalPdf = Boolean(
-    result && result.fileUrl && result.mimeType === "application/pdf"
-  )
+  const viewer = result
+    ? originalViewer({
+        mimeType: result.mimeType,
+        filename: result.citation.filename,
+        fileUrl: result.fileUrl,
+        textLength: result.text.length,
+      })
+    : undefined
   const markerRef = useRef<HTMLElement>(null)
   const [tab, setTab] = useState("")
-  const activeTab = tab || (hasOriginalPdf ? "pdf" : "passage")
+  // The original opens first when it can be drawn; the passage is one tap away.
+  const activeTab = tab || (viewer ? "original" : "passage")
   useEffect(() => {
     if (activeTab === "passage")
       markerRef.current?.scrollIntoView({
@@ -196,8 +270,10 @@ export function SourceReader({
       >
         <TabsList className="mx-5 mt-3 shrink-0" aria-label="Source view">
           <TabsTrigger value="passage">Passage</TabsTrigger>
-          {fileUrl && mimeType === "application/pdf" ? (
-            <TabsTrigger value="pdf">Original PDF</TabsTrigger>
+          {viewer ? (
+            <TabsTrigger value="original">
+              {ORIGINAL_VIEWER_LABELS[viewer]}
+            </TabsTrigger>
           ) : null}
         </TabsList>
         <TabsContent
@@ -222,9 +298,9 @@ export function SourceReader({
             {text.slice(endOffset)}
           </div>
         </TabsContent>
-        {fileUrl && mimeType === "application/pdf" ? (
+        {viewer === "pdf" && fileUrl ? (
           <TabsContent
-            value="pdf"
+            value="original"
             forceMount
             className="min-h-0 flex-1 overflow-y-auto px-4 py-4 data-[state=inactive]:hidden"
           >
@@ -233,6 +309,24 @@ export function SourceReader({
               initialPage={citation.page ?? 1}
               quote={citation.text}
             />
+          </TabsContent>
+        ) : viewer ? (
+          // Other originals load each time their tab opens, so they scroll to the passage again.
+          <TabsContent
+            value="original"
+            className="flex min-h-0 flex-1 flex-col"
+          >
+            {viewer === "slides" && fileUrl ? (
+              <SlidesReader
+                url={fileUrl}
+                slide={citedSlide(citation)}
+                quote={citation.text}
+              />
+            ) : viewer === "document" && fileUrl ? (
+              <DocumentReader url={fileUrl} quote={citation.text} />
+            ) : (
+              <FormattedReader text={text} quote={citation.text} />
+            )}
           </TabsContent>
         ) : null}
       </Tabs>
