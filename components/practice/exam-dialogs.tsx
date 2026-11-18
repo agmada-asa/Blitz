@@ -21,6 +21,7 @@ import {
 } from "@/components/ui/dialog"
 import { LoadingIcon } from "@/components/ui/icon"
 import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { Textarea } from "@/components/ui/textarea"
 import { MAX_MOCK_GUIDANCE_CHARS, MOCK_EXAM_MINUTES } from "@/lib/exam-scoring"
@@ -136,10 +137,8 @@ export function AddPastPaperDialog({
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-4">
-          <div className="space-y-1.5">
-            <label htmlFor="past-paper-file" className="text-sm font-medium">
-              Paper
-            </label>
+          <div className="space-y-2">
+            <Label htmlFor="past-paper-file">Paper</Label>
             <Input
               id="past-paper-file"
               type="file"
@@ -149,10 +148,11 @@ export function AddPastPaperDialog({
               className="min-h-11"
             />
           </div>
-          <div className="space-y-1.5">
-            <label htmlFor="past-paper-solutions" className="text-sm font-medium">
-              Solutions or mark scheme <span className="font-normal text-muted-foreground">(optional)</span>
-            </label>
+          <div className="space-y-2">
+            <Label htmlFor="past-paper-solutions">
+              Solutions or mark scheme
+              <span className="font-normal text-muted-foreground">(optional)</span>
+            </Label>
             <Input
               id="past-paper-solutions"
               type="file"

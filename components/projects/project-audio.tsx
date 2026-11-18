@@ -26,11 +26,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { ArrowLeftIcon, HeadphonesIcon, PlusIcon } from "@/components/ui/icon"
 import { api } from "@/convex/_generated/api"
 import type { Id } from "@/convex/_generated/dataModel"
 import type { ProjectAudioItem } from "@/lib/project-audio-types"
+import { sourceDisplayName } from "@/lib/source-display"
 import { cn } from "@/lib/utils"
 
 /** Select value for a podcast covering the whole module. */
@@ -375,15 +377,15 @@ export function ProjectAudio({
             </TabsList>
             <TabsContent value="audiobook" className="w-full">
               <div className="space-y-3">
-                <label className="block space-y-1.5 text-sm">
-                  <span className="font-medium">Source</span>
+                <div className="space-y-2">
+                  <Label htmlFor="audiobook-source">Source</Label>
                   {readySources.length ? (
                     <Select
                       value={selectedSourceId}
                       onValueChange={setSourceId}
                     >
                       <SelectTrigger
-                        aria-label="Source for audiobook"
+                        id="audiobook-source"
                         className="min-h-10"
                       >
                         <SelectValue placeholder="Choose a source" />
@@ -391,7 +393,7 @@ export function ProjectAudio({
                       <SelectContent>
                         {readySources.map((source) => (
                           <SelectItem key={source.id} value={source.id}>
-                            {source.filename}
+                            {sourceDisplayName(source.filename)}
                           </SelectItem>
                         ))}
                       </SelectContent>
@@ -399,14 +401,14 @@ export function ProjectAudio({
                   ) : (
                     <Select disabled>
                       <SelectTrigger
-                        aria-label="Source for audiobook"
+                        id="audiobook-source"
                         className="min-h-10"
                       >
                         <SelectValue placeholder="Choose a source" />
                       </SelectTrigger>
                     </Select>
                   )}
-                </label>
+                </div>
                 <Button
                   className="min-h-10 w-full"
                   disabled={
@@ -423,10 +425,10 @@ export function ProjectAudio({
             <TabsContent value="podcast" className="w-full">
               <div className="space-y-3">
                 {podcastUnits.length ? (
-                  <label className="block space-y-1.5 text-sm">
-                    <span className="font-medium">Covers</span>
+                  <div className="space-y-2">
+                    <Label htmlFor="podcast-scope">Covers</Label>
                     <Select value={podcastScope} onValueChange={setPodcastScope}>
-                      <SelectTrigger aria-label="What the podcast covers" className="min-h-10 w-full">
+                      <SelectTrigger id="podcast-scope" className="min-h-10 w-full">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
@@ -438,10 +440,10 @@ export function ProjectAudio({
                         ))}
                       </SelectContent>
                     </Select>
-                  </label>
+                  </div>
                 ) : null}
-                <label className="block space-y-1.5 text-sm">
-                  <span className="font-medium">Episode length</span>
+                <div className="space-y-2">
+                  <Label htmlFor="podcast-length">Episode length</Label>
                   <Select
                     value={String(durationMinutes)}
                     onValueChange={(value) =>
@@ -451,7 +453,7 @@ export function ProjectAudio({
                     }
                   >
                     <SelectTrigger
-                      aria-label="Podcast episode length"
+                      id="podcast-length"
                       className="min-h-10"
                     >
                       <SelectValue />
@@ -464,22 +466,23 @@ export function ProjectAudio({
                       ))}
                     </SelectContent>
                   </Select>
-                </label>
-                <label className="block space-y-1.5 text-sm">
-                  <span className="font-medium">
-                    Focus{" "}
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="podcast-focus">
+                    Focus
                     <span className="font-normal text-muted-foreground">
                       (optional)
                     </span>
-                  </span>
+                  </Label>
                   <Textarea
+                    id="podcast-focus"
                     value={focus}
                     onChange={(event) => setFocus(event.target.value)}
                     maxLength={500}
                     placeholder="What should the hosts focus on?"
                     className="min-h-20"
                   />
-                </label>
+                </div>
                 <Button
                   className="min-h-10 w-full"
                   disabled={

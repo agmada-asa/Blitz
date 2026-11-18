@@ -16,6 +16,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
+import { Label } from "@/components/ui/label"
 import {
   Select,
   SelectContent,
@@ -308,9 +309,9 @@ function ModelSettingsEditor({
                 key={provider.id}
                 className="grid gap-2 sm:grid-cols-2 sm:items-center"
               >
-                <label htmlFor={`approval-${provider.id}`} className="text-sm">
+                <Label htmlFor={`approval-${provider.id}`} className="font-normal">
                   {provider.label}
-                </label>
+                </Label>
                 <div>
                   <Select
                     value={resolveProviderApprovalPolicy(draft, provider.id)}
