@@ -189,10 +189,8 @@ export function TodayXpChip() {
       )}
     >
       <ZapIcon aria-hidden="true" className="size-4" />
-      <span>
-        {summary.todayXp}
-        <span className="sr-only sm:not-sr-only"> / {summary.goal}</span> XP
-      </span>
+      {/* Plain XP; the goal is in the Library's badge and read out below. */}
+      <span>{summary.todayXp} XP</span>
       <span className="sr-only">{met ? "today, daily goal met" : `today of a ${summary.goal} XP goal`}</span>
     </p>
   )

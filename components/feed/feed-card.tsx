@@ -52,6 +52,8 @@ function headlineClass(text: string): string {
 /** Props required to render one card in the Review feed. */
 type FeedCardProps = {
   card: FeedCard
+  /** The card's project name, shown before its source; omitted when the project is not known. */
+  projectTitle?: string
   onAsk: (card: FeedCard) => void
   onSkip: (card: FeedCard) => void
   onAnswer: (
@@ -75,6 +77,7 @@ type RecallState =
 /** Renders a server-backed explanation or question card. */
 export function FeedCardView({
   card,
+  projectTitle,
   onAsk,
   onSkip,
   onAnswer,
@@ -258,9 +261,12 @@ export function FeedCardView({
       className="feed-card flex h-svh snap-start items-center px-4 pt-24 pb-10 sm:px-8 sm:pt-20 sm:pb-8"
     >
       <div className="feed-card-content mx-auto flex max-h-full min-h-0 w-full max-w-[680px] [scrollbar-width:none] flex-col overflow-y-auto [&::-webkit-scrollbar]:hidden">
-        {card.type === "explain" ? (
-          <p className="mb-3 text-xs font-medium text-brand">Recap</p>
-        ) : null}
+        {/* Where the card comes from sits above it, so the learner has the context before reading. */}
+        <p className="mb-3 text-xs text-muted-foreground">
+          {card.type === "explain" ? <span className="font-medium text-brand">Recap · </span> : null}
+          <span className="sr-only">Source: </span>
+          {[projectTitle, card.sourceLabel].filter(Boolean).join(" · ")}
+        </p>
         {/* Questions may hold code blocks, so long ones render as Markdown blocks. */}
         {card.type !== "explain" && prompt.includes("```") ? (
           <div
@@ -503,10 +509,6 @@ export function FeedCardView({
             ) : null}
           </>
         )}
-
-        <p className="mt-7 text-xs text-muted-foreground sm:mt-5">
-          Source · {card.sourceLabel}
-        </p>
 
         {feedback && feedback.status !== "invalid" ? (
           <div className="mt-5 space-y-1.5" aria-live="polite">
