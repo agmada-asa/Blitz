@@ -4,11 +4,8 @@ import {
   Add01Icon,
   AiSearch01Icon as AiSearch01Glyph,
   AiSparklesIcon,
-  Alert02Icon,
   ArrowDown01Icon,
   ArrowUpDownIcon,
-  Clock01Icon,
-  PencilEdit01Icon,
   Search01Icon,
   ArrowLeft01Icon,
   ArrowRight01Icon,
@@ -124,12 +121,6 @@ export const SunIcon = makeIcon(Sun03Icon)
 export const ShieldCheckIcon = makeIcon(ShieldCheckGlyph)
 /** Snowflake for streak freezes. */
 export const SnowflakeIcon = makeIcon(SnowflakeGlyph)
-/** Warning glyph for a problem that needs the learner's attention. */
-export const AlertIcon = makeIcon(Alert02Icon)
-/** Timed activity glyph. */
-export const ClockIcon = makeIcon(Clock01Icon)
-/** Written work glyph. */
-export const PencilIcon = makeIcon(PencilEdit01Icon)
 /** Search field glyph. */
 export const SearchIcon = makeIcon(Search01Icon)
 /** Sort order glyph. */
