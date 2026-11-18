@@ -9,6 +9,7 @@
 import { spawn } from "node:child_process"
 import { closeSync, openSync, readSync, statSync } from "node:fs"
 import { homedir } from "node:os"
+import { sep } from "node:path"
 
 /** Terminal colour and cursor sequences, removed before a line is inspected or echoed. */
 const ANSI_SEQUENCE = /\x1b\[[0-9;?]*[A-Za-z]/g
@@ -44,20 +45,35 @@ export function isProblemLine(line) {
   return SERVER_ERROR_REQUEST.test(text) || PROBLEM_PATTERN.test(text)
 }
 
+/** Convex's message once this run's functions are pushed, such as `✔ … Convex functions ready! (1.2s)`. */
+const CONVEX_FUNCTIONS_READY = /Convex functions ready/
+
+/** A worker's note that a loop failed and will try again, such as `Ingestion paused: … Retrying in 3s.` */
+const WORKER_RETRY = /Retrying in \d+s\.$/
+
 /**
  * Creates the terminal's filter for service log lines. It passes problem lines
  * through without colour, and drops a line identical to one shown within
  * `repeatWindowMs`: a broken page fails on every health check, which would
  * otherwise print the same error twice a second.
+ *
+ * Until Convex reports its functions ready, worker retry notes stay in the log
+ * only: the workers start as soon as Convex answers, so on a new database (or
+ * after new functions are added) they fail with "Could not find public
+ * function" until the first push lands. A failed push still shows through
+ * Convex's own error lines.
  * @param {{repeatWindowMs?: number, now?: () => number}} [options] The repeat window and clock.
  * @returns {(line: string) => string | undefined} The text to show, or undefined to keep it in the log only.
  */
 export function createProblemFilter({ repeatWindowMs = 60_000, now = Date.now } = {}) {
   /** @type {Map<string, number>} When each recently shown line was last shown. */
   const shownAt = new Map()
+  let functionsReady = false
   return (line) => {
+    if (!functionsReady && CONVEX_FUNCTIONS_READY.test(line)) functionsReady = true
     if (!isProblemLine(line)) return undefined
     const text = plainLine(line)
+    if (!functionsReady && WORKER_RETRY.test(text)) return undefined
     const time = now()
     const previous = shownAt.get(text)
     if (previous !== undefined && time - previous < repeatWindowMs) return undefined
@@ -151,7 +167,8 @@ function readRange(path, start, end) {
  */
 export function displayPath(path) {
   const home = homedir()
-  return path.startsWith(`${home}/`) ? `~${path.slice(home.length)}` : path
+  // `sep` so Windows paths such as `C:\Users\me\.blitz\logs\dev.log` shorten too.
+  return path.startsWith(`${home}${sep}`) ? `~${path.slice(home.length)}` : path
 }
 
 /**

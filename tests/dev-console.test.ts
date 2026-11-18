@@ -2,11 +2,12 @@
 
 import assert from "node:assert/strict"
 import { appendFileSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
-import { tmpdir } from "node:os"
+import { homedir, tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
 import {
   createProblemFilter,
+  displayPath,
   followLog,
   isProblemLine,
   plainLine,
@@ -39,6 +40,28 @@ test("shows a repeated error once per window", () => {
   assert.equal(show("Error: something else"), "Error: something else")
   time = 1_500
   assert.equal(show(error), error)
+})
+
+test("keeps worker retries in the log until Convex has pushed its functions", () => {
+  const show = createProblemFilter()
+  const missing =
+    "Ingestion paused: [Request ID: 1] Server Error Could not find public function for 'sources:listPendingOriginalIngestions'.. Retrying in 3s."
+  assert.equal(show(missing), undefined)
+  assert.equal(
+    show("A research step failed. Saved requests remain available for retry. Retrying in 3s."),
+    undefined
+  )
+  // Convex's own push errors still show before the push lands.
+  assert.equal(show("✖ Error: Unable to push deployment config"), "✖ Error: Unable to push deployment config")
+  show("\x1b[32m✔\x1b[0m 12:00:00 Convex functions ready! (2.1s)")
+  assert.equal(show(missing), missing)
+})
+
+test("shortens paths in the home folder", () => {
+  assert.equal(displayPath(join(homedir(), ".blitz", "logs", "dev.log")), join("~", ".blitz", "logs", "dev.log"))
+  // A sibling folder whose name starts with the home folder's is left alone.
+  const sibling = join(`${homedir()}-other`, "dev.log")
+  assert.equal(displayPath(sibling), sibling)
 })
 
 test("follows new complete lines and the tail of this run's output", async () => {
