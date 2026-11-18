@@ -1,13 +1,18 @@
-/** Presents application-wide appearance and AI settings for Blitz. */
+/**
+ * Presents application-wide settings for Blitz. Each group has its label on the left and its
+ * controls on the right; the longer voice and AI blocks fold behind a row that opens.
+ */
 
 import { AppearanceSettings } from "@/components/settings/appearance-settings"
 import { DesktopLinkSettings } from "@/components/settings/desktop-link-settings"
 import { KokoroVoiceSettings } from "@/components/settings/kokoro-voice-settings"
 import { ModelSettingsForm } from "@/components/settings/model-settings-form"
 import { ProviderConnections } from "@/components/settings/provider-connections"
+import { SettingsFold } from "@/components/settings/settings-fold"
+import { SettingsGroup } from "@/components/settings/settings-group"
 import { StudyGoalSettings } from "@/components/settings/study-goal-settings"
 
-/** Renders the settings route and groups appearance choices above AI settings. */
+/** Renders the settings route: daily goal, appearance, desktop app, audio, then AI. */
 export default function SettingsPage() {
   return (
     <main className="mx-auto w-full max-w-4xl px-5 py-8 pb-28 sm:px-8 sm:py-12">
@@ -19,67 +24,49 @@ export default function SettingsPage() {
           Customize how Blitz looks, sounds, and helps you study.
         </p>
       </div>
-      <div className="space-y-10">
-        <section aria-labelledby="study-heading" className="space-y-4">
-          <div>
-            <h2
-              id="study-heading"
-              className="font-heading text-xl font-medium tracking-tight"
-            >
-              Daily goal
-            </h2>
-            <p className="mt-1 text-sm leading-5 text-muted-foreground">
-              Reaching your goal keeps your streak going. Correct answers earn
-              10 XP, wrong answers 4, and each taught section 25.
-            </p>
-          </div>
+      <div>
+        <SettingsGroup
+          id="study-heading"
+          title="Daily goal"
+          description="Reaching your goal keeps your streak going. Correct answers earn 10 XP, wrong answers 4, and each taught section 25."
+        >
           <StudyGoalSettings />
-        </section>
-        <section aria-labelledby="appearance-heading" className="space-y-4">
-          <div>
-            <h2
-              id="appearance-heading"
-              className="font-heading text-xl font-medium tracking-tight"
-            >
-              Appearance
-            </h2>
-            <p className="mt-1 text-sm leading-5 text-muted-foreground">
-              Choose the theme and accent colour for Blitz.
-            </p>
-          </div>
+        </SettingsGroup>
+        <SettingsGroup
+          id="appearance-heading"
+          title="Appearance"
+          description="Choose the theme and accent colour for Blitz."
+        >
           <AppearanceSettings />
-        </section>
+        </SettingsGroup>
         <DesktopLinkSettings />
-        <section aria-labelledby="audio-settings-heading" className="space-y-4">
-          <div>
-            <h2
-              id="audio-settings-heading"
-              className="font-heading text-xl font-medium tracking-tight"
-            >
-              Audio
-            </h2>
-            <p className="mt-1 text-sm leading-5 text-muted-foreground">
-              Choose the voices for narrated study material and podcasts.
-            </p>
-          </div>
-          <KokoroVoiceSettings />
-        </section>
-        <section aria-labelledby="ai-settings-heading" className="space-y-4">
-          <div>
-            <h2
-              id="ai-settings-heading"
-              className="font-heading text-xl font-medium tracking-tight"
-            >
-              AI settings
-            </h2>
-            <p className="mt-1 text-sm leading-5 text-muted-foreground">
-              Choose the models and reasoning levels Blitz uses for research,
-              teaching and chat, and practice questions.
-            </p>
-          </div>
-          <ProviderConnections />
-          <ModelSettingsForm />
-        </section>
+        <SettingsGroup
+          id="audio-settings-heading"
+          title="Audio"
+          description="Choose the voices for narrated study material and podcasts."
+        >
+          <SettingsFold title="Voices" summary="Speech model and podcast hosts">
+            <KokoroVoiceSettings />
+          </SettingsFold>
+        </SettingsGroup>
+        <SettingsGroup
+          id="ai-settings-heading"
+          title="AI settings"
+          description="Choose the models and reasoning levels Blitz uses for research, teaching and chat, and practice questions."
+        >
+          <SettingsFold
+            title="Provider connections"
+            summary="Accounts, spending limits and which agents Blitz can use"
+          >
+            <ProviderConnections />
+          </SettingsFold>
+          <SettingsFold
+            title="Model and reasoning choices"
+            summary="A model and reasoning level for each task"
+          >
+            <ModelSettingsForm />
+          </SettingsFold>
+        </SettingsGroup>
       </div>
     </main>
   )
