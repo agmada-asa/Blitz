@@ -25,6 +25,7 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "convex": "^1.45.0",
+    "docx-preview": "^0.4.1",
     "dompurify": "^3.4.16",
     "entities": "^8.0.0",
     "fflate": "^0.8.3",
