@@ -9,6 +9,8 @@
  * anchor that opens the original at the cited place.
  */
 
+import { timestampSeconds, youtubeAtTime } from "./source-viewers.ts"
+
 /** A saved passage supplied to the model, with a server-resolved source location. */
 export type ChatCitation = {
   id: string
@@ -319,11 +321,12 @@ export type CitationOriginal = {
  * - A saved PDF opens at its physical page (`#page=N`).
  * - A web source opens the live page: a PDF link at its page, any other page
  *   scrolled to the passage with a text fragment.
+ * - A transcript of a YouTube video opens the video at the cited moment.
  * - Other saved originals (slides, documents) open or download whole; the
- *   Passage view is where their slide or heading is highlighted.
+ *   reader's own views are where their slide or passage is highlighted.
  */
 export function citationOriginalUrl(
-  citation: Pick<ChatCitation, "page" | "text">,
+  citation: Pick<ChatCitation, "page" | "text"> & { label?: string },
   original: CitationOriginal
 ): string | undefined {
   const page = citation.page ? `#page=${citation.page}` : ""
@@ -331,6 +334,10 @@ export function citationOriginalUrl(
     return `${original.fileUrl}${page}`
   if (original.webUrl) {
     if (page) return `${original.webUrl.split("#")[0]}${page}`
+    const seconds = citation.label ? timestampSeconds(citation.label) : undefined
+    const video =
+      seconds === undefined ? undefined : youtubeAtTime(original.webUrl, seconds)
+    if (video) return video
     const fragment = textFragment(citation.text)
     if (!fragment) return original.webUrl
     // A fragment directive may follow an existing fragment.
