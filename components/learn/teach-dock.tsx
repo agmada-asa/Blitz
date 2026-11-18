@@ -2,8 +2,9 @@
 
 /**
  * The bottom of the Teach screen: one bar, centred and floating over the
- * bottom of the slightly wider lesson text, that moves the lesson along. It says `Next section` while the lesson waits for
- * the learner and shows a disabled spinner while the tutor works. After the
+ * bottom of the slightly wider lesson text, that moves the lesson along. It
+ * says `Next section` while the lesson waits for the learner and shows a
+ * disabled spinner while the tutor works. After the
  * opening pre-check it offers to plan the lesson around the answers or skip
  * the check; after the recap it offers practice and the next unit. N sends the
  * next section from the keyboard. Questions go to the side chat instead, which

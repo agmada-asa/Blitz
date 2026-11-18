@@ -322,7 +322,7 @@ function SourcesLoadingState() {
 /** Offers a simple return path when the requested project no longer exists. */
 function SourcesNotFoundState() {
   return (
-    <main className="mx-auto flex min-h-[55svh] max-w-3xl flex-col items-center justify-center px-5 text-center">
+    <PageContainer className="flex min-h-[55svh] flex-col items-center justify-center text-center">
       <div role="alert">
         <h1 className="font-heading text-2xl font-semibold">
           Project not found
@@ -331,6 +331,6 @@ function SourcesNotFoundState() {
           <Link href="/">Back to projects</Link>
         </Button>
       </div>
-    </main>
+    </PageContainer>
   )
 }
