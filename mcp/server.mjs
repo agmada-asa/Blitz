@@ -490,7 +490,9 @@ server.registerTool(
       source: z
         .string()
         .optional()
-        .describe("move_source: the source's file name (or part of it) or id."),
+        .describe(
+          "move_source: the source's id, or its file name (or part of it) when no other source shares it."
+        ),
     },
     annotations: WRITES,
   },

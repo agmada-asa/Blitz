@@ -1058,9 +1058,11 @@ export const ORGANISE_ACTIONS = [
  * @param input.unit The unit to rename or move, or the unit a source moves to.
  * @param input.title The new title, for a rename.
  * @param input.position Where a unit moves to, counting from 1.
- * @param input.source The source to move, by file name or id.
+ * @param input.source The source to move, by id or by a file name (or part of
+ *   one) that only one source in the module has.
  * @returns A sentence saying what changed.
- * @throws BlitzError when something named can't be found or an argument is missing.
+ * @throws BlitzError when something named can't be found or matches several
+ *   things, or an argument is missing. Nothing changes then.
  */
 export async function organise(blitz, input) {
   const found = await findModule(blitz, input.module)
@@ -1116,28 +1118,42 @@ export async function organise(blitz, input) {
     }
     case "move_source": {
       const wanted = String(input.source ?? "").trim().toLowerCase()
+      if (!wanted) throw new BlitzError("Give the source's file name or id.")
+      // Each source with where it sits now, so a name shared by several weeks can be told apart.
       const all = [
-        ...path.units.flatMap((unit) => unit.sources),
-        ...path.unsortedSources,
-        ...path.referenceSources,
+        ...path.units.flatMap((unit) =>
+          unit.sources.map((source) => ({ source, where: unit.title }))
+        ),
+        ...path.unsortedSources.map((source) => ({ source, where: "unsorted" })),
+        ...path.referenceSources.map((source) => ({
+          source,
+          where: "reference books",
+          reference: true,
+        })),
       ]
-      const matches = all.filter(
-        (source) => source.id === input.source || source.filename.toLowerCase() === wanted
-      )
-      const partial = all.filter((source) => source.filename.toLowerCase().includes(wanted))
-      const source = matches[0] ?? (wanted && partial.length === 1 ? partial[0] : null)
-      if (!source)
+      const byId = all.filter((item) => item.source.id === input.source)
+      const exact = all.filter((item) => item.source.filename.toLowerCase() === wanted)
+      const partial = all.filter((item) => item.source.filename.toLowerCase().includes(wanted))
+      // An id is unique; a file name only counts when one source has it, since
+      // weeks often reuse names like "Slides.pdf" and the wrong one must not move.
+      const candidates = byId.length ? byId : exact.length ? exact : partial
+      if (candidates.length !== 1)
         throw new BlitzError(
-          `No single source in ${found.title} matches "${input.source}".${partial.length > 1 ? ` Matches: ${partial.map((item) => `"${item.filename}"`).join(", ")}.` : ""}`
+          candidates.length
+            ? `Several sources in ${found.title} match "${input.source}"; give one by id: ${candidates.map((item) => `"${item.source.filename}" in ${item.where} (id ${item.source.id})`).join(", ")}.`
+            : `No source in ${found.title} matches "${input.source}".`
         )
+      const [{ source, reference }] = candidates
       const target = input.unit ? findUnit(found, path.units, input.unit) : null
       await blitz.convex.mutation(anyApi.units.moveSource, {
         sourceId: source.id,
         ...(target ? { unitId: target.id } : {}),
       })
+      // Blitz drops a moved reference book's role, so it no longer backs up every unit.
+      const demoted = reference ? " It's no longer a reference book for every unit." : ""
       return target
-        ? `Moved "${source.filename}" to ${target.title}. If that unit already has a lesson, update_unit adds it.`
-        : `Moved "${source.filename}" out of its unit; it's now unsorted in ${found.title}.`
+        ? `Moved "${source.filename}" to ${target.title}.${demoted} If that unit already has a lesson, update_unit adds it.`
+        : `Moved "${source.filename}" out of its unit; it's now unsorted in ${found.title}.${demoted}`
     }
     default:
       throw new BlitzError(`Unknown action "${input.action}". Use one of: ${ORGANISE_ACTIONS.join(", ")}.`)
