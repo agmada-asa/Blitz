@@ -15,6 +15,7 @@ import { strToU8, zipSync } from "fflate"
 import {
   MAX_PPTX_BYTES,
   parsePptx,
+  SlideDeckError,
   type SlideDeck,
   type SlideParagraph,
   type SlideShape,
@@ -439,6 +440,8 @@ test("groups, pictures and tables are placed on the slide", () => {
 test("files that are too large, not presentations or empty fail with a reader message", () => {
   assert.throws(() => parsePptx(new Uint8Array(MAX_PPTX_BYTES + 1)), /too large to show/)
   assert.throws(() => parsePptx(strToU8("not a zip file")), /could not be read/)
+  // The reader shows only these messages, so each one must be a SlideDeckError.
+  assert.throws(() => parsePptx(strToU8("not a zip file")), SlideDeckError)
   assert.throws(
     () => parsePptx(zipSync({ "word/document.xml": strToU8("<w:document/>") })),
     /not a PowerPoint presentation/
@@ -459,6 +462,6 @@ test("files that are too large, not presentations or empty fail with a reader me
           { level: 1 }
         )
       ),
-    /too large to show/
+    (error) => error instanceof SlideDeckError && /too large to show/.test(error.message)
   )
 })

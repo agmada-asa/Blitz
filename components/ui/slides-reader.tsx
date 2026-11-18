@@ -17,6 +17,7 @@ import {
 } from "@/lib/client/source-highlight"
 import {
   parsePptx,
+  SlideDeckError,
   type SlideDeck,
   type SlideParagraph,
   type SlideShape,
@@ -183,22 +184,27 @@ export function SlidesReader({
   useEffect(() => {
     let current: SlideDeck | undefined
     let cancelled = false
+    const unavailable = () => {
+      throw new SlideDeckError("The presentation is not available.")
+    }
     fetch(url)
       .then(async (response) => {
-        if (!response.ok) throw new Error("The presentation is not available.")
+        if (!response.ok) unavailable()
         return new Uint8Array(await response.arrayBuffer())
-      })
+      }, unavailable)
       .then((bytes) => {
         if (cancelled) return
         current = parsePptx(bytes)
         setLoaded({ key, deck: current })
       })
       .catch((reason: unknown) => {
+        // Only reader-facing messages are shown; browser and parser errors
+        // ("Failed to fetch", a TypeError on odd XML) get the general one.
         if (!cancelled)
           setLoaded({
             key,
             error:
-              reason instanceof Error
+              reason instanceof SlideDeckError
                 ? reason.message
                 : "The presentation could not be shown.",
           })

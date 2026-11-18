@@ -177,16 +177,23 @@ type SlideContext = {
 }
 
 /**
+ * A failure whose message is written for the reader, such as a file that is
+ * too large. Any other error from reading a deck is a defect or a malformed
+ * file, and its message is not shown.
+ */
+export class SlideDeckError extends Error {}
+
+/**
  * Parses a PowerPoint file into drawable slides.
  *
  * @param bytes The `.pptx` file.
  * @returns The deck; call `dispose` when it is no longer shown.
- * @throws Error with a reader-facing message when the file is too large,
- *   is not a presentation, or has no slides.
+ * @throws SlideDeckError with a reader-facing message when the file is too
+ *   large, is not a presentation, or has no slides.
  */
 export function parsePptx(bytes: Uint8Array): SlideDeck {
   if (bytes.byteLength > MAX_PPTX_BYTES)
-    throw new Error("This presentation is too large to show here.")
+    throw new SlideDeckError("This presentation is too large to show here.")
   let total = 0
   let files: Record<string, Uint8Array>
   try {
@@ -203,13 +210,13 @@ export function parsePptx(bytes: Uint8Array): SlideDeck {
         if (!wanted) return false
         total += entry.originalSize
         if (total > MAX_UNZIPPED_BYTES)
-          throw new Error("This presentation is too large to show here.")
+          throw new SlideDeckError("This presentation is too large to show here.")
         return true
       },
     })
   } catch (error) {
-    if (error instanceof Error && error.message.includes("too large")) throw error
-    throw new Error("This presentation could not be read.")
+    if (error instanceof SlideDeckError) throw error
+    throw new SlideDeckError("This presentation could not be read.")
   }
   const decoder = new TextDecoder()
   const parser = new DOMParser()
@@ -261,7 +268,8 @@ export function parsePptx(bytes: Uint8Array): SlideDeck {
   }
 
   const presentation = part("ppt/presentation.xml")
-  if (!presentation) throw new Error("This file is not a PowerPoint presentation.")
+  if (!presentation)
+    throw new SlideDeckError("This file is not a PowerPoint presentation.")
   const size = child(presentation.root, "sldSz")
   const width = numberAttribute(size, "cx") ?? 12_192_000
   const height = numberAttribute(size, "cy") ?? 6_858_000
@@ -269,7 +277,7 @@ export function parsePptx(bytes: Uint8Array): SlideDeck {
   const slidePaths = Object.keys(files)
     .filter((name) => /^ppt\/slides\/slide\d+\.xml$/i.test(name))
     .sort((left, right) => slideNumber(left) - slideNumber(right))
-  if (!slidePaths.length) throw new Error("This presentation has no slides.")
+  if (!slidePaths.length) throw new SlideDeckError("This presentation has no slides.")
 
   const slides: Slide[] = []
   for (const path of slidePaths) {
