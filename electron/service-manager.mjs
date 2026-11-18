@@ -418,8 +418,10 @@ export class ServiceManager {
           ...portArgs,
         ])
       else
-        this.define("convex", "npx", [
-          "convex",
+        // Node runs Convex's CLI directly: Windows cannot start `npx`, a
+        // `.cmd` script, without a shell.
+        this.define("convex", "node", [
+          CONVEX_CLI,
           "dev",
           "--tail-logs",
           "disable",

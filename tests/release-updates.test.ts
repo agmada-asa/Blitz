@@ -18,6 +18,7 @@ import {
   RELEASE_MARKER,
   ReleaseManager,
   runCommand,
+  runNextBuild,
 } from "../electron/release-manager.mjs"
 import {
   DatabaseInUseError,
@@ -76,6 +77,18 @@ async function releaseFixture() {
   })
   return { root, source, shared, home, first, manager, calls }
 }
+
+test("builds with nice on macOS and runs Node directly on Windows, which has no nice", async () => {
+  const calls: string[] = []
+  const run = async (command: string, args: string[]) => {
+    calls.push([command, ...args].join(" "))
+    return ""
+  }
+  await runNextBuild(run, "/checkout", process.env, undefined, "darwin")
+  await runNextBuild(run, "C:\\checkout", process.env, undefined, "win32")
+  assert.match(calls[0], /^nice -n 10 node .*next build$/)
+  assert.match(calls[1], /^node .*next build$/)
+})
 
 test("builds a release from the tracked branch with the shared settings linked", async () => {
   const { root, source, shared, home, first, manager, calls } = await releaseFixture()

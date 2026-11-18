@@ -20,6 +20,7 @@ import { tmpdir } from "node:os"
 import { providerModelOptions } from "./engines.ts"
 import { openCodeEnvironment, type OpenCodePolicyRequest } from "./opencode-policy.ts"
 import { providerCommand } from "./registry.ts"
+import { windowsSpawnOption } from "./spawn-command.ts"
 import type { ProviderModelOption } from "./types.ts"
 
 /**
@@ -60,7 +61,7 @@ export function createOpenCodeEngine(
     cwd: workspaceDirectory,
     env: openCodeEnvironment(policy, OPENCODE_AGENT_NAME),
     clientName: "blitz",
-    ...(spawnProcess ? { spawnProcess } : {}),
+    ...(spawnProcess ? { spawnProcess } : windowsSpawnOption()),
   })
 }
 

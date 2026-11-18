@@ -8,7 +8,7 @@
  * session.
  */
 
-import { spawn } from "node:child_process"
+import { spawnCommand as spawn } from "./spawn-command.ts"
 import { existsSync } from "node:fs"
 import { homedir, tmpdir } from "node:os"
 import { join } from "node:path"

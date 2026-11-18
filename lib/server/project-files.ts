@@ -14,7 +14,7 @@ import {
   type Stats,
 } from "node:fs"
 import { homedir } from "node:os"
-import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
+import { dirname, isAbsolute, join, parse, relative, resolve, sep } from "node:path"
 import { pipeline } from "node:stream/promises"
 import { Readable, Transform } from "node:stream"
 
@@ -108,7 +108,9 @@ export async function ensureProjectDirectory(
 /** Rejects symlink ancestors before any recursive directory creation can follow them. */
 async function assertExistingPathHasNoSymlinks(target: string): Promise<void> {
   const absoluteTarget = resolve(target)
-  const parsedRoot = absoluteTarget.startsWith(sep) ? sep : ""
+  // `/` on macOS; a drive such as `C:\` on Windows, where joining onto a bare
+  // `C:` would name a path relative to that drive's working folder instead.
+  const parsedRoot = parse(absoluteTarget).root
   let current = parsedRoot
   for (const part of absoluteTarget
     .slice(parsedRoot.length)
