@@ -2548,18 +2548,13 @@ export function ChatWorkspace({
               <span className="mx-auto flex size-12 items-center justify-center rounded-2xl bg-brand/10 text-brand">
                 <HugeiconsIcon icon={Chat01Icon} size={25} strokeWidth={1.8} />
               </span>
-              <h2 className="mt-4 text-xl font-medium tracking-tight">
+              <h2 className="mt-5 text-2xl font-medium tracking-tight">
                 {contextualCard
                   ? `Ask about ${contextualCard.label}`
                   : contextualProject
                     ? `Ask about ${contextualProject.label}`
                     : "Ask Blitz"}
               </h2>
-              {contextualCard || contextualProject ? null : (
-                <p className="mt-1 text-sm text-muted-foreground">
-                  About any project, or attach a file.
-                </p>
-              )}
             </div>
           ) : (
             <div
