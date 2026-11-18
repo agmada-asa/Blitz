@@ -14,6 +14,7 @@ import { useEffect, useState } from "react"
 import { SegmentedBar, pathSegments } from "@/components/progress/progress-path"
 import { ArrowRightIcon, CheckIcon, SnowflakeIcon, ZapIcon } from "@/components/ui/icon"
 import { Skeleton } from "@/components/ui/skeleton"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { api } from "@/convex/_generated/api"
 import { useMinuteClock } from "@/hooks/use-minute-clock"
 import { streakMessage } from "@/lib/progress"
@@ -215,7 +216,7 @@ function WeekChart({
   return (
     <div className="flex flex-col gap-4 rounded-2xl border border-border bg-card px-5 py-4">
       <p className="flex items-baseline justify-between gap-3 text-sm">
-        <span className="text-muted-foreground">This week</span>
+        <span className="text-muted-foreground">Last 7 days</span>
         <span aria-hidden="true" className="text-xs text-muted-foreground">
           XP per day
         </span>
@@ -226,41 +227,44 @@ function WeekChart({
         const isToday = index === week.length - 1
         const frozen = frozenDays.includes(entry.day)
         return (
-          <li key={entry.day} className="group flex h-full flex-col items-center justify-end gap-1.5">
-            <span className="sr-only">
-              {weekday(entry.day, "long")}: {entry.xp} XP{met ? ", goal met" : ""}
-              {frozen ? ", covered by a streak freeze" : ""}
-            </span>
-            {frozen ? (
-              <SnowflakeIcon aria-hidden="true" className="size-3.5 text-muted-foreground" />
-            ) : null}
-            <span
-              aria-hidden="true"
-              className={cn(
-                "relative w-full max-w-7 rounded-[5px]",
-                // Today is the full accent; earlier days are quieter so today reads first.
-                isToday
-                  ? entry.xp
-                    ? "bg-brand"
-                    : "bg-muted"
-                  : met
-                    ? "bg-brand/55"
-                    : entry.xp
-                      ? "bg-brand/30"
-                      : "bg-muted"
-              )}
-              style={{ height: `${Math.max(4, (entry.xp / ceiling) * 100)}%` }}
-            >
-              {/* Hovering anywhere in the day's column shows its XP above the bar.
-                  Screen readers get the same figure from the text above. */}
-              <span className="pointer-events-none absolute bottom-full left-1/2 z-10 mb-1.5 -translate-x-1/2 rounded-md bg-popover px-2 py-1 text-xs font-medium whitespace-nowrap text-popover-foreground tabular-nums opacity-0 shadow-sm ring-1 ring-foreground/10 transition-opacity group-hover:opacity-100 motion-reduce:transition-none">
-                {entry.xp} XP
-              </span>
-            </span>
-            <span aria-hidden="true" className={cn("text-[11px] leading-none text-muted-foreground", isToday && "font-medium text-foreground")}>
-              {weekday(entry.day, "narrow")}
-            </span>
-          </li>
+          // Hovering anywhere in the day's column shows its XP; screen readers
+          // get the same figure, and more, from the hidden text below.
+          <Tooltip key={entry.day}>
+            <TooltipTrigger asChild>
+              <li className="flex h-full flex-col items-center justify-end gap-1.5">
+                <span className="sr-only">
+                  {weekday(entry.day, "long")}: {entry.xp} XP{met ? ", goal met" : ""}
+                  {frozen ? ", covered by a streak freeze" : ""}
+                </span>
+                {frozen ? (
+                  <SnowflakeIcon aria-hidden="true" className="size-3.5 text-muted-foreground" />
+                ) : null}
+                <span
+                  aria-hidden="true"
+                  className={cn(
+                    "w-full max-w-7 rounded-[5px]",
+                    // Today is the full accent; earlier days are quieter so today reads first.
+                    isToday
+                      ? entry.xp
+                        ? "bg-brand"
+                        : "bg-muted"
+                      : met
+                        ? "bg-brand/55"
+                        : entry.xp
+                          ? "bg-brand/30"
+                          : "bg-muted"
+                  )}
+                  style={{ height: `${Math.max(4, (entry.xp / ceiling) * 100)}%` }}
+                />
+                <span aria-hidden="true" className={cn("text-[11px] leading-none text-muted-foreground", isToday && "font-medium text-foreground")}>
+                  {weekday(entry.day, "narrow")}
+                </span>
+              </li>
+            </TooltipTrigger>
+            <TooltipContent side="top" aria-hidden="true" className="tabular-nums">
+              {entry.xp} XP
+            </TooltipContent>
+          </Tooltip>
         )
         })}
       </ol>
@@ -270,9 +274,9 @@ function WeekChart({
 
 /**
  * Today's XP against the daily goal as one small pill beside the streak. A met
- * goal shows a tick; otherwise a ring fills toward the goal. The streak message
- * and any streak freezes are kept as secondary text, so nothing the old
- * full-width bar said is lost.
+ * goal shows a tick; otherwise a ring fills toward the goal. Streak freezes
+ * show as secondary text, and the streak message (such as how to keep the
+ * streak today) shows on hover and is read out with the badge.
  */
 function GoalBadge({
   xp,
@@ -286,7 +290,7 @@ function GoalBadge({
   goal: number
   /** Streak freezes in hand; hidden when zero. */
   freezes: number
-  /** The `streakMessage` sentence, read by screen readers and shown as a tooltip. */
+  /** The `streakMessage` sentence, read by screen readers and shown on hover. */
   message: string
 }) {
   const met = xp >= goal
@@ -294,46 +298,53 @@ function GoalBadge({
   // A 26px ring: circumference of r=11.
   const circumference = 2 * Math.PI * 11
   return (
-    <div
-      className="flex items-center gap-2.5 rounded-full border border-border bg-card py-1.5 pr-4 pl-1.5"
-    >
-      <span
-        aria-hidden="true"
-        className="relative flex size-7 shrink-0 items-center justify-center rounded-full bg-brand/12 text-brand"
-      >
-        {met ? (
-          <CheckIcon className="size-4" strokeWidth={2.2} />
-        ) : (
-          <svg viewBox="0 0 26 26" className="absolute inset-0 size-full -rotate-90">
-            <circle cx="13" cy="13" r="11" fill="none" strokeWidth="2.5" className="stroke-muted" />
-            <circle
-              cx="13"
-              cy="13"
-              r="11"
-              fill="none"
-              strokeWidth="2.5"
-              strokeLinecap="round"
-              className="stroke-brand"
-              strokeDasharray={`${share * circumference} ${circumference}`}
-            />
-          </svg>
-        )}
-      </span>
-      <span className="min-w-0 leading-tight">
-        <span className="block text-sm font-medium">
-          {met ? "Today's goal met" : `${Math.max(0, goal - xp)} XP to today's goal`}
-        </span>
-        <span className="flex items-center gap-1.5 text-xs tabular-nums text-muted-foreground">
-          {xp} XP · goal {goal}
-          {freezes ? (
-            <span className="flex items-center gap-1" title="A freeze covers a day you miss">
-              · <SnowflakeIcon aria-hidden="true" className="size-3" />
-              {freezes} {freezes === 1 ? "freeze" : "freezes"}
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <div
+          className="flex items-center gap-2.5 rounded-full border border-border bg-card py-1.5 pr-4 pl-1.5"
+        >
+          <span
+            aria-hidden="true"
+            className="relative flex size-7 shrink-0 items-center justify-center rounded-full bg-brand/12 text-brand"
+          >
+            {met ? (
+              <CheckIcon className="size-4" strokeWidth={2.2} />
+            ) : (
+              <svg viewBox="0 0 26 26" className="absolute inset-0 size-full -rotate-90">
+                <circle cx="13" cy="13" r="11" fill="none" strokeWidth="2.5" className="stroke-muted" />
+                <circle
+                  cx="13"
+                  cy="13"
+                  r="11"
+                  fill="none"
+                  strokeWidth="2.5"
+                  strokeLinecap="round"
+                  className="stroke-brand"
+                  strokeDasharray={`${share * circumference} ${circumference}`}
+                />
+              </svg>
+            )}
+          </span>
+          <span className="min-w-0 leading-tight">
+            <span className="block text-sm font-medium">
+              {met ? "Today's goal met" : `${Math.max(0, goal - xp)} XP to today's goal`}
             </span>
-          ) : null}
-        </span>
-      </span>
-      <span className="sr-only">{message}</span>
-    </div>
+            <span className="flex items-center gap-1.5 text-xs tabular-nums text-muted-foreground">
+              {xp} XP · goal {goal}
+              {freezes ? (
+                <span className="flex items-center gap-1" title="A freeze covers a day you miss">
+                  · <SnowflakeIcon aria-hidden="true" className="size-3" />
+                  {freezes} {freezes === 1 ? "freeze" : "freezes"}
+                </span>
+              ) : null}
+            </span>
+          </span>
+          <span className="sr-only">{message}</span>
+        </div>
+      </TooltipTrigger>
+      <TooltipContent side="bottom" aria-hidden="true" className="max-w-64">
+        {message}
+      </TooltipContent>
+    </Tooltip>
   )
 }
