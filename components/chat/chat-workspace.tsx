@@ -96,6 +96,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
 import { type ChatAnnotation } from "@/components/ui/markdown"
 import {
   Popover,
@@ -3488,9 +3489,7 @@ export function ChatWorkspace({
             }}
           >
             <div className="grid gap-2">
-              <label htmlFor="rename-chat" className="font-medium">
-                Chat name
-              </label>
+              <Label htmlFor="rename-chat">Chat name</Label>
               <Input
                 id="rename-chat"
                 autoFocus

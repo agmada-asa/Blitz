@@ -5,6 +5,8 @@ import {
   AiSearch01Icon as AiSearch01Glyph,
   AiSparklesIcon,
   ArrowDown01Icon,
+  ArrowUpDownIcon,
+  Search01Icon,
   ArrowLeft01Icon,
   ArrowRight01Icon,
   ArrowUp01Icon,
@@ -119,6 +121,10 @@ export const SunIcon = makeIcon(Sun03Icon)
 export const ShieldCheckIcon = makeIcon(ShieldCheckGlyph)
 /** Snowflake for streak freezes. */
 export const SnowflakeIcon = makeIcon(SnowflakeGlyph)
+/** Search field glyph. */
+export const SearchIcon = makeIcon(Search01Icon)
+/** Sort order glyph. */
+export const SortIcon = makeIcon(ArrowUpDownIcon)
 
 /** Blitz brand and energy glyph. */
 export const ZapIcon = makeIcon(ZapGlyph)

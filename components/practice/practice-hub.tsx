@@ -12,6 +12,7 @@ import { useQuery } from "convex/react"
 import type { FunctionReturnType } from "convex/server"
 import { useState } from "react"
 
+import { PageContainer } from "@/components/page-container"
 import { ExamPrep } from "@/components/practice/exam-prep"
 import { SegmentedBar, type BarSegment } from "@/components/progress/progress-path"
 import { Button } from "@/components/ui/button"
@@ -104,12 +105,12 @@ export function PracticeHub({ projectId }: { projectId: string }) {
 
   if (project === null)
     return (
-      <main className="mx-auto max-w-4xl px-4 py-12 sm:px-8">
+      <PageContainer>
         <h1 className="font-heading text-2xl font-semibold">Project not found</h1>
         <Button asChild variant="outline" className="mt-5 min-h-11 rounded-full">
           <Link href="/">Back to projects</Link>
         </Button>
-      </main>
+      </PageContainer>
     )
 
   const totalQuestions = data?.units.reduce((sum, unit) => sum + unit.questionCount, 0) ?? 0
@@ -127,7 +128,7 @@ export function PracticeHub({ projectId }: { projectId: string }) {
     : ""
 
   return (
-    <main className="mx-auto w-full max-w-4xl px-4 py-8 text-foreground sm:px-8 sm:py-10">
+    <PageContainer className="text-foreground">
       <Button asChild variant="ghost" size="sm" className="mb-3 -ml-2 min-h-9">
         <Link href={base}>
           <ArrowLeftIcon aria-hidden="true" /> {project?.title ?? "Module"}
@@ -262,7 +263,7 @@ export function PracticeHub({ projectId }: { projectId: string }) {
           </nav>
         </>
       )}
-    </main>
+    </PageContainer>
   )
 }
 

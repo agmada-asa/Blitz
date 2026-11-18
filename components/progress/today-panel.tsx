@@ -12,9 +12,9 @@ import { useQuery } from "convex/react"
 import { useEffect, useState } from "react"
 
 import { SegmentedBar, pathSegments } from "@/components/progress/progress-path"
-import { ArrowRightIcon, SnowflakeIcon, ZapIcon } from "@/components/ui/icon"
-import { Progress } from "@/components/ui/progress"
+import { ArrowRightIcon, CheckIcon, SnowflakeIcon, ZapIcon } from "@/components/ui/icon"
 import { Skeleton } from "@/components/ui/skeleton"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { api } from "@/convex/_generated/api"
 import { useMinuteClock } from "@/hooks/use-minute-clock"
 import { streakMessage } from "@/lib/progress"
@@ -27,6 +27,16 @@ let goalMetSeen = false
 function weekday(day: string, style: "narrow" | "long"): string {
   return new Date(`${day}T12:00:00Z`).toLocaleDateString(undefined, {
     weekday: style,
+    timeZone: "UTC",
+  })
+}
+
+/** Formats a `YYYY-MM-DD` key as a weekday with its date, such as "Wednesday 18 November". */
+function longDate(day: string): string {
+  return new Date(`${day}T12:00:00Z`).toLocaleDateString(undefined, {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
     timeZone: "UTC",
   })
 }
@@ -63,11 +73,11 @@ export function TodayPanel() {
   const resumeTaught = new Set(resume?.taughtSectionIds ?? [])
 
   return (
-    <section aria-label="Today" className="mb-10">
-      <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-1">
+    <section aria-label="Today" className="mb-12">
+      <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-4">
         <div className="min-w-0">
-          <p className="text-sm text-muted-foreground">{weekday(summary.today, "long")}</p>
-          <h2 className="mt-1 flex items-center gap-2.5 text-2xl font-medium tracking-[-0.04em]">
+          <p className="text-sm text-muted-foreground">{longDate(summary.today)}</p>
+          <h2 className="mt-1 flex items-center gap-2.5 text-3xl font-medium tracking-[-0.04em]">
             <ZapIcon
               aria-hidden="true"
               className={cn(
@@ -79,42 +89,31 @@ export function TodayPanel() {
             {summary.streak.current ? `${summary.streak.current}-day streak` : "Start a streak today"}
           </h2>
         </div>
-        <p className="flex items-center gap-3 text-sm tabular-nums text-muted-foreground">
-          {summary.streak.freezes ? (
-            <span className="flex items-center gap-1" title="A freeze covers a day you miss">
-              <SnowflakeIcon aria-hidden="true" className="size-3.5" />
-              {summary.streak.freezes} {summary.streak.freezes === 1 ? "freeze" : "freezes"}
-            </span>
-          ) : null}
-          <span>
-            {summary.todayXp} / {summary.goal} XP
-          </span>
-        </p>
+        <GoalBadge
+          xp={summary.todayXp}
+          goal={summary.goal}
+          freezes={summary.streak.freezes}
+          message={streakMessage(summary.streak, summary.todayXp, summary.goal)}
+        />
       </div>
-      <Progress
-        value={Math.min(100, (summary.todayXp / summary.goal) * 100)}
-        aria-label={`${summary.todayXp} of ${summary.goal} XP today`}
-        className="mt-3 h-2 [&_[data-slot=progress-indicator]]:bg-brand"
-      />
-      <p className="mt-2 text-xs text-muted-foreground">
-        {streakMessage(summary.streak, summary.todayXp, summary.goal)}
-      </p>
 
-      <div className="mt-6 grid grid-cols-1 gap-6 md:grid-cols-[minmax(0,1fr)_minmax(0,16rem)] md:items-end">
+      <div className="mt-6 grid grid-cols-1 gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,16rem)]">
         <div className="flex flex-col gap-3">
           {resume ? (
             <Link
               href={`/projects/${encodeURIComponent(resume.projectId)}/learn/${encodeURIComponent(resume.unitId)}`}
-              className="group flex items-center gap-4 rounded-2xl border border-brand/25 bg-brand/[0.05] px-5 py-4 transition-colors hover:bg-brand/10 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+              className="group flex items-center gap-4 rounded-2xl border border-brand/25 bg-brand/[0.05] px-5 py-4 transition-colors hover:bg-brand/10 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none sm:px-6 sm:py-5"
             >
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-xs font-medium text-brand">
                   Continue {resume.projectTitle}
                 </span>
-                <span className="mt-0.5 block truncate font-medium">{resume.unitTitle}</span>
-                <span className="block truncate text-xs text-muted-foreground">{resume.detail}</span>
+                <span className="mt-0.5 block text-lg leading-snug font-medium text-balance">
+                  {resume.unitTitle}
+                </span>
+                <span className="line-clamp-2 text-sm text-muted-foreground">{resume.detail}</span>
                 <SegmentedBar
-                  className="mt-3"
+                  className="mt-3 max-w-sm"
                   segments={pathSegments(
                     resume.sectionIds.map((id, index) => ({
                       key: id,
@@ -141,7 +140,7 @@ export function TodayPanel() {
                 <span className="block font-medium">
                   Review {summary.review.count} {summary.review.count === 1 ? "question" : "questions"}
                 </span>
-                <span className="block truncate text-xs text-muted-foreground">
+                <span className="block text-xs text-muted-foreground">
                   About {summary.review.minutes} min
                   {summary.review.waiting ? ` · ${summary.review.waiting} more due after this` : ""}
                 </span>
@@ -202,7 +201,7 @@ export function TodayXpChip() {
 
 /**
  * Seven bars showing XP per day; days that met the goal are filled, and a day
- * a streak freeze covered shows a snowflake.
+ * a streak freeze covered shows a snowflake. Hovering a day shows its XP.
  */
 function WeekChart({
   week,
@@ -215,35 +214,137 @@ function WeekChart({
 }) {
   const ceiling = Math.max(goal, ...week.map((entry) => entry.xp))
   return (
-    <ol aria-label="XP over the last seven days" className="grid h-20 grid-cols-7 items-end gap-2">
-      {week.map((entry, index) => {
+    <div className="flex flex-col gap-4 rounded-2xl border border-border bg-card px-5 py-4">
+      <p className="flex items-baseline justify-between gap-3 text-sm">
+        <span className="text-muted-foreground">Last 7 days</span>
+        <span aria-hidden="true" className="text-xs text-muted-foreground">
+          XP per day
+        </span>
+      </p>
+      <ol aria-label="XP over the last seven days" className="mt-auto grid h-24 grid-cols-7 items-end gap-2">
+        {week.map((entry, index) => {
         const met = entry.xp >= goal
         const isToday = index === week.length - 1
         const frozen = frozenDays.includes(entry.day)
         return (
-          <li key={entry.day} className="flex h-full flex-col items-center justify-end gap-1.5">
-            <span className="sr-only">
-              {weekday(entry.day, "long")}: {entry.xp} XP{met ? ", goal met" : ""}
-              {frozen ? ", covered by a streak freeze" : ""}
-            </span>
-            {frozen ? (
-              <SnowflakeIcon aria-hidden="true" className="size-3.5 text-muted-foreground" />
-            ) : null}
-            <span
-              aria-hidden="true"
-              className={cn(
-                "w-full max-w-8 rounded-md",
-                met ? "bg-brand" : entry.xp ? "bg-brand/35" : "bg-muted",
-                isToday && "ring-2 ring-brand/40 ring-offset-2 ring-offset-background"
-              )}
-              style={{ height: `${Math.max(6, (entry.xp / ceiling) * 100)}%` }}
-            />
-            <span aria-hidden="true" className={cn("text-[11px] text-muted-foreground", isToday && "font-medium text-foreground")}>
-              {weekday(entry.day, "narrow")}
-            </span>
-          </li>
+          // Hovering anywhere in the day's column shows its XP; screen readers
+          // get the same figure, and more, from the hidden text below.
+          <Tooltip key={entry.day}>
+            <TooltipTrigger asChild>
+              <li className="flex h-full flex-col items-center justify-end gap-1.5">
+                <span className="sr-only">
+                  {weekday(entry.day, "long")}: {entry.xp} XP{met ? ", goal met" : ""}
+                  {frozen ? ", covered by a streak freeze" : ""}
+                </span>
+                {frozen ? (
+                  <SnowflakeIcon aria-hidden="true" className="size-3.5 text-muted-foreground" />
+                ) : null}
+                <span
+                  aria-hidden="true"
+                  className={cn(
+                    "w-full max-w-7 rounded-[5px]",
+                    // Today is the full accent; earlier days are quieter so today reads first.
+                    isToday
+                      ? entry.xp
+                        ? "bg-brand"
+                        : "bg-muted"
+                      : met
+                        ? "bg-brand/55"
+                        : entry.xp
+                          ? "bg-brand/30"
+                          : "bg-muted"
+                  )}
+                  style={{ height: `${Math.max(4, (entry.xp / ceiling) * 100)}%` }}
+                />
+                <span aria-hidden="true" className={cn("text-[11px] leading-none text-muted-foreground", isToday && "font-medium text-foreground")}>
+                  {weekday(entry.day, "narrow")}
+                </span>
+              </li>
+            </TooltipTrigger>
+            <TooltipContent side="top" aria-hidden="true" className="tabular-nums">
+              {entry.xp} XP
+            </TooltipContent>
+          </Tooltip>
         )
-      })}
-    </ol>
+        })}
+      </ol>
+    </div>
+  )
+}
+
+/**
+ * Today's XP against the daily goal as one small pill beside the streak. A met
+ * goal shows a tick; otherwise a ring fills toward the goal. Streak freezes
+ * show as secondary text, and the streak message (such as how to keep the
+ * streak today) shows on hover and is read out with the badge.
+ */
+function GoalBadge({
+  xp,
+  goal,
+  freezes,
+  message,
+}: {
+  /** XP earned today. */
+  xp: number
+  /** The daily goal in XP; always positive. */
+  goal: number
+  /** Streak freezes in hand; hidden when zero. */
+  freezes: number
+  /** The `streakMessage` sentence, read by screen readers and shown on hover. */
+  message: string
+}) {
+  const met = xp >= goal
+  const share = Math.min(1, xp / goal)
+  // A 26px ring: circumference of r=11.
+  const circumference = 2 * Math.PI * 11
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <div
+          className="flex items-center gap-2.5 rounded-full border border-border bg-card py-1.5 pr-4 pl-1.5"
+        >
+          <span
+            aria-hidden="true"
+            className="relative flex size-7 shrink-0 items-center justify-center rounded-full bg-brand/12 text-brand"
+          >
+            {met ? (
+              <CheckIcon className="size-4" strokeWidth={2.2} />
+            ) : (
+              <svg viewBox="0 0 26 26" className="absolute inset-0 size-full -rotate-90">
+                <circle cx="13" cy="13" r="11" fill="none" strokeWidth="2.5" className="stroke-muted" />
+                <circle
+                  cx="13"
+                  cy="13"
+                  r="11"
+                  fill="none"
+                  strokeWidth="2.5"
+                  strokeLinecap="round"
+                  className="stroke-brand"
+                  strokeDasharray={`${share * circumference} ${circumference}`}
+                />
+              </svg>
+            )}
+          </span>
+          <span className="min-w-0 leading-tight">
+            <span className="block text-sm font-medium">
+              {met ? "Today's goal met" : `${Math.max(0, goal - xp)} XP to today's goal`}
+            </span>
+            <span className="flex items-center gap-1.5 text-xs tabular-nums text-muted-foreground">
+              {xp} XP · goal {goal}
+              {freezes ? (
+                <span className="flex items-center gap-1" title="A freeze covers a day you miss">
+                  · <SnowflakeIcon aria-hidden="true" className="size-3" />
+                  {freezes} {freezes === 1 ? "freeze" : "freezes"}
+                </span>
+              ) : null}
+            </span>
+          </span>
+          <span className="sr-only">{message}</span>
+        </div>
+      </TooltipTrigger>
+      <TooltipContent side="bottom" aria-hidden="true" className="max-w-64">
+        {message}
+      </TooltipContent>
+    </Tooltip>
   )
 }

@@ -12,6 +12,7 @@ import type { FunctionReturnType } from "convex/server"
 import { useState } from "react"
 
 import { AddMaterial } from "@/components/learn/add-material"
+import { PageContainer } from "@/components/page-container"
 import { ProjectActions } from "@/components/projects/project-actions"
 import {
   PathConnector,
@@ -40,12 +41,14 @@ import {
 import {
   ArrowLeftIcon,
   ArrowRightIcon,
+  ChatIcon,
   FileIcon,
   HeadphonesIcon,
   PlusIcon,
   ZapIcon,
 } from "@/components/ui/icon"
 import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
 import {
   Select,
   SelectContent,
@@ -73,20 +76,20 @@ export function ProjectOverview({ projectId }: { projectId: string }) {
 
   if (project === undefined) {
     return (
-      <main className="mx-auto max-w-4xl space-y-6 px-4 py-8 sm:px-8">
+      <PageContainer className="space-y-6">
         <Skeleton className="h-10 w-56" />
         <Skeleton className="h-36 w-full rounded-2xl" />
-      </main>
+      </PageContainer>
     )
   }
   if (project === null) {
     return (
-      <main className="mx-auto max-w-4xl px-4 py-12 sm:px-8">
+      <PageContainer>
         <h1 className="text-2xl font-semibold">Project not found</h1>
         <Button asChild variant="outline" className="mt-5">
           <Link href="/">Back to library</Link>
         </Button>
-      </main>
+      </PageContainer>
     )
   }
   return <ModuleOverview project={project} />
@@ -167,7 +170,7 @@ function ModuleOverview({ project }: { project: Doc<"projects"> }) {
   }
 
   return (
-    <main className="mx-auto w-full max-w-4xl px-4 py-8 text-foreground sm:px-8 sm:py-10">
+    <PageContainer className="text-foreground">
       <Button asChild variant="ghost" size="sm" className="mb-3 -ml-2 min-h-9">
         <Link href="/">
           <ArrowLeftIcon aria-hidden="true" /> Projects
@@ -178,9 +181,9 @@ function ModuleOverview({ project }: { project: Doc<"projects"> }) {
           {project.title}
         </h1>
         <div className="flex flex-wrap items-center gap-2">
-          <Button asChild variant="ghost" className="min-h-10 rounded-full">
+          <Button asChild variant="outline" className="min-h-10 rounded-full px-4">
             <Link href={`/chat?projectId=${encodeURIComponent(String(projectId))}`}>
-              Ask Blitz
+              <ChatIcon aria-hidden="true" /> Ask Blitz
             </Link>
           </Button>
           <ProjectActions project={project} returnToLibrary />
@@ -195,6 +198,42 @@ function ModuleOverview({ project }: { project: Doc<"projects"> }) {
         </section>
       ) : (
         <>
+          {/* The module's other areas sit first, so they are reachable without scrolling past the path. */}
+          <nav aria-label="Module areas" className="mt-8 grid gap-2 sm:grid-cols-3">
+            {[
+              {
+                href: `${base}/practice`,
+                label: "Practice",
+                detail: "Drills and mock exams",
+                icon: ZapIcon,
+              },
+              {
+                href: `${base}/sources`,
+                label: "Sources",
+                detail: `${units.reduce((sum, unit) => sum + unit.sources.length, 0) + data.unsortedSources.length + data.referenceSources.length} files and links`,
+                icon: FileIcon,
+              },
+              {
+                href: `${base}/listen`,
+                label: "Listen",
+                detail: "Podcasts made from your units",
+                icon: HeadphonesIcon,
+              },
+            ].map((item) => (
+              <Link
+                key={item.href}
+                href={item.href}
+                className="flex min-h-16 items-center gap-3 rounded-xl border border-border bg-card px-4 py-3 transition-colors hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+              >
+                <item.icon aria-hidden="true" className="size-5 shrink-0 text-brand" />
+                <span className="min-w-0">
+                  <span className="block text-sm font-medium">{item.label}</span>
+                  <span className="block truncate text-xs text-muted-foreground">{item.detail}</span>
+                </span>
+              </Link>
+            ))}
+          </nav>
+
           {next ? (
             <section className="mt-8 flex flex-col gap-4 rounded-2xl border border-brand/25 bg-brand/[0.05] p-5 sm:flex-row sm:items-center sm:justify-between sm:p-6">
               <div className="min-w-0 flex-1">
@@ -320,41 +359,6 @@ function ModuleOverview({ project }: { project: Doc<"projects"> }) {
               </ul>
             </section>
           ) : null}
-
-          <nav aria-label="Module areas" className="mt-10 grid gap-2 sm:grid-cols-3">
-            {[
-              {
-                href: `${base}/practice`,
-                label: "Practice",
-                detail: "Drills and mock exams",
-                icon: ZapIcon,
-              },
-              {
-                href: `${base}/sources`,
-                label: "Sources",
-                detail: `${units.reduce((sum, unit) => sum + unit.sources.length, 0) + data.unsortedSources.length + data.referenceSources.length} files and links`,
-                icon: FileIcon,
-              },
-              {
-                href: `${base}/listen`,
-                label: "Listen",
-                detail: "Podcasts made from your units",
-                icon: HeadphonesIcon,
-              },
-            ].map((item) => (
-              <Link
-                key={item.href}
-                href={item.href}
-                className="flex min-h-16 items-center gap-3 rounded-xl border border-border bg-card px-4 py-3 transition-colors hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
-              >
-                <item.icon aria-hidden="true" className="size-5 shrink-0 text-brand" />
-                <span className="min-w-0">
-                  <span className="block text-sm font-medium">{item.label}</span>
-                  <span className="block truncate text-xs text-muted-foreground">{item.detail}</span>
-                </span>
-              </Link>
-            ))}
-          </nav>
         </>
       )}
 
@@ -369,7 +373,7 @@ function ModuleOverview({ project }: { project: Doc<"projects"> }) {
           }}
         />
       ) : null}
-    </main>
+    </PageContainer>
   )
 }
 
@@ -613,9 +617,7 @@ function UnitListItem({
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-2">
-            <label htmlFor={`unit-destination-${unit.id}`} className="text-sm font-medium">
-              Move its material to
-            </label>
+            <Label htmlFor={`unit-destination-${unit.id}`}>Move its material to</Label>
             <Select value={destination} onValueChange={setDestination}>
               <SelectTrigger id={`unit-destination-${unit.id}`} className="min-h-11 w-full">
                 <SelectValue />

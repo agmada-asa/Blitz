@@ -1,11 +1,16 @@
 "use client"
 
-/** Manages project audiobook and podcast creation, status, and playback. */
+/**
+ * Manages project audiobook and podcast creation, status, and playback on the Listen page:
+ * a header with the one Create recording action, then the recordings, or an empty state once
+ * loading finishes with none.
+ */
 
 import { useCallback, useEffect, useMemo, useState } from "react"
 import Link from "next/link"
 import { useQuery } from "convex/react"
 
+import { PageContainer } from "@/components/page-container"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -21,10 +26,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
+import { ArrowLeftIcon, HeadphonesIcon, PlusIcon } from "@/components/ui/icon"
 import { api } from "@/convex/_generated/api"
 import type { Id } from "@/convex/_generated/dataModel"
 import type { ProjectAudioItem } from "@/lib/project-audio-types"
+import { sourceDisplayName } from "@/lib/source-display"
+import { cn } from "@/lib/utils"
 
 /** Select value for a podcast covering the whole module. */
 const WHOLE_MODULE = "module"
@@ -209,26 +218,37 @@ export function ProjectAudio({
   }
 
   return (
-    <main className="mx-auto max-w-5xl space-y-8 px-4 py-6 pb-32 sm:px-8 sm:py-8">
+    <PageContainer className="space-y-6">
       <header className="space-y-3">
-        <Button asChild variant="ghost" size="sm" className="-ml-3 min-h-9">
+        <Button
+          asChild
+          variant="ghost"
+          size="sm"
+          className="-ml-3 min-h-9 max-w-full text-muted-foreground"
+        >
           <Link href={`/projects/${encodeURIComponent(projectId)}`}>
-            ← {projectTitle}
+            <ArrowLeftIcon aria-hidden="true" className="size-4" />
+            <span className="truncate">{projectTitle}</span>
           </Link>
         </Button>
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <h1 className="font-heading text-3xl font-medium tracking-tight">
-            Listen
-          </h1>
+        <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-3">
+          <div className="min-w-0">
+            <h1 className="font-heading text-3xl font-medium tracking-tight">
+              Listen
+            </h1>
+            <p className="mt-1 text-sm text-pretty text-muted-foreground">
+              {`Audiobooks and podcasts made from ${projectTitle}.`}
+            </p>
+          </div>
           <Button
             type="button"
-            variant="outline"
             className="min-h-10"
             onClick={() => {
               setCreateError(null)
               setCreateOpen(true)
             }}
           >
+            <PlusIcon aria-hidden="true" className="size-4" />
             Create recording
           </Button>
         </div>
@@ -237,7 +257,10 @@ export function ProjectAudio({
       <section aria-labelledby="audio-library-heading" className="space-y-3">
         <h2
           id="audio-library-heading"
-          className="font-heading text-xl font-medium"
+          className={cn(
+            "text-sm font-medium",
+            items.length ? null : "sr-only"
+          )}
         >
           Your recordings
         </h2>
@@ -247,13 +270,22 @@ export function ProjectAudio({
           </p>
         ) : null}
         {!loading && !items.length && !loadError ? (
-          <p className="text-sm text-muted-foreground">No recordings yet.</p>
+          <div className="rounded-2xl border bg-card px-5 py-12 text-center">
+            <span className="mx-auto flex size-12 items-center justify-center rounded-2xl bg-brand/10 text-brand">
+              <HeadphonesIcon aria-hidden="true" className="size-6" />
+            </span>
+            <p className="mt-4 font-medium">No recordings yet</p>
+            <p className="mx-auto mt-1 max-w-sm text-sm text-pretty text-muted-foreground">
+              Choose a source or a unit, and Blitz turns it into an episode you
+              can play here.
+            </p>
+          </div>
         ) : null}
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           {items.map((item) => (
             <article
               key={item.id}
-              className="flex aspect-square min-w-0 flex-col justify-between gap-4 rounded-xl border border-border/70 bg-card p-4 sm:p-5"
+              className="flex min-w-0 flex-col justify-between gap-4 rounded-2xl border bg-card p-4 sm:p-5"
             >
               <div className="space-y-3">
                 <div className="min-w-0">
@@ -284,7 +316,7 @@ export function ProjectAudio({
               </div>
               {item.status === "completed" && item.audioUrl ? (
                 <div className="flex flex-col gap-2">
-                  <Button asChild className="min-h-10 w-full">
+                  <Button asChild variant="outline" className="min-h-10 w-full">
                     <Link
                       href={`/projects/${encodeURIComponent(projectId)}/listen/${encodeURIComponent(item.id)}`}
                     >
@@ -345,15 +377,15 @@ export function ProjectAudio({
             </TabsList>
             <TabsContent value="audiobook" className="w-full">
               <div className="space-y-3">
-                <label className="block space-y-1.5 text-sm">
-                  <span className="font-medium">Source</span>
+                <div className="space-y-2">
+                  <Label htmlFor="audiobook-source">Source</Label>
                   {readySources.length ? (
                     <Select
                       value={selectedSourceId}
                       onValueChange={setSourceId}
                     >
                       <SelectTrigger
-                        aria-label="Source for audiobook"
+                        id="audiobook-source"
                         className="min-h-10"
                       >
                         <SelectValue placeholder="Choose a source" />
@@ -361,7 +393,7 @@ export function ProjectAudio({
                       <SelectContent>
                         {readySources.map((source) => (
                           <SelectItem key={source.id} value={source.id}>
-                            {source.filename}
+                            {sourceDisplayName(source.filename)}
                           </SelectItem>
                         ))}
                       </SelectContent>
@@ -369,14 +401,14 @@ export function ProjectAudio({
                   ) : (
                     <Select disabled>
                       <SelectTrigger
-                        aria-label="Source for audiobook"
+                        id="audiobook-source"
                         className="min-h-10"
                       >
                         <SelectValue placeholder="Choose a source" />
                       </SelectTrigger>
                     </Select>
                   )}
-                </label>
+                </div>
                 <Button
                   className="min-h-10 w-full"
                   disabled={
@@ -393,10 +425,10 @@ export function ProjectAudio({
             <TabsContent value="podcast" className="w-full">
               <div className="space-y-3">
                 {podcastUnits.length ? (
-                  <label className="block space-y-1.5 text-sm">
-                    <span className="font-medium">Covers</span>
+                  <div className="space-y-2">
+                    <Label htmlFor="podcast-scope">Covers</Label>
                     <Select value={podcastScope} onValueChange={setPodcastScope}>
-                      <SelectTrigger aria-label="What the podcast covers" className="min-h-10 w-full">
+                      <SelectTrigger id="podcast-scope" className="min-h-10 w-full">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
@@ -408,10 +440,10 @@ export function ProjectAudio({
                         ))}
                       </SelectContent>
                     </Select>
-                  </label>
+                  </div>
                 ) : null}
-                <label className="block space-y-1.5 text-sm">
-                  <span className="font-medium">Episode length</span>
+                <div className="space-y-2">
+                  <Label htmlFor="podcast-length">Episode length</Label>
                   <Select
                     value={String(durationMinutes)}
                     onValueChange={(value) =>
@@ -421,7 +453,7 @@ export function ProjectAudio({
                     }
                   >
                     <SelectTrigger
-                      aria-label="Podcast episode length"
+                      id="podcast-length"
                       className="min-h-10"
                     >
                       <SelectValue />
@@ -434,22 +466,23 @@ export function ProjectAudio({
                       ))}
                     </SelectContent>
                   </Select>
-                </label>
-                <label className="block space-y-1.5 text-sm">
-                  <span className="font-medium">
-                    Focus{" "}
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="podcast-focus">
+                    Focus
                     <span className="font-normal text-muted-foreground">
                       (optional)
                     </span>
-                  </span>
+                  </Label>
                   <Textarea
+                    id="podcast-focus"
                     value={focus}
                     onChange={(event) => setFocus(event.target.value)}
                     maxLength={500}
                     placeholder="What should the hosts focus on?"
                     className="min-h-20"
                   />
-                </label>
+                </div>
                 <Button
                   className="min-h-10 w-full"
                   disabled={
@@ -486,6 +519,6 @@ export function ProjectAudio({
           ) : null}
         </DialogContent>
       </Dialog>
-    </main>
+    </PageContainer>
   )
 }

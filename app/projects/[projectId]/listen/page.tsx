@@ -6,6 +6,7 @@ import { use } from "react"
 import { usePaginatedQuery, useQuery } from "convex/react"
 import Link from "next/link"
 
+import { PageContainer } from "@/components/page-container"
 import { ProjectAudio } from "@/components/projects/project-audio"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -31,24 +32,21 @@ export default function ProjectListenPage({
 
   if (project === undefined || sourceStatus === "LoadingFirstPage")
     return (
-      <main
-        className="mx-auto max-w-5xl space-y-5 px-4 py-8 pb-32 sm:px-8"
-        aria-busy="true"
-      >
+      <PageContainer className="space-y-5" aria-busy="true">
         <Skeleton className="h-8 w-40" />
         <Skeleton className="h-24 w-full" />
         <Skeleton className="h-48 w-full" />
-      </main>
+      </PageContainer>
     )
 
   if (project === null)
     return (
-      <main className="mx-auto max-w-5xl space-y-4 px-4 py-8 pb-32 sm:px-8">
+      <PageContainer className="space-y-4">
         <h1 className="font-heading text-2xl font-medium">Project not found</h1>
         <Button asChild variant="outline">
           <Link href="/">Back to library</Link>
         </Button>
-      </main>
+      </PageContainer>
     )
 
   return (

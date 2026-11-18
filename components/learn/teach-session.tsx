@@ -62,6 +62,11 @@ import {
 import { SessionSummary } from "@/components/progress/session-summary"
 import { Button } from "@/components/ui/button"
 import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible"
+import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -76,7 +81,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { ArrowDownIcon, ArrowLeftIcon, FileIcon } from "@/components/ui/icon"
+import { ArrowDownIcon, ArrowLeftIcon, ArrowRightIcon, FileIcon } from "@/components/ui/icon"
 import {
   Popover,
   PopoverContent,
@@ -91,6 +96,7 @@ import type { LessonPassage } from "@/lib/client/lesson-passage-dom"
 import { consumeRelearn } from "@/lib/client/relearn"
 import { restartSitting, sittingStart } from "@/lib/client/teach-sitting"
 import { MAX_LESSON_SECTION_CHARACTERS } from "@/lib/lesson-passage"
+import { sourceDisplayName } from "@/lib/source-display"
 import {
   compactTeachSession,
   createClientMessageId,
@@ -837,36 +843,48 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
           </div>
         )}
         {unit.sources.length ? (
-          <section
-            aria-label="Unit sources"
-            className="mt-8 border-t border-border/70 pt-4"
-          >
-            <h2 className="px-3 text-xs font-medium text-muted-foreground">
-              Sources
-            </h2>
-            <ul className="mt-2 space-y-0.5">
-              {unit.sources.map((item) => (
-                <li key={item.id}>
-                  <button
-                    type="button"
-                    disabled={!item.hasText}
-                    onClick={() =>
-                      showSource({
-                        kind: "learning",
-                        projectId: unit.projectId,
-                        sourceId: item.id,
-                        filename: item.filename,
-                      })
-                    }
-                    className="flex min-h-10 w-full items-center gap-2 rounded-lg px-3 text-left text-sm text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none disabled:opacity-50"
-                  >
-                    <FileIcon aria-hidden="true" className="size-4 shrink-0" />
-                    <span className="min-w-0 truncate">{item.filename}</span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </section>
+          // The unit's files fold into one line so a long list does not push the outline aside.
+          <Collapsible asChild>
+            <section
+              aria-label="Unit sources"
+              className="mt-6 border-t border-border/70 pt-3"
+            >
+              <h2>
+                <CollapsibleTrigger className="group flex min-h-10 w-full items-center gap-2 rounded-lg px-3 text-left text-sm text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none">
+                  <ArrowRightIcon
+                    aria-hidden="true"
+                    className="size-4 shrink-0 transition-transform group-data-[state=open]:rotate-90 motion-reduce:transition-none"
+                  />
+                  <span className="flex-1">Sources</span>
+                  <span className="text-xs tabular-nums">{unit.sources.length}</span>
+                </CollapsibleTrigger>
+              </h2>
+              <CollapsibleContent asChild>
+                <ul className="mt-1 space-y-0.5">
+                  {unit.sources.map((item) => (
+                    <li key={item.id}>
+                      <button
+                        type="button"
+                        disabled={!item.hasText}
+                        onClick={() =>
+                          showSource({
+                            kind: "learning",
+                            projectId: unit.projectId,
+                            sourceId: item.id,
+                            filename: item.filename,
+                          })
+                        }
+                        className="flex min-h-10 w-full items-center gap-2 rounded-lg px-3 text-left text-sm text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none disabled:opacity-50"
+                      >
+                        <FileIcon aria-hidden="true" className="size-4 shrink-0" />
+                        <span className="min-w-0 truncate">{sourceDisplayName(item.filename)}</span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </CollapsibleContent>
+            </section>
+          </Collapsible>
         ) : null}
       </aside>
 
@@ -1060,9 +1078,12 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
               (voice.phase === "hearing" || voice.phase === "thinking") && "opacity-55"
             )}
           >
+            {/* The lesson runs a little wider than the dock but stops short of the
+                full section, so lines stay easy to scan. The bottom padding lets
+                its last lines scroll clear of the controls floating over it. */}
             <div
               ref={columnRef}
-              className="mx-auto w-full max-w-3xl px-4 py-8 sm:px-6"
+              className="mx-auto w-full max-w-4xl px-4 pt-8 pb-52 sm:px-8"
             >
               {chat ? (
                 <TeachLesson
@@ -1114,25 +1135,6 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
               ) : null}
             </div>
           </div>
-          {showJump ? (
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() =>
-                reveal(
-                  lastAssistantId
-                    ? document.querySelector(
-                        `[data-message-id="${lastAssistantId}"]`
-                      )
-                    : null
-                )
-              }
-              className="absolute bottom-4 left-1/2 min-h-10 -translate-x-1/2 rounded-full bg-background px-4 shadow-md dark:bg-background dark:hover:bg-muted"
-            >
-              Latest
-              <ArrowDownIcon aria-hidden="true" />
-            </Button>
-          ) : null}
           {chat ? (
             <TeachAskOverlay
               scrollRef={scrollRef}
@@ -1141,40 +1143,66 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
               onAsk={openSideChat}
             />
           ) : null}
-        </div>
 
-        {dockState.kind === "paused" &&
-        chat?.lastErrorReason === "usage-limit" &&
-        lastMessage?.role === "assistant" ? (
-          <div className="px-4 sm:px-6">
-            <ProviderHandoffOffer
-              chatId={chat.id}
-              messageId={lastMessage.id}
-              providerId={chat.providerId}
-              disabled={sending}
-              onContinue={async () => { await send("", lastMessage.id) }}
-            />
+          {/* The lesson's controls float over the bottom of the text, centred at the
+              dock's own width. A short fade behind them keeps them readable; only the
+              controls themselves take clicks, so the text beside them stays selectable. */}
+          <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 bg-linear-to-t from-background from-40% to-transparent pt-12 [&>*]:pointer-events-auto">
+            {showJump ? (
+              <div className="mx-auto mb-2 w-fit">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() =>
+                    reveal(
+                      lastAssistantId
+                        ? document.querySelector(
+                            `[data-message-id="${lastAssistantId}"]`
+                          )
+                        : null
+                    )
+                  }
+                  className="min-h-10 rounded-full bg-background px-4 shadow-md dark:bg-background dark:hover:bg-muted"
+                >
+                  Latest
+                  <ArrowDownIcon aria-hidden="true" />
+                </Button>
+              </div>
+            ) : null}
+            {dockState.kind === "paused" &&
+            chat?.lastErrorReason === "usage-limit" &&
+            lastMessage?.role === "assistant" ? (
+              <div className="mx-auto w-full max-w-3xl px-4 sm:px-6">
+                <ProviderHandoffOffer
+                  chatId={chat.id}
+                  messageId={lastMessage.id}
+                  providerId={chat.providerId}
+                  disabled={sending}
+                  onContinue={async () => { await send("", lastMessage.id) }}
+                />
+              </div>
+            ) : null}
+            {(voiceOn && !voiceBarInChat) || voice.error ? (
+              // The same width and padding as the dock it replaces.
+              <div className="mx-auto w-full max-w-3xl px-4 pt-2 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:px-6">
+                <VoiceError session={voice} />
+                {voiceOn && !voiceBarInChat ? voiceBar : null}
+              </div>
+            ) : null}
+            {voiceOn ? null : (
+              <TeachDock
+                state={dockState}
+                error={error}
+                onSend={(message) => void send(message)}
+                onResume={() =>
+                  lastMessage?.role === "assistant"
+                    ? void send("", lastMessage.id)
+                    : undefined
+                }
+              />
+            )}
           </div>
-        ) : null}
-        {(voiceOn && !voiceBarInChat) || voice.error ? (
-          // The same width and padding as the lesson column, like the dock it replaces.
-          <div className="mx-auto w-full max-w-3xl px-4 pt-2 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:px-6">
-            <VoiceError session={voice} />
-            {voiceOn && !voiceBarInChat ? voiceBar : null}
-          </div>
-        ) : null}
-        {voiceOn ? null : (
-          <TeachDock
-            state={dockState}
-            error={error}
-            onSend={(message) => void send(message)}
-            onResume={() =>
-              lastMessage?.role === "assistant"
-                ? void send("", lastMessage.id)
-                : undefined
-            }
-          />
-        )}
+        </div>
       </div>
 
       {sideOpen ? (

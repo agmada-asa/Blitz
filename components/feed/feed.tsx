@@ -37,6 +37,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import { Label } from "@/components/ui/label"
 import { Skeleton } from "@/components/ui/skeleton"
 import { api } from "@/convex/_generated/api"
 import { useMinuteClock } from "@/hooks/use-minute-clock"
@@ -634,12 +635,7 @@ export function Feed({ initialFilter }: { initialFilter?: FeedFilter }) {
             </DialogHeader>
             <div className="space-y-4">
               <div className="space-y-2">
-                <label
-                  className="block text-sm font-medium text-foreground"
-                  htmlFor="feed-project-filter"
-                >
-                  Project
-                </label>
+                <Label htmlFor="feed-project-filter">Project</Label>
                 <Select
                   value={selectedProjectId}
                   onValueChange={(value) =>
@@ -669,12 +665,7 @@ export function Feed({ initialFilter }: { initialFilter?: FeedFilter }) {
                 </Select>
               </div>
               <div className="space-y-2">
-                <label
-                  className="block text-sm font-medium text-foreground"
-                  htmlFor="feed-topic-filter"
-                >
-                  Topic
-                </label>
+                <Label htmlFor="feed-topic-filter">Topic</Label>
                 <Select
                   value={selectedTopicId}
                   onValueChange={(value) =>

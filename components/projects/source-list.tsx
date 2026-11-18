@@ -2,9 +2,11 @@
 
 /**
  * The module's source files, grouped the way the learning path is: by unit,
- * then reference books, files not in a unit, and exam papers. Each file can
- * be opened, downloaded, renamed, moved to another unit, or deleted. Upload
- * and preparation state comes from the Sources page through props.
+ * then reference books, files not in a unit, and exam papers. Long lists
+ * start with each group folded so the units read as an index. Each file opens
+ * from anywhere on its row and can be downloaded, renamed, moved to another
+ * unit, or deleted. Upload and preparation state comes from the Sources page
+ * through props.
  */
 
 import Link from "next/link"
@@ -20,6 +22,11 @@ import type {
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible"
+import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -34,8 +41,17 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { FileIcon, LoadingIcon, RotateLeftIcon } from "@/components/ui/icon"
+import {
+  ArrowRightIcon,
+  FileIcon,
+  LayersIcon,
+  LinkIcon,
+  LoadingIcon,
+  RotateLeftIcon,
+  SearchIcon,
+} from "@/components/ui/icon"
 import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
 import { Progress } from "@/components/ui/progress"
 import {
   Select,
@@ -46,6 +62,7 @@ import {
 } from "@/components/ui/select"
 import { api } from "@/convex/_generated/api"
 import type { Id } from "@/convex/_generated/dataModel"
+import { sourceDisplayName, sourceTypeLabel } from "@/lib/source-display"
 
 /** Files listed before the filter box appears; short lists are easy to scan. */
 const FILTER_THRESHOLD = 6
@@ -136,22 +153,19 @@ function preparationProgress(preparationJob: ProjectFilePreparation | undefined)
 
 /** Describes a file's type, size, and upload date in one short line. */
 function sourceDetails(source: ProjectFileSource): string {
-  const type =
-    source.originalUrl && !source.relativeKey
-      ? "Link"
-      : source.kind === "pdf"
-        ? "PDF"
-        : source.kind === "markdown"
-          ? "Markdown"
-          : source.kind === "paste"
-            ? "Pasted text"
-            : source.kind === "text"
-              ? "Text"
-              : undefined
   const added = source.createdAt
     ? `Added ${new Date(source.createdAt).toLocaleDateString(undefined, { day: "numeric", month: "short" })}`
     : undefined
-  return [type, formatSize(source.sizeBytes), added].filter(Boolean).join(" · ")
+  return [sourceTypeLabel(source), formatSize(source.sizeBytes), added].filter(Boolean).join(" · ")
+}
+
+/** Draws the row icon for a file's type: slides, links and web pages, or a plain file. */
+function SourceTypeIcon({ source }: { source: ProjectFileSource }) {
+  const type = sourceTypeLabel(source)
+  const props = { className: "shrink-0 text-muted-foreground", size: 18, "aria-hidden": true } as const
+  if (type === "Slides") return <LayersIcon {...props} />
+  if (type === "Link" || type === "Web page") return <LinkIcon {...props} />
+  return <FileIcon {...props} />
 }
 
 /**
@@ -195,7 +209,11 @@ function groupSources(sources: ProjectFileSource[], units: ProjectFileUnit[]): S
   return groups.filter((group) => group.sources.length)
 }
 
-/** Renders the module's files grouped by unit, with a filter for long lists. */
+/**
+ * Renders the module's files grouped by unit, with a filter for long lists.
+ * In a long list every group starts folded, so the page reads as an index of
+ * units; a search opens every group with a match.
+ */
 export function SourceList({
   projectId,
   sources,
@@ -205,58 +223,96 @@ export function SourceList({
   onRetryIngestion,
 }: SourceListProps) {
   const [filter, setFilter] = useState("")
+  // Groups the learner has opened or closed; untouched groups use the default.
+  const [toggled, setToggled] = useState<Record<string, boolean>>({})
   const query = filter.trim().toLowerCase()
   const shown = query
-    ? sources.filter((source) => source.filename.toLowerCase().includes(query))
+    ? sources.filter(
+        (source) =>
+          source.filename.toLowerCase().includes(query) ||
+          sourceDisplayName(source.filename).toLowerCase().includes(query)
+      )
     : sources
   const groups = groupSources(shown, units)
+  const long = sources.length > FILTER_THRESHOLD
 
-  if (!sources.length) return <p className="mt-4 text-sm text-muted-foreground">No sources yet.</p>
+  if (!sources.length) return <p className="text-sm text-muted-foreground">No sources yet.</p>
+
+  /**
+   * Whether a group's files are showing: short lists stay open, and a search
+   * opens every group with a match and pauses folding until it is cleared.
+   */
+  const isOpen = (key: string) => Boolean(query) || (toggled[key] ?? !long)
 
   return (
-    <div className="mt-4 space-y-6">
-      {sources.length > FILTER_THRESHOLD ? (
-        <div>
+    <div className="space-y-4">
+      {long ? (
+        <div className="relative sm:max-w-sm">
           <label htmlFor="source-filter" className="sr-only">
             Find a file
           </label>
+          <SearchIcon
+            aria-hidden="true"
+            className="pointer-events-none absolute top-1/2 left-3.5 size-4 -translate-y-1/2 text-muted-foreground"
+          />
           <Input
             id="source-filter"
             type="search"
             value={filter}
             onChange={(event) => setFilter(event.target.value)}
             placeholder="Find a file"
-            className="min-h-11"
+            className="min-h-11 rounded-full pl-10"
           />
         </div>
       ) : null}
       {groups.length ? (
-        groups.map((group) => (
-          <section key={group.key} aria-labelledby={`source-group-${group.key}`}>
-            <div className="flex items-baseline justify-between gap-3">
-              <h3 id={`source-group-${group.key}`} className="font-medium break-words">
-                {group.title}
-              </h3>
-              <span className="shrink-0 text-xs text-muted-foreground">
-                {group.sources.length} {group.sources.length === 1 ? "file" : "files"}
-              </span>
-            </div>
-            {group.note ? <p className="mt-0.5 text-xs text-muted-foreground">{group.note}</p> : null}
-            <ul className="mt-2 divide-y divide-border/70 rounded-xl border border-border">
-              {group.sources.map((source) => (
-                <SourceRow
-                  key={String(source._id)}
-                  projectId={projectId}
-                  source={source}
-                  units={units}
-                  ingestionJob={ingestion.find((item) => item.sourceId === String(source._id))}
-                  preparationJob={preparation.find((item) => item.sourceId === String(source._id))}
-                  onRetryIngestion={onRetryIngestion}
-                />
-              ))}
-            </ul>
-          </section>
-        ))
+        <div className="space-y-2">
+          {groups.map((group) => (
+            <Collapsible
+              key={group.key}
+              asChild
+              open={isOpen(group.key)}
+              onOpenChange={(open) => setToggled((current) => ({ ...current, [group.key]: open }))}
+              disabled={Boolean(query)}
+            >
+              <section
+                aria-labelledby={`source-group-${group.key}`}
+                className="rounded-xl border border-border bg-card"
+              >
+                <h3 id={`source-group-${group.key}`}>
+                  <CollapsibleTrigger className="group flex min-h-12 w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none disabled:cursor-default disabled:hover:bg-transparent sm:px-4">
+                    <ArrowRightIcon
+                      aria-hidden="true"
+                      className="size-4 shrink-0 text-muted-foreground transition-transform group-data-[state=open]:rotate-90 motion-reduce:transition-none"
+                    />
+                    <span className="min-w-0 flex-1 font-medium break-words">{group.title}</span>
+                    <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
+                      {group.sources.length} {group.sources.length === 1 ? "file" : "files"}
+                    </span>
+                  </CollapsibleTrigger>
+                </h3>
+                <CollapsibleContent className="border-t border-border/70">
+                  {group.note ? (
+                    <p className="px-3 pt-2.5 text-xs text-muted-foreground sm:px-4">{group.note}</p>
+                  ) : null}
+                  <ul className="divide-y divide-border/70">
+                    {group.sources.map((source) => (
+                      <SourceRow
+                        key={String(source._id)}
+                        projectId={projectId}
+                        source={source}
+                        units={units}
+                        ingestionJob={ingestion.find((item) => item.sourceId === String(source._id))}
+                        preparationJob={preparation.find((item) => item.sourceId === String(source._id))}
+                        onRetryIngestion={onRetryIngestion}
+                      />
+                    ))}
+                  </ul>
+                </CollapsibleContent>
+              </section>
+            </Collapsible>
+          ))}
+        </div>
       ) : (
         <p className="text-sm text-muted-foreground">No files match “{filter.trim()}”.</p>
       )}
@@ -387,28 +443,35 @@ function SourceRow({
     }
   }
 
+  const name = sourceDisplayName(source.filename)
+
   return (
-    <li className="p-3 sm:p-4">
-      <div className="flex items-start gap-3">
-        <FileIcon className="mt-0.5 shrink-0 text-muted-foreground" size={20} aria-hidden="true" />
+    <li className="relative px-3 py-2.5 transition-colors hover:bg-muted/40 sm:px-4">
+      <div className="flex items-center gap-3">
+        <SourceTypeIcon source={source} />
         <div className="min-w-0 flex-1">
+          {/* The link's hit area covers the whole row; the menu sits above it. */}
           <Link
             href={href}
-            className="font-medium break-words hover:text-brand focus-visible:rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+            title={source.filename === name ? undefined : source.filename}
+            className="line-clamp-2 text-sm font-medium break-words after:absolute after:inset-0 after:content-[''] focus-visible:outline-none focus-visible:after:rounded-md focus-visible:after:ring-2 focus-visible:after:ring-ring focus-visible:after:ring-inset"
           >
-            {source.filename}
+            {name}
           </Link>
           <p className="mt-0.5 text-xs text-muted-foreground">{sourceDetails(source)}</p>
         </div>
-        <Badge variant={state.variant} className="mt-0.5 shrink-0">
-          {state.label}
-        </Badge>
+        {/* Ready is the normal state, so only states that need a look get a badge. */}
+        {state.label !== "Ready" ? (
+          <Badge variant={state.variant} className="shrink-0">
+            {state.label}
+          </Badge>
+        ) : null}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button
               variant="ghost"
-              className="-my-1.5 min-h-10 min-w-10 shrink-0 rounded-full"
-              aria-label={`Actions for ${source.filename}`}
+              className="relative z-10 -my-1.5 min-h-10 min-w-10 shrink-0 rounded-full"
+              aria-label={`Actions for ${name}`}
             >
               ⋯
             </Button>
@@ -449,12 +512,12 @@ function SourceRow({
         </div>
       ) : null}
       {source.unsupported && !preparationJob ? (
-        <p className="mt-3 rounded-md bg-muted/60 px-3 py-2 text-sm text-muted-foreground">
-          The original is saved. Blitz cannot read this file type yet.
+        <p className="mt-1 pl-[30px] text-xs text-muted-foreground">
+          Blitz cannot read this file type yet, so it is not used for teaching.
         </p>
       ) : null}
       {state.label === "Needs attention" ? (
-        <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
+        <div className="relative z-10 mt-3 flex flex-wrap items-center justify-between gap-2 rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
           <span>
             {sourceError(source, ingestionJob, preparationJob) ||
               "This file could not be prepared for retrieval."}
@@ -510,15 +573,13 @@ function SourceRow({
           ) : dialog === "move" ? (
             <div className="space-y-4">
               <DialogHeader>
-                <DialogTitle>Move {source.filename}</DialogTitle>
+                <DialogTitle>Move {name}</DialogTitle>
                 <DialogDescription>
                   A unit&apos;s Teach session covers new files once you restart it.
                 </DialogDescription>
               </DialogHeader>
               <div className="space-y-2">
-                <label htmlFor={`source-destination-${sourceId}`} className="text-sm font-medium">
-                  Move to
-                </label>
+                <Label htmlFor={`source-destination-${sourceId}`}>Move to</Label>
                 <Select value={destination} onValueChange={setDestination}>
                   <SelectTrigger id={`source-destination-${sourceId}`} className="min-h-11 w-full">
                     <SelectValue />
@@ -551,7 +612,7 @@ function SourceRow({
           ) : dialog === "delete" ? (
             <div className="space-y-4">
               <DialogHeader>
-                <DialogTitle>Delete {source.filename}?</DialogTitle>
+                <DialogTitle>Delete {name}?</DialogTitle>
                 <DialogDescription>
                   This deletes the file from Blitz and from the module&apos;s folder on this
                   computer. Questions made only from it leave your drills. Your answers and XP

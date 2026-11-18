@@ -7,6 +7,7 @@
 
 import { useMutation, useQuery } from "convex/react"
 
+import { PageContainer } from "@/components/page-container"
 import { ProjectGrid } from "@/components/projects/project-grid"
 import { TodayPanel } from "@/components/progress/today-panel"
 import { useMinuteClock } from "@/hooks/use-minute-clock"
@@ -20,7 +21,7 @@ export default function Page() {
   const createProject = useMutation(api.projects.createProject)
 
   return (
-    <main className="mx-auto w-full max-w-6xl px-5 py-10 pb-28 sm:px-8 sm:py-16">
+    <PageContainer>
       <TodayPanel />
       <ProjectGrid
         projects={projects}
@@ -29,6 +30,6 @@ export default function Page() {
           await createProject({ title })
         }}
       />
-    </main>
+    </PageContainer>
   )
 }

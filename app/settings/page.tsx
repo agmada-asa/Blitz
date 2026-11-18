@@ -1,5 +1,6 @@
 /** Presents application-wide appearance and AI settings for Blitz. */
 
+import { PageContainer } from "@/components/page-container"
 import { AppearanceSettings } from "@/components/settings/appearance-settings"
 import { DesktopLinkSettings } from "@/components/settings/desktop-link-settings"
 import { KokoroVoiceSettings } from "@/components/settings/kokoro-voice-settings"
@@ -10,7 +11,7 @@ import { StudyGoalSettings } from "@/components/settings/study-goal-settings"
 /** Renders the settings route and groups appearance choices above AI settings. */
 export default function SettingsPage() {
   return (
-    <main className="mx-auto w-full max-w-4xl px-5 py-8 pb-28 sm:px-8 sm:py-12">
+    <PageContainer>
       <div className="mb-8 max-w-2xl">
         <h1 className="font-heading text-3xl font-medium tracking-tight sm:text-4xl">
           Settings
@@ -81,6 +82,6 @@ export default function SettingsPage() {
           <ModelSettingsForm />
         </section>
       </div>
-    </main>
+    </PageContainer>
   )
 }

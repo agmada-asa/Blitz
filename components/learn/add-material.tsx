@@ -24,6 +24,7 @@ import {
 } from "@/components/ui/dialog"
 import { CheckIcon, FileIcon, LoadingIcon } from "@/components/ui/icon"
 import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
 import {
   Select,
   SelectContent,
@@ -294,10 +295,8 @@ export function AddMaterial({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-1.5">
-          <label htmlFor="material-unit" className="text-sm font-medium">
-            Add to
-          </label>
+        <div className="space-y-2">
+          <Label htmlFor="material-unit">Add to</Label>
           <Select value={target} onValueChange={setTarget} disabled={busy || Boolean(doneUnitId)}>
             <SelectTrigger id="material-unit" className="min-h-11 w-full">
               <SelectValue />

@@ -12,6 +12,7 @@ import { useBackgroundNotice } from "@/components/background-notices"
 import { Button } from "@/components/ui/button"
 import { isArchived } from "@/lib/projects"
 import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
 import {
   Dialog,
   DialogContent,
@@ -157,12 +158,7 @@ export function ProjectActions({
           >
             {action === "rename" && (
               <div className="grid gap-2">
-                <label
-                  htmlFor={`rename-${project._id}`}
-                  className="font-medium"
-                >
-                  Project name
-                </label>
+                <Label htmlFor={`rename-${project._id}`}>Project name</Label>
                 <Input
                   id={`rename-${project._id}`}
                   value={title}

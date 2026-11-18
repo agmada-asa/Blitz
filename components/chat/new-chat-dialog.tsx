@@ -16,6 +16,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
 import { LoadingIcon } from "@/components/ui/icon"
 import type { Id } from "@/convex/_generated/dataModel"
 
@@ -105,9 +106,7 @@ export function NewChatDialog({
             }}
           >
             <div className="grid gap-2">
-              <label htmlFor="new-chat-project-name" className="font-medium">
-                Project name
-              </label>
+              <Label htmlFor="new-chat-project-name">Project name</Label>
               <Input
                 id="new-chat-project-name"
                 autoFocus
