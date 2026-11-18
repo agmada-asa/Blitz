@@ -347,7 +347,7 @@ function OutcomeMark({ tone }: { tone: "good" | "bad" | "neutral" }) {
 /** One concept's marks with a bar, and Relearn when marks were lost. */
 function ConceptRow({ row, projectId }: { row: Review["breakdown"][number]; projectId: string }) {
   return (
-    <li className="flex items-center justify-between gap-3 px-4 py-3 sm:px-5">
+    <li className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-5">
       <div className="min-w-0 flex-1">
         <p className="font-medium break-words">{row.concept}</p>
         <p className="text-xs text-muted-foreground tabular-nums">
