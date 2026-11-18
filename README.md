@@ -19,6 +19,16 @@ npm run dev
 
 Blitz opens in your browser when it has started; if it doesn't, open the printed address. Create a project, add a week's material, and open its first unit to start a Teach session. The address also works on a phone on the same Wi-Fi.
 
+## Which one to run
+
+| For | Run | Updates itself |
+| --- | --- | --- |
+| Everyday use on a Mac | `npm run server -- install` once, then `npm run desktop:install` for Blitz.app | Yes, from `main` every 15 minutes |
+| A long session from this checkout | `npm run dev:lan` | No |
+| Working on the code | `npm run dev` | No, it reloads as you edit |
+
+The background server and Blitz.app are one Blitz: the app opens the server on port `3007`, and so does any browser or phone, so they always run the same version. A browser tab that was already open keeps the old version until you reload it. When the server is installed, `npm run dev:lan` opens it rather than starting a second copy, and `npm run dev` starts only Next on port `3009` against the same database. See [local server](docs/local-server.md) and [Blitz.app](docs/local-desktop-host.md).
+
 ## What it does
 
 - **Teach**: each upload is filed into a unit (a week or a lecture). Opening a unit starts a live lesson with an outline, citations back to your sources, and quick checks along the way. See [Teach](docs/teach.md).
@@ -129,14 +139,14 @@ npm run check:runtimes
 
 `npm run check:runtimes` reports when OpenCode, Antigravity or the Codex model catalogue no longer matches what Blitz relies on; Codex and Claude Code compatibility is checked by [agent-engines](docs/agent-engines.md). See [AI model settings](docs/ai-model-settings.md).
 
-The [overhaul plan](docs/overhaul-plan.md) records the current direction. Implementation details are in [Teach](docs/teach.md), [source ingestion](docs/source-ingestion.md), [learning API](docs/learning-api.md), [provider text turns and legacy card chat](docs/card-chat.md), and [providers through agent-engines](docs/agent-engines.md).
+Implementation details are in [Teach](docs/teach.md), [source ingestion](docs/source-ingestion.md), [learning API](docs/learning-api.md), [provider text turns and legacy card chat](docs/card-chat.md), and [providers through agent-engines](docs/agent-engines.md).
 
 ## Known limits
 
 This version is a personal local app without account authentication. It is not configured for public hosting. The local agent is separate from any future cloud sync service. Creating proposed notes, richer diagrams, and moving topics are still outside this version.
 
 - The agents, local database, and speech run on the computer hosting Blitz; a phone is only a client of it.
-- Six local processes (Next.js, Convex, and workers) run under one supervisor. Consolidating the workers is planned.
+- Three local processes (Next.js, Convex, and one worker) run under one supervisor; the speech worker starts on demand.
 - Citations land on a page, slide, timestamp, or heading when the source has one; other passages only get a section label.
 
 ## Credits
