@@ -46,6 +46,7 @@ export const RUNNER_FILES = [
   "electron/login-environment.mjs",
   "electron/release-manager.mjs",
   "electron/service-manager.mjs",
+  "scripts/dev-console.mjs",
   "scripts/dev-lan.mjs",
   "scripts/process-groups.mjs",
 ]

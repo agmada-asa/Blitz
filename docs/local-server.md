@@ -21,6 +21,15 @@ does, it starts only Next, on port 3009, against that database, and does not
 push this checkout's Convex functions or start workers. To work on Convex
 functions, stop the server first with `npm run server -- stop`.
 
+`npm run dev` keeps the terminal short. Next, Convex and worker output goes to
+`~/.blitz/logs/dev.log`. The terminal prints "Blitz has started" with the
+address. It also shows problem lines from the log, such as errors, failed
+Convex pushes and requests that answered 5xx, and service restarts. When
+started from a terminal, it opens Blitz in the default browser. If startup
+fails, the last lines of the log are printed above the error. Pass
+`-- --verbose` to stream all output as before, and `-- --no-open` or
+`BLITZ_OPEN=0` to keep the browser closed.
+
 ## The background server
 
 `npm run server -- install` sets up the Blitz home, `~/.blitz` (or `BLITZ_HOME`):
@@ -33,7 +42,8 @@ functions, stop the server first with `npm run server -- stop`.
   `node_modules` and `.next`. The newest three are kept.
 - `current`: a link to the release being served.
 - `logs/`: `server.log` (the server's own messages), `services.log` (Next,
-  Convex, and the worker; trimmed above 20 MB), and one `build-*.log` per build.
+  Convex, and the worker; trimmed above 20 MB), `dev.log` (the same output
+  from `npm run dev`, also trimmed above 20 MB), and one `build-*.log` per build.
 - `run/state.json`: the release, the last check, and the last failure, read by
   the desktop app and `npm run server -- status`.
 
