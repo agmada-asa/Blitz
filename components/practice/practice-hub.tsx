@@ -154,8 +154,8 @@ export function PracticeHub({ projectId }: { projectId: string }) {
       ) : (
         <>
           {/* Drill leads; the other two ways to practise sit beside it instead of at the bottom. */}
-          <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)_minmax(0,1fr)]">
-            <section className="col-span-2 flex flex-col gap-4 rounded-2xl sm:col-span-1 border border-brand/25 bg-brand/[0.05] p-5 sm:flex-row sm:items-center sm:justify-between">
+          <div className="mt-4 grid gap-3 sm:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)_minmax(0,1fr)]">
+            <section className="flex flex-col gap-4 rounded-2xl border border-brand/25 bg-brand/[0.05] p-5 sm:flex-row sm:items-center sm:justify-between">
               <div className="min-w-0">
                 <h2 className="font-heading text-lg font-semibold">Drill</h2>
                 <p className="mt-0.5 text-sm text-muted-foreground">
@@ -323,7 +323,7 @@ function PracticeModeLink({
   return (
     <Link
       href={href}
-      className="flex min-h-20 min-w-0 flex-col items-start gap-2 rounded-2xl border border-border bg-card p-4 transition-colors hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none sm:p-5"
+      className="flex min-h-20 items-center gap-3 rounded-2xl border border-border bg-card p-4 transition-colors hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none sm:flex-col sm:items-start sm:gap-2 sm:p-5"
     >
       <Icon aria-hidden="true" className="size-5 shrink-0 text-brand" />
       <span className="min-w-0">
