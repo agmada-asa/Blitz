@@ -3,7 +3,7 @@
 /** Owns the editable, persisted model and reasoning choices for each AI task in Blitz. */
 
 import { providerAccessChoice } from "@/lib/provider-capabilities"
-import { useState, type FormEvent } from "react"
+import { useState } from "react"
 import { useMutation, useQuery } from "convex/react"
 
 import { ModelReasoningPicker } from "@/components/settings/model-reasoning-picker"
@@ -83,38 +83,53 @@ const MODEL_FIELDS: Array<{
 /** Copy and intent for the save result announced to assistive technology. */
 type SaveFeedback = { tone: "error" | "success"; message: string } | null
 
-/** Renders saved model fields and submits a complete update as one configuration. */
+/**
+ * Renders the saved model fields. Every change saves straight away as one
+ * complete configuration, so there is no separate save step.
+ */
 export function ModelSettingsForm() {
   const savedSettings = useQuery(api.settings.get)
+  // Held here because the editor remounts whenever a save changes the stored
+  // settings, and the "saved" confirmation must survive that remount.
+  const [feedback, setFeedback] = useState<SaveFeedback>(null)
   if (savedSettings === undefined) return <ModelSettingsLoading />
 
   return (
     <ModelSettingsEditor
       key={JSON.stringify(savedSettings ?? DEFAULT_AI_MODEL_SETTINGS)}
       initialSettings={{ ...(savedSettings ?? DEFAULT_AI_MODEL_SETTINGS) }}
+      feedback={feedback}
+      onFeedback={setFeedback}
     />
   )
 }
 
-/** Edits one stable settings snapshot and resets only after Convex reports a new saved value. */
+/**
+ * Edits one stable settings snapshot and saves each change as it is made.
+ * Controls are disabled while a save runs, so changes never overlap. A failed
+ * save keeps the learner's choice on screen with the reason and a retry.
+ */
 function ModelSettingsEditor({
   initialSettings,
+  feedback,
+  onFeedback,
 }: {
   initialSettings: AiModelSettings
+  /** The latest save result, owned by the parent so it outlives a remount. */
+  feedback: SaveFeedback
+  onFeedback: (feedback: SaveFeedback) => void
 }) {
   const saveSettings = useMutation(api.settings.save)
   const [draft, setDraft] = useState<AiModelSettings>(initialSettings)
-  const [isDirty, setIsDirty] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
-  const [feedback, setFeedback] = useState<SaveFeedback>(null)
 
-  /** Marks a local change as pending and clears older save feedback. */
-  const markDirty = (): void => {
-    setIsDirty(true)
-    setFeedback(null)
+  /** Shows a change at once and saves it. */
+  const change = (next: AiModelSettings): void => {
+    setDraft(next)
+    void save(next)
   }
 
-  /** Updates one task's provider, model, and reasoning choice without saving yet. */
+  /** Updates one task's provider, model, and reasoning choice and saves it. */
   const updateSelection = (
     providerField: AiProviderField,
     modelField: AiModelField,
@@ -123,25 +138,23 @@ function ModelSettingsEditor({
     reasoning: AiReasoningEffort,
     provider: AiProviderId
   ): void => {
-    setDraft((current) => ({
-      ...current,
+    change({
+      ...draft,
       [providerField]: provider,
       [modelField]: model,
       [effortField]: reasoning,
-    }))
-    markDirty()
+    })
   }
 
-  /** Validates the complete form, then persists all choices in one Convex mutation. */
-  const save = async (event: FormEvent<HTMLFormElement>): Promise<void> => {
-    event.preventDefault()
+  /** Validates the complete configuration, then persists it in one Convex mutation. */
+  const save = async (next: AiModelSettings): Promise<void> => {
     if (isSaving) return
     let settings: AiModelSettings
     try {
-      settings = validateAiModelSettings(draft)
+      settings = validateAiModelSettings(next)
       validateAiTaskProviders(settings)
     } catch (error) {
-      setFeedback({
+      onFeedback({
         tone: "error",
         message:
           error instanceof Error
@@ -151,7 +164,7 @@ function ModelSettingsEditor({
       return
     }
     setIsSaving(true)
-    setFeedback(null)
+    onFeedback(null)
     try {
       const response = await fetch("/api/providers", { cache: "no-store" })
       if (!response.ok)
@@ -175,10 +188,9 @@ function ModelSettingsEditor({
       settings = validateAiModelSettings(settings, modelCatalogs)
       const saved = await saveSettings(settings)
       setDraft(saved)
-      setIsDirty(false)
-      setFeedback({ tone: "success", message: "AI settings saved." })
+      onFeedback({ tone: "success", message: "AI settings saved." })
     } catch (error) {
-      setFeedback({
+      onFeedback({
         tone: "error",
         message:
           error instanceof Error
@@ -191,7 +203,7 @@ function ModelSettingsEditor({
   }
 
   return (
-    <form onSubmit={save}>
+    <div>
       <Card className="gap-0 py-0">
         <CardHeader className="border-b py-5">
           <CardTitle>Model and reasoning choices</CardTitle>
@@ -229,12 +241,12 @@ function ModelSettingsEditor({
                       {description}
                     </p>
                   </div>
-                  <div className="space-y-1.5">
-                    <span className="text-xs font-medium">
+                  <div className="space-y-2">
+                    <p className="text-xs font-medium">
                       {task === "reply"
                         ? "Model, reasoning, and access"
                         : "Model and reasoning"}
-                    </span>
+                    </p>
                     <div>
                       <ModelReasoningPicker
                         task={task}
@@ -252,16 +264,14 @@ function ModelSettingsEditor({
                         showAccessPolicy={task === "reply"}
                         onAccessPolicyChange={
                           task === "reply"
-                            ? (policy) => {
-                                setDraft((current) => ({
-                                  ...current,
+                            ? (policy) =>
+                                change({
+                                  ...draft,
                                   providerApprovalPolicies: {
-                                    ...current.providerApprovalPolicies,
+                                    ...draft.providerApprovalPolicies,
                                     [selectedProvider]: policy,
                                   },
-                                }))
-                                markDirty()
-                              }
+                                })
                             : undefined
                         }
                         disabled={isSaving}
@@ -308,16 +318,15 @@ function ModelSettingsEditor({
                       isSaving ||
                       AI_PROVIDER_APPROVAL_POLICIES[provider.id].length === 1
                     }
-                    onValueChange={(value) => {
-                      setDraft((current) => ({
-                        ...current,
+                    onValueChange={(value) =>
+                      change({
+                        ...draft,
                         providerApprovalPolicies: {
-                          ...current.providerApprovalPolicies,
+                          ...draft.providerApprovalPolicies,
                           [provider.id]: value as AiApprovalPolicy,
                         },
-                      }))
-                      markDirty()
-                    }}
+                      })
+                    }
                   >
                     <SelectTrigger
                       id={`approval-${provider.id}`}
@@ -344,26 +353,32 @@ function ModelSettingsEditor({
           <p
             aria-live="polite"
             className={
-              feedback?.tone === "error"
+              feedback?.tone === "error" && !isSaving
                 ? "text-sm text-destructive"
                 : "text-sm text-muted-foreground"
             }
           >
-            {feedback?.message ??
-              (isDirty
-                ? "Unsaved changes"
-                : "Changes apply when Blitz starts its next AI turn.")}
+            {isSaving
+              ? "Saving…"
+              : feedback?.tone === "error"
+                ? feedback.message
+                : feedback
+                  ? `${feedback.message} They apply when Blitz starts its next AI turn.`
+                  : "Changes save as you make them and apply when Blitz starts its next AI turn."}
           </p>
-          <Button
-            type="submit"
-            disabled={isSaving || !isDirty}
-            className="h-10 rounded-xl bg-brand px-4 text-brand-foreground hover:bg-brand/85"
-          >
-            {isSaving ? "Saving AI settings" : "Save AI settings"}
-          </Button>
+          {feedback?.tone === "error" && !isSaving ? (
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => void save(draft)}
+              className="h-10 rounded-xl px-4"
+            >
+              Try again
+            </Button>
+          ) : null}
         </CardFooter>
       </Card>
-    </form>
+    </div>
   )
 }
 
