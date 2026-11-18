@@ -57,7 +57,11 @@ try {
   process.exit(exitCode)
 }
 
-/** Resolves once the launcher prints that Blitz is ready, or throws if it exits or stalls. */
+/**
+ * Resolves once the launcher prints that Blitz is ready and Convex has pushed
+ * Blitz's functions, which on a fresh clone finishes a little later; throws if
+ * the launcher exits or stalls.
+ */
 function waitForReady() {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(
@@ -65,7 +69,7 @@ function waitForReady() {
       READY_TIMEOUT_MS
     )
     const check = setInterval(() => {
-      if (!/Blitz is ready at/.test(output)) return
+      if (!/Blitz is ready at/.test(output) || !/Convex functions ready/.test(output)) return
       clearInterval(check)
       clearTimeout(timer)
       resolve(undefined)
