@@ -1078,11 +1078,12 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
               (voice.phase === "hearing" || voice.phase === "thinking") && "opacity-55"
             )}
           >
-            {/* The lesson uses most of the section's width. The bottom padding lets
+            {/* The lesson runs a little wider than the dock but stops short of the
+                full section, so lines stay easy to scan. The bottom padding lets
                 its last lines scroll clear of the controls floating over it. */}
             <div
               ref={columnRef}
-              className="mx-auto w-full max-w-6xl px-4 pt-8 pb-52 sm:px-8 lg:px-12"
+              className="mx-auto w-full max-w-4xl px-4 pt-8 pb-52 sm:px-8"
             >
               {chat ? (
                 <TeachLesson

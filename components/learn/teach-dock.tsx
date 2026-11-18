@@ -2,7 +2,7 @@
 
 /**
  * The bottom of the Teach screen: one bar, centred and floating over the
- * bottom of the wider lesson text, that moves the lesson along. It says `Next section` while the lesson waits for
+ * bottom of the slightly wider lesson text, that moves the lesson along. It says `Next section` while the lesson waits for
  * the learner and shows a disabled spinner while the tutor works. After the
  * opening pre-check it offers to plan the lesson around the answers or skip
  * the check; after the recap it offers practice and the next unit. N sends the
@@ -183,7 +183,7 @@ export function TeachDock({ state, error, onSend, onResume }: TeachDockProps) {
   }
 
   return (
-    // A comfortable reading width, centred; the lesson text runs wider underneath.
+    // A comfortable reading width, centred; the lesson text runs a little wider underneath.
     <div className="mx-auto w-full max-w-3xl px-4 pt-2 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:px-6">
       {error ? (
         <p role="alert" className="mb-2 text-sm text-destructive">
