@@ -275,7 +275,12 @@ test(
       shutdownGraceMs: 20,
     })
     await assert.rejects(runtime.synthesize(request), /took too long/)
-    assert.equal(child.signalCode, "SIGKILL")
+    // Windows cannot ignore SIGTERM: Node terminates the process on the first
+    // signal, so the escalation to SIGKILL never happens there.
+    assert.equal(
+      child.signalCode,
+      process.platform === "win32" ? "SIGTERM" : "SIGKILL"
+    )
     assert.throws(() => process.kill(child.pid!, 0), { code: "ESRCH" })
   }
 )
@@ -292,7 +297,12 @@ test("a real missing executable fails startup without leaking timers", async () 
 
 test(
   "Python stops stalled inference after its Node parent is abruptly killed",
-  { timeout: 8_000 },
+  {
+    timeout: 8_000,
+    // The watchdog notices reparenting, which Windows does not do, and local
+    // Kokoro is installed on macOS only.
+    skip: process.platform === "win32" && "Local Kokoro runs on macOS only",
+  },
   async (t) => {
     if (spawnSync("python3", ["--version"]).error) {
       t.skip("Python is not installed on this host.")

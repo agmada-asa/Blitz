@@ -19,6 +19,7 @@ import { AcpEngine, type AcpEngineOptions } from "agent-engines"
 
 import type { ProviderTextTurnRequest } from "./types.ts"
 import { providerCommand } from "./registry.ts"
+import { windowsSpawnOption } from "./spawn-command.ts"
 
 /** The access settings of one turn that decide how Antigravity starts. */
 export type AntigravityPolicyRequest = Pick<
@@ -66,6 +67,6 @@ export function createAntigravityEngine(
     cwd: workspaceDirectory,
     clientName: "blitz",
     updater: "antigravity",
-    ...(spawnProcess ? { spawnProcess } : {}),
+    ...(spawnProcess ? { spawnProcess } : windowsSpawnOption()),
   })
 }

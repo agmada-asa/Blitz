@@ -1,6 +1,6 @@
 /** Owns user-initiated connect and disconnect operations for local AI providers. */
 
-import { spawn } from "node:child_process"
+import { spawnCommand as spawn } from "./spawn-command.ts"
 import { tmpdir } from "node:os"
 
 import type { AiProviderId } from "../../ai-model-settings.ts"

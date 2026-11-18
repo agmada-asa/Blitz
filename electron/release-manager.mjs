@@ -246,15 +246,19 @@ function nextBuildEnvironment(environment, buildEnvironment, distDir) {
 
 /**
  * Runs `next build` at low CPU priority, so an update does not slow the Mac.
+ * Windows has no `nice`, so there the build runs at normal priority.
  * @param {RunCommand} run The command runner.
  * @param {string} directory The project directory to build.
  * @param {NodeJS.ProcessEnv} env The full build environment.
  * @param {string | undefined} logPath Where to append the build output.
+ * @param {NodeJS.Platform} [platform] The operating system, for tests.
  */
-function runNextBuild(run, directory, env, logPath) {
+export function runNextBuild(run, directory, env, logPath, platform = process.platform) {
+  const build = ["node", join("node_modules", "next", "dist", "bin", "next"), "build"]
+  const [command, ...args] = platform === "win32" ? build : ["nice", "-n", "10", ...build]
   return run(
-    "nice",
-    ["-n", "10", "node", join("node_modules", "next", "dist", "bin", "next"), "build"],
+    command,
+    args,
     { cwd: directory, env, logPath, timeoutMs: 20 * 60_000, label: "next build" }
   )
 }

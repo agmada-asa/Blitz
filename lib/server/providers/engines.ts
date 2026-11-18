@@ -21,6 +21,7 @@ import {
 
 import type { AiReasoningEffort } from "../../ai-model-settings.ts"
 import { providerCommand } from "./registry.ts"
+import { windowsSpawnOption } from "./spawn-command.ts"
 import type { ProviderAvailability, ProviderModelOption } from "./types.ts"
 
 /** Providers with their own agent-engines engine. OpenCode's ACP engine is in `opencode.ts`. */
@@ -66,8 +67,24 @@ export function createCodexEngine(
     env: engineEnvironment(),
     requireSubscription: false,
     clientName: "blitz",
+    ...windowsSpawnOption(),
     ...options,
   })
+}
+
+/**
+ * The Claude Code executable the engine should run. On Windows, unless one is
+ * configured, the Agent SDK's bundled Claude Code runs instead: an npm install
+ * of `claude` is a `.cmd` script the SDK cannot start, and the bundled copy
+ * reads the same sign-in.
+ */
+function claudeExecutable(): string | undefined {
+  if (
+    process.platform === "win32" &&
+    !process.env.BLITZ_CLAUDE_CODE_COMMAND?.trim()
+  )
+    return undefined
+  return providerCommand("claude-code").executable
 }
 
 /**
@@ -80,8 +97,9 @@ export function createCodexEngine(
 export function createClaudeEngine(
   options: { effortSelected?: boolean } = {}
 ): ClaudeEngine {
+  const executable = claudeExecutable()
   return new ClaudeEngine({
-    executable: providerCommand("claude-code").executable,
+    ...(executable ? { executable } : {}),
     env: engineEnvironment(options.effortSelected === true),
     requireSubscription: false,
   })

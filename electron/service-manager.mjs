@@ -403,28 +403,21 @@ export class ServiceManager {
     this.definitions = new Map()
     if (base.BLITZ_DESKTOP_SKIP_CONVEX !== "1") {
       const portArgs = ["--local-cloud-port", convexPort, "--local-site-port", sitePort]
-      if (this.production)
-        // A release never changes, so type checks and code generation would
-        // only slow every start; `convex dev` still pushes the functions once.
-        this.define("convex", "node", [
-          CONVEX_CLI,
-          "dev",
-          "--tail-logs",
-          "disable",
-          "--typecheck",
-          "disable",
-          "--codegen",
-          "disable",
-          ...portArgs,
-        ])
-      else
-        this.define("convex", "npx", [
-          "convex",
-          "dev",
-          "--tail-logs",
-          "disable",
-          ...portArgs,
-        ])
+      // The CLI runs under `node` directly rather than through `npx`, whose
+      // Windows `.cmd` shim Node cannot spawn without a shell. A release never
+      // changes, so type checks and code generation would only slow every
+      // start; `convex dev` still pushes the functions once.
+      const releaseArgs = this.production
+        ? ["--typecheck", "disable", "--codegen", "disable"]
+        : []
+      this.define("convex", "node", [
+        CONVEX_CLI,
+        "dev",
+        "--tail-logs",
+        "disable",
+        ...releaseArgs,
+        ...portArgs,
+      ])
     }
     // Next runs directly in the group this supervisor records, not through a
     // launcher such as `scripts/dev.mjs` that would move it into a group of

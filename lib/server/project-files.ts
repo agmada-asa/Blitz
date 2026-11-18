@@ -14,7 +14,15 @@ import {
   type Stats,
 } from "node:fs"
 import { homedir } from "node:os"
-import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
+import {
+  dirname,
+  isAbsolute,
+  join,
+  parse,
+  relative,
+  resolve,
+  sep,
+} from "node:path"
 import { pipeline } from "node:stream/promises"
 import { Readable, Transform } from "node:stream"
 
@@ -108,13 +116,16 @@ export async function ensureProjectDirectory(
 /** Rejects symlink ancestors before any recursive directory creation can follow them. */
 async function assertExistingPathHasNoSymlinks(target: string): Promise<void> {
   const absoluteTarget = resolve(target)
-  const parsedRoot = absoluteTarget.startsWith(sep) ? sep : ""
+  // Start from the real filesystem root (`/` or a drive such as `C:\`). Joining
+  // a bare drive letter would produce drive-relative paths like `C:Users`
+  // that resolve against the drive's working directory instead.
+  const parsedRoot = parse(absoluteTarget).root
   let current = parsedRoot
   for (const part of absoluteTarget
     .slice(parsedRoot.length)
     .split(sep)
     .filter(Boolean)) {
-    current = join(current || parsedRoot, part)
+    current = join(current, part)
     try {
       const entry = await fs.lstat(current)
       if (entry.isSymbolicLink()) {
