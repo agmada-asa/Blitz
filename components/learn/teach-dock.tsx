@@ -7,9 +7,7 @@
  * opening pre-check it offers to plan the lesson around the answers or skip
  * the check; after the recap it offers practice and the next unit. N sends the
  * next section from the keyboard. Questions go to the side chat instead, which
- * leaves the lesson undisturbed, and Pause is in Unit options. The dock sits
- * under the lesson, not over it, and the jump to the latest reply sits beside
- * the bar, so neither covers the text.
+ * leaves the lesson undisturbed, and Pause is in Unit options.
  */
 
 import Link from "next/link"
@@ -46,8 +44,6 @@ type TeachDockProps = {
   error: string
   onSend: (message: string) => void
   onResume: () => void
-  /** A small control kept beside the bar, such as the jump to the latest reply; omitted when there is none. */
-  trailing?: ReactNode
 }
 
 /** Shape of the dock's main bar, and of any button sharing the row with it. */
@@ -57,7 +53,7 @@ const BAR_CLASS = "min-h-12 rounded-full text-[15px]"
 const PRIMARY_BAR_CLASS = `${BAR_CLASS} min-w-0 flex-1 bg-brand px-5 text-brand-foreground hover:bg-brand/85`
 
 /** Renders the lesson's current action as a single bar. */
-export function TeachDock({ state, error, onSend, onResume, trailing }: TeachDockProps) {
+export function TeachDock({ state, error, onSend, onResume }: TeachDockProps) {
   const ready = state.kind === "ready"
 
   // While the lesson waits for the learner, N sends "Next section" unless they are typing or hold a modifier.
@@ -187,18 +183,14 @@ export function TeachDock({ state, error, onSend, onResume, trailing }: TeachDoc
   }
 
   return (
-    // Borderless, in the flow under the lesson rather than over it, and the same
-    // width and padding as the lesson column, so the bar lines up with its text.
+    // The same width and padding as the lesson column, so the bar lines up with its text.
     <div className="mx-auto w-full max-w-3xl px-4 pt-2 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:px-6">
       {error ? (
         <p role="alert" className="mb-2 text-sm text-destructive">
           {error}
         </p>
       ) : null}
-      <div className="flex items-end gap-2">
-        <div className="min-w-0 flex-1">{bar()}</div>
-        {trailing}
-      </div>
+      {bar()}
     </div>
   )
 }
