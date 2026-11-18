@@ -63,6 +63,7 @@ names the PR that delivers it once one exists.
 - [x] Interactive blocks in chat, follow-up chips, and Quiz me
 - [x] Save chat quizzes into a unit's question bank
 - [x] Citations for every source type (`docs/chat-citations.md`), including Word documents and reference books
+- [x] Source reader draws PowerPoint slides, Word documents and formatted Markdown at the cited passage
 
 ## Phase 5: polish and redesign
 

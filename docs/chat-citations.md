@@ -1,6 +1,6 @@
 # Chat source citations
 
-Chat replies can link directly to uploaded sources. A citation opens a source pane on desktop and a full-screen dialog on smaller screens. The reader scrolls to a highlighted passage, offers an original PDF view at the cited physical page, and can open independently in a new tab.
+Chat replies can link directly to uploaded sources. A citation opens a source pane on desktop and a full-screen dialog on smaller screens. The reader scrolls to a highlighted passage, opens PDFs, PowerPoint slides, Word documents and Markdown notes in their own view at the cited place, and can open independently in a new tab.
 
 ## Source storage
 
@@ -28,7 +28,15 @@ The manifest is stored before streaming begins. Reloads, interrupted responses, 
 
 PDF.js renders the requested page and highlights the text items that match the saved passage, ignoring whitespace and case (`pdfHighlightItems`). When the whole passage does not match, for example because extraction reordered columns, each sentence or line is matched separately on the cited page only. Font or layout differences can still prevent a visual match; the Passage tab always preserves the exact cited excerpt. Page numbers refer to physical PDF pages, which can differ from printed page labels.
 
-`Open original` uses `citationOriginalUrl`: a saved PDF opens at `#page=N`, a web source opens the live page (a PDF link at its page, any other page scrolled to the passage's opening words with a `#:~:text=` fragment), and other saved originals open or download whole.
+Other originals get their own view, chosen by `originalViewer` (`lib/source-viewers.ts`) and opened first:
+
+- **Slides** for a saved PowerPoint file. `lib/client/pptx-slides.ts` reads the file in the browser and draws each slide: positioned text with inherited layout, master and theme styles, pictures, tables and backgrounds. Charts, SmartArt, effects and EMF/WMF pictures are left out. The reader scrolls to the cited slide (from the `Slide N` label) and highlights the passage on it. Slides are numbered by part name, the same rule extraction uses, so a citation and the drawn slide always agree.
+- **Document** for a saved Word file, drawn by `docx-preview` with the pages reflowed to the reader's width.
+- **Formatted** for Markdown notes, and for Word documents whose original was not kept, drawn with the chat's Markdown renderer.
+
+These views find the passage with `quoteMatchSpans`, which ignores whitespace, case and Markdown syntax, and falls back to matching each sentence or line in order. The highlight uses the CSS Custom Highlight API, so the drawn original is never edited.
+
+`Open original` uses `citationOriginalUrl`: a saved PDF opens at `#page=N`, a web source opens the live page (a PDF link at its page, a YouTube video at the cited transcript moment, any other page scrolled to the passage's opening words with a `#:~:text=` fragment), and other saved originals open or download whole.
 
 ## Per source type
 
@@ -38,16 +46,17 @@ Every type Blitz ingests reaches Teach and chat as extracted text with explicit 
 | --- | --- | --- |
 | PDF upload, including slides exported to PDF | `Page N` (physical page) | Original PDF tab at the page, passage highlighted; Passage tab scrolled to it |
 | Whole textbook (reference book) | `Page N`, also past the 450 KB excerpt | Original PDF at the page; Passage tab shows the surrounding section |
-| PowerPoint (`.pptx`) | `Slide N` | Passage tab scrolled to the slide text; the original downloads |
-| Word (`.docx`) | The Word heading, else `Section N` | Passage tab scrolled to the passage; the original downloads |
-| Markdown, plain notes, pasted notes | The Markdown heading, else `Section N` | Passage tab scrolled to the passage |
-| `.vtt` and `.srt` transcripts, timestamped text | `m:ss` or `h:mm:ss` | Passage tab scrolled to the moment; there is no recording to seek |
+| PowerPoint (`.pptx`) | `Slide N` | Slides tab at the cited slide, passage highlighted; Passage tab scrolled to the slide text |
+| Word (`.docx`) | The Word heading, else `Section N` | Document tab with the passage highlighted; Passage tab scrolled to it |
+| Markdown notes | The Markdown heading, else `Section N` | Formatted tab with the passage highlighted; Passage tab scrolled to it |
+| Plain and pasted notes, code | The Markdown heading, else `Section N` | Passage tab scrolled to the passage |
+| `.vtt` and `.srt` transcripts, timestamped text | `m:ss` or `h:mm:ss` | Passage tab scrolled to the moment; a YouTube source opens at that moment, other recordings cannot be seeked |
 | Web article or link | The page heading, else `Section N` | Passage tab; `Open original` scrolls the live page to the passage |
 | PDF link | `Page N` | Passage tab; `Open original` opens the live PDF at the page |
 | Research import | As its format above | Passage tab; `Open original` opens the web source as for links |
 | Chat attachment | As its format above | As its format above; PDFs open the saved original at the page |
 
-Known gaps: PowerPoint and Word originals are not rendered in the reader, so their slide or heading is shown in the extracted text only. Text fragments depend on the browser and on the live page still containing the words. Research imports made before imports were filed into units have no passages: grouped into a unit they are still taught from their text, but cannot be cited. Adding the same link again with `Add material` gives it passages.
+Known gaps: the slide view is a reader, not PowerPoint, so animated builds show every step at once and charts are missing. Saved HTML pages are shown as extracted text only, because drawing untrusted HTML in the app would need a sanitiser. Text fragments depend on the browser and on the live page still containing the words. Research imports made before imports were filed into units have no passages: grouped into a unit they are still taught from their text, but cannot be cited. Adding the same link again with `Add material` gives it passages.
 
 The reader supports keyboard navigation, Escape to close, focus restoration, reduced motion, and a full-screen mobile layout. Source text and model Markdown are never injected as executable HTML.
 
