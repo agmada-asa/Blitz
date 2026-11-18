@@ -1,9 +1,9 @@
 "use client"
 
 /**
- * A module's home: links to its other areas (Practice, Sources, Listen) under
- * the title, the one next thing to learn, the learning path of units (weeks or
- * lectures) with their Teach progress, and a way to add this week's material.
+ * A module's home: the one next thing to learn, the learning path of units
+ * (weeks or lectures) with their Teach progress, and a way to add this week's
+ * material. Practice, sources, and listening are secondary destinations.
  */
 
 import Link from "next/link"
@@ -14,6 +14,7 @@ import { useState } from "react"
 import { AddMaterial } from "@/components/learn/add-material"
 import { ProjectActions } from "@/components/projects/project-actions"
 import {
+  PathConnector,
   PathMarker,
   SegmentedBar,
   pathSegments,
@@ -39,8 +40,10 @@ import {
 import {
   ArrowLeftIcon,
   ArrowRightIcon,
-  ChatIcon,
+  FileIcon,
+  HeadphonesIcon,
   PlusIcon,
+  ZapIcon,
 } from "@/components/ui/icon"
 import { Input } from "@/components/ui/input"
 import {
@@ -163,44 +166,29 @@ function ModuleOverview({ project }: { project: Doc<"projects"> }) {
     }
   }
 
-  const sourceCount = data
-    ? units.reduce((sum, unit) => sum + unit.sources.length, 0) +
-      data.unsortedSources.length +
-      data.referenceSources.length
-    : undefined
-
   return (
-    <main className="mx-auto w-full max-w-3xl px-4 py-8 text-foreground sm:px-8 sm:py-10">
-      <Button asChild variant="ghost" size="sm" className="mb-3 -ml-2 min-h-9 text-muted-foreground">
+    <main className="mx-auto w-full max-w-4xl px-4 py-8 text-foreground sm:px-8 sm:py-10">
+      <Button asChild variant="ghost" size="sm" className="mb-3 -ml-2 min-h-9">
         <Link href="/">
           <ArrowLeftIcon aria-hidden="true" /> Projects
         </Link>
       </Button>
-      <header className="flex items-start justify-between gap-3">
-        <div className="min-w-0 pt-0.5">
-          <h1 className="font-heading text-3xl font-semibold tracking-tight break-words sm:text-4xl">
-            {project.title}
-          </h1>
-          {data ? (
-            <p className="mt-1 text-sm text-muted-foreground">
-              {`${units.length} unit${units.length === 1 ? "" : "s"} · ${sourceCount} source${sourceCount === 1 ? "" : "s"}`}
-            </p>
-          ) : null}
-        </div>
-        <div className="flex shrink-0 items-center gap-1.5">
-          <Button asChild variant="outline" className="min-h-10 gap-1.5 rounded-full px-3.5">
+      <header className="flex flex-wrap items-center justify-between gap-3">
+        <h1 className="min-w-0 font-heading text-3xl font-semibold tracking-tight break-words sm:text-4xl">
+          {project.title}
+        </h1>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button asChild variant="ghost" className="min-h-10 rounded-full">
             <Link href={`/chat?projectId=${encodeURIComponent(String(projectId))}`}>
-              <ChatIcon aria-hidden="true" className="size-4" />
               Ask Blitz
             </Link>
           </Button>
           <ProjectActions project={project} returnToLibrary />
         </div>
       </header>
-      <ModuleAreas base={base} />
 
       {data === undefined ? (
-        <section aria-label="Loading module" className="mt-6 space-y-4">
+        <section aria-label="Loading module" className="mt-8 space-y-4">
           <Skeleton className="h-28 w-full rounded-2xl" />
           <Skeleton className="h-16 w-full rounded-xl" />
           <Skeleton className="h-16 w-full rounded-xl" />
@@ -208,7 +196,7 @@ function ModuleOverview({ project }: { project: Doc<"projects"> }) {
       ) : (
         <>
           {next ? (
-            <section className="mt-6 flex flex-col gap-4 rounded-2xl border border-brand/25 bg-brand/[0.05] p-5 sm:flex-row sm:items-center sm:justify-between sm:px-6">
+            <section className="mt-8 flex flex-col gap-4 rounded-2xl border border-brand/25 bg-brand/[0.05] p-5 sm:flex-row sm:items-center sm:justify-between sm:p-6">
               <div className="min-w-0 flex-1">
                 <p className="text-xs font-medium text-brand">
                   {next.teach?.sectionCount ? "Continue where you left off" : "Up next"}
@@ -221,6 +209,7 @@ function ModuleOverview({ project }: { project: Doc<"projects"> }) {
                       ? unitStatus(next)
                       : `${next.sources.length} source${next.sources.length === 1 ? "" : "s"} ready to teach`}
                 </p>
+                <SegmentedBar segments={unitSegments(next)} className="mt-3 max-w-md" />
               </div>
               <Button
                 asChild
@@ -233,14 +222,14 @@ function ModuleOverview({ project }: { project: Doc<"projects"> }) {
               </Button>
             </section>
           ) : allDone ? (
-            <section className="mt-6 flex flex-col gap-4 rounded-2xl border border-border bg-card p-5 sm:flex-row sm:items-center sm:justify-between sm:p-6">
+            <section className="mt-8 flex flex-col gap-4 rounded-2xl border border-border bg-card p-5 sm:flex-row sm:items-center sm:justify-between sm:p-6">
               <h2 className="font-heading text-xl font-semibold">Every unit is taught</h2>
               <Button asChild className="min-h-11 rounded-full px-6">
                 <Link href={`${base}/practice`}>Practice</Link>
               </Button>
             </section>
           ) : !units.length && !data.unsortedSources.length && !data.referenceSources.length ? (
-            <section className="mt-6 rounded-2xl border border-border bg-card p-6 text-center sm:p-10">
+            <section className="mt-8 rounded-2xl border border-border bg-card p-6 text-center sm:p-10">
               <h2 className="font-heading text-xl font-semibold">Add your first week</h2>
               <p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">
                 Upload a week&apos;s transcripts, slides, and notes. Blitz starts
@@ -271,7 +260,7 @@ function ModuleOverview({ project }: { project: Doc<"projects"> }) {
                   <PlusIcon aria-hidden="true" /> Add material
                 </Button>
               </div>
-              <ol className="mt-3 divide-y divide-border overflow-hidden rounded-2xl border border-border bg-card">
+              <ol className="mt-4 space-y-1">
                 {units.map((unit, index) => (
                   <UnitListItem
                     key={unit.id}
@@ -331,6 +320,41 @@ function ModuleOverview({ project }: { project: Doc<"projects"> }) {
               </ul>
             </section>
           ) : null}
+
+          <nav aria-label="Module areas" className="mt-10 grid gap-2 sm:grid-cols-3">
+            {[
+              {
+                href: `${base}/practice`,
+                label: "Practice",
+                detail: "Drills and mock exams",
+                icon: ZapIcon,
+              },
+              {
+                href: `${base}/sources`,
+                label: "Sources",
+                detail: `${units.reduce((sum, unit) => sum + unit.sources.length, 0) + data.unsortedSources.length + data.referenceSources.length} files and links`,
+                icon: FileIcon,
+              },
+              {
+                href: `${base}/listen`,
+                label: "Listen",
+                detail: "Podcasts made from your units",
+                icon: HeadphonesIcon,
+              },
+            ].map((item) => (
+              <Link
+                key={item.href}
+                href={item.href}
+                className="flex min-h-16 items-center gap-3 rounded-xl border border-border bg-card px-4 py-3 transition-colors hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+              >
+                <item.icon aria-hidden="true" className="size-5 shrink-0 text-brand" />
+                <span className="min-w-0">
+                  <span className="block text-sm font-medium">{item.label}</span>
+                  <span className="block truncate text-xs text-muted-foreground">{item.detail}</span>
+                </span>
+              </Link>
+            ))}
+          </nav>
         </>
       )}
 
@@ -346,43 +370,6 @@ function ModuleOverview({ project }: { project: Doc<"projects"> }) {
         />
       ) : null}
     </main>
-  )
-}
-
-/**
- * The module's areas as a row of links under its title: the learning path
- * (this page, marked current), then Practice, Sources and Listen. They sat
- * below the unit list before, out of sight on a long module.
- * @param base The module's URL prefix, `/projects/<id>`.
- */
-function ModuleAreas({ base }: { base: string }) {
-  const areas = [
-    { href: base, label: "Learning path", current: true },
-    { href: `${base}/practice`, label: "Practice" },
-    { href: `${base}/sources`, label: "Sources" },
-    { href: `${base}/listen`, label: "Listen" },
-  ]
-  return (
-    <nav aria-label="Module areas" className="mt-4">
-      <ul className="flex flex-wrap gap-1.5">
-        {areas.map((area) => (
-          <li key={area.href}>
-            <Link
-              href={area.href}
-              aria-current={area.current ? "page" : undefined}
-              className={cn(
-                "inline-flex min-h-9 items-center rounded-full border px-3.5 text-sm transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none",
-                area.current
-                  ? "border-border bg-muted font-medium text-foreground"
-                  : "border-border/70 text-muted-foreground hover:bg-muted/60 hover:text-foreground"
-              )}
-            >
-              {area.label}
-            </Link>
-          </li>
-        ))}
-      </ul>
-    </nav>
   )
 }
 
@@ -478,44 +465,32 @@ function UnitListItem({
     }
   }
 
-  // A finished unit is one compact line; only the unit in progress shows its bar.
-  const compact = state === "done" && !updating && !failure && !newFiles
-
   return (
     <li
       className={cn(
-        "group relative flex gap-3 px-3 transition-colors hover:bg-muted/50 sm:px-4",
-        compact ? "items-center py-2" : "items-start py-3",
-        state === "current" && "bg-brand/[0.05]"
+        "group relative flex items-start gap-3 rounded-xl px-3 py-3 transition-colors hover:bg-muted/60",
+        state === "current" && "bg-brand/[0.06]"
       )}
     >
-      <PathMarker
-        state={state}
-        number={number}
-        className={cn(
-          "size-7 text-xs",
-          !compact && "mt-0.5",
-          // Finished units are quieter than the one in progress.
-          state === "done" && "border-transparent bg-brand/15 text-brand"
-        )}
-      />
-      <div className={cn("min-w-0 flex-1", compact && "flex flex-wrap items-baseline gap-x-2")}>
+      {/* The path joins each unit's marker to the next; taught stretches are filled. */}
+      {!isLast ? (
+        <PathConnector done={state === "done"} className="top-[48px] -bottom-[16px] left-[27.5px] z-10" />
+      ) : null}
+      <PathMarker state={state} number={number} size="md" />
+      <div className="min-w-0 flex-1 pt-0.5">
         <Link
           href={href}
           aria-current={state === "current" ? "step" : undefined}
           className={cn(
-            "font-medium break-words after:absolute after:inset-0 focus-visible:outline-none focus-visible:after:ring-2 focus-visible:after:ring-ring focus-visible:after:ring-inset",
-            compact ? "inline text-sm" : "block",
+            "block font-medium break-words after:absolute after:inset-0 after:rounded-xl focus-visible:outline-none focus-visible:after:ring-2 focus-visible:after:ring-ring",
             state === "ahead" && "text-foreground/85"
           )}
         >
           {unit.title}
           <span className="sr-only"> ({pathStateLabel(state)})</span>
         </Link>
-        <p className={cn("text-xs text-muted-foreground", compact ? "inline" : "mt-0.5")}>{unitStatus(unit)}</p>
-        {state === "current" ? (
-          <SegmentedBar size="sm" segments={segments} className="mt-2 max-w-sm" />
-        ) : null}
+        <p className="mt-0.5 text-xs text-muted-foreground">{unitStatus(unit)}</p>
+        <SegmentedBar size="sm" segments={segments} className="mt-2 max-w-sm" />
         {updating ? (
           <p role="status" className="mt-1.5 text-xs text-muted-foreground">
             Updating the lesson…
@@ -534,8 +509,7 @@ function UnitListItem({
         <DropdownMenuTrigger asChild>
           <Button
             variant="ghost"
-            // Shown on hover or focus where a pointer can hover, so the list stays quiet; always shown on touch.
-            className="relative z-10 min-h-10 min-w-10 rounded-full text-muted-foreground [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100 [@media(hover:hover)]:group-focus-within:opacity-100 [@media(hover:hover)]:aria-expanded:opacity-100"
+            className="relative z-10 min-h-10 min-w-10 rounded-full"
             aria-label={`Actions for ${unit.title}`}
           >
             ⋯
