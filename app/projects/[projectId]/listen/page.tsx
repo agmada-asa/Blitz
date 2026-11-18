@@ -32,7 +32,7 @@ export default function ProjectListenPage({
   if (project === undefined || sourceStatus === "LoadingFirstPage")
     return (
       <main
-        className="mx-auto max-w-5xl space-y-5 px-4 py-8 pb-32 sm:px-8"
+        className="mx-auto max-w-3xl space-y-5 px-4 py-6 pb-32 sm:px-8 sm:py-10"
         aria-busy="true"
       >
         <Skeleton className="h-8 w-40" />
@@ -43,7 +43,7 @@ export default function ProjectListenPage({
 
   if (project === null)
     return (
-      <main className="mx-auto max-w-5xl space-y-4 px-4 py-8 pb-32 sm:px-8">
+      <main className="mx-auto max-w-3xl space-y-4 px-4 py-6 pb-32 sm:px-8 sm:py-10">
         <h1 className="font-heading text-2xl font-medium">Project not found</h1>
         <Button asChild variant="outline">
           <Link href="/">Back to library</Link>
