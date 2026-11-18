@@ -21,10 +21,10 @@ import { cn } from "@/lib/utils"
 
 /** Goal presets, described by roughly what each takes. */
 const GOALS = [
-  { xp: 30, label: "Light", detail: "a few questions" },
-  { xp: 50, label: "Regular", detail: "one section and a short drill" },
-  { xp: 100, label: "Serious", detail: "two sections and a drill" },
-  { xp: 150, label: "Exam season", detail: "a unit's worth of work" },
+  { xp: 30, label: "Light", detail: "A few questions" },
+  { xp: 50, label: "Regular", detail: "One section and a short drill" },
+  { xp: 100, label: "Serious", detail: "Two sections and a drill" },
+  { xp: 150, label: "Exam season", detail: "A unit's worth of work" },
 ] as const
 
 /** Reminder hours offered, as local 24-hour clock hours. */
@@ -51,28 +51,28 @@ export function StudyGoalSettings() {
           setError("")
           save({ xp: Number(value) }).catch(() => setError("The goal could not be saved. Try again."))
         }}
-        className="grid grid-cols-2 gap-2 lg:grid-cols-4"
+        className="grid gap-2 sm:grid-cols-2"
         disabled={current === undefined}
       >
         {GOALS.map((goal) => (
           <label
             key={goal.xp}
             className={cn(
-              "flex cursor-pointer items-start gap-2.5 rounded-xl border border-border bg-card px-3 py-3 transition-colors hover:bg-muted/50",
+              "flex min-h-14 cursor-pointer items-center gap-3 rounded-xl border border-border bg-card px-4 py-3 transition-colors hover:bg-muted/50",
               current === goal.xp && "border-brand/60 bg-brand/[0.06]"
             )}
           >
-            <RadioGroupItem value={String(goal.xp)} className="mt-0.5" />
+            <RadioGroupItem value={String(goal.xp)} />
             <span className="min-w-0 flex-1">
-              <span className="block text-sm font-medium">{goal.label}</span>
-              <span className="block text-xs text-muted-foreground">
-                {`${goal.xp} XP · ${goal.detail}`}
+              <span className="block text-sm font-medium">
+                {goal.label} · {goal.xp} XP
               </span>
+              <span className="block text-xs text-muted-foreground">{goal.detail}</span>
             </span>
           </label>
         ))}
       </RadioGroup>
-      <div className="flex flex-col gap-2 rounded-xl border bg-card px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex flex-col gap-2 pt-2 sm:flex-row sm:items-center sm:justify-between">
         <label htmlFor="study-reminder" className="text-sm">
           <span className="block font-medium">Daily reminder</span>
           <span className="block text-xs text-muted-foreground">

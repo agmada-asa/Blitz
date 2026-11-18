@@ -10,7 +10,6 @@
 
 import { useEffect, useState } from "react"
 
-import { SettingsGroup } from "@/components/settings/settings-group"
 import { Card, CardContent } from "@/components/ui/card"
 import { Checkbox } from "@/components/ui/checkbox"
 import {
@@ -45,11 +44,18 @@ export function DesktopLinkSettings() {
   if (!available) return null
 
   return (
-    <SettingsGroup
-      id="desktop-app-heading"
-      title="Desktop app"
-      description="Choose where links to Blitz open on this Mac."
-    >
+    <section aria-labelledby="desktop-app-heading" className="space-y-4">
+      <div>
+        <h2
+          id="desktop-app-heading"
+          className="scroll-mt-8 font-heading text-xl font-medium tracking-tight"
+        >
+          Desktop app
+        </h2>
+        <p className="mt-1 text-sm leading-5 text-muted-foreground">
+          Choose where links to Blitz open on this Mac.
+        </p>
+      </div>
       <Card className="gap-0 py-0">
         <CardContent className="px-0">
           <label
@@ -78,6 +84,6 @@ export function DesktopLinkSettings() {
           </label>
         </CardContent>
       </Card>
-    </SettingsGroup>
+    </section>
   )
 }
