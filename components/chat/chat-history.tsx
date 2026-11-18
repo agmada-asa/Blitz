@@ -1,6 +1,9 @@
 "use client"
 
-/** Renders the saved chat rail with view mode toggling, project badges, archiving, and deletion. */
+/**
+ * Renders the saved chat rail: Recent (pinned, then grouped by day, with each chat's project as a
+ * plain second line) or By project, plus row actions, archiving and deletion.
+ */
 
 import {
   Add01Icon,
@@ -20,7 +23,6 @@ import {
 import { HugeiconsIcon } from "@hugeicons/react"
 import { useMemo, useState, useSyncExternalStore } from "react"
 
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
   ContextMenu,
@@ -37,6 +39,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import type { Id } from "@/convex/_generated/dataModel"
+import { groupByDay } from "@/lib/day-groups"
 import { cn } from "@/lib/utils"
 
 /** Supported layout modes for the saved chats rail. */
@@ -167,6 +170,26 @@ export function ChatHistory({
       return a.title.localeCompare(b.title)
     })
   }, [chats])
+
+  // Fixed at mount: a chat updated since then still counts as today.
+  const [now] = useState(() => Date.now())
+
+  /** Splits the Recent view into a Pinned group and day groups, keeping the query's order. */
+  const recentGroups = useMemo((): Array<{
+    label: string
+    items: ChatHistoryItem[]
+  }> => {
+    if (!chats) return []
+    const pinned = chats.filter((chat) => chat.isPinned)
+    const dated = groupByDay(
+      chats.filter((chat) => !chat.isPinned),
+      (chat) => chat.updatedAt,
+      now
+    )
+    return pinned.length
+      ? [{ label: "Pinned", items: pinned }, ...dated]
+      : dated
+  }, [chats, now])
 
   /** Renders context menu and row dropdown menu actions for a chat. */
   const renderChatActions = (chat: ChatHistoryItem) => (
@@ -316,97 +339,104 @@ export function ChatHistory({
             </p>
           </div>
         ) : viewMode === "chronological" ? (
-          /* Chronological view with project badge beneath each chat */
-          <ul className="w-full min-w-0 space-y-1" role="list">
-            {chats.map((chat) => {
-              const selected = chat.id === activeChatId
-              return (
-                <li key={chat.id} className="group relative min-w-0">
-                  <ContextMenu>
-                    <ContextMenuTrigger asChild>
-                      <button
-                        type="button"
-                        aria-current={selected ? "page" : undefined}
-                        aria-label={`${chat.title}${chat.projectTitle ? ` (${chat.projectTitle})` : ""}${chat.isUnread ? " (unread)" : ""}${chat.isPinned ? " (pinned)" : ""}`}
-                        className={cn(
-                          "flex w-full min-w-0 flex-col gap-1 overflow-hidden rounded-lg px-3 py-2 text-left transition-colors hover:bg-muted/70 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none",
-                          chat.isUnread && "font-medium",
-                          selected && "bg-muted hover:bg-muted"
-                        )}
-                        onClick={() => onSelect(chat.id)}
-                      >
-                        <div className="flex w-full min-w-0 items-center justify-between gap-1.5">
-                          <span className="min-w-0 flex-1 truncate text-sm text-foreground">
-                            {chat.title}
-                          </span>
-                          <span className="flex shrink-0 items-center gap-1.5">
-                            {chat.isUnread ? (
-                              <span
-                                className="size-1.5 rounded-full bg-brand"
-                                aria-hidden="true"
-                              />
-                            ) : null}
-                            {chat.isPinned ? (
-                              <HugeiconsIcon
-                                icon={Pin02Icon}
-                                size={14}
-                                strokeWidth={1.8}
-                                className="text-muted-foreground"
-                                aria-hidden="true"
-                              />
-                            ) : null}
-                            {chat.status === "running" ? (
-                              <HugeiconsIcon
-                                icon={Loading03Icon}
-                                size={14}
-                                strokeWidth={2}
-                                className="animate-spin text-muted-foreground motion-reduce:animate-none"
-                                aria-label="Reply in progress"
-                              />
-                            ) : null}
-                          </span>
-                        </div>
-                        {chat.projectTitle ? (
-                          <div className="flex items-center">
-                            <Badge
-                              variant="outline"
-                              className="h-4.5 max-w-[190px] truncate border-border/60 px-1.5 py-0 text-[10px] font-normal text-muted-foreground"
+          /* Recent view: pinned chats first, then the rest under day headings. */
+          <div className="space-y-3">
+            {recentGroups.map((group) => (
+              <section key={group.label} aria-label={group.label}>
+                <h3 className="px-2.5 pt-1 pb-1 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
+                  {group.label}
+                </h3>
+                <ul className="w-full min-w-0 space-y-0.5" role="list">
+                  {group.items.map((chat) => {
+                    const selected = chat.id === activeChatId
+                    return (
+                      <li key={chat.id} className="group relative min-w-0">
+                        <ContextMenu>
+                          <ContextMenuTrigger asChild>
+                            <button
+                              type="button"
+                              aria-current={selected ? "page" : undefined}
+                              aria-label={`${chat.title}${chat.projectTitle ? ` (${chat.projectTitle})` : ""}${chat.isUnread ? " (unread)" : ""}${chat.isPinned ? " (pinned)" : ""}`}
+                              className={cn(
+                                "flex w-full min-w-0 flex-col gap-0.5 overflow-hidden rounded-lg px-2.5 py-2 text-left transition-colors hover:bg-muted/70 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none",
+                                chat.isUnread && "font-medium",
+                                selected && "bg-muted hover:bg-muted"
+                              )}
+                              onClick={() => onSelect(chat.id)}
                             >
-                              {chat.projectTitle}
-                            </Badge>
-                          </div>
-                        ) : null}
-                      </button>
-                    </ContextMenuTrigger>
-                    <ContextMenuContent>
-                      {renderChatActions(chat)}
-                    </ContextMenuContent>
-                  </ContextMenu>
+                              <div className="flex w-full min-w-0 items-center justify-between gap-1.5">
+                                <span className="min-w-0 flex-1 truncate text-sm text-foreground">
+                                  {chat.title}
+                                </span>
+                                <span className="flex shrink-0 items-center gap-1.5">
+                                  {chat.isUnread ? (
+                                    <span
+                                      className="size-1.5 rounded-full bg-brand"
+                                      aria-hidden="true"
+                                    />
+                                  ) : null}
+                                  {chat.isPinned ? (
+                                    <HugeiconsIcon
+                                      icon={Pin02Icon}
+                                      size={14}
+                                      strokeWidth={1.8}
+                                      className="text-muted-foreground"
+                                      aria-hidden="true"
+                                    />
+                                  ) : null}
+                                  {chat.status === "running" ? (
+                                    <HugeiconsIcon
+                                      icon={Loading03Icon}
+                                      size={14}
+                                      strokeWidth={2}
+                                      className="animate-spin text-muted-foreground motion-reduce:animate-none"
+                                      aria-label="Reply in progress"
+                                    />
+                                  ) : null}
+                                </span>
+                              </div>
+                              {chat.projectTitle ? (
+                                <span className="block w-full truncate pr-6 text-xs font-normal text-muted-foreground">
+                                  {chat.projectTitle}
+                                </span>
+                              ) : null}
+                            </button>
+                          </ContextMenuTrigger>
+                          <ContextMenuContent>
+                            {renderChatActions(chat)}
+                          </ContextMenuContent>
+                        </ContextMenu>
 
-                  {/* Accessible row menu trigger */}
-                  <div className="absolute right-2 bottom-2 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon-xs"
-                          className="size-5 rounded-md text-muted-foreground hover:text-foreground"
-                          aria-label={`Options for ${chat.title}`}
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          <HugeiconsIcon icon={MoreHorizontalIcon} size={13} />
-                        </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end">
-                        {renderDropdownItems(chat)}
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  </div>
-                </li>
-              )
-            })}
-          </ul>
+                        {/* Accessible row menu trigger */}
+                        <div className="absolute right-2 bottom-2 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon-xs"
+                                className="size-5 rounded-md text-muted-foreground hover:text-foreground"
+                                aria-label={`Options for ${chat.title}`}
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                <HugeiconsIcon
+                                  icon={MoreHorizontalIcon}
+                                  size={13}
+                                />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              {renderDropdownItems(chat)}
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        </div>
+                      </li>
+                    )
+                  })}
+                </ul>
+              </section>
+            ))}
+          </div>
         ) : (
           /* Project-based view with collapsible project sections */
           <div className="space-y-3">
