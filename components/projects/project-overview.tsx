@@ -371,7 +371,7 @@ function ModuleAreas({ base }: { base: string }) {
               href={area.href}
               aria-current={area.current ? "page" : undefined}
               className={cn(
-                "inline-flex min-h-9 items-center rounded-full border px-3.5 text-sm transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none",
+                "inline-flex min-h-9 items-center rounded-full border px-2.5 text-[13px] transition-colors sm:px-3.5 sm:text-sm focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none",
                 area.current
                   ? "border-border bg-muted font-medium text-foreground"
                   : "border-border/70 text-muted-foreground hover:bg-muted/60 hover:text-foreground"
