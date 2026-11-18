@@ -14,10 +14,29 @@ You need Node.js 22.13 or newer and one supported agent installed and signed in.
 git clone https://github.com/agmada-asa/Blitz.git
 cd Blitz
 npm ci
+```
+
+Then pick one of the two below. Either way, create a project, add a week's material, and open its first unit to start a Teach session. The address also works on a phone on the same Wi-Fi.
+
+### For everyday use (macOS)
+
+Blitz runs in the background, starts when you log in, and updates itself from `main`.
+
+```bash
+npm run dev                  # once, to create the local database; stop it with Ctrl+C when it has started
+npm run server -- install    # the background server, at http://localhost:3007
+npm run desktop:install      # optional: Blitz.app in ~/Applications
+```
+
+Open http://localhost:3007 in a browser, or open Blitz.app. The app is a window onto the same server, so you can use either or both. On Windows, use `npm run dev:lan` instead: it doesn't run in the background or update itself.
+
+### For development
+
+```bash
 npm run dev
 ```
 
-Blitz opens in your browser when it has started; if it doesn't, open the printed address. Create a project, add a week's material, and open its first unit to start a Teach session. The address also works on a phone on the same Wi-Fi.
+This runs Blitz from your checkout and reloads as you edit. It opens in your browser when it has started; if it doesn't, open the printed address. If the background server is already running, it starts on port `3009` against the same database.
 
 ## Which one to run
 
