@@ -27,8 +27,12 @@ address. It also shows problem lines from the log, such as errors, failed
 Convex pushes and requests that answered 5xx, and service restarts. When
 started from a terminal, it opens Blitz in the default browser. If startup
 fails, the last lines of the log are printed above the error. Pass
-`-- --verbose` to stream all output as before, and `-- --no-open` or
-`BLITZ_OPEN=0` to keep the browser closed.
+`-- --no-open` or set `BLITZ_OPEN=0` to keep the browser closed.
+
+To keep the full output as it was, run `npm run dev:verbose` (the same as
+`npm run dev -- --verbose`). Everything streams to the terminal with the QR
+code, and the browser does not open. To make that the default for
+`npm run dev`, set `BLITZ_VERBOSE=1`, for example in your shell profile.
 
 ## The background server
 

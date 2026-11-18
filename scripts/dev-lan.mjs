@@ -12,9 +12,9 @@
  *   Blitz server already holds the database, Next starts on port 3009 against
  *   it and does not push this checkout's Convex functions. Service output goes
  *   to `~/.blitz/logs/dev.log`; the terminal shows the address, errors, and
- *   restarts, and the browser opens when Blitz is ready. `--verbose` streams
- *   everything to the terminal instead, and `--no-open` (or `BLITZ_OPEN=0`)
- *   keeps the browser closed.
+ *   restarts, and the browser opens when Blitz is ready. `--verbose`
+ *   (`npm run dev:verbose`, or `BLITZ_VERBOSE=1`) keeps the full output as it
+ *   was before, and `--no-open` (or `BLITZ_OPEN=0`) keeps the browser closed.
  * - `--service`: the background server's launchd entry. It serves
  *   `~/.blitz/current` and keeps it on the newest tracked commit
  *   (`electron/auto-update.mjs`).
@@ -61,8 +61,12 @@ const mode = process.argv.includes("--service")
   : process.argv.includes("--dev")
     ? "dev"
     : "production"
-/** In dev mode, streams every service's output to the terminal instead of `dev.log`. */
-const verbose = process.argv.includes("--verbose")
+/**
+ * In dev mode, keeps the full output: every service streams to the terminal
+ * instead of `dev.log`, with the QR code and no browser opening. Set by
+ * `--verbose` (`npm run dev:verbose`) or, to make it the default, `BLITZ_VERBOSE=1`.
+ */
+const verbose = process.argv.includes("--verbose") || process.env.BLITZ_VERBOSE === "1"
 /** In dev mode, opens the browser once Blitz is ready, unless asked not to or not run from a terminal. */
 const openBrowser =
   Boolean(process.stdout.isTTY) &&
@@ -227,7 +231,7 @@ async function runDevelopment() {
     stopFollowing()
     const tail = tailLog(log.path, logStart)
     if (tail.length) console.error(`\nLast lines of ${displayPath(log.path)}:\n${tail.map((line) => `  ${line}`).join("\n")}\n`)
-    console.error("Run npm run dev -- --verbose to see all output as it happens.")
+    console.error("Run npm run dev:verbose to see all output as it happens.")
     throw error
   }
   console.log(`\nBlitz has started: ${url}`)
