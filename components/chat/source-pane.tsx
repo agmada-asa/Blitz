@@ -311,7 +311,7 @@ export function SourceReader({
             />
           </TabsContent>
         ) : viewer ? (
-          // Other originals load when first opened and keep their own scroll position.
+          // Other originals load each time their tab opens, so they scroll to the passage again.
           <TabsContent
             value="original"
             className="flex min-h-0 flex-1 flex-col"
