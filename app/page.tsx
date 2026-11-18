@@ -20,7 +20,7 @@ export default function Page() {
   const createProject = useMutation(api.projects.createProject)
 
   return (
-    <main className="mx-auto w-full max-w-6xl px-5 py-10 pb-28 sm:px-8 sm:py-16">
+    <main className="mx-auto w-full max-w-5xl px-5 py-10 pb-28 sm:px-8 sm:py-14">
       <TodayPanel />
       <ProjectGrid
         projects={projects}

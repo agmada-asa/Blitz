@@ -4,7 +4,7 @@
 
 import Link from "next/link"
 import { useEffect, useState } from "react"
-import { AddIcon } from "@/components/ui/icon"
+import { AddIcon, SearchIcon, SortIcon } from "@/components/ui/icon"
 import { ProjectActions } from "@/components/projects/project-actions"
 import { SegmentedBar } from "@/components/progress/progress-path"
 import {
@@ -60,20 +60,13 @@ type ProjectGridProps = {
 }
 
 /**
- * Describes a module's progress in one short line. A due count leads the line,
- * so it stays visible when a long unit title is truncated.
+ * Describes a module's unit progress, or what it still needs, in a few words.
+ * The due count and next unit are shown beside it by the card.
  */
-function progressLine(progress: ModuleProgress | undefined): string {
-  const status = progressStatus(progress)
-  return progress?.dueCount ? `${progress.dueCount} due · ${status}` : status
-}
-
-/** Describes a module's unit progress, or what it still needs, in one short line. */
 function progressStatus(progress: ModuleProgress | undefined): string {
   if (progress?.hasUnsortedSources) return "Sources aren't in a unit yet"
   if (!progress?.unitCount) return "No material yet"
-  const taught = `${progress.taughtCount} of ${progress.unitCount} unit${progress.unitCount === 1 ? "" : "s"} taught`
-  return progress.nextUnitTitle ? `${taught} · Next: ${progress.nextUnitTitle}` : taught
+  return `${progress.taughtCount} of ${progress.unitCount} unit${progress.unitCount === 1 ? "" : "s"} taught`
 }
 
 /** Displays project summaries and creates a project through the supplied mutation. */
@@ -160,32 +153,33 @@ export function ProjectGrid({ projects, progress, onCreate }: ProjectGridProps) 
     }
   }
 
+  const hasProjects = Boolean(projects && projects.length > 0)
+
   return (
     <section>
-      <div className="mb-6 flex items-center justify-between gap-4">
-        <div className="min-w-0">
-          <h1 className="text-3xl font-medium tracking-[-0.04em]">Projects</h1>
-        </div>
-        <Button
-          onClick={() => setOpen(true)}
-          className="h-11 gap-2 rounded-full bg-brand px-4 text-brand-foreground hover:bg-brand/85"
-        >
-          <AddIcon aria-hidden="true" size={17} />
-          <span>New project</span>
-        </Button>
-      </div>
-      {projects && projects.length > 0 && (
-        <div className="mb-5 flex flex-wrap items-center gap-3">
-          <Input
-            aria-label="Search projects"
-            placeholder="Search projects…"
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            className="h-11 min-w-0 flex-1 basis-40 rounded-xl bg-card"
-          />
+      {/* One row on wide screens; on a phone the search drops to its own full-width line. */}
+      <div className="mb-4 flex flex-wrap items-center gap-2">
+        <h1 className="mr-auto text-xl font-medium tracking-[-0.03em]">Projects</h1>
+        {hasProjects && (
+          <div className="relative order-last w-full sm:order-none sm:w-56">
+            <SearchIcon
+              aria-hidden="true"
+              className="pointer-events-none absolute top-1/2 left-3.5 size-4 -translate-y-1/2 text-muted-foreground"
+            />
+            <Input
+              aria-label="Search projects"
+              placeholder="Search projects"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              className="h-10 rounded-full bg-card pl-10 sm:h-9"
+            />
+          </div>
+        )}
+        {hasProjects && (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="outline" className="h-11 rounded-xl">
+              <Button variant="ghost" className="h-10 gap-1.5 rounded-full px-3 text-muted-foreground sm:h-9">
+                <SortIcon aria-hidden="true" className="size-4" />
                 {sort === "recent" ? "Recently studied" : sort === "newest" ? "Newest first" : "Name A–Z"}
               </Button>
             </DropdownMenuTrigger>
@@ -201,8 +195,17 @@ export function ProjectGrid({ projects, progress, onCreate }: ProjectGridProps) 
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
-        </div>
-      )}
+        )}
+        {/* Secondary on purpose: Continue in the Today panel is the page's one primary action. */}
+        <Button
+          variant="outline"
+          onClick={() => setOpen(true)}
+          className="h-10 gap-1.5 rounded-full px-3.5 sm:h-9"
+        >
+          <AddIcon aria-hidden="true" size={16} />
+          <span>New project</span>
+        </Button>
+      </div>
       {projects === undefined ? (
         <ProjectGridLoading />
       ) : projects.length === 0 ? (
@@ -224,7 +227,7 @@ export function ProjectGrid({ projects, progress, onCreate }: ProjectGridProps) 
               </p>
               <ul
                 aria-label="Projects"
-                className="grid grid-cols-2 gap-3 md:grid-cols-[repeat(auto-fill,minmax(160px,200px))]"
+                className="grid grid-cols-2 gap-3 sm:grid-cols-[repeat(auto-fill,minmax(11.5rem,1fr))]"
               >
                 {active.map((project) => (
                   <ProjectCard
@@ -264,7 +267,7 @@ export function ProjectGrid({ projects, progress, onCreate }: ProjectGridProps) 
                 {archivedMatches.length > 0 ? (
                   <ul
                     aria-label="Archived projects"
-                    className="grid grid-cols-2 gap-3 md:grid-cols-[repeat(auto-fill,minmax(160px,200px))]"
+                    className="grid grid-cols-2 gap-3 sm:grid-cols-[repeat(auto-fill,minmax(11.5rem,1fr))]"
                   >
                     {archivedMatches.map((project) => (
                       <ProjectCard
@@ -353,34 +356,43 @@ function ProjectCard({
   /** Per-module progress; undefined while the library is loading. */
   moduleProgress?: Record<string, ModuleProgress>
 }) {
+  const progress = moduleProgress?.[project._id]
   return (
-    <li className="relative h-32 min-w-0 rounded-2xl border border-border bg-card transition-colors hover:bg-muted/50">
+    <li className="group/card relative min-w-0 rounded-2xl border border-border bg-card transition-colors hover:bg-muted/50">
       <Link
         href={`/projects/${project._id}`}
-        className="absolute inset-0 flex min-w-0 flex-col justify-between rounded-2xl px-3 pb-3 pt-9 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none sm:px-4"
+        className="flex h-full min-h-30 min-w-0 flex-col gap-3 rounded-2xl p-3.5 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none sm:p-4"
       >
-        <h2 className="line-clamp-2 shrink-0 text-sm font-medium tracking-tight break-words sm:text-base">
+        {/* The full name wraps instead of being clipped; the card grows to fit it. */}
+        <h2 className="pr-8 text-sm leading-snug font-medium tracking-tight break-words sm:text-[0.95rem]">
           {project.title}
         </h2>
-        <div className="space-y-1.5">
+        <div className="mt-auto space-y-2.5">
           {/* One segment per unit, filled as far as it has been taught. */}
           <SegmentedBar
             size="sm"
-            segments={(moduleProgress?.[project._id]?.unitProgress ?? []).map(
-              (fill, index) => ({ key: String(index), fill })
-            )}
+            segments={(progress?.unitProgress ?? []).map((fill, index) => ({
+              key: String(index),
+              fill,
+            }))}
           />
           {moduleProgress ? (
-            // One line, so a two-line title still fits the fixed card height.
-            <p className="line-clamp-1 text-xs text-muted-foreground">
-              {progressLine(moduleProgress[project._id])}
+            <p className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
+              <span>{progressStatus(progress)}</span>
+              {progress?.dueCount ? (
+                <span className="font-medium text-foreground/80 tabular-nums">{progress.dueCount} due</span>
+              ) : null}
+              {progress?.nextUnitTitle ? (
+                <span className="sr-only">Next: {progress.nextUnitTitle}</span>
+              ) : null}
             </p>
           ) : (
             <Skeleton className="h-4 w-32" />
           )}
         </div>
       </Link>
-      <div className="absolute top-1 right-1 z-10">
+      {/* Quiet until the card is hovered or focused; always shown where there is no hover. */}
+      <div className="absolute top-1.5 right-1.5 z-10 transition-opacity [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover/card:opacity-100 [@media(hover:hover)]:group-focus-within/card:opacity-100 [@media(hover:hover)]:has-[[aria-expanded=true]]:opacity-100">
         <ProjectActions project={project} />
       </div>
     </li>
@@ -394,12 +406,12 @@ function ProjectGridLoading() {
       <span className="sr-only">Loading projects</span>
       <div
         aria-hidden="true"
-        className="grid grid-cols-2 gap-3 md:grid-cols-[repeat(auto-fill,minmax(160px,200px))]"
+        className="grid grid-cols-2 gap-3 sm:grid-cols-[repeat(auto-fill,minmax(11.5rem,1fr))]"
       >
         {Array.from({ length: 8 }, (_, index) => (
           <Skeleton
             key={index}
-            className="h-28 rounded-2xl bg-card"
+            className="h-30 rounded-2xl bg-card"
           />
         ))}
       </div>
