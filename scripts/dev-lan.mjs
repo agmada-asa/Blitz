@@ -333,10 +333,17 @@ function defaultRouteAddress() {
       resolvePromise(address)
     }
     socket.once("error", () => finish(undefined))
-    socket.connect(53, "8.8.8.8", () => {
-      const { address } = socket.address()
-      const usable = address && address !== "0.0.0.0" && !address.startsWith("169.254.")
-      finish(usable ? address : undefined)
+    // Offline, the failure arrives here rather than as an `error` event, and
+    // the socket may not be bound, so `address()` could throw.
+    socket.connect(53, "8.8.8.8", (error) => {
+      if (error) return finish(undefined)
+      try {
+        const { address } = socket.address()
+        const usable = address && address !== "0.0.0.0" && !address.startsWith("169.254.")
+        finish(usable ? address : undefined)
+      } catch {
+        finish(undefined)
+      }
     })
   })
 }
