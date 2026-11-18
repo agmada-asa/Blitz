@@ -1,16 +1,27 @@
 "use client"
 
-/** Connects a module's sources, their management actions, and source research in one page. */
+/**
+ * Connects a module's sources, their management actions, and source research
+ * in one page. The file list fills the page; research opens from the
+ * "Ask Blitz to find sources" button in a dialog.
+ */
 
 import Link from "next/link"
 import { useEffect, useState } from "react"
 import { useQuery } from "convex/react"
 import { AddMaterial } from "@/components/learn/add-material"
+import { PageContainer } from "@/components/page-container"
 import { ProjectFiles } from "@/components/projects/project-files"
 import { ResearchPanel } from "@/components/projects/research-panel"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent } from "@/components/ui/card"
-import { PlusIcon } from "@/components/ui/icon"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import { ArrowLeftIcon, PlusIcon, SparklesIcon } from "@/components/ui/icon"
 import { Skeleton } from "@/components/ui/skeleton"
 import { api } from "@/convex/_generated/api"
 import type { Id } from "@/convex/_generated/dataModel"
@@ -42,6 +53,10 @@ export function ProjectSourcesWorkspace({
     projectId: convexProjectId,
   })
   const [adding, setAdding] = useState(false)
+  // Links from a unit's Find sources or a research notification open research straight away.
+  const [researchOpen, setResearchOpen] = useState(
+    Boolean(initialResearchRequestId || initialResearchUnitId)
+  )
   const [agentWorkspaceDirectory, setAgentWorkspaceDirectory] = useState("")
   const [desktopAvailable, setDesktopAvailable] = useState(false)
   const ingestion = useQuery(api.projectAgents.listIngestion, {
@@ -145,30 +160,65 @@ export function ProjectSourcesWorkspace({
     leaseExpired: job.leaseExpired,
   }))
 
-  return (
-    <main className="mx-auto w-full max-w-6xl px-4 py-5 pb-24 sm:px-7 sm:py-8">
-      <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
-        <div className="min-w-0">
-          <Button asChild variant="ghost" size="sm" className="mb-2 -ml-2">
-            <Link href={`/projects/${encodeURIComponent(projectId)}`}>
-              <span aria-hidden="true">←</span>
-              <span className="ml-2">{project.title}</span>
-            </Link>
-          </Button>
-          <h1 className="font-heading text-3xl font-semibold tracking-tight">
-            Sources
-          </h1>
-        </div>
-        <Button
-          type="button"
-          onClick={() => setAdding(true)}
-          className="min-h-11 rounded-full bg-brand px-5 text-brand-foreground hover:bg-brand/85"
-        >
-          <PlusIcon aria-hidden="true" /> Add material
-        </Button>
-      </div>
+  const unitOptions = (unitData?.units ?? []).map((unit) => ({
+    id: unit.id,
+    title: unit.title,
+  }))
+  const unitCount = unitOptions.length
 
-      <div className="grid min-w-0 items-start gap-6 lg:grid-cols-2">
+  return (
+    <PageContainer className="space-y-6">
+      <header className="space-y-3">
+        <Button
+          asChild
+          variant="ghost"
+          size="sm"
+          className="-ml-3 min-h-9 max-w-full text-muted-foreground"
+        >
+          <Link href={`/projects/${encodeURIComponent(projectId)}`}>
+            <ArrowLeftIcon aria-hidden="true" className="size-4" />
+            <span className="truncate">{project.title}</span>
+          </Link>
+        </Button>
+        <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-3">
+          <div className="min-w-0">
+            <h1 className="font-heading text-3xl font-medium tracking-tight">
+              Sources
+            </h1>
+            {managedSources?.length ? (
+              <p className="mt-1 text-sm text-pretty text-muted-foreground">
+                {managedSources.length}{" "}
+                {managedSources.length === 1 ? "file" : "files"}
+                {unitCount
+                  ? ` across ${unitCount} ${unitCount === 1 ? "unit" : "units"}`
+                  : ""}
+                . Open one to read the original.
+              </p>
+            ) : null}
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setResearchOpen(true)}
+              className="min-h-10"
+            >
+              <SparklesIcon aria-hidden="true" className="size-4" />
+              Ask Blitz to find sources
+            </Button>
+            <Button
+              type="button"
+              onClick={() => setAdding(true)}
+              className="min-h-10"
+            >
+              <PlusIcon aria-hidden="true" className="size-4" />
+              Add material
+            </Button>
+          </div>
+        </div>
+      </header>
+
+      <div className="min-w-0">
         <section className="min-w-0" aria-label="Project sources">
           {managedSources === undefined ? (
             <p className="py-5 text-sm text-muted-foreground" role="status">
@@ -214,54 +264,58 @@ export function ProjectSourcesWorkspace({
             />
           )}
         </section>
-
-        <aside className="min-w-0 lg:sticky lg:top-6 lg:self-start">
-          <Card className="border-border bg-card">
-            <CardContent className="p-5 sm:p-7">
-              <h2 className="mb-4 font-heading text-xl">Find sources</h2>
-              <ResearchPanel
-                projectId={String(projectId)}
-                initialRequestId={initialResearchRequestId}
-                active
-                units={(unitData?.units ?? []).map((unit) => ({
-                  id: String(unit.id),
-                  title: unit.title,
-                }))}
-                {...(initialResearchUnitId
-                  ? { defaultUnitId: initialResearchUnitId }
-                  : {})}
-              />
-            </CardContent>
-          </Card>
-        </aside>
       </div>
+
+      {/* Research lives in a dialog so the file list keeps the page. The panel
+          reloads the latest request whenever it opens, so closing it never
+          loses research in progress. */}
+      <Dialog open={researchOpen} onOpenChange={setResearchOpen}>
+        <DialogContent className="sm:max-w-xl">
+          <DialogHeader>
+            <DialogTitle>Ask Blitz to find sources</DialogTitle>
+            <DialogDescription>
+              Describe what you want to learn. Blitz suggests sources to add,
+              and you choose which ones go into the module.
+            </DialogDescription>
+          </DialogHeader>
+          <ResearchPanel
+            projectId={String(projectId)}
+            initialRequestId={initialResearchRequestId}
+            active={researchOpen}
+            units={unitOptions.map((unit) => ({
+              id: String(unit.id),
+              title: unit.title,
+            }))}
+            {...(initialResearchUnitId
+              ? { defaultUnitId: initialResearchUnitId }
+              : {})}
+          />
+        </DialogContent>
+      </Dialog>
       {adding ? (
         <AddMaterial
           projectId={convexProjectId}
-          units={(unitData?.units ?? []).map((unit) => ({
-            id: unit.id,
-            title: unit.title,
-          }))}
+          units={unitOptions}
           open
           onOpenChange={(open) => {
             if (!open) setAdding(false)
           }}
         />
       ) : null}
-    </main>
+    </PageContainer>
   )
 }
 
 /** Keeps source navigation visible while the project query is pending. */
 function SourcesLoadingState() {
   return (
-    <main className="mx-auto w-full max-w-6xl space-y-5 px-4 py-6 sm:px-7">
-      <div role="status" aria-label="Loading sources">
+    <PageContainer>
+      <div role="status" aria-label="Loading sources" className="space-y-5">
         <span className="sr-only">Loading sources</span>
         <Skeleton className="h-8 w-48" />
         <Skeleton className="h-56 w-full rounded-xl" />
       </div>
-    </main>
+    </PageContainer>
   )
 }
 

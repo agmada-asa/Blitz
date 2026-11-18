@@ -135,21 +135,23 @@ export function ProjectFiles({
       : "Show in folder"
 
   return (
-    <section className="space-y-5" aria-label="Sources and created files">
-      <Card className="border-border bg-card">
-        <CardContent className="p-5 sm:p-7">
-          <h2 className="font-heading text-xl">Your sources</h2>
-          <SourceList
-            projectId={String(projectId)}
-            sources={sources}
-            units={units}
-            ingestion={ingestion}
-            preparation={preparation}
-            onRetryIngestion={actions.onRetryIngestion}
-          />
-        </CardContent>
-      </Card>
+    <div className="space-y-10">
+      <section aria-labelledby="your-sources-heading">
+        <h2 id="your-sources-heading" className="sr-only">
+          Your sources
+        </h2>
+        <SourceList
+          projectId={String(projectId)}
+          sources={sources}
+          units={units}
+          ingestion={ingestion}
+          preparation={preparation}
+          onRetryIngestion={actions.onRetryIngestion}
+        />
+      </section>
 
+      {/* Files an agent wrote for the module; the section only appears once there are some. */}
+      {activeArtifacts.length ? (
       <Card className="border-border bg-card">
         <CardContent className="p-5 sm:p-7">
           <div className="flex flex-wrap items-start justify-between gap-3">
@@ -173,8 +175,7 @@ export function ProjectFiles({
             ) : null}
           </div>
           <div className="mt-4 space-y-2">
-            {activeArtifacts.length ? (
-              activeArtifacts.map((artifact) => (
+            {activeArtifacts.map((artifact) => (
                 <div
                   key={artifact.id}
                   className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border/70 p-3"
@@ -233,15 +234,11 @@ export function ProjectFiles({
                     </p>
                   ) : null}
                 </div>
-              ))
-            ) : (
-              <p className="text-sm text-muted-foreground">
-                No created files yet.
-              </p>
-            )}
+              ))}
           </div>
         </CardContent>
       </Card>
-    </section>
+      ) : null}
+    </div>
   )
 }
