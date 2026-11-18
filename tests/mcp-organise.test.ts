@@ -126,7 +126,7 @@ test("a unit moves to a position one place at a time", async (t) => {
   ])
 })
 
-test("archiving and renaming need nothing but the module", async (t) => {
+test("archiving needs only the module, and a rename without a title changes nothing", async (t) => {
   const { blitz, mutations } = fakeBlitz(t)
   await organise(blitz, { action: "archive_module", module: "data" })
   await assert.rejects(
