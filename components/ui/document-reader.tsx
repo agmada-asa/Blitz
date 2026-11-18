@@ -15,6 +15,7 @@ import {
   highlightQuote,
   scrollRangeIntoView,
 } from "@/lib/client/source-highlight"
+import { markdownHref } from "@/lib/markdown"
 
 /** Largest Word file rendered in the browser. Matches the import limit for Word documents. */
 const MAX_DOCX_BYTES = 20_000_000
@@ -32,6 +33,32 @@ const SYMBOL_BULLETS: Record<string, string> = {
   "": "✓",
   "": "□",
   "": "■",
+}
+
+/**
+ * Makes the document's links safe to click inside the app.
+ *
+ * `docx-preview` copies a hyperlink's target into `href` unchanged, so a
+ * document could carry a `javascript:` link that would run in Blitz when
+ * clicked. Links inside the document (`#bookmark`) are kept; web and mail
+ * links are kept only when `markdownHref` accepts them and open in a new tab;
+ * anything else loses its `href` and stays as plain text.
+ *
+ * @param body The container `docx-preview` rendered into.
+ */
+function secureLinks(body: HTMLElement): void {
+  for (const link of Array.from(body.querySelectorAll("a[href]"))) {
+    const value = link.getAttribute("href") ?? ""
+    if (/^#[^\s]*$/.test(value)) continue
+    const href = markdownHref(value)
+    if (!href) {
+      link.removeAttribute("href")
+      continue
+    }
+    link.setAttribute("href", href)
+    link.setAttribute("target", "_blank")
+    link.setAttribute("rel", "noopener noreferrer")
+  }
 }
 
 /** Replaces Symbol and Wingdings bullets in the rendered list styles. */
@@ -91,11 +118,15 @@ export function DocumentReader({ url, quote }: { url: string; quote: string }) {
           renderFooters: false,
           renderComments: false,
           renderChanges: false,
+          // Embedded HTML chunks are drawn in an unsandboxed same-origin
+          // iframe, where their scripts would run in the app. Leave them out.
+          renderAltChunks: false,
           useBase64URL: true,
         })
       })
       .then(() => {
         if (cancelled) return
+        secureLinks(body)
         fixSymbolBullets(styles)
         setDone({ key, ok: true })
       })
