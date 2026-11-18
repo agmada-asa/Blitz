@@ -201,7 +201,7 @@ export function ProjectSourcesWorkspace({
               type="button"
               variant="outline"
               onClick={() => setResearchOpen(true)}
-              className="min-h-10"
+              className="min-h-10 rounded-full px-4"
             >
               <SparklesIcon aria-hidden="true" className="size-4" />
               Ask Blitz to find sources
@@ -209,7 +209,7 @@ export function ProjectSourcesWorkspace({
             <Button
               type="button"
               onClick={() => setAdding(true)}
-              className="min-h-10"
+              className="min-h-10 rounded-full px-4"
             >
               <PlusIcon aria-hidden="true" className="size-4" />
               Add material
@@ -327,7 +327,7 @@ function SourcesNotFoundState() {
         <h1 className="font-heading text-2xl font-semibold">
           Project not found
         </h1>
-        <Button asChild variant="outline" className="mt-5">
+        <Button asChild variant="outline" className="mt-5 min-h-10 rounded-full px-4">
           <Link href="/">Back to projects</Link>
         </Button>
       </div>
