@@ -349,7 +349,13 @@ test("a rebuild asked for during a check runs after it and gets its own answer",
   }
 })
 
-test("requests sent while the server starts wait for it instead of ending it", async () => {
+/** Skips tests of POSIX process groups and signals, which the supervisor does not use on Windows. */
+const posixOnly = process.platform === "win32" && "POSIX process groups and signals are not used on Windows"
+
+/** Skips tests of the launchd background server, which runs on macOS only. */
+const backgroundServerOnly = process.platform === "win32" && "The background server and its SIGUSR2 requests run on macOS only"
+
+test("requests sent while the server starts wait for it instead of ending it", { skip: backgroundServerOnly }, async () => {
   const home = await mkdtemp(join(tmpdir(), "blitz-update-"))
   const listeners = process.listeners("SIGUSR2")
   // The test runner writes a diagnostic report on SIGUSR2; Blitz's server does not.
@@ -528,7 +534,7 @@ function productionHarness(cwd: string, options: Record<string, unknown> = {}) {
   return { manager, children }
 }
 
-test("stopping a service waits for its whole group, not just the first process", async () => {
+test("stopping a service waits for its whole group, not just the first process", { skip: posixOnly }, async () => {
   const cwd = await mkdtemp(join(tmpdir(), "blitz-production-"))
   try {
     // The leader exits on SIGTERM, but a descendant keeps the group alive until SIGKILL.
@@ -565,7 +571,7 @@ test("stopping a service waits for its whole group, not just the first process",
   }
 })
 
-test("orphan cleanup stops recorded groups and spares a process that reused an ID", async () => {
+test("orphan cleanup stops recorded groups and spares a process that reused an ID", { skip: posixOnly }, async () => {
   const cwd = await mkdtemp(join(tmpdir(), "blitz-production-"))
   const sleepers: ChildProcess[] = []
   try {
