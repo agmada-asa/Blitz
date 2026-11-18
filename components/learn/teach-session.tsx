@@ -1078,9 +1078,11 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
               (voice.phase === "hearing" || voice.phase === "thinking") && "opacity-55"
             )}
           >
+            {/* The lesson uses most of the section's width. The bottom padding lets
+                its last lines scroll clear of the controls floating over it. */}
             <div
               ref={columnRef}
-              className="mx-auto w-full max-w-3xl px-4 py-8 sm:px-6"
+              className="mx-auto w-full max-w-6xl px-4 pt-8 pb-52 sm:px-8 lg:px-12"
             >
               {chat ? (
                 <TeachLesson
@@ -1132,25 +1134,6 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
               ) : null}
             </div>
           </div>
-          {showJump ? (
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() =>
-                reveal(
-                  lastAssistantId
-                    ? document.querySelector(
-                        `[data-message-id="${lastAssistantId}"]`
-                      )
-                    : null
-                )
-              }
-              className="absolute bottom-4 left-1/2 min-h-10 -translate-x-1/2 rounded-full bg-background px-4 shadow-md dark:bg-background dark:hover:bg-muted"
-            >
-              Latest
-              <ArrowDownIcon aria-hidden="true" />
-            </Button>
-          ) : null}
           {chat ? (
             <TeachAskOverlay
               scrollRef={scrollRef}
@@ -1159,40 +1142,66 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
               onAsk={openSideChat}
             />
           ) : null}
-        </div>
 
-        {dockState.kind === "paused" &&
-        chat?.lastErrorReason === "usage-limit" &&
-        lastMessage?.role === "assistant" ? (
-          <div className="px-4 sm:px-6">
-            <ProviderHandoffOffer
-              chatId={chat.id}
-              messageId={lastMessage.id}
-              providerId={chat.providerId}
-              disabled={sending}
-              onContinue={async () => { await send("", lastMessage.id) }}
-            />
+          {/* The lesson's controls float over the bottom of the text, centred at the
+              dock's own width. A short fade behind them keeps them readable; only the
+              controls themselves take clicks, so the text beside them stays selectable. */}
+          <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 bg-linear-to-t from-background from-40% to-transparent pt-12 [&>*]:pointer-events-auto">
+            {showJump ? (
+              <div className="mx-auto mb-2 w-fit">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() =>
+                    reveal(
+                      lastAssistantId
+                        ? document.querySelector(
+                            `[data-message-id="${lastAssistantId}"]`
+                          )
+                        : null
+                    )
+                  }
+                  className="min-h-10 rounded-full bg-background px-4 shadow-md dark:bg-background dark:hover:bg-muted"
+                >
+                  Latest
+                  <ArrowDownIcon aria-hidden="true" />
+                </Button>
+              </div>
+            ) : null}
+            {dockState.kind === "paused" &&
+            chat?.lastErrorReason === "usage-limit" &&
+            lastMessage?.role === "assistant" ? (
+              <div className="mx-auto w-full max-w-3xl px-4 sm:px-6">
+                <ProviderHandoffOffer
+                  chatId={chat.id}
+                  messageId={lastMessage.id}
+                  providerId={chat.providerId}
+                  disabled={sending}
+                  onContinue={async () => { await send("", lastMessage.id) }}
+                />
+              </div>
+            ) : null}
+            {(voiceOn && !voiceBarInChat) || voice.error ? (
+              // The same width and padding as the dock it replaces.
+              <div className="mx-auto w-full max-w-3xl px-4 pt-2 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:px-6">
+                <VoiceError session={voice} />
+                {voiceOn && !voiceBarInChat ? voiceBar : null}
+              </div>
+            ) : null}
+            {voiceOn ? null : (
+              <TeachDock
+                state={dockState}
+                error={error}
+                onSend={(message) => void send(message)}
+                onResume={() =>
+                  lastMessage?.role === "assistant"
+                    ? void send("", lastMessage.id)
+                    : undefined
+                }
+              />
+            )}
           </div>
-        ) : null}
-        {(voiceOn && !voiceBarInChat) || voice.error ? (
-          // The same width and padding as the lesson column, like the dock it replaces.
-          <div className="mx-auto w-full max-w-3xl px-4 pt-2 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:px-6">
-            <VoiceError session={voice} />
-            {voiceOn && !voiceBarInChat ? voiceBar : null}
-          </div>
-        ) : null}
-        {voiceOn ? null : (
-          <TeachDock
-            state={dockState}
-            error={error}
-            onSend={(message) => void send(message)}
-            onResume={() =>
-              lastMessage?.role === "assistant"
-                ? void send("", lastMessage.id)
-                : undefined
-            }
-          />
-        )}
+        </div>
       </div>
 
       {sideOpen ? (
