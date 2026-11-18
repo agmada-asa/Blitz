@@ -9,13 +9,21 @@
  */
 
 import { spawn, execFileSync } from "node:child_process"
-import { readFileSync } from "node:fs"
+import { readFileSync, statSync } from "node:fs"
 import { join } from "node:path"
 import { fileURLToPath } from "node:url"
+import { blitzHome, homePaths } from "../electron/release-manager.mjs"
 
 const READY_TIMEOUT_MS = 10 * 60_000
 const checkout = fileURLToPath(new URL("..", import.meta.url))
 const port = Number(process.env.BLITZ_PORT ?? "3007")
+/**
+ * Where quiet `npm run dev` sends service output, including Convex's "functions
+ * ready" line; with `BLITZ_VERBOSE=1` that line reaches the launcher's output instead.
+ */
+const devLog = join(homePaths(blitzHome()).logs, "dev.log")
+/** Where this run's output starts in `devLog`, which earlier runs share. */
+const devLogStart = fileSize(devLog)
 
 const child = spawn(process.execPath, ["scripts/dev-lan.mjs", "--dev"], {
   cwd: checkout,
@@ -52,15 +60,18 @@ try {
   exitCode = 0
 } catch (error) {
   console.error(`\n[smoke] ${error instanceof Error ? error.message : error}`)
+  const log = devLogSinceStart().trimEnd()
+  if (log) console.error(`\n[smoke] Last lines of ${devLog}:\n${log.split("\n").slice(-60).join("\n")}`)
 } finally {
   stopLauncher()
   process.exit(exitCode)
 }
 
 /**
- * Resolves once the launcher prints that Blitz is ready and Convex has pushed
- * Blitz's functions, which on a fresh clone finishes a little later; throws if
- * the launcher exits or stalls.
+ * Resolves once the launcher prints that Blitz is ready ("Blitz has started"
+ * in the quiet default, "Blitz is ready at" with `BLITZ_VERBOSE=1`) and Convex
+ * has pushed Blitz's functions, which on a fresh clone finishes a little later;
+ * throws if the launcher exits or stalls.
  */
 function waitForReady() {
   return new Promise((resolve, reject) => {
@@ -69,7 +80,8 @@ function waitForReady() {
       READY_TIMEOUT_MS
     )
     const check = setInterval(() => {
-      if (!/Blitz is ready at/.test(output) || !/Convex functions ready/.test(output)) return
+      if (!/Blitz has started|Blitz is ready at/.test(output)) return
+      if (!/Convex functions ready/.test(output + devLogSinceStart())) return
       clearInterval(check)
       clearTimeout(timer)
       resolve(undefined)
@@ -80,6 +92,33 @@ function waitForReady() {
       reject(new Error(`The launcher exited with ${code} before Blitz was ready.`))
     })
   })
+}
+
+/**
+ * Returns a file's size in bytes.
+ * @param {string} path The file.
+ * @returns {number} Zero when the file does not exist yet.
+ */
+function fileSize(path) {
+  try {
+    return statSync(path).size
+  } catch {
+    return 0
+  }
+}
+
+/**
+ * Returns what this run has written to `devLog` so far.
+ * @returns {string} The text, or everything when the log was rotated since
+ *   the start; empty when there is no log (verbose mode).
+ */
+function devLogSinceStart() {
+  try {
+    const bytes = readFileSync(devLog)
+    return bytes.subarray(bytes.length >= devLogStart ? devLogStart : 0).toString("utf8")
+  } catch {
+    return ""
+  }
 }
 
 /**
