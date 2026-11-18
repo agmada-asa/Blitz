@@ -10,6 +10,7 @@ import { useCallback, useEffect, useMemo, useState } from "react"
 import Link from "next/link"
 import { useQuery } from "convex/react"
 
+import { PageContainer } from "@/components/page-container"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -215,7 +216,7 @@ export function ProjectAudio({
   }
 
   return (
-    <main className="mx-auto max-w-3xl space-y-6 px-4 py-6 pb-32 sm:px-8 sm:py-10">
+    <PageContainer className="space-y-6">
       <header className="space-y-3">
         <Button
           asChild
@@ -515,6 +516,6 @@ export function ProjectAudio({
           ) : null}
         </DialogContent>
       </Dialog>
-    </main>
+    </PageContainer>
   )
 }
