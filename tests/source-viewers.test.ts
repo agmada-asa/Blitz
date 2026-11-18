@@ -127,6 +127,18 @@ test("fragments are matched in order so a repeated phrase earlier is skipped", (
   )
 })
 
+test("letters that grow when lower-cased keep later matches aligned", () => {
+  // `İ` lower-cases to two code units; the match after it must still land on
+  // the right characters instead of running past the end.
+  assert.deepEqual(highlighted(["İstanbul is a big city"], "big city"), [
+    "big city",
+  ])
+  assert.deepEqual(
+    highlighted(["Rapor", "İSTANBUL ŞUBESİ", "kapanış özeti"], "kapanış özeti"),
+    ["kapanış özeti"]
+  )
+})
+
 test("transcript citations open YouTube at the cited moment", () => {
   assert.equal(timestampSeconds("12:34"), 754)
   assert.equal(timestampSeconds("1:02:03"), 3723)

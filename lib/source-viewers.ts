@@ -134,22 +134,27 @@ export function quoteMatchSpans(
   pieces: readonly string[],
   quote: string
 ): QuoteSpan[] {
-  // Compact every piece into one string, remembering where each character came from.
+  // Compact every piece into one string, remembering where each character came
+  // from. Characters are lower-cased one at a time on both sides: some grow
+  // (`İ` becomes two code units) and some depend on their neighbours (final
+  // `Σ`), so whole-string lower-casing would misalign the two.
   let haystack = ""
   const owners: Array<{ index: number; offset: number }> = []
   pieces.forEach((piece, index) => {
     for (let offset = 0; offset < piece.length; offset++) {
       const character = piece[offset]
       if (IGNORED_CHARACTER.test(character)) continue
-      haystack += character.toLowerCase()
-      owners.push({ index, offset })
+      const folded = character.toLowerCase()
+      haystack += folded
+      for (let unit = 0; unit < folded.length; unit++)
+        owners.push({ index, offset })
     }
   })
   const compact = (value: string) =>
     [...value]
       .filter((character) => !IGNORED_CHARACTER.test(character))
+      .map((character) => character.toLowerCase())
       .join("")
-      .toLowerCase()
   const body = quote.replace(
     /^\s*\[(?:Page|Slide|Part)\s+[^\]\n]+\]\s*|^\s*\[(?:\d{1,2}:)?\d{1,2}:\d{2}\]\s*/i,
     ""
