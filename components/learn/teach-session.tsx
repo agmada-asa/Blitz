@@ -76,7 +76,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { ArrowDownIcon, ArrowLeftIcon, FileIcon } from "@/components/ui/icon"
+import { ArrowDownIcon, ArrowLeftIcon, ArrowRightIcon, FileIcon } from "@/components/ui/icon"
 import {
   Popover,
   PopoverContent,
@@ -196,6 +196,8 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
   const setTeachSideChat = useMutation(api.workspaceChats.setTeachSideChat)
   const [confirmRestart, setConfirmRestart] = useState(false)
   const [outlineOpen, setOutlineOpen] = useState(false)
+  // The unit's files fold into one line so a long list does not push the outline aside.
+  const [sourcesOpen, setSourcesOpen] = useState(false)
   const [summaryOpen, setSummaryOpen] = useState(false)
   const [contextOpen, setContextOpen] = useState(false)
   const unitOptionsRef = useRef<HTMLButtonElement>(null)
@@ -839,12 +841,28 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
         {unit.sources.length ? (
           <section
             aria-label="Unit sources"
-            className="mt-8 border-t border-border/70 pt-4"
+            className="mt-6 border-t border-border/70 pt-3"
           >
-            <h2 className="px-3 text-xs font-medium text-muted-foreground">
-              Sources
+            <h2>
+              <button
+                type="button"
+                aria-expanded={sourcesOpen}
+                aria-controls="teach-unit-sources"
+                onClick={() => setSourcesOpen((open) => !open)}
+                className="flex min-h-10 w-full items-center gap-2 rounded-lg px-3 text-left text-sm text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+              >
+                <ArrowRightIcon
+                  aria-hidden="true"
+                  className={cn(
+                    "size-4 shrink-0 transition-transform motion-reduce:transition-none",
+                    sourcesOpen && "rotate-90"
+                  )}
+                />
+                <span className="flex-1">Sources</span>
+                <span className="text-xs tabular-nums">{unit.sources.length}</span>
+              </button>
             </h2>
-            <ul className="mt-2 space-y-0.5">
+            <ul id="teach-unit-sources" hidden={!sourcesOpen} className="mt-1 space-y-0.5">
               {unit.sources.map((item) => (
                 <li key={item.id}>
                   <button
