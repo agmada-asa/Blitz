@@ -24,6 +24,7 @@ import {
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
 import { isArchived } from "@/lib/projects"
+import { cn } from "@/lib/utils"
 
 /** Project summary returned by the library query. */
 type Project = {
@@ -61,7 +62,8 @@ type ProjectGridProps = {
 
 /**
  * Describes a module's unit progress, or what it still needs, in a few words.
- * The due count and next unit are shown beside it by the card.
+ * The card shows the "needs" messages and reads the progress out to screen
+ * readers only, with the due count and next unit.
  */
 function progressStatus(progress: ModuleProgress | undefined): string {
   if (progress?.hasUnsortedSources) return "Sources aren't in a unit yet"
@@ -344,9 +346,8 @@ export function ProjectGrid({ projects, progress, onCreate }: ProjectGridProps) 
 }
 
 /**
- * Renders one library card: a link to the project with its unit progress, and
- * the project menu. Shows a skeleton line in place of the progress text until
- * the module progress has loaded.
+ * Renders one library card: a link to the project with its unit progress bar,
+ * and the project menu.
  */
 function ProjectCard({
   project,
@@ -379,19 +380,22 @@ function ProjectCard({
               fill,
             }))}
           />
+          {/* The bar shows progress at a glance, so the counts are only read out. A module
+              that still needs material says so visibly, since that tells the learner what to do. */}
           {moduleProgress ? (
-            <p className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
-              <span>{progressStatus(progress)}</span>
-              {progress?.dueCount ? (
-                <span className="font-medium text-foreground/80 tabular-nums">{progress.dueCount} due</span>
-              ) : null}
+            <p
+              className={cn(
+                "text-xs text-muted-foreground",
+                progress?.unitCount && !progress.hasUnsortedSources && "sr-only"
+              )}
+            >
+              {progressStatus(progress)}
+              {progress?.dueCount ? `, ${progress.dueCount} due` : ""}
               {progress?.nextUnitTitle ? (
-                <span className="sr-only">Next: {progress.nextUnitTitle}</span>
+                <span className="sr-only">. Next: {progress.nextUnitTitle}</span>
               ) : null}
             </p>
-          ) : (
-            <Skeleton className="h-4 w-32" />
-          )}
+          ) : null}
         </div>
       </Link>
       {/* Quiet until the card is hovered or focused; always shown where there is no hover. */}
