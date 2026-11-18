@@ -31,7 +31,7 @@ PDF.js renders the requested page and highlights the text items that match the s
 Other originals get their own view, chosen by `originalViewer` (`lib/source-viewers.ts`) and opened first:
 
 - **Slides** for a saved PowerPoint file. `lib/client/pptx-slides.ts` reads the file in the browser and draws each slide: positioned text with inherited layout, master and theme styles, pictures, tables and backgrounds. Charts, SmartArt, effects and EMF/WMF pictures are left out. The reader scrolls to the cited slide (from the `Slide N` label) and highlights the passage on it. Slides are numbered by part name, the same rule extraction uses, so a citation and the drawn slide always agree.
-- **Document** for a saved Word file, drawn by `docx-preview` with the pages reflowed to the reader's width.
+- **Document** for a saved Word file, drawn by `docx-preview` with the pages reflowed to the reader's width. It is drawn in a shadow root because `docx-preview` writes values from the file into CSS unescaped; there the document's styles cannot reach the rest of the app.
 - **Formatted** for Markdown notes, and for Word documents whose original was not kept, drawn with the chat's Markdown renderer.
 
 These views find the passage with `quoteMatchSpans`, which ignores whitespace, case and Markdown syntax, and falls back to matching each sentence or line in order. The highlight uses the CSS Custom Highlight API, so the drawn original is never edited.

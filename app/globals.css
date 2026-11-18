@@ -252,7 +252,9 @@
   background-color: color-mix(in oklab, var(--brand) 28%, transparent);
 }
 
-/* The cited passage inside a drawn original (slides, Word, formatted Markdown). */
+/* The cited passage inside a drawn original (slides, formatted Markdown). Word
+   documents are drawn in a shadow root and repeat this rule there
+   (`components/ui/document-reader.tsx`). */
 ::highlight(source-quote) {
   background-color: color-mix(in oklab, var(--brand) 30%, transparent);
 }

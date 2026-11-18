@@ -7,6 +7,12 @@
  * Rendering is done in the browser by `docx-preview`, loaded only when a Word
  * source is opened. Pages keep the document's look but reflow to the
  * reader's width, so the pane works beside a chat and on a phone.
+ *
+ * The document is drawn inside a shadow root. `docx-preview` writes the
+ * document's styles into a `<style>` element without escaping values taken
+ * from the file (list numbering text, style names), so a crafted `.docx`
+ * could otherwise restyle the whole app. In the shadow root those rules only
+ * reach the document.
  */
 import { useEffect, useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
@@ -19,6 +25,28 @@ import { markdownHref } from "@/lib/markdown"
 
 /** Largest Word file rendered in the browser. Matches the import limit for Word documents. */
 const MAX_DOCX_BYTES = 20_000_000
+
+/**
+ * Reader styles inside the document's shadow root, where the app's stylesheet
+ * does not reach. Pages stay paper-white in dark mode because the document
+ * sets its own colours; `--border`, `--radius` and `--brand` inherit from
+ * the app. The passage highlight must be declared here too.
+ */
+const DOCUMENT_STYLES = `
+section.docx {
+  min-height: 0 !important;
+  border: 1px solid var(--border) !important;
+  border-radius: calc(var(--radius) * 0.6) !important;
+  background: white !important;
+  color: black !important;
+  padding: 1.5rem !important;
+}
+section.docx + section.docx { margin-top: 1rem; }
+img { max-width: 100%; }
+::highlight(source-quote) {
+  background-color: color-mix(in oklab, var(--brand) 30%, transparent);
+}
+`
 
 /**
  * Word draws most bullets with private-use characters of the Symbol and
@@ -61,6 +89,28 @@ function secureLinks(body: HTMLElement): void {
   }
 }
 
+/**
+ * Follows a click on a link to a bookmark inside the document.
+ *
+ * Bookmarks live in the shadow root, where the browser's own `#id`
+ * navigation cannot find them, so the click scrolls to the bookmark instead
+ * of changing the app's URL. Other clicks are left alone.
+ *
+ * @param shadow The shadow root holding the drawn document.
+ * @param event The click inside the document.
+ */
+function followBookmark(shadow: ShadowRoot, event: MouseEvent): void {
+  const link =
+    event.target instanceof Element
+      ? event.target.closest<HTMLAnchorElement>('a[href^="#"]')
+      : null
+  if (!link) return
+  event.preventDefault()
+  // `docx-preview` writes the bookmark name unencoded into both `href` and `id`.
+  const id = link.getAttribute("href")?.slice(1)
+  if (id) shadow.getElementById(id)?.scrollIntoView({ block: "start" })
+}
+
 /** Replaces Symbol and Wingdings bullets in the rendered list styles. */
 function fixSymbolBullets(styles: HTMLElement): void {
   for (const style of Array.from(styles.querySelectorAll("style"))) {
@@ -81,22 +131,29 @@ function fixSymbolBullets(styles: HTMLElement): void {
  */
 export function DocumentReader({ url, quote }: { url: string; quote: string }) {
   const scrollRef = useRef<HTMLDivElement>(null)
-  const bodyRef = useRef<HTMLDivElement>(null)
-  const styleRef = useRef<HTMLDivElement>(null)
+  // Holds the shadow root; the document's own containers are created inside it.
+  const hostRef = useRef<HTMLDivElement>(null)
+  const bodyRef = useRef<HTMLDivElement | null>(null)
   const [attempt, setAttempt] = useState(0)
   // Results are keyed by file and attempt, so a new file or a retry shows loading.
   const key = `${attempt}:${url}`
   const [done, setDone] = useState<{ key: string; ok: boolean }>()
   const state = done?.key !== key ? "loading" : done.ok ? "ready" : "failed"
 
-  // Render the document into this component's own containers.
+  // Render the document into fresh containers inside the shadow root.
   useEffect(() => {
-    const body = bodyRef.current
-    const styles = styleRef.current
-    if (!body || !styles) return
+    const host = hostRef.current
+    if (!host) return
     let cancelled = false
-    body.replaceChildren()
-    styles.replaceChildren()
+    const shadow = host.shadowRoot ?? host.attachShadow({ mode: "open" })
+    const sheet = document.createElement("style")
+    sheet.textContent = DOCUMENT_STYLES
+    const styles = document.createElement("div")
+    const body = document.createElement("div")
+    shadow.replaceChildren(sheet, styles, body)
+    bodyRef.current = body
+    const onClick = (event: MouseEvent) => followBookmark(shadow, event)
+    body.addEventListener("click", onClick)
     Promise.all([
       fetch(url).then(async (response) => {
         if (!response.ok) throw new Error("unavailable")
@@ -135,6 +192,7 @@ export function DocumentReader({ url, quote }: { url: string; quote: string }) {
       })
     return () => {
       cancelled = true
+      body.removeEventListener("click", onClick)
     }
   }, [url, key])
 
@@ -170,16 +228,7 @@ export function DocumentReader({ url, quote }: { url: string; quote: string }) {
           </Button>
         </div>
       ) : null}
-      <div ref={styleRef} hidden />
-      {/* Word pages stay paper-white in dark mode; the document sets its own colours. */}
-      <div
-        ref={bodyRef}
-        className={
-          state === "ready"
-            ? "space-y-4 [&_section.docx]:!min-h-0 [&_section.docx]:!rounded-sm [&_section.docx]:!border [&_section.docx]:!bg-white [&_section.docx]:!p-6 [&_section.docx]:!text-black [&_img]:max-w-full"
-            : "hidden"
-        }
-      />
+      <div ref={hostRef} hidden={state !== "ready"} />
     </div>
   )
 }
