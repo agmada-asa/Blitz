@@ -1,14 +1,8 @@
 "use client"
 
-/**
- * Renders the notification center: a toolbar with the unread count and whether anything is
- * running, any ongoing work, then finished notifications grouped by day. Neighbouring "practice
- * questions ready" notifications fold into one line that opens to show each. Every row links to
- * where the work happened.
- */
+/** Renders active work and recent finished notifications with direct destinations. */
 
 import Link from "next/link"
-import { useId, useState } from "react"
 import {
   AlertCircleIcon,
   BubbleChatNotificationIcon,
@@ -28,13 +22,11 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { ElapsedTime } from "@/components/ui/elapsed-time"
 import {
-  ArrowRightIcon,
   CheckCircleIcon,
   CheckIcon,
   FileIcon,
   LoadingIcon,
 } from "@/components/ui/icon"
-import { collapseRuns, groupByDay } from "@/lib/day-groups"
 import { cn } from "@/lib/utils"
 
 /** Maps notification kinds to a compact visual cue. */
@@ -156,8 +148,6 @@ type NotificationItemProps = {
   unread: boolean
   onMarkRead: () => void
   onMarkUnread: () => void
-  /** Indents the row under a collapsed run's summary line. */
-  nested?: boolean
 }
 
 /** Renders one finished or failed item as an openable notification with compact unread cues. */
@@ -166,13 +156,11 @@ function NotificationItem({
   unread,
   onMarkRead,
   onMarkUnread,
-  nested = false,
 }: NotificationItemProps) {
   return (
     <article
       className={cn(
-        "group relative flex items-center gap-3 px-3 py-2.5 transition-colors sm:px-4 sm:py-3",
-        nested && "pl-8 sm:pl-14",
+        "group relative flex items-center gap-3 px-3 py-2 transition-colors sm:px-3.5 sm:py-2.5",
         unread
           ? "bg-brand/[0.03] hover:bg-brand/[0.06] dark:bg-brand/[0.06] dark:hover:bg-brand/[0.09]"
           : "hover:bg-muted/60"
@@ -217,7 +205,7 @@ function NotificationItem({
           <div className="flex min-w-0 items-center gap-1.5">
             <span
               className={cn(
-                "line-clamp-2 text-sm",
+                "truncate text-sm",
                 unread
                   ? "font-semibold text-foreground"
                   : "font-medium text-foreground/90"
@@ -225,6 +213,13 @@ function NotificationItem({
             >
               {row.title}
             </span>
+            {unread ? (
+              <span
+                className="size-1.5 shrink-0 rounded-full bg-brand"
+                aria-hidden="true"
+                title="Unread notification"
+              />
+            ) : null}
             {row.context ? (
               <span className="hidden truncate text-xs text-muted-foreground/80 sm:inline">
                 · {row.context}
@@ -295,152 +290,6 @@ function NotificationItem({
   )
 }
 
-/**
- * Returns the key that lets neighbouring notifications fold into one line. Only finished
- * "practice questions ready" rows fold; everything else stays on its own line.
- * @param row A finished or failed notification.
- */
-function runKey(row: NotificationRow): string | null {
-  return row.kind === "practice" && row.status === "completed"
-    ? "practice-ready"
-    : null
-}
-
-/** Props for one folded run of "practice questions ready" notifications. */
-type NotificationRunProps = {
-  rows: NotificationRow[]
-  isRead: (id: string) => boolean
-  markAsRead: (id: string) => void
-  markAsUnread: (id: string) => void
-}
-
-/**
- * Shows a run of "practice questions ready" notifications as one line with the unit count,
- * the total questions and the projects involved. Opening it lists each notification with its
- * own link and read control. The line counts as unread while any notification in it is.
- */
-function NotificationRun({
-  rows,
-  isRead,
-  markAsRead,
-  markAsUnread,
-}: NotificationRunProps) {
-  const [open, setOpen] = useState(false)
-  const panelId = useId()
-  const unreadRows = rows.filter((row) => !isRead(row.id))
-  const unread = unreadRows.length > 0
-  const questions = rows.reduce(
-    (total, row) => total + (row.generatedItemCount ?? 0),
-    0
-  )
-  const projects = [
-    ...new Set(rows.map((row) => row.context).filter(Boolean)),
-  ].join(", ")
-  const newest = rows[0]
-  const title = `Practice questions ready for ${rows.length} units`
-  const detail = [
-    questions ? `${questions} ${questions === 1 ? "question" : "questions"}` : null,
-    projects || null,
-  ]
-    .filter(Boolean)
-    .join(" · ")
-
-  return (
-    <div>
-      <div
-        className={cn(
-          "group relative flex items-center gap-3 px-3 py-2.5 transition-colors sm:px-4 sm:py-3",
-          unread
-            ? "bg-brand/[0.03] hover:bg-brand/[0.06] dark:bg-brand/[0.06] dark:hover:bg-brand/[0.09]"
-            : "hover:bg-muted/60"
-        )}
-      >
-        <button
-          type="button"
-          aria-expanded={open}
-          aria-controls={panelId}
-          onClick={() => setOpen((value) => !value)}
-          className="absolute inset-0 z-0 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
-        >
-          <span className="sr-only">
-            {title}
-            {unread ? " (unread)" : ""}. {detail}. {open ? "Hide" : "Show"} each
-          </span>
-        </button>
-        <span
-          className={cn(
-            "pointer-events-none relative z-10 flex size-8 shrink-0 items-center justify-center rounded-lg",
-            unread ? "bg-brand/10 text-brand" : "bg-muted text-foreground"
-          )}
-        >
-          <CheckCircleIcon aria-hidden="true" size={16} />
-          {unread ? (
-            <span
-              className="absolute -top-0.5 -right-0.5 size-2 rounded-full border border-background bg-brand"
-              aria-hidden="true"
-            />
-          ) : null}
-        </span>
-        <div className="pointer-events-none relative z-10 min-w-0 flex-1">
-          <p
-            className={cn(
-              "line-clamp-2 text-sm",
-              unread
-                ? "font-semibold text-foreground"
-                : "font-medium text-foreground/90"
-            )}
-          >
-            {title}
-          </p>
-          <p className="truncate text-xs text-muted-foreground">{detail}</p>
-        </div>
-        <div className="relative z-10 flex shrink-0 items-center gap-1.5">
-          <time
-            dateTime={new Date(newest.updatedAt).toISOString()}
-            title={formatTimestamp(newest.updatedAt)}
-            className="pointer-events-none text-[11px] text-muted-foreground"
-          >
-            {formatCompactTimestamp(newest.updatedAt)}
-          </time>
-          {unread ? (
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-xs"
-              className="size-6 text-muted-foreground opacity-80 hover:text-foreground hover:opacity-100"
-              title="Mark all as read"
-              aria-label={`Mark ${rows.length} practice notifications as read`}
-              onClick={() => unreadRows.forEach((row) => markAsRead(row.id))}
-            >
-              <CheckIcon aria-hidden="true" size={13} strokeWidth={2.2} />
-            </Button>
-          ) : null}
-          <ArrowRightIcon
-            aria-hidden="true"
-            size={14}
-            className={cn(
-              "pointer-events-none text-muted-foreground transition-transform motion-reduce:transition-none",
-              open && "rotate-90"
-            )}
-          />
-        </div>
-      </div>
-      <div id={panelId} hidden={!open} className="divide-y border-t">
-        {rows.map((row) => (
-          <NotificationItem
-            key={row.id}
-            row={row}
-            nested
-            unread={!isRead(row.id)}
-            onMarkRead={() => markAsRead(row.id)}
-            onMarkUnread={() => markAsUnread(row.id)}
-          />
-        ))}
-      </div>
-    </div>
-  )
-}
-
 /** Displays notification permission status and requests browser alerts on click. */
 function BrowserAlertControl() {
   const { browserPermission, requestBrowserNotifications } = useNotifications()
@@ -460,7 +309,7 @@ function BrowserAlertControl() {
   return (
     <Button
       type="button"
-      variant="ghost"
+      variant="outline"
       size="sm"
       className="h-7 rounded-full px-2.5 text-xs"
       onClick={() => void requestBrowserNotifications()}
@@ -480,8 +329,6 @@ export function NotificationCenter() {
     markAsUnread,
     markAllRead,
   } = useNotifications()
-  // Fixed at mount: anything newer still lands under Today.
-  const [now] = useState(() => Date.now())
 
   if (!snapshot)
     return (
@@ -490,100 +337,94 @@ export function NotificationCenter() {
       </p>
     )
 
-  const dayGroups = groupByDay(snapshot.notifications, (row) => row.updatedAt, now)
-
   return (
-    <div className="space-y-6">
-      {/* One toolbar: unread count, whether anything is running, and the page actions. */}
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-        {unreadCount > 0 ? (
-          <Badge
-            variant="secondary"
-            className="gap-1 px-2 py-0.5 text-[11px] font-normal"
-          >
-            <span className="size-1.5 rounded-full bg-brand" aria-hidden="true" />
-            {unreadCount} unread
-          </Badge>
-        ) : null}
-        {snapshot.tasks.length ? null : (
-          <p className="text-xs text-muted-foreground">
-            Nothing running right now
-          </p>
-        )}
-        <div className="ml-auto flex flex-wrap items-center gap-2">
-          <BrowserAlertControl />
-          {unreadCount > 0 ? (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="h-7 rounded-full px-2.5 text-xs"
-              onClick={markAllRead}
-            >
-              Mark all as read
-            </Button>
-          ) : null}
-        </div>
-      </div>
-
-      {snapshot.tasks.length ? (
-        <section aria-labelledby="ongoing-heading">
-          <div className="mb-2 flex items-baseline gap-2">
-            <h2 id="ongoing-heading" className="text-sm font-medium">
+    <div className="space-y-6 sm:space-y-8">
+      <section aria-labelledby="ongoing-heading">
+        <div className="mb-2.5 flex flex-wrap items-end justify-between gap-2">
+          <div>
+            <h2 id="ongoing-heading" className="font-heading text-lg sm:text-xl">
               Ongoing
             </h2>
             <p className="text-xs text-muted-foreground">
               Work continues when you move elsewhere in Blitz.
             </p>
           </div>
+          {snapshot.tasks.length ? (
+            <Badge variant="secondary" className="px-2 py-0.5 text-[11px]">
+              {snapshot.tasks.length} active
+            </Badge>
+          ) : null}
+        </div>
+        {snapshot.tasks.length ? (
           <div className="space-y-2">
             {snapshot.tasks.map((row) => (
               <TaskRow key={row.id} row={row} />
             ))}
           </div>
-        </section>
-      ) : null}
+        ) : (
+          <div className="rounded-xl border border-dashed py-3.5 px-4 text-xs text-muted-foreground">
+            No work is running right now.
+          </div>
+        )}
+      </section>
 
-      {dayGroups.length ? (
-        dayGroups.map((group) => {
-          const headingId = `notifications-${group.label.replace(/\s+/g, "-").toLowerCase()}`
-          return (
-            <section key={group.label} aria-labelledby={headingId}>
-              <h2
-                id={headingId}
-                className="mb-2 text-[11px] font-medium tracking-wide text-muted-foreground uppercase"
-              >
-                {group.label}
+      <section aria-labelledby="recent-heading">
+        <div className="mb-2.5 flex flex-wrap items-end justify-between gap-2">
+          <div>
+            <div className="flex items-center gap-2">
+              <h2 id="recent-heading" className="font-heading text-lg sm:text-xl">
+                Recent
               </h2>
-              <div className="divide-y overflow-hidden rounded-2xl border bg-card">
-                {collapseRuns(group.items, runKey).map((entry) =>
-                  entry.type === "run" ? (
-                    <NotificationRun
-                      key={entry.items[0].id}
-                      rows={entry.items}
-                      isRead={isRead}
-                      markAsRead={markAsRead}
-                      markAsUnread={markAsUnread}
-                    />
-                  ) : (
-                    <NotificationItem
-                      key={entry.item.id}
-                      row={entry.item}
-                      unread={!isRead(entry.item.id)}
-                      onMarkRead={() => markAsRead(entry.item.id)}
-                      onMarkUnread={() => markAsUnread(entry.item.id)}
-                    />
-                  )
-                )}
-              </div>
-            </section>
-          )
-        })
-      ) : (
-        <p className="rounded-2xl border border-dashed px-4 py-6 text-center text-xs text-muted-foreground">
-          Finished work and replies will appear here.
-        </p>
-      )}
+              {unreadCount > 0 ? (
+                <Badge
+                  variant="secondary"
+                  className="gap-1 px-2 py-0.5 text-[11px] font-normal"
+                >
+                  <span
+                    className="size-1.5 rounded-full bg-brand"
+                    aria-hidden="true"
+                  />
+                  {unreadCount} unread
+                </Badge>
+              ) : null}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Open a result to return to the chat, research plan, or project.
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            {unreadCount > 0 ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-7 rounded-full px-2.5 text-xs"
+                onClick={markAllRead}
+              >
+                Mark all as read
+              </Button>
+            ) : null}
+            <BrowserAlertControl />
+          </div>
+        </div>
+        {snapshot.notifications.length ? (
+          <div className="divide-y rounded-xl border bg-card overflow-hidden">
+            {snapshot.notifications.map((row) => (
+              <NotificationItem
+                key={row.id}
+                row={row}
+                unread={!isRead(row.id)}
+                onMarkRead={() => markAsRead(row.id)}
+                onMarkUnread={() => markAsUnread(row.id)}
+              />
+            ))}
+          </div>
+        ) : (
+          <div className="rounded-xl border border-dashed py-6 px-4 text-center text-xs text-muted-foreground">
+            Finished work and replies will appear here.
+          </div>
+        )}
+      </section>
     </div>
   )
 }
