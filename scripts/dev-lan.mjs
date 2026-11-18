@@ -10,7 +10,11 @@
  *   `.next-production` (again only after the code changes) and runs `next start`.
  * - `npm run dev:lan -- --dev`: `next dev` from this checkout, for coding. If a
  *   Blitz server already holds the database, Next starts on port 3009 against
- *   it and does not push this checkout's Convex functions.
+ *   it and does not push this checkout's Convex functions. Service output goes
+ *   to `~/.blitz/logs/dev.log`; the terminal shows the address, errors, and
+ *   restarts, and the browser opens when Blitz is ready. `--verbose`
+ *   (`npm run dev:verbose`, or `BLITZ_VERBOSE=1`) keeps the full output as it
+ *   was before, and `--no-open` (or `BLITZ_OPEN=0`) keeps the browser closed.
  * - `--service`: the background server's launchd entry. It serves
  *   `~/.blitz/current` and keeps it on the newest tracked commit
  *   (`electron/auto-update.mjs`).
@@ -21,10 +25,20 @@
 import { createSocket } from "node:dgram"
 import { networkInterfaces } from "node:os"
 import { isIP } from "node:net"
-import { closeSync, copyFileSync, openSync, renameSync, statSync, truncateSync } from "node:fs"
+import {
+  closeSync,
+  copyFileSync,
+  fstatSync,
+  openSync,
+  renameSync,
+  statSync,
+  truncateSync,
+  writeSync,
+} from "node:fs"
 import { mkdir } from "node:fs/promises"
 import { join } from "node:path"
 import { fileURLToPath } from "node:url"
+import { createProblemFilter, displayPath, followLog, openInBrowser, tailLog } from "./dev-console.mjs"
 import { formatTerminalQr } from "./lan-qr.mjs"
 import { AutoUpdater, CHECK_INTERVAL_MS, readServerState, shortCommit } from "../electron/auto-update.mjs"
 import { isServerInstalled, RESTART_EXIT_CODE, serverProcess, startServer } from "../electron/background-server.mjs"
@@ -47,6 +61,17 @@ const mode = process.argv.includes("--service")
   : process.argv.includes("--dev")
     ? "dev"
     : "production"
+/**
+ * In dev mode, keeps the full output: every service streams to the terminal
+ * instead of `dev.log`, with the QR code and no browser opening. Set by
+ * `--verbose` (`npm run dev:verbose`) or, to make it the default, `BLITZ_VERBOSE=1`.
+ */
+const verbose = process.argv.includes("--verbose") || process.env.BLITZ_VERBOSE === "1"
+/** In dev mode, opens the browser once Blitz is ready, unless asked not to or not run from a terminal. */
+const openBrowser =
+  Boolean(process.stdout.isTTY) &&
+  !process.argv.includes("--no-open") &&
+  process.env.BLITZ_OPEN !== "0"
 const checkout = fileURLToPath(new URL("..", import.meta.url))
 const configuredPort = Number(process.env.BLITZ_PORT ?? "3007")
 const home = blitzHome()
@@ -68,6 +93,8 @@ const environment = {
 
 /** @type {ServiceManager | undefined} */
 let services
+/** The log quiet dev mode writes service output to, named in restart messages. */
+let quietLogPath = ""
 let stopping = false
 process.on("SIGINT", () => void stop(0))
 process.on("SIGTERM", () => void stop(0))
@@ -134,26 +161,45 @@ async function runProduction() {
 /**
  * Runs `next dev` from this checkout. When another Blitz already serves the
  * database, only Next starts, on its own port, against that database.
+ *
+ * Unless `--verbose` is passed, service output is appended to
+ * `~/.blitz/logs/dev.log` and the terminal shows only a start message, the
+ * address, problem lines from the log, and restarts. A failed start prints
+ * the end of this run's log before the error.
  */
 async function runDevelopment() {
+  const log = verbose ? undefined : await openServiceLog(homePaths(home).logs, "dev.log")
+  let logStart = 0
+  if (log) {
+    // Runs share one log; the marker and offset separate this run's output.
+    writeSync(log.fd, `\n--- npm run dev started ${new Date().toISOString()} ---\n`)
+    logStart = fstatSync(log.fd).size
+    quietLogPath = log.path
+    setInterval(() => log.rotate(), 60 * 60_000).unref()
+    console.log("\nStarting Blitz…")
+  }
   const options = {
     cwd: checkout,
     host: "0.0.0.0",
     desktop: false,
     pidFile: join(homePaths(home).run, "dev-services.json"),
     onStatus: reportStatus,
+    ...(log ? { stdio: /** @type {import("node:child_process").StdioOptions} */ (["ignore", log.fd, log.fd]) } : {}),
   }
   services = new ServiceManager({ ...options, port: configuredPort, environment })
   await services.reapOrphans()
+  let attached = false
   try {
     await services.prepareEnvironment()
   } catch (error) {
     if (!(error instanceof DatabaseInUseError)) throw error
+    attached = true
     const port = Number(process.env.BLITZ_PORT ?? "3009")
-    console.log(
-      `\nAnother Blitz is serving the database, so only Next starts here, on port ${port}.` +
-        "\nThis checkout's Convex functions are not pushed; stop the other server to work on them (npm run server -- stop)."
-    )
+    if (verbose)
+      console.log(
+        `\nAnother Blitz is serving the database, so only Next starts here, on port ${port}.` +
+          "\nThis checkout's Convex functions are not pushed; stop the other server to work on them (npm run server -- stop)."
+      )
     services = new ServiceManager({
       ...options,
       port,
@@ -164,9 +210,38 @@ async function runDevelopment() {
       },
     })
   }
-  await printAddresses(services.port)
-  await services.start()
-  console.log(`\nBlitz is ready at http://localhost:${services.port}\n`)
+  const url = `http://localhost:${services.port}`
+  if (!log) {
+    await printAddresses(services.port)
+    await services.start()
+    console.log(`\nBlitz is ready at ${url}\n`)
+    return
+  }
+
+  // Errors keep reaching the terminal, including Convex push failures that
+  // would otherwise only show up as missing functions in the app.
+  const showProblem = createProblemFilter()
+  const stopFollowing = followLog(log.path, logStart, (line) => {
+    const text = showProblem(line)
+    if (text) console.error(`  ${text}`)
+  })
+  try {
+    await services.start()
+  } catch (error) {
+    stopFollowing()
+    const tail = tailLog(log.path, logStart)
+    if (tail.length) console.error(`\nLast lines of ${displayPath(log.path)}:\n${tail.map((line) => `  ${line}`).join("\n")}\n`)
+    console.error("Run npm run dev:verbose to see all output as it happens.")
+    throw error
+  }
+  console.log(`\nBlitz has started: ${url}`)
+  if (lanAddress) console.log(`On a phone on the same Wi-Fi: http://${lanAddress}:${services.port}`)
+  if (attached)
+    console.log(
+      "Using the database of the Blitz server that is already running, so changes in convex/ are not pushed. Stop it with npm run server -- stop to work on them."
+    )
+  console.log(`Logs are in ${displayPath(log.path)}. Press Ctrl+C to stop.\n`)
+  if (openBrowser) openInBrowser(url)
 }
 
 /**
@@ -241,10 +316,11 @@ async function restartForNewRunner() {
  * launch, and `rotate` copies and truncates it later: the services keep their
  * append-mode descriptor, so they continue at the start of the emptied file.
  * @param {string} directory The logs folder.
+ * @param {string} [name] The log's file name.
  */
-async function openServiceLog(directory) {
+async function openServiceLog(directory, name = "services.log") {
   await mkdir(directory, { recursive: true })
-  const path = join(directory, "services.log")
+  const path = join(directory, name)
   const previous = `${path}.previous`
   /** Returns the log's size, or zero when it does not exist. */
   const size = () => {
@@ -258,6 +334,7 @@ async function openServiceLog(directory) {
   const fd = openSync(path, "a")
   return {
     fd,
+    path,
     /** Keeps the log bounded while services are writing to it. */
     rotate() {
       if (size() <= SERVICE_LOG_LIMIT_BYTES) return
@@ -356,7 +433,8 @@ function reportStatus(name, status) {
       Math.round(((status.nextRestartAt ?? Date.now()) - Date.now()) / 1000)
     )
     console.error(
-      `[blitz] ${name} stopped (${status.lastExit}). Restarting in ${seconds}s.`
+      `[blitz] ${name} stopped (${status.lastExit}). Restarting in ${seconds}s.` +
+        (quietLogPath ? ` Details are in ${displayPath(quietLogPath)}.` : "")
     )
   } else if (status.state === "running" && status.restarts > 0) {
     console.log(`[blitz] ${name} restarted.`)
