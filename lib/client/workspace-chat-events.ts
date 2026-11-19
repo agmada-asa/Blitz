@@ -6,6 +6,7 @@
 import type { Id } from "../../convex/_generated/dataModel"
 import type { AgentRequest } from "../agent-request"
 import type { ProviderActivityEvent } from "../provider-activity"
+import { shownTurnNotice, type TurnNotice } from "../turn-notices.ts"
 
 /** Narrow event shapes returned by the workspace chat stream. */
 export type ChatEvent =
@@ -13,6 +14,8 @@ export type ChatEvent =
   | { type: "delta"; text: string }
   | { type: "thought-delta"; text: string }
   | { type: "activity"; event: ProviderActivityEvent }
+  /** A refusal, denied tool, or safety check; the reply shows it from Convex. */
+  | { type: "notice"; notice: TurnNotice }
   | {
       type: "complete"
       chatId: Id<"workspaceChats">
@@ -119,6 +122,19 @@ export function parseChatEvent(value: unknown): ChatEvent {
             : {}),
         },
       }
+  }
+  if (
+    event.type === "notice" &&
+    event.notice &&
+    typeof event.notice === "object" &&
+    !Array.isArray(event.notice)
+  ) {
+    const raw = event.notice as Record<string, unknown>
+    const notice =
+      typeof raw.kind === "string"
+        ? shownTurnNotice(raw.kind, raw.message, raw.details)
+        : undefined
+    if (notice) return { type: "notice", notice }
   }
   if (
     event.type === "complete" &&

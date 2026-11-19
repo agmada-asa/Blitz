@@ -73,6 +73,28 @@ test("keeps only well-formed tool activity", () => {
   )
 })
 
+test("reads the notices the chat route streams beside a reply", async () => {
+  // The exact line the route sends for a denied tool (tests/chat-route.test.ts).
+  const notice = { kind: "permission-denied", message: "Writing files is off." }
+  const events: ChatEvent[] = []
+  await readChatEvents(
+    bytes(
+      `{"type":"started","chatId":"c1"}\n${JSON.stringify({ type: "notice", notice })}\n{"type":"delta","text":"Done"}\n`
+    ),
+    (event) => events.push(event)
+  )
+  assert.deepEqual(events, [
+    { type: "started", chatId: "c1" },
+    { type: "notice", notice },
+    { type: "delta", text: "Done" },
+  ])
+  assert.throws(
+    () => parseChatEvent({ type: "notice", notice: { kind: "warning", message: "x" } }),
+    /invalid response/
+  )
+  assert.throws(() => parseChatEvent({ type: "notice" }), /invalid response/)
+})
+
 test("reads agent requests under both the current and the previous event names", () => {
   const current = parseChatEvent({
     type: "agent-request",
