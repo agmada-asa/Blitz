@@ -83,6 +83,11 @@ export type ModelReasoningPickerProps = {
   labelPrefix?: string
   /** Additional classes for the visible trigger bar container. */
   className?: string
+  /**
+   * Stretches the bar to its container's width and lets the model name use the
+   * spare room, instead of capping the name at a fixed width.
+   */
+  fill?: boolean
   /** Accessible name for the combined control. */
   "aria-label"?: string
   /** Optional description reference for the combined control. */
@@ -125,6 +130,7 @@ export function ModelReasoningPicker({
   showAccessPolicy = Boolean(accessPolicy && onAccessPolicyChange),
   labelPrefix = "Model",
   className,
+  fill = false,
   "aria-label": ariaLabel,
   "aria-describedby": ariaDescribedBy,
 }: ModelReasoningPickerProps) {
@@ -345,6 +351,7 @@ export function ModelReasoningPicker({
       aria-describedby={ariaDescribedBy}
       className={cn(
         "inline-flex items-center rounded-lg border border-border/70 bg-card/80 text-xs text-foreground shadow-xs backdrop-blur-xs select-none dark:bg-zinc-900/85",
+        fill && "flex w-full min-w-0",
         disabled && "pointer-events-none opacity-60",
         className
       )}
@@ -355,11 +362,16 @@ export function ModelReasoningPicker({
           <button
             type="button"
             disabled={disabled}
-            className="flex min-w-0 items-center gap-2 rounded-l-lg px-2.5 py-1.5 transition-colors hover:bg-muted/70"
+            className="flex min-w-0 flex-1 items-center gap-2 rounded-l-lg px-2.5 py-1.5 transition-colors hover:bg-muted/70"
             title={`${selectedProviderLabel}: ${selectedModelLabel}`}
           >
             <ProviderIcon provider={provider} className="size-4 shrink-0" />
-            <span className="max-w-[120px] truncate font-medium sm:max-w-[150px]">
+            <span
+              className={cn(
+                "truncate font-medium",
+                fill ? "min-w-0 flex-1 text-left" : "max-w-[120px] sm:max-w-[150px]"
+              )}
+            >
               {selectedModelLabel}
             </span>
             <ChevronDownIcon className="size-3 shrink-0 text-muted-foreground" />

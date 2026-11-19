@@ -144,6 +144,7 @@ function ReplyModelPickerEditor({
         showAccessPolicy={true}
         disabled={isDisabled}
         labelPrefix="Reply model"
+        fill
         onChange={selectModelAndReasoning}
       />
       <span aria-live="polite" className="sr-only">
