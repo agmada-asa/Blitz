@@ -67,8 +67,6 @@ import {
   DictationButton,
   DictationStatus,
   useDictation,
-  useReplyReader,
-  useReadRepliesSetting,
 } from "@/components/learn/teach-voice"
 import { InteractiveBlocksProvider } from "@/components/ui/interactive-blocks"
 import { ReadAloudButton } from "@/components/chat/read-aloud-button"
@@ -773,7 +771,6 @@ export function ChatWorkspace({
       ) === index
   )
   const messages = activeChat?.messages ?? []
-  const [readReplies, setReadReplies] = useReadRepliesSetting()
   /** Formats the loaded conversation as Markdown with optional agent activity. */
   const exportChatMarkdown = (): string => {
     const title = activeChat?.title?.trim() || "Chat"
@@ -2075,7 +2072,6 @@ export function ChatWorkspace({
   })
   const voiceOn = voice.phase !== "off"
   const lessonVoice = lesson?.voice
-  const chatReader = useReplyReader(readReplies && !voiceOn && !lessonVoice, messages, null)
   const stopVoice = voice.stop
   // Voice belongs to one chat; switching chats ends it. A new chat getting its id from the first
   // spoken turn is the same conversation, so voice carries on into it.
@@ -3231,13 +3227,9 @@ export function ChatWorkspace({
                   <PopoverContent
                     side="top"
                     align="start"
-                    className="max-h-[min(70svh,32rem)] w-[min(24rem,calc(100vw-2rem))] overflow-y-auto rounded-xl p-4"
+                    className="w-[min(32rem,calc(100vw-2rem))] rounded-xl p-4"
                   >
                     <div className="space-y-4">
-                      <label className="flex min-h-11 items-center gap-3 text-sm">
-                        <Checkbox checked={readReplies} onCheckedChange={value => { if (!value) chatReader.stop(); setReadReplies(value === true) }} />
-                        Read replies aloud
-                      </label>
                       <section className="space-y-2">
                         <h2 className="text-sm font-medium">Reply model</h2>
                         {/* Settings are read when a turn starts, so changes made
