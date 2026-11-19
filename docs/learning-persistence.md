@@ -1,8 +1,7 @@
 # Learning persistence
 
-The new learning tables sit beside the prototype `cards` and `attempts`
-tables. They give generated material stable source references and keep raw
-study events separate from the review summary derived from them.
+The learning tables give generated material stable source references and keep
+raw study events separate from the review summary derived from them.
 
 `topics` belong to a project and may point to a parent topic in that same
 project. `concepts` belong to a project, may belong to a topic, and keep the

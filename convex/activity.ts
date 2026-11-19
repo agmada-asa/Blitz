@@ -25,7 +25,6 @@ export type NotificationKind =
   | "exam-marking"
   | "research"
   | "import"
-  | "card-reply"
   | "workspace-reply"
 
 /** Shared row used by active tasks and finished notifications. */
@@ -90,8 +89,6 @@ export const list = query({
       importRunning,
       importFailed,
       importCompleted,
-      cardFailed,
-      cardCompleted,
       workspaceChats,
     ] = await Promise.all([
       ctx.db
@@ -149,19 +146,6 @@ export const list = query({
         .withIndex("by_status_createdAt", (q) => q.eq("status", "imported"))
         .order("desc")
         .take(MAX_ROWS_PER_STATUS),
-      // Card chat has no worker any more (docs/card-chat.md), so queued and
-      // running card questions never progress. Listing them would show
-      // permanent in-progress work; only their settled history is shown.
-      ctx.db
-        .query("conversationMessages")
-        .withIndex("by_status_createdAt", (q) => q.eq("status", "failed"))
-        .order("desc")
-        .take(MAX_ROWS_PER_STATUS),
-      ctx.db
-        .query("conversationMessages")
-        .withIndex("by_status_createdAt", (q) => q.eq("status", "completed"))
-        .order("desc")
-        .take(MAX_ROWS_PER_STATUS),
       ctx.db
         .query("workspaceChats")
         .withIndex("by_updatedAt")
@@ -186,22 +170,6 @@ export const list = query({
       ...importFailed,
       ...importCompleted,
     ]
-    const cardMessages = [
-      ...cardFailed,
-      ...cardCompleted,
-    ]
-
-    const conversationIds = [
-      ...new Set(cardMessages.map((message) => message.conversationId)),
-    ]
-    const conversations = new Map(
-      (await Promise.all(conversationIds.map((id) => ctx.db.get(id))))
-        .filter(
-          (conversation): conversation is Doc<"conversations"> =>
-            conversation !== null
-        )
-        .map((conversation) => [conversation._id, conversation])
-    )
     const proposalIds = [
       ...new Set(imports.map((importRow) => importRow.proposalId)),
     ]
@@ -236,25 +204,11 @@ export const list = query({
       ...[...papers.values()].map((paper) => paper.projectId),
       ...proposals.map((proposal) => proposal.projectId),
       ...imports.map((importRow) => importRow.projectId),
-      ...[...conversations.values()].map(
-        (conversation) => conversation.projectId
-      ),
     ])
     const projects = new Map(
       (await Promise.all([...projectIds].map((id) => ctx.db.get(id))))
         .filter((project): project is Doc<"projects"> => project !== null)
         .map((project) => [project._id, project])
-    )
-    const learningItems = new Map(
-      (
-        await Promise.all(
-          [...conversations.values()].map((conversation) =>
-            ctx.db.get(conversation.itemId)
-          )
-        )
-      )
-        .filter((item): item is Doc<"learningItems"> => item !== null)
-        .map((item) => [item._id, item])
     )
     const workspaceMessages = (
       await Promise.all(
@@ -526,42 +480,6 @@ export const list = query({
       })
     }
 
-    for (const message of cardMessages) {
-      const conversation = conversations.get(message.conversationId)
-      if (!conversation) continue
-      const project = projects.get(conversation.projectId)
-      const item = learningItems.get(conversation.itemId)
-      if (!project || !item) continue
-      const status = message.status
-      rows.push({
-        id: `card-reply:${message._id}`,
-        kind: "card-reply",
-        title:
-          status === "completed"
-            ? "Card reply is ready"
-            : status === "failed"
-              ? "Card reply failed"
-              : "Preparing a card reply",
-        detail: compact(message.question),
-        context: `${project.title} · ${item.title}`,
-        status,
-        stage:
-          status === "completed"
-            ? "Open reply"
-            : status === "failed"
-              ? "Failed"
-              : status === "queued"
-                ? "Queued"
-                : "Replying",
-        href: `/chat?projectId=${encodeURIComponent(conversation.projectId)}&itemId=${encodeURIComponent(conversation.itemId)}`,
-        createdAt: message.createdAt,
-        updatedAt: message.updatedAt,
-        ...timing(status, message.createdAt, message.updatedAt),
-        generatedItemCount: null,
-        error: message.error?.trim().slice(0, 500) || null,
-      })
-    }
-
     for (const message of workspaceMessages) {
       const chat = workspaceChats.find((row) => row._id === message.chatId)
       // Teach replies are read on the Teach screen as they stream; no notice needed.
@@ -598,7 +516,6 @@ export const list = query({
       .filter(
         (row) =>
           (row.status === "queued" || row.status === "running") &&
-          row.kind !== "card-reply" &&
           row.kind !== "workspace-reply"
       )
       .sort((left, right) => right.updatedAt - left.updatedAt)
@@ -606,7 +523,6 @@ export const list = query({
       .filter(
         (row) =>
           (row.status === "completed" || row.status === "failed") &&
-          row.kind !== "card-reply" &&
           row.kind !== "workspace-reply"
       )
       .sort((left, right) => right.updatedAt - left.updatedAt)

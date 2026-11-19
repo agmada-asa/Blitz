@@ -1,15 +1,11 @@
 /** Identifies whether a chat reply belongs to the chat interface currently open. */
 
-/** Chat notification kinds that can be matched against the current URL. */
-export type ChatNotificationKind = "card-reply" | "workspace-reply"
-
 /**
- * Checks whether a chat notification targets the conversation visible in the UI.
+ * Checks whether a chat reply notification targets the chat visible in the UI.
  * Returns false for non-chat routes or malformed URLs so callers can announce
  * those notifications normally.
  */
 export function isNotificationInCurrentChat(
-  kind: ChatNotificationKind,
   notificationHref: string,
   currentPathname: string,
   currentSearch: string
@@ -20,25 +16,10 @@ export function isNotificationInCurrentChat(
     const notificationUrl = new URL(notificationHref, "http://blitz.local")
     if (notificationUrl.pathname !== "/chat") return false
 
-    const currentParams = new URLSearchParams(currentSearch)
-    const notificationParams = notificationUrl.searchParams
-    if (kind === "workspace-reply") {
-      const currentChatId = currentParams.get("chatId")
-      const notificationChatId = notificationParams.get("chatId")
-      return Boolean(
-        currentChatId &&
-          notificationChatId &&
-          currentChatId === notificationChatId
-      )
-    }
-
-    const currentProjectId = currentParams.get("projectId")
-    const currentItemId = currentParams.get("itemId")
+    const currentChatId = new URLSearchParams(currentSearch).get("chatId")
+    const notificationChatId = notificationUrl.searchParams.get("chatId")
     return Boolean(
-      currentProjectId &&
-        currentItemId &&
-        currentProjectId === notificationParams.get("projectId") &&
-        currentItemId === notificationParams.get("itemId")
+      currentChatId && notificationChatId && currentChatId === notificationChatId
     )
   } catch {
     return false

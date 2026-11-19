@@ -1,7 +1,7 @@
 /**
  * The one audio format Blitz's speech to text takes: 16 kHz mono 16-bit PCM
- * WAV with the canonical 44-byte header. The browser encodes it
- * (`lib/client/speech-recording.ts`) and the server checks it
+ * WAV with the canonical 44-byte header. The voice service encodes it
+ * (`scripts/voice-service.ts`) and the server checks it
  * (`lib/server/speech-to-text.ts`) before the on-device model reads it.
  */
 

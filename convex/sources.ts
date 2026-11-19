@@ -636,55 +636,18 @@ export const remove = mutation({
 
     // Preparation and ingestion state. Deleting jobs makes any worker still
     // holding a lease fail its next write instead of recreating data.
-    const deletions: { _id: Id<TableWithSourceRows> }[] = []
-    const preparationChunkIds = new Set<string>()
-    deletions.push(
+    const deletions: { _id: Id<TableWithSourceRows> }[] = [
       ...(await ctx.db
         .query("ingestionJobs")
         .withIndex("by_source", (q) => q.eq("sourceId", sourceId))
-        .collect())
-    )
-    const preparationJobs = await ctx.db
-      .query("preparationJobs")
-      .withIndex("by_project_source", (q) =>
-        q.eq("projectId", projectId).eq("sourceId", sourceId)
-      )
-      .collect()
-    deletions.push(...preparationJobs)
-    for (const job of preparationJobs) {
-      const chunks = await ctx.db
-        .query("preparationChunks")
-        .withIndex("by_job_ordinal", (q) => q.eq("jobId", job._id))
-        .collect()
-      for (const chunk of chunks) preparationChunkIds.add(chunk._id)
-      deletions.push(...chunks)
-    }
-    const contentJobs = await ctx.db
-      .query("contentGenerationJobs")
-      .withIndex("by_project_source", (q) =>
-        q.eq("projectId", projectId).eq("sourceId", sourceId)
-      )
-      .collect()
-    deletions.push(...contentJobs)
-    for (const job of contentJobs)
-      deletions.push(
-        ...(await ctx.db
-          .query("contentPageCommits")
-          .withIndex("by_job_page", (q) => q.eq("jobId", job._id))
-          .collect())
-      )
-    deletions.push(
-      ...(await ctx.db
-        .query("cards")
-        .withIndex("by_source_order", (q) => q.eq("sourceId", sourceId))
         .collect()),
       ...(await ctx.db
-        .query("conceptRelationships")
+        .query("preparationJobs")
         .withIndex("by_project_source", (q) =>
           q.eq("projectId", projectId).eq("sourceId", sourceId)
         )
-        .collect())
-    )
+        .collect()),
+    ]
     for (const row of deletions) await ctx.db.delete(row._id)
 
     // Study material keeps its history but stops citing the deleted source.
@@ -695,15 +658,9 @@ export const remove = mutation({
     for (const item of items) {
       const ids = withoutSource(item.sourceIds, sourceId, (id) => id)
       const references = withoutSource(item.sourceReferences, sourceId, (ref) => ref.sourceId)
-      // Older cards point at a preparation chunk of their source; that chunk is deleted above.
-      const chunkGone = Boolean(item.sourceChunkId && preparationChunkIds.has(item.sourceChunkId))
-      if (!ids.changed && !references.changed && !chunkGone) continue
+      if (!ids.changed && !references.changed) continue
       const patch: Partial<Doc<"learningItems">> = { sourceIds: ids.list }
       if (item.sourceReferences) patch.sourceReferences = references.list
-      if (chunkGone) {
-        patch.sourceChunkId = undefined
-        patch.sourceChunkOrdinal = undefined
-      }
       if (!ids.list.length && item.origin !== "exam" && !item.archivedAt) patch.archivedAt = now
       await ctx.db.patch(item._id, patch)
     }
@@ -731,14 +688,7 @@ export const remove = mutation({
 })
 
 /** Tables cleared by `remove` in its own transaction. */
-type TableWithSourceRows =
-  | "ingestionJobs"
-  | "preparationJobs"
-  | "preparationChunks"
-  | "contentGenerationJobs"
-  | "contentPageCommits"
-  | "cards"
-  | "conceptRelationships"
+type TableWithSourceRows = "ingestionJobs" | "preparationJobs"
 
 /**
  * Deletes a removed source's search chunks and outline in bounded batches,

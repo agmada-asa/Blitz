@@ -17,14 +17,6 @@ import {
   turnNoticeFields,
 } from "./teachFields"
 
-/** Validator shared by the cards table's supported learning formats. */
-const cardType = v.union(
-  v.literal("explain"),
-  v.literal("recall"),
-  v.literal("multiple_choice"),
-  v.literal("connection")
-)
-
 /**
  * Question formats stored in the new learning-item table. The structured
  * formats (cloze, ordering, matching, code output) are answered with a list
@@ -159,32 +151,6 @@ export default defineSchema({
     .index("by_unit", ["unitId"])
     .index("by_project_role", ["projectId", "role"]),
 
-  cards: defineTable({
-    projectId: v.id("projects"),
-    sourceId: v.id("sources"),
-    type: cardType,
-    title: v.string(),
-    body: v.string(),
-    question: v.optional(v.string()),
-    answer: v.optional(v.string()),
-    options: v.optional(v.array(v.string())),
-    correctOption: v.optional(v.number()),
-    sourceLabel: v.string(),
-    order: v.number(),
-  })
-    .index("by_project_order", ["projectId", "order"])
-    .index("by_source_order", ["sourceId", "order"]),
-
-  attempts: defineTable({
-    projectId: v.id("projects"),
-    cardId: v.id("cards"),
-    rating: v.union(v.literal("again"), v.literal("got_it")),
-    createdAt: v.number(),
-  })
-    .index("by_project", ["projectId"])
-    .index("by_project_card", ["projectId", "cardId"])
-    .index("by_card_createdAt", ["cardId", "createdAt"]),
-
   topics: defineTable({
     projectId: v.id("projects"),
     parentTopicId: v.optional(v.id("topics")),
@@ -211,33 +177,6 @@ export default defineSchema({
     .index("by_project_title", ["projectId", "title"])
     .index("by_project_topic", ["projectId", "topicId"]),
 
-  /** One source-supported connection between two concepts in a project. */
-  conceptRelationships: defineTable({
-    projectId: v.id("projects"),
-    sourceId: v.id("sources"),
-    fromConceptId: v.id("concepts"),
-    toConceptId: v.id("concepts"),
-    kind: v.union(
-      v.literal("prerequisite_for"),
-      v.literal("part_of"),
-      v.literal("causes"),
-      v.literal("contrasts_with"),
-      v.literal("applies_to"),
-      v.literal("related_to")
-    ),
-    explanation: v.string(),
-    evidence: v.array(
-      v.object({
-        sectionId: v.optional(v.string()),
-        locator: v.string(),
-      })
-    ),
-    createdAt: v.number(),
-  })
-    .index("by_project", ["projectId"])
-    .index("by_project_source", ["projectId", "sourceId"])
-    .index("by_project_from", ["projectId", "fromConceptId"])
-    .index("by_project_to", ["projectId", "toConceptId"]),
 
   learningItems: defineTable({
     projectId: v.id("projects"),
@@ -296,8 +235,6 @@ export default defineSchema({
      * Code output: a single entry listing the accepted outputs.
      */
     acceptedAnswers: v.optional(v.array(v.array(v.string()))),
-    sourceChunkId: v.optional(v.id("preparationChunks")),
-    sourceChunkOrdinal: v.optional(v.number()),
     order: v.number(),
     createdAt: v.number(),
   })
@@ -413,24 +350,6 @@ export default defineSchema({
   })
     .index("by_paper_startedAt", ["paperId", "startedAt"])
     .index("by_submittedAt", ["submittedAt"]),
-
-  /** Previous explanation text retained when a new source revises a lesson. */
-  lessonPageRevisions: defineTable({
-    projectId: v.id("projects"),
-    itemId: v.id("learningItems"),
-    jobId: v.id("contentGenerationJobs"),
-    title: v.string(),
-    body: v.string(),
-    deepExplanation: v.optional(v.string()),
-    sourceIds: v.array(v.id("sources")),
-    sourceReferences: v.optional(v.array(v.object({
-      sourceId: v.id("sources"),
-      locator: v.string(),
-    }))),
-    replacedAt: v.number(),
-  })
-    .index("by_project", ["projectId"])
-    .index("by_item_replacedAt", ["itemId", "replacedAt"]),
 
   writingActivities: defineTable({
     projectId: v.id("projects"),
@@ -565,96 +484,6 @@ export default defineSchema({
     .index("by_project_source", ["projectId", "sourceId"])
     .index("by_status_createdAt", ["status", "createdAt"])
     .index("by_leaseToken", ["leaseToken"]),
-
-  /** Agent-led content work for one source, with durable page import progress. */
-  contentGenerationJobs: defineTable({
-    projectId: v.id("projects"),
-    sourceId: v.id("sources"),
-    status: v.union(
-      v.literal("queued"),
-      v.literal("leased"),
-      v.literal("failed"),
-      v.literal("completed")
-    ),
-    depth: v.number(),
-    /** Approved research scope restricts what imported references may teach. */
-    learningScope: v.optional(v.string()),
-    providerId: v.optional(v.string()),
-    providerInstanceId: v.optional(v.string()),
-    generationModel: v.optional(v.string()),
-    generationEffort: v.optional(v.string()),
-    /** Current worker step, shown while lessons are being prepared. */
-    stage: v.optional(
-      v.union(
-        v.literal("preparing"),
-        v.literal("generating"),
-        v.literal("validating"),
-        v.literal("importing")
-      )
-    ),
-    /** Bounded provider commentary and tool activity for the source detail view. */
-    thought: v.optional(v.string()),
-    activity: v.optional(
-      v.array(
-        v.object({
-          id: v.string(),
-          type: v.literal("tool"),
-          title: v.string(),
-          status: v.union(
-            v.literal("running"),
-            v.literal("completed"),
-            v.literal("failed")
-          ),
-          detail: v.optional(v.string()),
-          startedAt: v.optional(v.number()),
-          completedAt: v.optional(v.number()),
-        })
-      )
-    ),
-    startedAt: v.optional(v.number()),
-    durationMs: v.optional(v.number()),
-    totalPages: v.optional(v.number()),
-    /** Section accounting retained after temporary agent draft files are removed. */
-    coverage: v.optional(v.array(v.object({
-      sectionId: v.string(),
-      status: v.union(v.literal("included"), v.literal("skipped")),
-      pageKeys: v.array(v.string()),
-      reason: v.optional(v.string()),
-    }))),
-    importedPages: v.number(),
-    leaseToken: v.optional(v.string()),
-    leaseExpiresAt: v.optional(v.number()),
-    error: v.optional(v.string()),
-    createdAt: v.number(),
-    updatedAt: v.number(),
-  })
-    .index("by_project_source", ["projectId", "sourceId"])
-    .index("by_status_createdAt", ["status", "createdAt"])
-    /** Finds a project's active lease before another source starts generating. */
-    .index("by_project_status_lease", ["projectId", "status", "leaseExpiresAt"])
-    /** Finds expired leases without active jobs hiding them in the queue. */
-    .index("by_status_lease", ["status", "leaseExpiresAt"]),
-
-  /** Idempotent page commits allow a large agent draft to resume after a failed import. */
-  contentPageCommits: defineTable({
-    jobId: v.id("contentGenerationJobs"),
-    pageKey: v.string(),
-    /** Saved concept lets a resumed job resolve links after page imports. */
-    conceptId: v.optional(v.id("concepts")),
-    payloadHash: v.string(),
-    createdAt: v.number(),
-  }).index("by_job_page", ["jobId", "pageKey"]),
-
-  preparationChunks: defineTable({
-    jobId: v.id("preparationJobs"),
-    sourceId: v.id("sources"),
-    ordinal: v.number(),
-    chunkId: v.string(),
-    totalChunks: v.number(),
-    createdAt: v.number(),
-  })
-    .index("by_job_ordinal", ["jobId", "ordinal"])
-    .index("by_job_chunkId", ["jobId", "chunkId"]),
 
   /** Durable ingestion lifecycle for original files and derived chunks. */
   ingestionJobs: defineTable({
@@ -1154,56 +983,6 @@ export default defineSchema({
     .index("by_project", ["projectId"])
     .index("by_ownerToken", ["ownerToken"])
     .index("by_chat", ["chatId"]),
-
-  conversations: defineTable({
-    projectId: v.id("projects"),
-    itemId: v.id("learningItems"),
-    /** Provider snapshot for this card conversation; absent on legacy Codex chats. */
-    providerId: v.optional(v.string()),
-    providerInstanceId: v.optional(v.string()),
-    providerSessionId: v.optional(v.string()),
-    providerModel: v.optional(v.string()),
-    providerEffort: v.optional(v.string()),
-    codexThreadId: v.optional(v.string()),
-    status: v.union(
-      v.literal("idle"),
-      v.literal("queued"),
-      v.literal("running"),
-      v.literal("failed")
-    ),
-    activeMessageId: v.optional(v.id("conversationMessages")),
-    lastError: v.optional(v.string()),
-    createdAt: v.number(),
-    updatedAt: v.number(),
-  }).index("by_project_item", ["projectId", "itemId"]),
-
-  conversationMessages: defineTable({
-    conversationId: v.id("conversations"),
-    clientMessageId: v.string(),
-    question: v.string(),
-    status: v.union(
-      v.literal("queued"),
-      v.literal("running"),
-      v.literal("completed"),
-      v.literal("failed")
-    ),
-    reply: v.optional(v.string()),
-    error: v.optional(v.string()),
-    providerTurnId: v.optional(v.string()),
-    codexTurnId: v.optional(v.string()),
-    workerId: v.optional(v.string()),
-    leaseToken: v.optional(v.string()),
-    leaseExpiresAt: v.optional(v.number()),
-    createdAt: v.number(),
-    updatedAt: v.number(),
-  })
-    .index("by_conversation_createdAt", ["conversationId", "createdAt"])
-    .index("by_conversation_clientMessageId", [
-      "conversationId",
-      "clientMessageId",
-    ])
-    .index("by_status_createdAt", ["status", "createdAt"])
-    .index("by_leaseToken", ["leaseToken"]),
 
   researchProposals: defineTable({
     projectId: v.id("projects"),

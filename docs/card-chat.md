@@ -14,7 +14,7 @@ Generation uses ephemeral threads; conversations keep their thread ID for resume
 
 ## Saved card conversations
 
-The `/api/learning/chat` routes and their Convex enqueue and retry functions were removed with the Android app. Conversation rows stay in the schema, and `conversations.getAttachment` still resolves the card for older `/chat` links. No worker answers card questions any more, so nothing writes new ones.
+The `/api/learning/chat` routes and their Convex enqueue and retry functions were removed with the Android app, and the conversation tables went later. `conversations.getAttachment` still resolves the card for older `/chat` links, which open as a new workspace chat about that card.
 
 Provider turns use `BLITZ_CODEX_WORKSPACE` or `~/.local/share/blitz/codex-workspace`, an explicitly created directory outside the repository. `defaultChatWorkspaceDirectory` and `ensureChatWorkspaceDirectory` in `lib/server/research-worker.ts` resolve and create it for the research worker.
 

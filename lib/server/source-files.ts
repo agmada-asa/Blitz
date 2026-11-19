@@ -144,21 +144,3 @@ export async function storeOriginalChatUpload(input: {
   }
 }
 
-/** Exports legacy extracted text as an explicitly labelled derived source file. */
-export async function exportLegacyDerivedSource(input: {
-  projectId: string
-  filename: string
-  text: string
-}): Promise<{ key: string; size: number }> {
-  const safeName = safeSourceFilename(input.filename).replace(/\.[^.]+$/, "")
-  const key = `Sources/legacy-derived-${safeName}.txt`
-  const payload = Buffer.from(`LEGACY DERIVED TEXT\n${input.text.trim()}\n`, "utf8")
-  const stored = await storeProjectFile(input.projectId, key, payload)
-  return { key: stored.key, size: stored.size }
-}
-
-/** Returns the size of a safe stored source key for diagnostics and restart checks. */
-export async function sourceFileStats(projectId: string, key: string): Promise<number> {
-  const path = await resolveProjectFile(projectId, key)
-  return (await fs.stat(path)).size
-}
