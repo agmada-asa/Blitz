@@ -2308,16 +2308,16 @@ export function ChatWorkspace({
           draggingFiles && "bg-brand/5"
         )}
         onDragEnter={(event) => {
+          // Only file drags belong to the pane; in-page drags (such as
+          // reordering an ordering question) must reach their own handlers.
+          if (!event.dataTransfer.types.includes("Files")) return
           event.preventDefault()
-          if (
-            !isRunning &&
-            !continuableMessage &&
-            event.dataTransfer.types.includes("Files")
-          ) {
-            setDraggingFiles(true)
-          }
+          if (!isRunning && !continuableMessage) setDraggingFiles(true)
         }}
         onDragOver={(event) => {
+          // Forcing dropEffect "copy" on every drag cancels move drags, so
+          // leave non-file drags untouched.
+          if (!event.dataTransfer.types.includes("Files")) return
           event.preventDefault()
           event.dataTransfer.dropEffect = "copy"
         }}
