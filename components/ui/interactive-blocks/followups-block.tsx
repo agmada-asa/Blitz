@@ -1,9 +1,10 @@
 "use client"
 
 /**
- * Renders suggested follow-up questions from a ```followups Markdown block as small buttons that send
- * the suggestion as the learner's next message. Suggestions are hidden when the surrounding chat
- * provides no `onFollowUp` handler, and disabled while the reply is still streaming.
+ * Renders suggested follow-up questions from a ```followups Markdown block as small buttons that hand
+ * the suggestion to the surrounding chat's `onFollowUp` handler: a chat sends it as the learner's next
+ * message, while a Teach lesson asks it in its side chat. Suggestions are hidden without a handler,
+ * and disabled while the reply is still streaming.
  */
 import type { FollowupsBlock } from "@/lib/interactive-blocks"
 import { Button } from "@/components/ui/button"

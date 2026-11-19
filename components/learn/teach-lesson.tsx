@@ -77,9 +77,11 @@ type TeachLessonProps = {
     selectedOptionIds: string[],
     confidence?: "guess"
   ) => Promise<{ correct: boolean } | null>
-  onFollowUp: (text: string) => void
-  /** Disables follow-up chips while a reply is being written. */
-  busy: boolean
+  /**
+   * Asks a suggested question from the reply with this id. The session sends it to the side chat,
+   * so the lesson itself holds only lesson content.
+   */
+  onFollowUp: (messageId: string, text: string) => void
   /** True while a source is open; the outline rail then appears only on the widest screens. */
   sourceOpen: boolean
   /** The session's compactions, shown as dividers where they happened. */
@@ -133,7 +135,6 @@ export function TeachLesson({
   onCitation,
   onQuizAnswer,
   onFollowUp,
-  busy,
   sourceOpen,
   compactions,
   updates,
@@ -193,7 +194,7 @@ export function TeachLesson({
             answered={answered?.[message.id]}
             onCitation={onCitation}
             onQuizAnswer={onQuizAnswer}
-            onFollowUp={busy ? undefined : onFollowUp}
+            onFollowUp={onFollowUp}
             sourceOpen={sourceOpen}
             finishingAfterOverflow={finishing.has(message.id)}
             updateLabel={updateLabels.get(message.id)}
@@ -234,7 +235,7 @@ type TutorReplyProps = {
   answered: Record<string, { selectedOptionIds: string[]; correct: boolean }> | undefined
   onCitation: TeachLessonProps["onCitation"]
   onQuizAnswer: TeachLessonProps["onQuizAnswer"]
-  onFollowUp: ((text: string) => void) | undefined
+  onFollowUp: TeachLessonProps["onFollowUp"]
   sourceOpen: boolean
   /** The reply ran out of room and is being finished after a compaction. */
   finishingAfterOverflow: boolean
@@ -278,7 +279,8 @@ const TutorReply = memo(function TutorReply({
       acceptsConfidence: true,
       onQuizAnswer: (block: QuizBlock, selected: string[], confidence?: "guess") =>
         onQuizAnswer(message.id, block, selected, confidence),
-      ...(onFollowUp ? { onFollowUp } : {}),
+      // Suggestions go to the side chat, which is free while the lesson is being written.
+      onFollowUp: (text: string) => onFollowUp(message.id, text),
     }),
     [streaming, answered, onQuizAnswer, onFollowUp, message.id]
   )

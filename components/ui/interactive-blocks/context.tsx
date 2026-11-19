@@ -32,7 +32,7 @@ export type InteractiveBlocksContextValue = {
     string,
     { selectedOptionIds: string[]; correct: boolean }
   >
-  /** Sends a suggested follow-up as the learner's next message; suggestions are hidden without it. */
+  /** Asks a suggested follow-up: as the next message in a chat, in the side chat in Teach. Suggestions are hidden without it. */
   onFollowUp?: (text: string) => void
   /** Lets quizzes be saved to a unit's question bank; the action is hidden without it. */
   quizSaving?: QuizSaving

@@ -212,6 +212,17 @@ export type ChatLessonContext = {
   onQuoteCleared: () => void
   /** A new chat was saved, so the lesson can reopen it next time. */
   onChatStarted: (chatId: Id<"workspaceChats">) => void
+  /**
+   * A suggested question picked under a lesson section, sent here once the chat is free; a new id
+   * is a new question. Suggestions are asked here rather than in the lesson, which holds only
+   * lesson content.
+   */
+  ask?: { id: number; text: string } | null
+  /**
+   * The suggested question was sent, or couldn't be, in which case it is left in the composer.
+   * Either way it is settled, and a reopened panel never sends it again.
+   */
+  onAsked?: (id: number, sent: boolean) => void
   /** A Teach voice lesson asking questions here: the lesson owns the microphone and reads answers. */
   voice?: LessonVoice
 }
@@ -1658,6 +1669,24 @@ export function ChatWorkspace({
       if (!sent) onVoiceAsked?.(id, false)
     })
   }, [voiceAsk, activeChatId, activeChat, isRunning, onVoiceAsked])
+
+  // A suggestion picked in the lesson is sent the same way, as a typed question. One that can't be
+  // sent is left in an empty composer, so the learner can send it themselves.
+  const lessonAsk = lesson?.ask
+  const onLessonAsked = lesson?.onAsked
+  const lessonAskedId = useRef(0)
+  useEffect(() => {
+    if (!lessonAsk || lessonAskedId.current === lessonAsk.id) return
+    if ((activeChatId && activeChat === undefined) || isRunning) return
+    const { id, text } = lessonAsk
+    lessonAskedId.current = id
+    onLessonAsked?.(id, true)
+    void sendRef.current({ message: text }).then((sent) => {
+      if (sent) return
+      setDraft((current) => current.trim() ? current : text)
+      onLessonAsked?.(id, false)
+    })
+  }, [lessonAsk, activeChatId, activeChat, isRunning, onLessonAsked])
 
   /** Resolves a pending agent request for the current chat message. */
   const decideAgentRequest = async (
