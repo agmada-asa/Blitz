@@ -87,7 +87,13 @@ import {
   type WorkspaceChatReplayContext,
   type WorkspaceChatProjectContext,
   type WorkspaceChatInlineAttachment,
+  type WorkspaceChatRequest,
 } from "@/lib/server/workspace-chat"
+import {
+  CHAT_IMAGE_MIME_TYPES,
+  MAX_CHAT_IMAGE_BYTES,
+  type ChatImageMimeType,
+} from "@/lib/server/chat-attachments"
 
 /** Uses Node.js because each turn starts the selected local provider process. */
 export const runtime = "nodejs"
@@ -411,6 +417,79 @@ async function stageWorkspaceAttachments(
   }
 }
 
+/** Most image bytes one turn hands a provider natively, across all its images. */
+const MAX_TURN_IMAGE_BYTES = 20_000_000
+
+/**
+ * Whether a saved document's MIME type is exactly one of the native image
+ * formats, as the upload route stores them.
+ */
+function isStoredImageMimeType(
+  mimeType: string | undefined
+): mimeType is ChatImageMimeType {
+  return CHAT_IMAGE_MIME_TYPES.some((type) => type === mimeType)
+}
+
+/**
+ * Fills in this turn's uploaded files from their saved documents. Each file's
+ * text replaces what the browser sent, within a shared 96,000-character budget
+ * (24,000 per file), and images small enough are also read for the provider to
+ * see natively.
+ *
+ * @param client - Convex client for the personal deployment.
+ * @param attachments - The request's attachments; file entries are updated in place.
+ * @param owners - Project and chat that may own the saved documents.
+ * @returns The native images and their total size in bytes.
+ * @throws When a file is missing or not owned by this chat, or an image's storage is unavailable.
+ */
+async function resolveSubmittedAttachments(
+  client: ConvexHttpClient,
+  attachments: WorkspaceChatRequest["attachments"],
+  owners: { ownerProjectId?: Id<"projects">; chatId?: Id<"workspaceChats"> }
+): Promise<{ images: ProviderImageAttachment[]; imageBytes: number }> {
+  const images: ProviderImageAttachment[] = []
+  let imageBytes = 0
+  let attachmentBudget = Math.max(
+    0,
+    96_000 -
+      attachments.reduce((sum, attachment) => sum + attachment.text.length, 0)
+  )
+  for (const attachment of attachments) {
+    if (!attachment.documentId) continue
+    const document = await findAttachmentDocument(client, attachment, owners)
+    if (!document)
+      throw new Error("Attached file was not found or is not owned by this chat")
+    attachment.label = document.filename
+    if (
+      document.sizeBytes <= MAX_CHAT_IMAGE_BYTES &&
+      imageBytes + document.sizeBytes <= MAX_TURN_IMAGE_BYTES &&
+      isStoredImageMimeType(document.mimeType)
+    ) {
+      attachment.mimeType = document.mimeType
+      const storageId =
+        document.projectId ??
+        (document.ownerToken ? chatStorageId(document.ownerToken) : null)
+      if (!storageId) throw new Error("Attached file storage is unavailable")
+      const bytes = await readProjectFileBytes(
+        storageId,
+        document.relativeKey,
+        MAX_CHAT_IMAGE_BYTES
+      )
+      imageBytes += bytes.byteLength
+      images.push({
+        type: "image",
+        mimeType: document.mimeType,
+        data: Buffer.from(bytes).toString("base64"),
+        name: document.filename,
+      })
+    }
+    attachment.text = document.text.slice(0, Math.min(24_000, attachmentBudget))
+    if (!attachment.text) attachment.text = `[Attached file: ${document.filename}]`
+    attachmentBudget = Math.max(0, attachmentBudget - attachment.text.length)
+  }
+  return { images, imageBytes }
+}
+
 /** Reads a bounded JSON request without allowing attachments to exhaust route memory. */
 async function readRequestJson(request: Request): Promise<unknown> {
   const maximumBytes = 140_000
@@ -485,8 +564,6 @@ export async function POST(request: Request): Promise<Response> {
       }
       try {
         const client = convexClient()
-        const nativeImageAttachments: ProviderImageAttachment[] = []
-        let nativeImageBytes = 0
         const ownerProjectId = input.chatId
           ? (
               await client.query(api.workspaceChats.get, {
@@ -494,64 +571,16 @@ export async function POST(request: Request): Promise<Response> {
               })
             )?.projectId
           : input.projectId
-        let attachmentBudget = Math.max(
-          0,
-          96_000 -
-            input.attachments.reduce(
-              (sum, attachment) => sum + attachment.text.length,
-              0
-            )
-        )
-        for (const attachment of input.attachments) {
-          if (!attachment.documentId) continue
-          const document = await findAttachmentDocument(client, attachment, {
+        const submitted = await resolveSubmittedAttachments(
+          client,
+          input.attachments,
+          {
             ...(ownerProjectId ? { ownerProjectId } : {}),
             ...(input.chatId ? { chatId: input.chatId } : {}),
-          })
-          if (!document)
-            throw new Error(
-              "Attached file was not found or is not owned by this chat"
-            )
-          attachment.label = document.filename
-          if (
-            document.sizeBytes <= 5_000_000 &&
-            nativeImageBytes + document.sizeBytes <= 20_000_000 &&
-            (document.mimeType === "image/png" ||
-              document.mimeType === "image/jpeg" ||
-              document.mimeType === "image/webp" ||
-              document.mimeType === "image/gif")
-          ) {
-            attachment.mimeType = document.mimeType
-            const storageId =
-              document.projectId ??
-              (document.ownerToken ? chatStorageId(document.ownerToken) : null)
-            if (!storageId)
-              throw new Error("Attached file storage is unavailable")
-            const bytes = await readProjectFileBytes(
-              storageId,
-              document.relativeKey,
-              5_000_000
-            )
-            nativeImageBytes += bytes.byteLength
-            nativeImageAttachments.push({
-              type: "image",
-              mimeType: document.mimeType,
-              data: Buffer.from(bytes).toString("base64"),
-              name: document.filename,
-            })
           }
-          attachment.text = document.text.slice(
-            0,
-            Math.min(24_000, attachmentBudget)
-          )
-          if (!attachment.text) {
-            attachment.text = `[Attached file: ${document.filename}]`
-          }
-          attachmentBudget = Math.max(
-            0,
-            attachmentBudget - attachment.text.length
-          )
-        }
+        )
+        const nativeImageAttachments = submitted.images
+        let nativeImageBytes = submitted.imageBytes
         // "What does this mean?" has no topic words, so quoted text counts too.
         const retrievalQuestion = [
           input.message.trim(),
@@ -661,10 +690,7 @@ export async function POST(request: Request): Promise<Response> {
             if (
               !attachment.documentId ||
               nativeImageDocumentIds.has(attachment.documentId) ||
-              (attachment.mimeType !== "image/png" &&
-                attachment.mimeType !== "image/jpeg" &&
-                attachment.mimeType !== "image/webp" &&
-                attachment.mimeType !== "image/gif")
+              !isStoredImageMimeType(attachment.mimeType)
             )
               continue
             const document = await client.query(api.chatCitations.getDocument, {
@@ -675,8 +701,8 @@ export async function POST(request: Request): Promise<Response> {
             })
             if (!document) continue
             if (
-              document.sizeBytes > 5_000_000 ||
-              nativeImageBytes + document.sizeBytes > 20_000_000
+              document.sizeBytes > MAX_CHAT_IMAGE_BYTES ||
+              nativeImageBytes + document.sizeBytes > MAX_TURN_IMAGE_BYTES
             )
               continue
             const storageId =
@@ -686,7 +712,7 @@ export async function POST(request: Request): Promise<Response> {
             const bytes = await readProjectFileBytes(
               storageId,
               document.relativeKey,
-              5_000_000
+              MAX_CHAT_IMAGE_BYTES
             )
             nativeImageBytes += bytes.byteLength
             nativeImageDocumentIds.add(attachment.documentId)
