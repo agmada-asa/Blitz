@@ -1,43 +1,30 @@
 "use client"
 
 /**
- * Owns the Review feed: a weakness-weighted scroll of questions and recaps on
- * studied material, its server-backed answer flow, and compact filters.
+ * Owns the Review screen: a weakness-weighted run of questions and recaps on
+ * studied material, shown one card at a time in the same frame as a drill,
+ * with its server-backed answer flow and a project filter.
  *
  * Each visit is a session with a target: the questions due today, at most
  * `REVIEW_SESSION_SIZE`, or a short round of ten when nothing is due. The
- * header counts progress and the current run of right answers; reaching the
- * target opens the session summary, and Keep going carries on with the feed.
+ * header counts progress and the current run of right answers. Once the
+ * target is reached, the next Next shows the session summary in the page,
+ * and Keep going carries on with the feed. Cards load in pages and the next
+ * page is fetched as the learner nears the end of the loaded cards.
  */
 
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { useQuery } from "convex/react"
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { FilterHorizontalIcon } from "@hugeicons/core-free-icons"
-import { HugeiconsIcon } from "@hugeicons/react"
+import { useCallback, useEffect, useRef, useState } from "react"
 
 import { FeedCardView } from "@/components/feed/feed-card"
 import { SessionSummary } from "@/components/progress/session-summary"
 import { TodayXpChip } from "@/components/progress/today-panel"
 import { Button } from "@/components/ui/button"
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog"
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
-import { Label } from "@/components/ui/label"
+import { CancelIcon } from "@/components/ui/icon"
+import { Progress } from "@/components/ui/progress"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
 import { api } from "@/convex/_generated/api"
 import { useMinuteClock } from "@/hooks/use-minute-clock"
@@ -57,10 +44,13 @@ const MAX_EMPTY_PAGE_HOPS = 3
 /** Questions in a review round when nothing is due. */
 const QUICK_ROUND_SIZE = 10
 
-/** Sentinel value representing an unfiltered project or topic selection in shadcn pickers. */
-const ALL_FILTER_VALUE = "all"
+/** Sentinel value for the unfiltered project choice in the shadcn picker. */
+const ALL_PROJECTS = "all"
 
-/** A selected project or topic filter, with empty values meaning all. */
+/**
+ * A selected project or topic filter, with empty values meaning all. Only the
+ * project has a picker; a topic arrives from a link and can be cleared.
+ */
 type FeedFilter = {
   projectId: string
   topicId: string
@@ -132,22 +122,16 @@ async function requestFeedPage(
   return (await response.json()) as FeedResponse
 }
 
-/** Renders the full-screen Review feed at `/review`. */
+/** Renders the Review screen at `/review`. */
 export function Feed({ initialFilter }: { initialFilter?: FeedFilter }) {
   const router = useRouter()
   const answerRequests = useRef(new Map<string, AnswerRequest>())
   const answeredCards = useRef(new Set<string>())
   const prefetchedAtCount = useRef<number | null>(null)
-  const feedRef = useRef<HTMLDivElement>(null)
   const [data, setData] = useState<FeedResponse | null>(null)
   const [filter, setFilter] = useState<FeedFilter>(
-    initialFilter ?? {
-      projectId: "",
-      topicId: "",
-    }
+    initialFilter ?? { projectId: "", topicId: "" }
   )
-  const [draftFilter, setDraftFilter] = useState<FeedFilter>(filter)
-  const [filterOpen, setFilterOpen] = useState(false)
   const [activeIndex, setActiveIndex] = useState(0)
   const [loading, setLoading] = useState(true)
   const [loadingMore, setLoadingMore] = useState(false)
@@ -170,8 +154,10 @@ export function Feed({ initialFilter }: { initialFilter?: FeedFilter }) {
   const [run, setRun] = useState<number | null>(null)
   if (run === null && today) setRun(today.run)
   const [xpPop, setXpPop] = useState<{ amount: number; key: number } | null>(null)
-  const [summaryOpen, setSummaryOpen] = useState(false)
+  // The summary waits for Next after the target is reached, so the last answer's feedback stays readable.
+  const [summaryDue, setSummaryDue] = useState(false)
   const [summaryShown, setSummaryShown] = useState(false)
+  const [showingSummary, setShowingSummary] = useState(false)
 
   /** Counts one scored answer toward the session, the run, and the XP pop. */
   const countAnswer = useCallback(
@@ -186,8 +172,7 @@ export function Feed({ initialFilter }: { initialFilter?: FeedFilter }) {
       setSessionAnswered(next)
       if (target !== null && next >= target && !summaryShown) {
         setSummaryShown(true)
-        // Let the answer's feedback show before the summary covers it.
-        window.setTimeout(() => setSummaryOpen(true), 900)
+        setSummaryDue(true)
       }
     },
     [run, sessionAnswered, target, summaryShown]
@@ -204,28 +189,6 @@ export function Feed({ initialFilter }: { initialFilter?: FeedFilter }) {
     },
     [router]
   )
-
-  const topics = useMemo(
-    () =>
-      (data?.topics ?? []).filter(
-        (topic) =>
-          !draftFilter.projectId || topic.projectId === draftFilter.projectId
-      ),
-    [data?.topics, draftFilter.projectId]
-  )
-
-  const selectedProjectId =
-    draftFilter.projectId &&
-    (!data ||
-      data.projects.some((project) => project.id === draftFilter.projectId))
-      ? draftFilter.projectId
-      : ALL_FILTER_VALUE
-
-  const selectedTopicId =
-    draftFilter.topicId &&
-    topics.some((topic) => topic.id === draftFilter.topicId)
-      ? draftFilter.topicId
-      : ALL_FILTER_VALUE
 
   /** Loads the first bounded set of pages, skipping empty eligible pages. */
   useEffect(() => {
@@ -248,7 +211,6 @@ export function Feed({ initialFilter }: { initialFilter?: FeedFilter }) {
       if (requestGeneration.current !== generation || !nextData) return
       setData(nextData)
       setActiveIndex(0)
-      feedRef.current?.scrollTo({ top: 0, behavior: "auto" })
     }
 
     void loadInitialPages()
@@ -276,64 +238,6 @@ export function Feed({ initialFilter }: { initialFilter?: FeedFilter }) {
   }, [filter, reloadToken])
 
   const cardCount = data?.cards.length ?? 0
-
-  /** Scrolls to one card while respecting the user's motion preference. */
-  const scrollToCard = useCallback(
-    (index: number) => {
-      const container = feedRef.current
-      if (!container || !cardCount) return
-      const boundedIndex = Math.max(0, Math.min(index, cardCount - 1))
-      const reducedMotion = window.matchMedia(
-        "(prefers-reduced-motion: reduce)"
-      ).matches
-      container.scrollTo({
-        top: boundedIndex * container.clientHeight,
-        behavior: reducedMotion ? "auto" : "smooth",
-      })
-      setActiveIndex(boundedIndex)
-    },
-    [cardCount]
-  )
-
-  /** Keeps keyboard navigation aligned with the currently visible card. */
-  useEffect(() => {
-    const container = feedRef.current
-    if (!container) return
-    const feedContainer = container
-    const handleScroll = () => {
-      const nextIndex =
-        Math.round(feedContainer.scrollTop / feedContainer.clientHeight)
-      setActiveIndex(
-        Math.max(0, Math.min(nextIndex, Math.max(cardCount - 1, 0)))
-      )
-    }
-    feedContainer.addEventListener("scroll", handleScroll, { passive: true })
-    return () => feedContainer.removeEventListener("scroll", handleScroll)
-  }, [cardCount])
-
-  /** Maps arrow and page keys to feed movement without capturing form input. */
-  useEffect(() => {
-    function handleKeyDown(event: KeyboardEvent) {
-      if (filterOpen) return
-      const target = event.target
-      if (
-        target instanceof HTMLElement &&
-        ["INPUT", "TEXTAREA", "SELECT", "BUTTON"].includes(target.tagName)
-      ) {
-        return
-      }
-      if (event.key === "ArrowDown" || event.key === "PageDown") {
-        event.preventDefault()
-        scrollToCard(activeIndex + 1)
-      }
-      if (event.key === "ArrowUp" || event.key === "PageUp") {
-        event.preventDefault()
-        scrollToCard(activeIndex - 1)
-      }
-    }
-    window.addEventListener("keydown", handleKeyDown)
-    return () => window.removeEventListener("keydown", handleKeyDown)
-  }, [activeIndex, filterOpen, scrollToCard])
 
   /** Sends one answer request for server scoring and post-answer feedback. */
   const answerCard = useCallback(
@@ -504,45 +408,42 @@ export function Feed({ initialFilter }: { initialFilter?: FeedFilter }) {
     loadMoreError,
   ])
 
-  /** Records a skip and advances without wrapping to an earlier card. */
-  function skipCard(card: FeedCard, index: number) {
-    if (!answeredCards.current.has(card.id)) void recordSkip(card)
-    if (index + 1 < cardCount) {
-      scrollToCard(index + 1)
+  /**
+   * Shows the card at `index`, loading the next page first when it is past
+   * the loaded cards. Past the last card of the last page, the index rests on
+   * `cardCount`, which shows the caught-up state.
+   */
+  function showCard(index: number) {
+    window.scrollTo({ top: 0, behavior: "auto" })
+    if (index < cardCount) {
+      setActiveIndex(index)
       return
     }
-    if (data?.continueCursor) {
-      const previousCount = cardCount
-      void loadMore().then((addedCards) => {
-        if (!addedCards) return
-        window.requestAnimationFrame(() => {
-          const container = feedRef.current
-          if (!container) return
-          const reducedMotion = window.matchMedia(
-            "(prefers-reduced-motion: reduce)"
-          ).matches
-          container.scrollTo({
-            top: previousCount * container.clientHeight,
-            behavior: reducedMotion ? "auto" : "smooth",
-          })
-          setActiveIndex(previousCount)
-        })
+    setActiveIndex(cardCount)
+    if (data?.continueCursor)
+      void loadMore().then((added) => {
+        if (added) setActiveIndex(index)
       })
-      return
-    }
-    const container = feedRef.current
-    if (!container) return
-    const reducedMotion = window.matchMedia(
-      "(prefers-reduced-motion: reduce)"
-    ).matches
-    container.scrollTo({
-      top: cardCount * container.clientHeight,
-      behavior: reducedMotion ? "auto" : "smooth",
-    })
   }
 
-  /** Applies the draft filter and returns to the beginning of the feed. */
-  function applyFilters() {
+  /**
+   * Moves past a card: records a skip when it wasn't answered, shows the
+   * session summary when the target was just reached, and otherwise shows the
+   * next card.
+   */
+  function nextCard(card: FeedCard) {
+    if (!answeredCards.current.has(card.id)) void recordSkip(card)
+    if (summaryDue) {
+      setSummaryDue(false)
+      setShowingSummary(true)
+      window.scrollTo({ top: 0, behavior: "auto" })
+      return
+    }
+    showCard(activeIndex + 1)
+  }
+
+  /** Applies a filter and returns to the beginning of the feed. */
+  function changeFilter(next: FeedFilter) {
     prefetchedAtCount.current = null
     requestGeneration.current += 1
     feedRequest.current?.abort()
@@ -551,44 +452,33 @@ export function Feed({ initialFilter }: { initialFilter?: FeedFilter }) {
     setLoadingMore(false)
     setError("")
     setLoadMoreError("")
-    const validTopicId =
-      draftFilter.topicId &&
-      topics.some((topic) => topic.id === draftFilter.topicId)
-        ? draftFilter.topicId
-        : ""
-    setFilter({
-      projectId: draftFilter.projectId,
-      topicId: validTopicId,
-    })
-    setFilterOpen(false)
+    setShowingSummary(false)
+    setFilter(next)
   }
 
-  const hasCards = Boolean(data?.cards.length)
-  const hasMore =
-    data?.continueCursor !== null && data?.continueCursor !== undefined
+  /** Reloads the feed after a failed first request. */
+  function retry() {
+    requestGeneration.current += 1
+    feedRequest.current?.abort()
+    setData(null)
+    setLoading(true)
+    setLoadingMore(false)
+    setError("")
+    setLoadMoreError("")
+    setReloadToken((value) => value + 1)
+  }
+
+  const card = data?.cards[activeIndex]
+  const projectTitles = new Map((data?.projects ?? []).map((project) => [project.id, project.title]))
+  const topicTitle = filter.topicId
+    ? (data?.topics.find((topic) => topic.id === filter.topicId)?.title ?? "One topic")
+    : ""
+  const answeredShown = target !== null ? Math.min(sessionAnswered, target) : 0
 
   return (
-    <main className="feed-backdrop relative isolate h-[calc(100svh-68px-env(safe-area-inset-bottom))] overflow-hidden bg-background text-foreground selection:bg-brand selection:text-brand-foreground md:h-svh">
-      <div className="pointer-events-none absolute inset-x-0 top-0 z-20 flex items-center justify-end gap-3 px-4 pt-[max(1rem,env(safe-area-inset-top))] sm:px-8 sm:pt-6">
-        <div className="mr-auto flex min-w-0 items-center gap-2 text-sm tabular-nums">
-          {target !== null ? (
-            <p className="flex h-10 items-center rounded-full border border-border/80 bg-background/80 px-3.5 text-muted-foreground backdrop-blur-md">
-              {Math.min(sessionAnswered, target)} of {target}
-              <span className="sr-only"> answered this session</span>
-            </p>
-          ) : null}
-          {run !== null && run >= COMBO_START ? (
-            <p
-              key={run}
-              className="combo-chip flex h-10 items-center rounded-full border border-brand/30 bg-brand/10 px-3.5 font-medium text-brand backdrop-blur-md"
-            >
-              {run} in a row
-              <span className="hidden sm:inline">
-                &nbsp;· +{comboBonus(run)} XP
-              </span>
-            </p>
-          ) : null}
-        </div>
+    <main className="mx-auto flex min-h-[calc(100svh-84px)] w-full max-w-2xl flex-col px-4 py-6 text-foreground sm:px-6 sm:py-10 md:min-h-svh">
+      <header className="flex items-center justify-between gap-3">
+        <h1 className="font-heading text-2xl font-semibold tracking-tight">Review</h1>
         <div className="relative">
           <TodayXpChip />
           {xpPop ? (
@@ -601,179 +491,77 @@ export function Feed({ initialFilter }: { initialFilter?: FeedFilter }) {
             </span>
           ) : null}
         </div>
-        <Dialog
-          open={filterOpen}
-          onOpenChange={(open) => {
-            if (open) setDraftFilter(filter)
-            setFilterOpen(open)
-          }}
-        >
-          <DialogTrigger asChild>
+      </header>
+
+      <div className="mt-4 flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <Select
+            value={filter.projectId || ALL_PROJECTS}
+            onValueChange={(value) =>
+              changeFilter({ projectId: value === ALL_PROJECTS ? "" : value, topicId: "" })
+            }
+          >
+            <SelectTrigger aria-label="Project" className="h-9 w-auto max-w-64 min-w-36 rounded-full px-3.5 text-sm">
+              <SelectValue placeholder="All projects" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={ALL_PROJECTS}>All projects</SelectItem>
+              {filter.projectId && !projectTitles.has(filter.projectId) ? (
+                <SelectItem value={filter.projectId}>This project</SelectItem>
+              ) : null}
+              {(data?.projects ?? []).map((project) => (
+                <SelectItem key={project.id} value={project.id}>
+                  {project.title}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          {topicTitle ? (
             <Button
               type="button"
               variant="outline"
-              aria-label="Filter"
-              className="pointer-events-auto h-10 w-10 rounded-full border-border/80 bg-background/80 px-0 text-sm text-muted-foreground backdrop-blur-md hover:bg-muted hover:text-foreground sm:w-auto sm:px-3.5"
+              onClick={() => changeFilter({ ...filter, topicId: "" })}
+              className="h-9 max-w-56 rounded-full px-3 text-sm"
+              aria-label={`Clear the ${topicTitle} filter`}
             >
-              <HugeiconsIcon
-                icon={FilterHorizontalIcon}
-                aria-hidden="true"
-                className="size-4"
-              />
-              <span className="sr-only sm:not-sr-only">Filter</span>
+              <span className="truncate">{topicTitle}</span>
+              <CancelIcon aria-hidden="true" />
             </Button>
-          </DialogTrigger>
-          <DialogContent
-            aria-describedby={undefined}
-            className="sm:max-w-sm"
-            showCloseButton
-          >
-            <DialogHeader>
-              <DialogTitle>
-                Filter feed
-              </DialogTitle>
-            </DialogHeader>
-            <div className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="feed-project-filter">Project</Label>
-                <Select
-                  value={selectedProjectId}
-                  onValueChange={(value) =>
-                    setDraftFilter({
-                      projectId: value === ALL_FILTER_VALUE ? "" : value,
-                      topicId: "",
-                    })
-                  }
-                >
-                  <SelectTrigger
-                    id="feed-project-filter"
-                    className="h-11 rounded-xl px-3"
-                    aria-label="Filter by project"
-                  >
-                    <SelectValue placeholder="All projects" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value={ALL_FILTER_VALUE}>
-                      All projects
-                    </SelectItem>
-                    {(data?.projects ?? []).map((project) => (
-                      <SelectItem key={project.id} value={project.id}>
-                        {project.title}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="feed-topic-filter">Topic</Label>
-                <Select
-                  value={selectedTopicId}
-                  onValueChange={(value) =>
-                    setDraftFilter((current) => ({
-                      ...current,
-                      topicId: value === ALL_FILTER_VALUE ? "" : value,
-                    }))
-                  }
-                >
-                  <SelectTrigger
-                    id="feed-topic-filter"
-                    className="h-11 rounded-xl px-3"
-                    aria-label="Filter by topic"
-                  >
-                    <SelectValue placeholder="All topics" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value={ALL_FILTER_VALUE}>
-                      All topics
-                    </SelectItem>
-                    {topics.map((topic) => (
-                      <SelectItem key={topic.id} value={topic.id}>
-                        {topic.title}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-            <DialogFooter>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => setFilterOpen(false)}
-              >
-                Cancel
-              </Button>
-              <Button
-                type="button"
-                onClick={applyFilters}
-                className="bg-brand text-brand-foreground hover:bg-brand/85"
-              >
-                Apply filters
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-      </div>
-
-      {loading ? (
-        <FeedLoadingState />
-      ) : error ? (
-        <FeedErrorState
-          message={error}
-          onRetry={() => {
-            requestGeneration.current += 1
-            feedRequest.current?.abort()
-            setData(null)
-            setLoading(true)
-            setLoadingMore(false)
-            setError("")
-            setLoadMoreError("")
-            setReloadToken((value) => value + 1)
-          }}
-        />
-      ) : !hasCards ? (
-        <FeedEmptyState
-          hasMore={hasMore}
-          loadingMore={loadingMore}
-          error={loadMoreError}
-          onLoadMore={() => void loadMore()}
-        />
-      ) : (
-        <div
-          ref={feedRef}
-          tabIndex={0}
-          aria-label="Learning feed"
-          className="h-full snap-y snap-mandatory [scrollbar-width:none] overflow-y-auto overscroll-y-contain scroll-smooth outline-none focus:outline-none focus-visible:outline-none [&::-webkit-scrollbar]:hidden"
-        >
-          {data?.cards.map((card, index) => (
-            <FeedCardView
-              key={card.key ?? card.id}
-              card={card}
-              onAsk={openCardChat}
-              onSkip={(nextCard) => skipCard(nextCard, index)}
-              onAnswer={answerCard}
-              onReveal={revealCard}
-              onRecall={recallCard}
-            />
-          ))}
-          {hasMore ? (
-            <FeedLoadMoreState
-              loading={loadingMore}
-              error={loadMoreError}
-              onLoadMore={() => void loadMore()}
-            />
-          ) : (
-            <FeedEndState />
-          )}
+          ) : null}
         </div>
-      )}
+        {target !== null ? (
+          <p className="flex items-center gap-3 text-sm text-muted-foreground tabular-nums">
+            {run !== null && run >= COMBO_START ? (
+              <span key={run} className="combo-chip font-medium text-brand">
+                {run} in a row
+                <span className="hidden sm:inline"> · +{comboBonus(run)} XP</span>
+              </span>
+            ) : null}
+            <span>
+              {answeredShown} of {target}
+              <span className="sr-only"> answered this session</span>
+            </span>
+          </p>
+        ) : null}
+      </div>
+      {target !== null ? (
+        <Progress
+          value={(answeredShown / target) * 100}
+          aria-label={`${answeredShown} of ${target} answered this session`}
+          className="mt-3 h-1"
+        />
+      ) : null}
 
-      <Dialog open={summaryOpen} onOpenChange={setSummaryOpen}>
-        <DialogContent className="max-h-[90svh] overflow-y-auto sm:max-w-lg" showCloseButton>
-          <DialogHeader className="sr-only">
-            <DialogTitle>Review session summary</DialogTitle>
-            <DialogDescription>What this review session added up to.</DialogDescription>
-          </DialogHeader>
+      <div className="mt-8 flex-1">
+        {loading ? (
+          <FeedLoadingState />
+        ) : error ? (
+          <FeedMessage title="Review didn't load" detail={error}>
+            <Button type="button" onClick={retry} className="mt-5 min-h-11 rounded-full bg-brand px-6 text-brand-foreground hover:bg-brand/85">
+              Try again
+            </Button>
+          </FeedMessage>
+        ) : showingSummary ? (
           <SessionSummary
             since={sessionStartedAt}
             eyebrow="Review done"
@@ -781,8 +569,11 @@ export function Feed({ initialFilter }: { initialFilter?: FeedFilter }) {
               <>
                 <Button
                   type="button"
-                  onClick={() => setSummaryOpen(false)}
-                  className="min-h-11 rounded-full bg-brand px-5 text-brand-foreground hover:bg-brand/85"
+                  onClick={() => {
+                    setShowingSummary(false)
+                    showCard(activeIndex + 1)
+                  }}
+                  className="min-h-11 rounded-full bg-brand px-6 text-brand-foreground hover:bg-brand/85"
                 >
                   Keep going
                 </Button>
@@ -792,138 +583,75 @@ export function Feed({ initialFilter }: { initialFilter?: FeedFilter }) {
               </>
             }
           />
-        </DialogContent>
-      </Dialog>
+        ) : card ? (
+          <FeedCardView
+            key={card.key ?? card.id}
+            card={card}
+            context={[projectTitles.get(card.projectId), card.sourceLabel].filter(Boolean).join(" · ")}
+            onAsk={openCardChat}
+            onNext={nextCard}
+            onAnswer={answerCard}
+            onReveal={revealCard}
+            onRecall={recallCard}
+          />
+        ) : loadingMore ? (
+          <FeedLoadingState />
+        ) : loadMoreError ? (
+          <FeedMessage title="More cards didn't load" detail={loadMoreError}>
+            <Button
+              type="button"
+              onClick={() => showCard(activeIndex)}
+              className="mt-5 min-h-11 rounded-full bg-brand px-6 text-brand-foreground hover:bg-brand/85"
+            >
+              Try again
+            </Button>
+          </FeedMessage>
+        ) : cardCount ? (
+          <FeedMessage title="You're caught up" detail="Nothing else is due. New cards appear as you learn more.">
+            <Button asChild variant="outline" className="mt-5 min-h-11 rounded-full px-5">
+              <Link href="/">Back to Library</Link>
+            </Button>
+          </FeedMessage>
+        ) : (
+          <FeedMessage
+            title="Nothing to review yet"
+            detail="Start a unit in one of your projects and its questions and recaps show up here."
+          >
+            <Button asChild className="mt-5 min-h-11 rounded-full bg-brand px-6 text-brand-foreground hover:bg-brand/85">
+              <Link href="/">Open your projects</Link>
+            </Button>
+          </FeedMessage>
+        )}
+      </div>
     </main>
   )
 }
 
-/** Displays a quiet card-shaped loading state while the feed request resolves. */
+/** Displays a card-shaped loading state while cards load. */
 function FeedLoadingState() {
   return (
-    <div
-      className="flex h-full items-center px-4 pt-20 pb-10 sm:px-8"
-      role="status"
-      aria-label="Loading feed"
-    >
-      <div className="mx-auto w-full max-w-[680px] space-y-6">
-        <Skeleton className="h-3 w-40" />
-        <Skeleton className="h-24 w-4/5" />
-        <Skeleton className="h-5 w-full max-w-xl" />
-        <Skeleton className="h-5 w-2/3" />
-      </div>
+    <div className="space-y-3" role="status" aria-label="Loading cards">
+      <Skeleton className="h-3 w-48" />
+      <Skeleton className="h-56 w-full rounded-xl" />
     </div>
   )
 }
 
-/** Explains a recoverable feed request failure and offers a retry. */
-function FeedErrorState({
-  message,
-  onRetry,
+/** A short message in place of a card, with its next action below it. */
+function FeedMessage({
+  title,
+  detail,
+  children,
 }: {
-  message: string
-  onRetry: () => void
+  title: string
+  detail: string
+  children?: React.ReactNode
 }) {
   return (
-    <section className="flex h-full items-center justify-center px-5 text-center">
-      <div className="max-w-sm">
-        <h1 className="text-3xl font-medium tracking-[-0.04em] text-foreground">
-          Feed unavailable
-        </h1>
-        <p className="mt-3 text-sm leading-relaxed text-muted-foreground">{message}</p>
-        <Button
-          type="button"
-          onClick={onRetry}
-          className="mt-6 h-11 rounded-full bg-brand px-5 text-sm font-medium text-brand-foreground hover:bg-brand/85"
-        >
-          Try again
-        </Button>
-      </div>
-    </section>
-  )
-}
-
-/** Provides the useful next action when no generated material is available. */
-function FeedEmptyState({
-  hasMore,
-  loadingMore,
-  error,
-  onLoadMore,
-}: {
-  hasMore: boolean
-  loadingMore: boolean
-  error: string
-  onLoadMore: () => void
-}) {
-  return (
-    <section className="flex h-full items-center justify-center px-5 text-center">
-      <div className="max-w-sm">
-        <h1 className="text-3xl font-medium tracking-[-0.04em] text-foreground">
-          {hasMore ? "No cards here yet" : "Start a unit to fill your feed"}
-        </h1>
-        {error ? (
-          <p className="mt-3 text-sm leading-relaxed text-destructive" role="alert">
-            {error}
-          </p>
-        ) : null}
-        {hasMore ? (
-          <Button
-            type="button"
-            onClick={onLoadMore}
-            disabled={loadingMore}
-            className="mt-6 h-11 rounded-full bg-brand px-5 text-sm font-medium text-brand-foreground hover:bg-brand/85"
-          >
-            {loadingMore ? "Loading…" : "Load more"}
-          </Button>
-        ) : (
-          <Button
-            asChild
-            className="mt-6 h-11 rounded-full bg-brand px-5 text-sm font-medium text-brand-foreground hover:bg-brand/85"
-          >
-            <Link href="/">Open your projects</Link>
-          </Button>
-        )}
-      </div>
-    </section>
-  )
-}
-
-/** Offers a bounded continuation action at the end of loaded cards. */
-function FeedLoadMoreState({
-  loading,
-  error,
-  onLoadMore,
-}: {
-  loading: boolean
-  error: string
-  onLoadMore: () => void
-}) {
-  return (
-    <section className="flex h-svh snap-start items-center justify-center px-5 text-center">
-      <div className="max-w-sm">
-        {error ? (
-          <p className="mb-4 text-sm leading-relaxed text-destructive" role="alert">
-            {error}
-          </p>
-        ) : null}
-        <Button
-          type="button"
-          onClick={onLoadMore}
-          disabled={loading}
-          className="h-11 rounded-full bg-brand px-5 text-sm font-medium text-brand-foreground hover:bg-brand/85"
-        >
-          {loading ? "Loading…" : "Load more"}
-        </Button>
-      </div>
-    </section>
-  )
-}
-
-/** Gives the learner a truthful stopping point when the server is exhausted. */
-function FeedEndState() {
-  return (
-    <section className="flex h-svh snap-start items-center justify-center px-5 text-center">
-      <p className="text-sm text-muted-foreground">You’re caught up</p>
+    <section>
+      <h2 className="font-heading text-xl font-semibold">{title}</h2>
+      <p className="mt-2 text-sm text-muted-foreground">{detail}</p>
+      {children}
     </section>
   )
 }
