@@ -138,6 +138,10 @@ import {
   clipboardImageFiles,
   droppedFiles,
 } from "@/lib/client/chat-composer-input"
+import {
+  agentRequestFromValue,
+  readChatEvents,
+} from "@/lib/client/workspace-chat-events"
 
 /** Sent by the Quiz me action; the reply uses interactive quiz blocks. */
 const QUIZ_ME_MESSAGE =
@@ -177,27 +181,6 @@ const IMAGE_MIME_TYPES = new Set([
 function isImageFile(file: File): boolean {
   return IMAGE_MIME_TYPES.has(file.type.toLowerCase())
 }
-
-/** Narrow event shapes returned by the workspace chat stream. */
-type ChatEvent =
-  | { type: "started"; chatId: Id<"workspaceChats"> }
-  | { type: "delta"; text: string }
-  | { type: "thought-delta"; text: string }
-  | { type: "activity"; event: ProviderActivityEvent }
-  | {
-      type: "complete"
-      chatId: Id<"workspaceChats">
-      threadId: string
-      durationMs?: number
-    }
-  | {
-      type: "agent-request"
-      chatId: Id<"workspaceChats">
-      messageId: string
-      request: AgentRequest
-    }
-  | { type: "agent-request-resolved"; requestId: string }
-  | { type: "error"; message: string }
 
 /** Initial conversation or study context, with optional embedded panel behavior. */
 type ChatWorkspaceProps = {
@@ -348,58 +331,6 @@ function formatMessageTime(timestamp: number): string {
   }).format(timestamp)
 }
 
-/** Converts persisted or streamed data into a safe composer request envelope. */
-function agentRequestFromValue(value: unknown): AgentRequest | undefined {
-  if (!value || typeof value !== "object" || Array.isArray(value))
-    return undefined
-  const candidate = value as Record<string, unknown>
-  if (
-    typeof candidate.id !== "string" ||
-    typeof candidate.method !== "string" ||
-    typeof candidate.details !== "string" ||
-    typeof candidate.expiresAt !== "number" ||
-    !["pending", "approved", "denied", "expired", "cancelled"].includes(
-      String(candidate.status)
-    )
-  )
-    return undefined
-  const kind =
-    candidate.kind === "question" ||
-    candidate.kind === "form" ||
-    candidate.kind === "url"
-      ? candidate.kind
-      : "approval"
-  const title =
-    typeof candidate.title === "string" && candidate.title.trim()
-      ? candidate.title.trim()
-      : "Review needed"
-  return {
-    id: candidate.id,
-    ...(typeof candidate.providerRequestId === "string"
-      ? { providerRequestId: candidate.providerRequestId }
-      : {}),
-    method: candidate.method,
-    kind,
-    title,
-    details: candidate.details,
-    ...(typeof candidate.prompt === "string"
-      ? { prompt: candidate.prompt }
-      : {}),
-    ...(typeof candidate.input === "string" ? { input: candidate.input } : {}),
-    expiresAt: candidate.expiresAt,
-    status: candidate.status as AgentRequest["status"],
-    ...(typeof candidate.response === "string"
-      ? { response: candidate.response }
-      : {}),
-    ...(typeof candidate.createdAt === "number"
-      ? { createdAt: candidate.createdAt }
-      : {}),
-    ...(typeof candidate.completedAt === "number"
-      ? { completedAt: candidate.completedAt }
-      : {}),
-  }
-}
-
 /** Copies text on localhost and LAN browsers that lack the async Clipboard API. */
 async function writeClipboardText(text: string): Promise<void> {
   if (navigator.clipboard?.writeText) {
@@ -420,137 +351,6 @@ async function writeClipboardText(text: string): Promise<void> {
   const copied = document.execCommand("copy")
   textarea.remove()
   if (!copied) throw new Error("Clipboard access is unavailable")
-}
-
-/** Parses one server event and rejects malformed stream data. */
-function parseChatEvent(value: unknown): ChatEvent {
-  if (!value || typeof value !== "object" || Array.isArray(value))
-    throw new Error("Blitz returned an invalid response.")
-  const event = value as Record<string, unknown>
-  if (event.type === "started" && typeof event.chatId === "string")
-    return { type: "started", chatId: event.chatId as Id<"workspaceChats"> }
-  if (event.type === "delta" && typeof event.text === "string")
-    return { type: "delta", text: event.text }
-  if (event.type === "thought-delta" && typeof event.text === "string")
-    return { type: "thought-delta", text: event.text }
-  if (
-    event.type === "activity" &&
-    event.event &&
-    typeof event.event === "object" &&
-    !Array.isArray(event.event)
-  ) {
-    const activity = event.event as Record<string, unknown>
-    if (
-      typeof activity.id === "string" &&
-      activity.type === "tool" &&
-      typeof activity.title === "string" &&
-      (activity.status === "running" ||
-        activity.status === "completed" ||
-        activity.status === "failed") &&
-      (activity.detail === undefined || typeof activity.detail === "string")
-    )
-      return {
-        type: "activity",
-        event: {
-          id: activity.id,
-          type: "tool",
-          title: activity.title,
-          status: activity.status,
-          ...(typeof activity.detail === "string"
-            ? { detail: activity.detail }
-            : {}),
-        },
-      }
-  }
-  if (
-    event.type === "complete" &&
-    typeof event.chatId === "string" &&
-    typeof event.threadId === "string"
-  )
-    return {
-      type: "complete",
-      chatId: event.chatId as Id<"workspaceChats">,
-      threadId: event.threadId,
-      ...(typeof event.durationMs === "number"
-        ? { durationMs: event.durationMs }
-        : {}),
-    }
-  if (
-    event.type === "agent-request" &&
-    typeof event.chatId === "string" &&
-    typeof event.messageId === "string" &&
-    event.request &&
-    typeof event.request === "object"
-  ) {
-    const request = agentRequestFromValue(event.request)
-    if (request?.status === "pending")
-      return {
-        type: "agent-request",
-        chatId: event.chatId as Id<"workspaceChats">,
-        messageId: event.messageId,
-        request,
-      }
-  }
-  // Keep an in-flight browser compatible with the previous approval event name.
-  if (
-    event.type === "approval" &&
-    typeof event.chatId === "string" &&
-    typeof event.messageId === "string" &&
-    event.approval &&
-    typeof event.approval === "object"
-  ) {
-    const request = agentRequestFromValue({
-      ...(event.approval as Record<string, unknown>),
-      kind: "approval",
-    })
-    if (request?.status === "pending")
-      return {
-        type: "agent-request",
-        chatId: event.chatId as Id<"workspaceChats">,
-        messageId: event.messageId,
-        request,
-      }
-  }
-  if (
-    event.type === "agent-request-resolved" &&
-    typeof event.requestId === "string"
-  )
-    return { type: "agent-request-resolved", requestId: event.requestId }
-  if (
-    event.type === "approval-resolved" &&
-    typeof event.approvalId === "string"
-  )
-    return { type: "agent-request-resolved", requestId: event.approvalId }
-  if (event.type === "error" && typeof event.message === "string")
-    return { type: "error", message: event.message }
-  throw new Error("Blitz returned an invalid response.")
-}
-
-/** Reads newline-delimited events without assuming network chunk boundaries. */
-async function readChatEvents(
-  body: ReadableStream<Uint8Array>,
-  onEvent: (event: ChatEvent) => void
-): Promise<void> {
-  const reader = body.getReader()
-  const decoder = new TextDecoder()
-  let pending = ""
-  try {
-    while (true) {
-      const { value, done } = await reader.read()
-      pending += decoder.decode(value, { stream: !done })
-      let newline = pending.indexOf("\n")
-      while (newline >= 0) {
-        const line = pending.slice(0, newline)
-        pending = pending.slice(newline + 1)
-        if (line.trim()) onEvent(parseChatEvent(JSON.parse(line)))
-        newline = pending.indexOf("\n")
-      }
-      if (done) break
-    }
-    if (pending.trim()) onEvent(parseChatEvent(JSON.parse(pending)))
-  } finally {
-    reader.releaseLock()
-  }
 }
 
 /** Subscribes to platform changes (static across browser runtime). */
