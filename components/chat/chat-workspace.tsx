@@ -59,6 +59,7 @@ import {
   writeCachedAgentAutonomy,
 } from "@/components/chat/chat-agent-controls"
 import { AnnotatedAssistantMessage } from "@/components/chat/annotated-assistant-message"
+import { ExportChatDialog } from "@/components/chat/export-chat-dialog"
 import {
   ChatManagementDialogs,
   useChatManagement,
@@ -87,7 +88,6 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
-  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
@@ -112,7 +112,6 @@ import {
 import { ThoughtTrace } from "@/components/chat/thought-trace"
 import { TurnNotices } from "@/components/chat/turn-notices"
 import { Textarea } from "@/components/ui/textarea"
-import { Checkbox } from "@/components/ui/checkbox"
 import { CancelIcon, LoadingIcon, SparklesIcon } from "@/components/ui/icon"
 import { api } from "@/convex/_generated/api"
 import type { Id } from "@/convex/_generated/dataModel"
@@ -482,8 +481,6 @@ export function ChatWorkspace({
     citationId: string
   }>()
   const [exportDialogOpen, setExportDialogOpen] = useState(false)
-  const [includeAgentActivity, setIncludeAgentActivity] = useState(true)
-  const [exportNotice, setExportNotice] = useState("")
   const [archivedDialogOpen, setArchivedDialogOpen] = useState(false)
   const chatManagement = useChatManagement({
     chats,
@@ -566,57 +563,6 @@ export function ChatWorkspace({
       ) === index
   )
   const messages = activeChat?.messages ?? []
-  /** Formats the loaded conversation as Markdown with optional agent activity. */
-  const exportChatMarkdown = (): string => {
-    const title = activeChat?.title?.trim() || "Chat"
-    const sections = [`# ${title}`]
-    for (const message of messages) {
-      const heading = message.role === "user" ? "You" : "Blitz"
-      sections.push(`## ${heading}\n\n${message.content || "_(No message text)_"}`)
-      if (!includeAgentActivity || message.role !== "assistant") continue
-
-      const thought = "thought" in message ? message.thought : undefined
-      if (thought?.trim()) sections.push(`### Agent working\n\n${thought.trim()}`)
-
-      const events = "providerEvents" in message && Array.isArray(message.providerEvents)
-        ? (message.providerEvents as ProviderActivityEvent[])
-        : []
-      for (const event of events) {
-        const detail = event.detail?.trim()
-        sections.push(`### Tool: ${event.title} (${event.status})${detail ? `\n\n${detail}` : ""}`)
-      }
-
-      const requests = "agentRequests" in message && Array.isArray(message.agentRequests)
-        ? message.agentRequests.map((value) => agentRequestFromValue(value)).filter((value): value is AgentRequest => value !== undefined)
-        : []
-      for (const request of requests) {
-        sections.push(`### Agent request: ${request.title || request.method} (${request.status})\n\n${request.details}`)
-      }
-    }
-    return `${sections.join("\n\n---\n\n")}\n`
-  }
-
-  /** Copies the chosen transcript to the clipboard and reports recoverable errors. */
-  const copyExport = async (): Promise<void> => {
-    try {
-      await navigator.clipboard.writeText(exportChatMarkdown())
-      setExportNotice("Chat copied to clipboard.")
-    } catch {
-      setExportNotice("Clipboard access failed. Try downloading the Markdown file.")
-    }
-  }
-
-  /** Downloads the chosen transcript as a Markdown file. */
-  const downloadExport = (): void => {
-    const blob = new Blob([exportChatMarkdown()], { type: "text/markdown;charset=utf-8" })
-    const url = URL.createObjectURL(blob)
-    const anchor = document.createElement("a")
-    anchor.href = url
-    anchor.download = `${(activeChat?.title || "chat").replace(/[^a-z0-9-_]+/gi, "-").replace(/^-|-$/g, "") || "chat"}.md`
-    anchor.click()
-    URL.revokeObjectURL(url)
-    setExportNotice("Markdown file downloaded.")
-  }
   const userClientMessageIds = useMemo(
     () =>
       new Set(
@@ -2079,11 +2025,7 @@ export function ChatWorkspace({
                       Rename chat
                     </DropdownMenuItem>
                     <DropdownMenuItem
-                      onSelect={() => {
-                        setIncludeAgentActivity(true)
-                        setExportNotice("")
-                        setExportDialogOpen(true)
-                      }}
+                      onSelect={() => setExportDialogOpen(true)}
                     >
                       <HugeiconsIcon icon={Download01Icon} size={15} aria-hidden="true" />
                       Export chat
@@ -3150,38 +3092,12 @@ export function ChatWorkspace({
 
       <ChatManagementDialogs management={chatManagement} />
 
-      <Dialog open={exportDialogOpen} onOpenChange={setExportDialogOpen}>
-        <DialogContent aria-describedby="export-chat-description">
-          <DialogHeader>
-            <DialogTitle>Export chat</DialogTitle>
-            <DialogDescription id="export-chat-description">
-              Export the full conversation as Markdown, including your messages and replies.
-            </DialogDescription>
-          </DialogHeader>
-          <label className="flex cursor-pointer items-start gap-3 rounded-lg border p-3 text-sm">
-            <Checkbox
-              checked={includeAgentActivity}
-              onCheckedChange={(checked) => setIncludeAgentActivity(checked === true)}
-              className="mt-0.5"
-            />
-            <span className="grid gap-1">
-              <span className="font-medium">Include agent working and tool calls</span>
-              <span className="text-muted-foreground">Adds available working notes, tool activity, and agent requests.</span>
-            </span>
-          </label>
-          <p aria-live="polite" className="min-h-5 text-sm text-muted-foreground">{exportNotice}</p>
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => void copyExport()}>
-              <HugeiconsIcon icon={Copy01Icon} size={15} aria-hidden="true" />
-              Copy to clipboard
-            </Button>
-            <Button type="button" onClick={downloadExport}>
-              <HugeiconsIcon icon={Download01Icon} size={15} aria-hidden="true" />
-              Export as Markdown
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <ExportChatDialog
+        open={exportDialogOpen}
+        onOpenChange={setExportDialogOpen}
+        title={activeChat?.title}
+        messages={messages}
+      />
 
       <ArchivedChatsDialog
         open={archivedDialogOpen}
