@@ -129,11 +129,6 @@ imports a labelled derived source through normal ingestion. Pending items are
 not indexed. The artifact `Add to sources` action also copies its bytes into
 `Sources/` through normal ingestion.
 
-For legacy text, `node --experimental-strip-types scripts/export-legacy-sources.ts <export.json>` previews a supplied Convex export. Add `--write` to create labelled
-legacy derived files. This is an explicit migration utility; existing projects
-are not silently rewritten. Existing legacy text needs indexing before it can
-participate in chunk retrieval.
-
 The default data directory may also be the development checkout. `Projects/`
 and `.next-*` are therefore excluded from Git, lint, and Tailwind scanning.
 Deleting a Convex project removes its associated metadata but retains local files
