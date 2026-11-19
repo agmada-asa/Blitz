@@ -34,8 +34,6 @@ type NavLink = {
 export function AppShell({ children }: AppShellProps) {
   const pathname = usePathname()
   const { unreadCount } = useNotifications()
-  const isPreviewRoute =
-    pathname === "/preview" || pathname.startsWith("/preview/")
   const isReviewRoute = pathname === "/review"
   const isChatRoute = pathname === "/chat"
   // Teach is a focused screen with its own back link and dock.
@@ -73,10 +71,6 @@ export function AppShell({ children }: AppShellProps) {
       active: pathname === "/settings",
     },
   ]
-
-  if (isPreviewRoute) {
-    return <>{children}</>
-  }
 
   return (
     <div className="min-h-svh bg-background text-foreground">
