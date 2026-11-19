@@ -149,19 +149,8 @@ export const prepare = mutation({
             documentId: document._id,
           })
       } else if (attachment.kind === "card" && attachment.itemId) {
-        const item = await ctx.db.get(attachment.itemId)
-        const chunk = item?.sourceChunkId
-          ? await ctx.db.get(item.sourceChunkId)
-          : null
-        const job = chunk ? await ctx.db.get(chunk.jobId) : null
-        const source = job ? await ctx.db.get(job.sourceId) : null
-        if (job && source && job.projectId === attachment.projectId)
-          add(job.sourceTextSnapshot.slice(0, 48_000), {
-            filename: source.filename,
-            projectId: job.projectId,
-            sourceId: source._id,
-            attachmentId: attachment._id,
-          })
+        // A card's source text is cited through its project's sources, not here.
+        continue
       } else if (attachment.text) {
         add(attachment.text, {
           filename: attachment.label,

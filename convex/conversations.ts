@@ -1,9 +1,8 @@
 /**
  * Resolves the card identity behind saved legacy card chat links.
  *
- * The card chat worker has been removed and nothing writes conversations any
- * more. This lookup remains so older `/chat` links keep opening. The
- * conversation tables stay in the schema because they hold saved history.
+ * The card chat worker and its conversation tables have been removed. This
+ * lookup remains so older `/chat` links keep opening.
  */
 
 import { query, type QueryCtx } from "./_generated/server"

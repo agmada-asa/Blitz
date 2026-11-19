@@ -86,18 +86,6 @@ export const deleteProject = mutation({
     )
     add(
       await ctx.db
-        .query("cards")
-        .withIndex("by_project_order", (q) => q.eq("projectId", projectId))
-        .take(2001)
-    )
-    add(
-      await ctx.db
-        .query("attempts")
-        .withIndex("by_project", (q) => q.eq("projectId", projectId))
-        .take(2001)
-    )
-    add(
-      await ctx.db
         .query("topics")
         .withIndex("by_project", (q) => q.eq("projectId", projectId))
         .take(2001)
@@ -110,19 +98,7 @@ export const deleteProject = mutation({
     )
     add(
       await ctx.db
-        .query("conceptRelationships")
-        .withIndex("by_project", (q) => q.eq("projectId", projectId))
-        .take(2001)
-    )
-    add(
-      await ctx.db
         .query("learningItems")
-        .withIndex("by_project", (q) => q.eq("projectId", projectId))
-        .take(2001)
-    )
-    add(
-      await ctx.db
-        .query("lessonPageRevisions")
         .withIndex("by_project", (q) => q.eq("projectId", projectId))
         .take(2001)
     )
@@ -204,44 +180,12 @@ export const deleteProject = mutation({
           .take(2001)
       )
     }
-    const jobs = await ctx.db
-      .query("preparationJobs")
-      .withIndex("by_project_source", (q) => q.eq("projectId", projectId))
-      .take(2001)
-    add(jobs)
-    for (const job of jobs)
-      add(
-        await ctx.db
-          .query("preparationChunks")
-          .withIndex("by_job_ordinal", (q) => q.eq("jobId", job._id))
-          .take(2001)
-      )
-    const contentJobs = await ctx.db
-      .query("contentGenerationJobs")
-      .withIndex("by_project_source", (q) => q.eq("projectId", projectId))
-      .take(2001)
-    add(contentJobs)
-    for (const job of contentJobs)
-      add(
-        await ctx.db
-          .query("contentPageCommits")
-          .withIndex("by_job_page", (q) => q.eq("jobId", job._id))
-          .take(2001)
-      )
-    const conversations = await ctx.db
-      .query("conversations")
-      .withIndex("by_project_item", (q) => q.eq("projectId", projectId))
-      .take(2001)
-    add(conversations)
-    for (const conversation of conversations)
-      add(
-        await ctx.db
-          .query("conversationMessages")
-          .withIndex("by_conversation_createdAt", (q) =>
-            q.eq("conversationId", conversation._id)
-          )
-          .take(2001)
-      )
+    add(
+      await ctx.db
+        .query("preparationJobs")
+        .withIndex("by_project_source", (q) => q.eq("projectId", projectId))
+        .take(2001)
+    )
     const proposals = await ctx.db
       .query("researchProposals")
       .withIndex("by_project_createdAt", (q) => q.eq("projectId", projectId))

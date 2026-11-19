@@ -138,20 +138,15 @@ test("delete removes every owned table and nested jobs, messages, and imports on
   for (const id of [projectId, otherId]) {
     for (const table of [
       "sources",
-      "cards",
-      "attempts",
       "topics",
       "concepts",
       "learningItems",
       "writingActivities",
       "studyEvents",
       "conceptReviews",
+      "preparationJobs",
     ])
       db.seed(table, { projectId: id })
-    const jobId = db.seed("preparationJobs", { projectId: id })
-    db.seed("preparationChunks", { jobId })
-    const conversationId = db.seed("conversations", { projectId: id })
-    db.seed("conversationMessages", { conversationId })
     const proposalId = db.seed("researchProposals", { projectId: id })
     db.seed("researchProposalImports", { proposalId })
     const workspaceChatId = db.seed("workspaceChats", { projectId: id })
@@ -163,20 +158,18 @@ test("delete removes every owned table and nested jobs, messages, and imports on
       row._id === otherId ||
       row.projectId === otherId ||
       ([
-        "preparationChunks",
-        "conversationMessages",
         "researchProposalImports",
         "workspaceChatMessages",
         "workspaceChatAttachments",
       ].includes(row.table) &&
-        Number(row._id.split(":")[1]) > 19)
+        Number(row._id.split(":")[1]) > 14)
   )
   await remove({ db }, { projectId })
   assert.deepEqual(db.rows, expectedRemaining)
   assert.equal(db.deleted.at(-1), projectId)
-  assert.equal(db.deleted.length, 19)
+  assert.equal(db.deleted.length, 14)
   await remove({ db }, { projectId })
-  assert.equal(db.deleted.length, 19)
+  assert.equal(db.deleted.length, 14)
 })
 
 test("oversized deletion refuses before any writes", async () => {
