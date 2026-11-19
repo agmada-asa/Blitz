@@ -60,6 +60,10 @@ import {
 } from "@/components/chat/chat-agent-controls"
 import { AnnotatedAssistantMessage } from "@/components/chat/annotated-assistant-message"
 import {
+  ChatManagementDialogs,
+  useChatManagement,
+} from "@/components/chat/chat-management"
+import {
   AnnotationAttachmentChip,
   AttachmentChip,
   QuotedPassage,
@@ -95,7 +99,6 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
 import { type ChatAnnotation } from "@/components/ui/markdown"
 import {
   Popover,
@@ -129,7 +132,7 @@ import {
   type AgentRequest,
   type AgentRequestSubmission,
 } from "@/lib/agent-request"
-import { cn } from "@/lib/utils"
+import { cn, messageForError } from "@/lib/utils"
 import { resolveAiProvider } from "@/lib/ai-model-settings"
 import { providerThreadFeatures } from "@/lib/provider-thread-features"
 import type { TurnNotice } from "@/lib/turn-notices"
@@ -315,13 +318,6 @@ function draftAttachmentForCard(card: ChatCard): DraftAttachment {
   }
 }
 
-/** Returns a readable error without exposing an arbitrary response object. */
-function messageForError(error: unknown, fallback: string): string {
-  return error instanceof Error && error.message.trim()
-    ? error.message
-    : fallback
-}
-
 /** Formats a message creation time as a local 24-hour clock value. */
 function formatMessageTime(timestamp: number): string {
   return new Intl.DateTimeFormat(undefined, {
@@ -423,12 +419,8 @@ export function ChatWorkspace({
   )
   const branchChat = useMutation(api.workspaceChats.branch)
   const createProject = useMutation(api.projects.createProject)
-  const renameChat = useMutation(api.workspaceChats.rename)
   const setChatUnread = useMutation(api.workspaceChats.setUnread)
-  const setChatPinned = useMutation(api.workspaceChats.setPinned)
-  const setChatArchived = useMutation(api.workspaceChats.setArchived)
   const assignChatProject = useMutation(api.workspaceChats.assignProject)
-  const deleteChat = useMutation(api.workspaceChats.remove)
   const [activeChatId, setActiveChatId] = useState<
     Id<"workspaceChats"> | undefined
   >(initialCard || initialPassage ? undefined : initialChatId)
@@ -489,16 +481,18 @@ export function ChatWorkspace({
     messageId: Id<"workspaceChatMessages">
     citationId: string
   }>()
-  const [renameChatId, setRenameChatId] = useState<Id<"workspaceChats">>()
-  const [renameDraft, setRenameDraft] = useState("")
-  const [deleteChatId, setDeleteChatId] = useState<Id<"workspaceChats">>()
   const [exportDialogOpen, setExportDialogOpen] = useState(false)
   const [includeAgentActivity, setIncludeAgentActivity] = useState(true)
   const [exportNotice, setExportNotice] = useState("")
-  const [deletingChat, setDeletingChat] = useState(false)
   const [archivedDialogOpen, setArchivedDialogOpen] = useState(false)
-  const [chatActionPending, setChatActionPending] = useState(false)
-  const [chatActionError, setChatActionError] = useState("")
+  const chatManagement = useChatManagement({
+    chats,
+    archivedChats,
+    activeChatId,
+    manuallyMarkedUnreadRef,
+    onError: setError,
+    onActiveChatDeleted: () => showView(undefined),
+  })
   const cachedAgentAutonomy = useCachedAgentAutonomy()
   const [agentAutonomy, setAgentAutonomy] = useState<
     ChatAgentAutonomy | undefined
@@ -844,12 +838,6 @@ export function ChatWorkspace({
   const canAttachProject =
     attachments.filter((attachment) => attachment.kind === "project").length <
       MAX_PROJECT_ATTACHMENTS
-  const renameTarget =
-    chats?.find((chat) => chat.id === renameChatId) ??
-    archivedChats?.find((chat) => chat.id === renameChatId)
-  const deleteTarget =
-    chats?.find((chat) => chat.id === deleteChatId) ??
-    archivedChats?.find((chat) => chat.id === deleteChatId)
   const activeChatTarget =
     chats?.find((chat) => chat.id === activeChatId) ??
     archivedChats?.find((chat) => chat.id === activeChatId)
@@ -1203,90 +1191,6 @@ export function ChatWorkspace({
   ): Promise<NewChatProject> => {
     const projectId = await createProject({ title })
     return { _id: projectId, title: title.trim() }
-  }
-
-  /** Opens the rename form with the current title from chat history. */
-  const openRenameChat = (chatId: Id<"workspaceChats">): void => {
-    const chat = chats?.find((item) => item.id === chatId)
-    if (!chat) return
-    setRenameChatId(chatId)
-    setRenameDraft(chat.title)
-    setChatActionError("")
-  }
-
-  /** Saves the new chat title and leaves the dialog open when validation fails. */
-  const saveChatName = async (): Promise<void> => {
-    if (!renameChatId || chatActionPending) return
-    const title = renameDraft.trim()
-    if (!title) {
-      setChatActionError("Enter a chat name.")
-      return
-    }
-    setChatActionPending(true)
-    setChatActionError("")
-    try {
-      await renameChat({ chatId: renameChatId, title })
-      setRenameChatId(undefined)
-    } catch (cause) {
-      setChatActionError(
-        messageForError(cause, "This chat could not be renamed.")
-      )
-    } finally {
-      setChatActionPending(false)
-    }
-  }
-
-  /** Changes a chat's unread marker from its context menu. */
-  const toggleChatUnread = (
-    chatId: Id<"workspaceChats">,
-    unread: boolean
-  ): void => {
-    if (unread) {
-      manuallyMarkedUnreadRef.current = chatId
-    } else if (manuallyMarkedUnreadRef.current === chatId) {
-      manuallyMarkedUnreadRef.current = undefined
-    }
-    void setChatUnread({ chatId, unread }).catch((cause) => {
-      setError(messageForError(cause, "This chat could not be updated."))
-    })
-  }
-
-  /** Changes a chat's pinned state from its context menu. */
-  const toggleChatPinned = (
-    chatId: Id<"workspaceChats">,
-    pinned: boolean
-  ): void => {
-    void setChatPinned({ chatId, pinned }).catch((cause) => {
-      setError(messageForError(cause, "This chat could not be updated."))
-    })
-  }
-
-  /** Changes a chat's archive state from its context menu or actions menu. */
-  const toggleChatArchived = (
-    chatId: Id<"workspaceChats">,
-    archived: boolean
-  ): void => {
-    void setChatArchived({ chatId, archived }).catch((cause) => {
-      setError(messageForError(cause, "This chat could not be updated."))
-    })
-  }
-
-  /** Confirms and permanently removes a chat and its dependencies. */
-  const confirmDeleteChat = async (): Promise<void> => {
-    if (!deleteChatId || deletingChat) return
-    setDeletingChat(true)
-    try {
-      const targetId = deleteChatId
-      await deleteChat({ chatId: targetId })
-      setDeleteChatId(undefined)
-      if (activeChatId === targetId) {
-        showView(undefined)
-      }
-    } catch (cause) {
-      setError(messageForError(cause, "This chat could not be deleted."))
-    } finally {
-      setDeletingChat(false)
-    }
   }
 
   /** Adds an unsent attachment unless the same project or URL is already selected. */
@@ -2065,11 +1969,11 @@ export function ChatWorkspace({
       onSelect={selectChat}
       onNew={startNewChat}
       onNewInProject={startNewChatForProject}
-      onRename={openRenameChat}
-      onToggleUnread={toggleChatUnread}
-      onTogglePin={toggleChatPinned}
-      onToggleArchive={toggleChatArchived}
-      onDelete={(id) => setDeleteChatId(id)}
+      onRename={chatManagement.openRename}
+      onToggleUnread={chatManagement.toggleUnread}
+      onTogglePin={chatManagement.togglePinned}
+      onToggleArchive={chatManagement.toggleArchived}
+      onDelete={chatManagement.requestDelete}
       onOpenArchived={() => setArchivedDialogOpen(true)}
       archivedCount={archivedCount}
     />
@@ -2169,7 +2073,7 @@ export function ChatWorkspace({
                 {activeChat ? (
                   <DropdownMenuContent align="end">
                     <DropdownMenuItem
-                      onSelect={() => openRenameChat(activeChat.id)}
+                      onSelect={() => chatManagement.openRename(activeChat.id)}
                     >
                       <HugeiconsIcon icon={PencilEdit02Icon} size={15} aria-hidden="true" />
                       Rename chat
@@ -2186,7 +2090,7 @@ export function ChatWorkspace({
                     </DropdownMenuItem>
                     <DropdownMenuItem
                       onSelect={() =>
-                        toggleChatUnread(
+                        chatManagement.toggleUnread(
                           activeChat.id,
                           !(activeChatTarget?.isUnread ?? activeChat.isUnread)
                         )
@@ -2196,19 +2100,19 @@ export function ChatWorkspace({
                       {activeChatTarget?.isUnread ?? activeChat.isUnread ? "Mark as read" : "Mark as unread"}
                     </DropdownMenuItem>
                     <DropdownMenuItem
-                      onSelect={() => toggleChatPinned(activeChat.id, !activeChatTarget?.isPinned)}
+                      onSelect={() => chatManagement.togglePinned(activeChat.id, !activeChatTarget?.isPinned)}
                     >
                       <HugeiconsIcon icon={Pin02Icon} size={15} aria-hidden="true" />
                       {activeChatTarget?.isPinned ? "Unpin chat" : "Pin chat"}
                     </DropdownMenuItem>
                     <DropdownMenuItem
-                      onSelect={() => toggleChatArchived(activeChat.id, !activeChat.isArchived)}
+                      onSelect={() => chatManagement.toggleArchived(activeChat.id, !activeChat.isArchived)}
                     >
                       <HugeiconsIcon icon={Archive02Icon} size={15} aria-hidden="true" />
                       {activeChat.isArchived ? "Restore chat" : "Archive chat"}
                     </DropdownMenuItem>
                     <DropdownMenuSeparator />
-                    <DropdownMenuItem className="text-destructive focus:text-destructive" onSelect={() => setDeleteChatId(activeChat.id)}>
+                    <DropdownMenuItem className="text-destructive focus:text-destructive" onSelect={() => chatManagement.requestDelete(activeChat.id)}>
                       <HugeiconsIcon icon={Delete02Icon} size={15} aria-hidden="true" />
                       Delete chat
                     </DropdownMenuItem>
@@ -2309,7 +2213,7 @@ export function ChatWorkspace({
                 variant="outline"
                 size="sm"
                 className="h-7 text-xs"
-                onClick={() => toggleChatArchived(activeChat.id, false)}
+                onClick={() => chatManagement.toggleArchived(activeChat.id, false)}
               >
                 Restore chat
               </Button>
@@ -3244,73 +3148,7 @@ export function ChatWorkspace({
         onCreate={createNewChatProject}
       />
 
-      <Dialog
-        open={renameChatId !== undefined}
-        onOpenChange={(open) => {
-          if (!open && !chatActionPending) {
-            setRenameChatId(undefined)
-            setChatActionError("")
-          }
-        }}
-      >
-        <DialogContent
-          aria-describedby="rename-chat-description"
-          showCloseButton={!chatActionPending}
-        >
-          <DialogHeader>
-            <DialogTitle>Rename chat</DialogTitle>
-            <DialogDescription id="rename-chat-description">
-              Choose a name that will be easy to find later.
-            </DialogDescription>
-          </DialogHeader>
-          <form
-            className="grid gap-4"
-            onSubmit={(event) => {
-              event.preventDefault()
-              void saveChatName()
-            }}
-          >
-            <div className="grid gap-2">
-              <Label htmlFor="rename-chat">Chat name</Label>
-              <Input
-                id="rename-chat"
-                autoFocus
-                maxLength={64}
-                value={renameDraft}
-                disabled={chatActionPending}
-                onChange={(event) => setRenameDraft(event.target.value)}
-              />
-            </div>
-            {chatActionError ? (
-              <p role="alert" className="text-sm text-destructive">
-                {chatActionError}
-              </p>
-            ) : null}
-            <DialogFooter>
-              <Button
-                type="button"
-                variant="outline"
-                className="h-11"
-                disabled={chatActionPending}
-                onClick={() => setRenameChatId(undefined)}
-              >
-                Cancel
-              </Button>
-              <Button
-                type="submit"
-                className="h-11"
-                disabled={
-                  chatActionPending ||
-                  !renameDraft.trim() ||
-                  renameDraft.trim() === renameTarget?.title
-                }
-              >
-                {chatActionPending ? "Saving…" : "Save name"}
-              </Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
+      <ChatManagementDialogs management={chatManagement} />
 
       <Dialog open={exportDialogOpen} onOpenChange={setExportDialogOpen}>
         <DialogContent aria-describedby="export-chat-description">
@@ -3353,50 +3191,9 @@ export function ChatWorkspace({
           selectChat(id)
           setArchivedDialogOpen(false)
         }}
-        onUnarchive={(id) => toggleChatArchived(id, false)}
-        onDelete={(id) => setDeleteChatId(id)}
+        onUnarchive={(id) => chatManagement.toggleArchived(id, false)}
+        onDelete={chatManagement.requestDelete}
       />
-
-      <Dialog
-        open={deleteChatId !== undefined}
-        onOpenChange={(open) => {
-          if (!open && !deletingChat) setDeleteChatId(undefined)
-        }}
-      >
-        <DialogContent
-          aria-describedby="delete-chat-description"
-          showCloseButton={!deletingChat}
-        >
-          <DialogHeader>
-            <DialogTitle>Delete chat?</DialogTitle>
-            <DialogDescription id="delete-chat-description">
-              {deleteTarget
-                ? `This permanently deletes “${deleteTarget.title}” and its messages. This cannot be undone.`
-                : "This permanently deletes this chat and its messages. This cannot be undone."}
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              className="h-11"
-              disabled={deletingChat}
-              onClick={() => setDeleteChatId(undefined)}
-            >
-              Cancel
-            </Button>
-            <Button
-              type="button"
-              variant="destructive"
-              className="h-11"
-              disabled={deletingChat}
-              onClick={() => void confirmDeleteChat()}
-            >
-              {deletingChat ? "Deleting…" : "Delete chat"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
 
       <Dialog open={projectDialogOpen} onOpenChange={setProjectDialogOpen}>
         <DialogContent aria-describedby="project-chat-description">

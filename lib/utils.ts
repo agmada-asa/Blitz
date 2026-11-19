@@ -7,3 +7,13 @@ import { twMerge } from "tailwind-merge"
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
 }
+
+/**
+ * Returns a caught error's message for display, or `fallback` when it has
+ * none, without exposing an arbitrary thrown value.
+ */
+export function messageForError(error: unknown, fallback: string): string {
+  return error instanceof Error && error.message.trim()
+    ? error.message
+    : fallback
+}
