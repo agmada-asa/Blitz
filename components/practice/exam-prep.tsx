@@ -128,7 +128,15 @@ function PaperRow({ paper, base }: { paper: PaperSummary; base: string }) {
           <h3 className="truncate font-medium" title={paper.title}>
             {paper.title}
           </h3>
-          <p className="text-xs text-muted-foreground">{details.join(" · ")}</p>
+          <p className="text-xs text-muted-foreground">
+            {details.join(" · ")}
+            {/* The score column is hidden on narrow screens, so the best score joins the details there. */}
+            {paper.status === "ready" && paper.bestPercentage !== null ? (
+              <span className="sm:hidden">
+                {details.length ? " · " : ""}Best {paper.bestPercentage}%
+              </span>
+            ) : null}
+          </p>
         </div>
         {paper.status === "ready" ? (
           <span className="hidden w-20 text-right text-sm whitespace-nowrap tabular-nums sm:block">
