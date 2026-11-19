@@ -112,10 +112,9 @@ import {
 import { ThoughtTrace } from "@/components/chat/thought-trace"
 import { TurnNotices } from "@/components/chat/turn-notices"
 import { Textarea } from "@/components/ui/textarea"
-import { CancelIcon, LoadingIcon, SparklesIcon } from "@/components/ui/icon"
+import { CancelIcon, LoadingIcon } from "@/components/ui/icon"
 import { api } from "@/convex/_generated/api"
 import type { Id } from "@/convex/_generated/dataModel"
-import { extractSourceResponse } from "@/lib/client/extract-source"
 import {
   getCachedQuizAnswers,
   getServerQuizAnswers,
@@ -153,8 +152,6 @@ const QUIZ_ME_MESSAGE =
 const MAX_PROJECT_ATTACHMENTS = 3
 /** Maximum extracted characters retained for one browser-owned attachment. */
 const MAX_ATTACHMENT_TEXT = 48_000
-/** Maximum inline file and link text sent with one message. */
-const MAX_INLINE_CONTEXT = 96_000
 
 /** One unsent card, project, file, or public link shown above the composer. */
 type DraftAttachment = {
@@ -540,9 +537,6 @@ export function ChatWorkspace({
   useEffect(() => {
     if (lessonQuoteId) composerRef.current?.focus()
   }, [lessonQuoteId])
-  const [linkDialogOpen, setLinkDialogOpen] = useState(false)
-  const [linkUrl, setLinkUrl] = useState("")
-  const [importingLink, setImportingLink] = useState(false)
   const persistedAttachments = activeChat?.attachments ?? []
   const contextualAttachments = [
     ...attachments.filter(
@@ -751,7 +745,6 @@ export function ChatWorkspace({
   const isStreaming = sending || activeChat?.status === "running"
   const isRunning =
     uploadingFiles ||
-    importingLink ||
     sending ||
     activeChat?.status === "running" ||
     savingReplySettings ||
@@ -986,7 +979,7 @@ export function ChatWorkspace({
    */
   const startNewChat = (): void => {
     // Uploads land in the visible draft, so wait for them before switching.
-    if (uploadingFiles || importingLink) return
+    if (uploadingFiles) return
     setSourceSelection(undefined)
     showView(undefined)
     setQueuedMessage(undefined)
@@ -1231,84 +1224,6 @@ export function ChatWorkspace({
     void chooseFiles(images)
   }
 
-  /** Fetches a public source through the protected route and attaches extracted text. */
-  const attachLink = async (): Promise<void> => {
-    const url = linkUrl.trim()
-    if (!url || importingLink) return
-    setImportingLink(true)
-    setError("")
-    try {
-      const response = await fetch("/api/sources/fetch", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url }),
-      })
-      if (!response.ok) {
-        const result = (await response.json().catch(() => null)) as {
-          error?: string
-        } | null
-        throw new Error(result?.error || "That link could not be fetched.")
-      }
-      const originalResponse = response.clone()
-      const source = await extractSourceResponse(response, url)
-      if (!source.text.trim())
-        throw new Error("There was no readable text at that link.")
-      const remainingCharacters =
-        MAX_INLINE_CONTEXT -
-        attachments.reduce(
-          (total, attachment) => total + (attachment.text?.length ?? 0),
-          0
-        )
-      if (remainingCharacters <= 0)
-        throw new Error("Remove a file or link before adding another.")
-      let documentId: Id<"chatDocuments"> | undefined
-      let ownerToken: string | undefined
-      const projectId =
-        activeChat?.projectId ?? newChatProjectId ?? selectedProject?.projectId
-      if (/\.(pdf|pptx)$/i.test(source.filename)) {
-        const saved = await fetch("/api/chat/files", {
-          method: "POST",
-          headers: {
-            ...(projectId ? { "x-blitz-project-id": projectId } : {}),
-            "x-blitz-filename": encodeURIComponent(source.filename),
-            "content-type":
-              originalResponse.headers.get("content-type") ||
-              "application/octet-stream",
-          },
-          body: await originalResponse.blob(),
-        })
-        const payload = (await saved.json()) as {
-          documentId?: Id<"chatDocuments">
-          ownerToken?: string
-          error?: string
-        }
-        if (!saved.ok)
-          throw new Error(
-            payload.error || "The original file could not be saved."
-          )
-        documentId = payload.documentId
-        ownerToken = payload.ownerToken
-      }
-      addAttachment({
-        id: crypto.randomUUID(),
-        kind: "link",
-        ...(documentId ? { documentId } : {}),
-        ...(ownerToken ? { ownerToken } : {}),
-        label: source.filename,
-        text: source.text.slice(
-          0,
-          Math.min(MAX_ATTACHMENT_TEXT, remainingCharacters)
-        ),
-        url: response.headers.get("x-source-url") ?? url,
-      })
-      setLinkUrl("")
-      setLinkDialogOpen(false)
-    } catch (linkError) {
-      setError(messageForError(linkError, "That link could not be attached."))
-    } finally {
-      setImportingLink(false)
-    }
-  }
 
   /**
    * Sends a standard, edited, or continuation turn and lets Convex drive the transcript.
@@ -1341,7 +1256,6 @@ export function ChatWorkspace({
       (!options.continuationOf &&
         replyForView(inFlightRepliesRef.current, targetChatId, viewRef.current)) ||
       uploadingFiles ||
-      importingLink ||
       savingReplySettings ||
       (!options.chatId && !options.continuationOf && activeChat?.status === "running") ||
       (options.continuationOf && !targetChatId)
@@ -2070,7 +1984,7 @@ export function ChatWorkspace({
                 "shrink-0 rounded-full px-3 md:hidden",
                 embedded && !activeChat && "hidden"
               )}
-              disabled={uploadingFiles || importingLink}
+              disabled={uploadingFiles}
               onClick={startNewChat}
             >
               New chat
@@ -2800,7 +2714,6 @@ export function ChatWorkspace({
               rows={2}
               disabled={
                 uploadingFiles ||
-                importingLink ||
                 savingReplySettings ||
                 Boolean(messageActionId)
               }
@@ -3167,50 +3080,6 @@ export function ChatWorkspace({
         </DialogContent>
       </Dialog>
 
-      <Dialog open={linkDialogOpen} onOpenChange={setLinkDialogOpen}>
-        <DialogContent aria-describedby="link-chat-description">
-          <DialogHeader>
-            <DialogTitle>Attach a public link</DialogTitle>
-            <DialogDescription id="link-chat-description">
-              Add a public webpage, PDF, text file, or PowerPoint link.
-            </DialogDescription>
-          </DialogHeader>
-          <form
-            className="space-y-3"
-            onSubmit={(event) => {
-              event.preventDefault()
-              void attachLink()
-            }}
-          >
-            <Input
-              type="url"
-              autoFocus
-              required
-              maxLength={2_048}
-              disabled={importingLink}
-              placeholder="https://example.com/notes.pdf"
-              value={linkUrl}
-              onChange={(event) => setLinkUrl(event.target.value)}
-            />
-            <Button
-              type="submit"
-              className="w-full bg-brand text-brand-foreground hover:bg-brand/85"
-              disabled={!linkUrl.trim() || importingLink}
-            >
-              {importingLink ? (
-                <>
-                  <LoadingIcon className="animate-spin motion-reduce:animate-none" />
-                  Reading link…
-                </>
-              ) : (
-                <>
-                  <SparklesIcon /> Attach link
-                </>
-              )}
-            </Button>
-          </form>
-        </DialogContent>
-      </Dialog>
     </main>
   )
 }
