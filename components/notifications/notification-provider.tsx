@@ -230,9 +230,8 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
     const announced = allUnseen.slice(-5)
     for (const item of announced) {
       if (
-        (item.kind === "card-reply" || item.kind === "workspace-reply") &&
+        item.kind === "workspace-reply" &&
         isNotificationInCurrentChat(
-          item.kind,
           item.href,
           pathname,
           window.location.search

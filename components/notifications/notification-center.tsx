@@ -49,7 +49,6 @@ function iconForKind(kind: NotificationRow["kind"]): IconSvgElement | null {
       return Search01Icon
     case "import":
       return Download01Icon
-    case "card-reply":
     case "workspace-reply":
       return BubbleChatNotificationIcon
     case "practice":

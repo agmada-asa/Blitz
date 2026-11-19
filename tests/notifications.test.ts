@@ -243,7 +243,6 @@ describe("Chat notification targeting", () => {
 
     assert.equal(
       isNotificationInCurrentChat(
-        "workspace-reply",
         href,
         "/chat",
         "?chatId=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -252,36 +251,12 @@ describe("Chat notification targeting", () => {
     )
     assert.equal(
       isNotificationInCurrentChat(
-        "workspace-reply",
         href,
         "/chat",
         "?chatId=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
       ),
       false
     )
-  })
-
-  it("matches a card reply only inside the same card chat interface", () => {
-    const href =
-      "/chat?projectId=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa&itemId=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-
-    assert.equal(
-      isNotificationInCurrentChat(
-        "card-reply",
-        href,
-        "/chat",
-        "?projectId=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa&itemId=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-      ),
-      true
-    )
-    assert.equal(
-      isNotificationInCurrentChat(
-        "card-reply",
-        href,
-        "/notifications",
-        ""
-      ),
-      false
-    )
+    assert.equal(isNotificationInCurrentChat(href, "/notifications", ""), false)
   })
 })
