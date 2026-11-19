@@ -226,7 +226,7 @@ export function SessionSummary({
 
       {summary.concepts.length ? (
         <div className="mt-6">
-          <Subheading className="text-sm font-medium">Concepts</Subheading>
+          <Subheading className="text-sm font-medium">Topics</Subheading>
           <ul className="mt-2 divide-y divide-border rounded-xl border border-border bg-card">
             {summary.concepts.map((concept) => (
               <li

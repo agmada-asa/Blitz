@@ -312,7 +312,7 @@ export function WriteMockExamDialog({
           <DialogTitle>Generate a mock exam</DialogTitle>
           <DialogDescription>
             A new timed paper from the units you choose, in the style of your past papers when you
-            have added any. Concepts you keep missing get more questions.
+            have added any. Topics you keep missing get more questions.
           </DialogDescription>
         </DialogHeader>
         <fieldset className="space-y-2">

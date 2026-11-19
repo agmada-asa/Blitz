@@ -146,7 +146,7 @@ export function ExamPaperActions({
           <DialogHeader>
             <DialogTitle>Delete this paper?</DialogTitle>
             <DialogDescription id={descriptionId} className="break-words">
-              {`“${paper.title}” and all its attempts and marks are removed${paper.hasOpenAttempt ? ", including the attempt you haven't submitted" : ""}. Answers you already gave still count toward your concept strengths. This can't be undone.`}
+              {`“${paper.title}” and all its attempts and marks are removed${paper.hasOpenAttempt ? ", including the attempt you haven't submitted" : ""}. Answers you already gave still count toward your topic strengths. This can't be undone.`}
             </DialogDescription>
           </DialogHeader>
           {paper.changeLock ? (

@@ -233,7 +233,7 @@ function Summary({
               {Math.round(readiness.readiness * 100)}%
             </span>
             <span className="text-sm text-muted-foreground">
-              {readiness.practised} of {plural(readiness.concepts, "concept")} practised ·{" "}
+              {readiness.practised} of {plural(readiness.concepts, "topic")} practised ·{" "}
               {Math.round(readiness.recallOfPractised * 100)}% recall on those
             </span>
           </p>
@@ -248,7 +248,7 @@ function Summary({
           <>
             <StrengthBar counts={counts} className="mt-4 mb-2.5" />
             <ul
-              aria-label="Concepts by strength"
+              aria-label="Topics by strength"
               className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground"
             >
               {STRENGTH_ORDER.map((strength) => (
@@ -492,7 +492,7 @@ function UnitRow({ unit, base }: { unit: UnitPractice; base: string }) {
                   aria-hidden="true"
                   className="size-4 shrink-0 text-muted-foreground transition-transform group-data-[state=open]/unit:rotate-180 motion-reduce:transition-none"
                 />
-                <span className="sr-only">Show concepts</span>
+                <span className="sr-only">Show topics</span>
               </>
             ) : null}
           </CollapsibleTrigger>
@@ -512,7 +512,7 @@ function UnitRow({ unit, base }: { unit: UnitPractice; base: string }) {
           </p>
         ) : null}
         <CollapsibleContent className="border-t border-border bg-muted/30 px-4 py-4">
-          <ul aria-label={`${unit.title} concepts`} className="gap-x-6 sm:columns-2 [&>li]:mb-1.5 [&>li]:break-inside-avoid">
+          <ul aria-label={`${unit.title} topics`} className="gap-x-6 sm:columns-2 [&>li]:mb-1.5 [&>li]:break-inside-avoid">
             {STRENGTH_ORDER.flatMap((strength) =>
               unit.concepts
                 .filter((concept) => concept.strength === strength)

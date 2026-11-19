@@ -174,9 +174,9 @@ export function ExamResults({
       </section>
 
       {review.breakdown.length ? (
-        <section aria-labelledby="concepts-heading" className="mt-10">
-          <h2 id="concepts-heading" className="font-heading text-lg font-semibold">
-            By concept
+        <section aria-labelledby="topics-heading" className="mt-10">
+          <h2 id="topics-heading" className="font-heading text-lg font-semibold">
+            By topic
           </h2>
           <p className="mt-1 text-sm text-muted-foreground">
             Weakest first.
