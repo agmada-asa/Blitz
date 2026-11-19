@@ -30,7 +30,7 @@ export async function POST(request: Request): Promise<Response> {
   const unitIds = Array.isArray(body?.unitIds)
     ? body.unitIds.slice(0, 40).map(requestId)
     : []
-  if (!projectId) return Response.json({ error: "Open a module first" }, { status: 400 })
+  if (!projectId) return Response.json({ error: "Open a project first" }, { status: 400 })
   if (!unitIds.length || unitIds.some((id) => id === null))
     return Response.json({ error: "Choose at least one unit" }, { status: 400 })
   if (!(MOCK_EXAM_MINUTES as readonly unknown[]).includes(body?.minutes))

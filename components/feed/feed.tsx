@@ -880,7 +880,7 @@ function FeedEmptyState({
             asChild
             className="mt-6 h-11 rounded-full bg-brand px-5 text-sm font-medium text-brand-foreground hover:bg-brand/85"
           >
-            <Link href="/">Open your modules</Link>
+            <Link href="/">Open your projects</Link>
           </Button>
         )}
       </div>

@@ -64,7 +64,7 @@ export async function POST(request: Request): Promise<Response> {
       return Response.json({ error: error.message }, { status: 400 })
     const message = error instanceof Error ? error.message : ""
     // Convex errors carry the mutation's learner-facing reason after "Uncaught Error: ".
-    const reason = /Choose a unit in this chat's module|Save questions after the reply finishes/.exec(message)
+    const reason = /Choose a unit in this chat's (?:project|module)|Save questions after the reply finishes/.exec(message)
     if (reason) return Response.json({ error: reason[0] }, { status: 400 })
     console.error("Chat question could not be saved", { message: message || "Unknown error" })
     return Response.json(

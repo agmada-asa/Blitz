@@ -641,7 +641,7 @@ export async function createProjectAudio(
     if (input.kind === "podcast" && input.unitId) {
       const unit = await client.query(api.units.get, { unitId: input.unitId as Id<"units"> })
       if (!unit || unit.projectId !== projectId)
-        throw new Error("Choose a unit from this module")
+        throw new Error("Choose a unit from this project")
       if (!unit.sources.some((source) => source.hasText))
         throw new Error("This unit has no readable material yet")
       unitTitle = unit.title

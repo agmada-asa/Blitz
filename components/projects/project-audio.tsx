@@ -432,7 +432,7 @@ export function ProjectAudio({
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value={WHOLE_MODULE}>The whole module</SelectItem>
+                        <SelectItem value={WHOLE_MODULE}>The whole project</SelectItem>
                         {podcastUnits.map((unit) => (
                           <SelectItem key={unit.id} value={unit.id}>
                             {unit.title}

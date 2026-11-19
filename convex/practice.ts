@@ -422,7 +422,7 @@ export const saveChatQuiz = mutation({
     const chat = await ctx.db.get(chatId)
     const unit = await ctx.db.get(unitId)
     if (!chat?.projectId || !unit || unit.projectId !== chat.projectId)
-      throw new Error("Choose a unit in this chat's module")
+      throw new Error("Choose a unit in this chat's project")
     const message = await ctx.db.get(messageId)
     if (
       !message ||
