@@ -18,23 +18,24 @@ import {
   type ProviderScript,
 } from "./fixtures/chat-route-stubs.ts"
 
-/** Route imports answered by the stand-ins instead of the real modules. */
-const STUBBED = new Set([
-  "@/lib/server/convex",
-  "@/lib/server/providers/run-text-turn",
-  "@/lib/server/chat-agent",
-  "@/lib/server/chat-title",
-  "@/lib/server/providers/codex-models",
-  "@/lib/server/question-bank",
-  "@/lib/server/project-agent",
-  "@/lib/server/project-files",
-])
+/** Modules the stand-ins replace when the route or its `chat-turn` helpers import them. */
+const STUBBED = [
+  "lib/server/convex.ts",
+  "lib/server/providers/run-text-turn.ts",
+  "lib/server/chat-agent.ts",
+  "lib/server/chat-title.ts",
+  "lib/server/providers/codex-models.ts",
+  "lib/server/question-bank.ts",
+  "lib/server/project-agent.ts",
+  "lib/server/project-files.ts",
+]
 
 type RoutePost = (request: Request) => Promise<Response>
 
 /**
  * Loads the route with its `@/` imports resolved from the repository root and
- * its outside services swapped for the stand-ins.
+ * its outside services swapped for the stand-ins. Other modules that import
+ * the same services keep the real ones.
  */
 async function loadRoute(): Promise<RoutePost> {
   type Context = { conditions: string[]; parentURL?: string }
@@ -51,6 +52,11 @@ async function loadRoute(): Promise<RoutePost> {
   const root = new URL("../", import.meta.url)
   const routeUrl = new URL("app/api/chat/route.ts", root).href
   const stubsUrl = new URL("fixtures/chat-route-stubs.ts", import.meta.url).href
+  const stubbedUrls = new Set(STUBBED.map((path) => new URL(path, root).href))
+  const helpersUrl = new URL("lib/server/chat-turn/", root).href
+  /** Whether a module is the route or one of its `chat-turn` helpers. */
+  const routeSide = (url: string | undefined): boolean =>
+    url === routeUrl || Boolean(url?.startsWith(helpersUrl))
   /** Tries a path with each source extension Next.js would accept. */
   const withExtensions = (
     base: string,
@@ -66,27 +72,36 @@ async function loadRoute(): Promise<RoutePost> {
     }
     return undefined
   }
-  const hooks = registerHooks({
-    resolve(specifier, context, next) {
-      if (context.parentURL === routeUrl && STUBBED.has(specifier))
-        return next(stubsUrl, context)
-      if (specifier.startsWith("@/")) {
-        const found = withExtensions(
-          new URL(specifier.slice(2), root).href,
-          context,
-          next
-        )
+  /** Resolves `@/` from the repository root and extensionless relative paths. */
+  const resolveSource = (
+    specifier: string,
+    context: Context,
+    next: (specifier: string, context: Context) => Result
+  ): Result => {
+    if (specifier.startsWith("@/")) {
+      const found = withExtensions(
+        new URL(specifier.slice(2), root).href,
+        context,
+        next
+      )
+      if (found) return found
+    }
+    try {
+      return next(specifier, context)
+    } catch (error) {
+      if (specifier.startsWith(".")) {
+        const found = withExtensions(specifier, context, next)
         if (found) return found
       }
-      try {
-        return next(specifier, context)
-      } catch (error) {
-        if (specifier.startsWith(".")) {
-          const found = withExtensions(specifier, context, next)
-          if (found) return found
-        }
-        throw error
-      }
+      throw error
+    }
+  }
+  const hooks = registerHooks({
+    resolve(specifier, context, next) {
+      const resolved = resolveSource(specifier, context, next)
+      return routeSide(context.parentURL) && stubbedUrls.has(resolved.url)
+        ? next(stubsUrl, context)
+        : resolved
     },
   })
   try {

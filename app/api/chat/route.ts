@@ -7,14 +7,20 @@
  * it overflows (and restates the unit material, outline, and plan after), and
  * finishes a reply cut off by a full context once compaction frees room.
  * Refusals, denied tools, and safety checks are saved beside the reply.
+ *
+ * The pieces live in `lib/server/chat-turn/`: the Convex functions a turn
+ * calls, its files and images, its access settings, the handling of each
+ * provider event, transcript replay, and the Teach prompt and bookkeeping.
  */
 
 import { api } from "@/convex/_generated/api"
+import type { Id } from "@/convex/_generated/dataModel"
 import { CHAT_PROVIDER_CAPABILITIES } from "@/lib/provider-capabilities"
 import { providerThreadFeatures } from "@/lib/provider-thread-features"
-import type { TurnNotice } from "@/lib/turn-notices"
-import type { TeachRedoStyle } from "@/lib/teach"
+import { providerLabel } from "@/lib/provider-handoff"
 import { citationPrompt } from "@/lib/citations"
+import { TEACH_QUICK_REPLIES, teachRedoMessage } from "@/lib/teach"
+import type { AiProviderId } from "@/lib/ai-model-settings"
 import { createChatAgentSession } from "@/lib/server/chat-agent"
 import {
   prepareProjectAgentWorkspace,
@@ -22,23 +28,9 @@ import {
   scanProjectArtifacts,
 } from "@/lib/server/project-agent"
 import type { ConvexHttpClient } from "convex/browser"
+import type { PortableTranscript } from "agent-engines"
 import { serverConvexClient } from "@/lib/server/convex"
-import { makeFunctionReference } from "convex/server"
-import { constants as fileConstants } from "node:fs"
-import { copyFile, mkdir } from "node:fs/promises"
-import { homedir } from "node:os"
-import { isAbsolute, join, resolve } from "node:path"
-import {
-  readProjectFileBytes,
-  resolveProjectFile,
-} from "@/lib/server/project-files"
-import { chatStorageId, safeSourceFilename } from "@/lib/server/source-files"
-import type { Id } from "@/convex/_generated/dataModel"
-import {
-  resolveProviderApprovalPolicy,
-  type AiProviderId,
-} from "@/lib/ai-model-settings"
-import { CardChatError, type CardChatResult } from "@/lib/server/card-chat"
+import { CardChatError } from "@/lib/server/card-chat"
 import { createChatProgress } from "@/lib/server/chat-progress"
 import { loadSavedAiModelSettings } from "@/lib/server/ai-model-settings"
 import {
@@ -50,8 +42,6 @@ import {
   handoffPrompt,
   readHandoffTranscript,
 } from "@/lib/server/provider-handoff"
-import { providerLabel } from "@/lib/provider-handoff"
-import type { PortableTranscript } from "agent-engines"
 import { getCodexModelCatalog } from "@/lib/server/providers/codex-models"
 import type { ProviderImageAttachment } from "@/lib/server/providers/types"
 import { isTrustedBlitzOrigin } from "@/lib/server/request-origin"
@@ -61,39 +51,42 @@ import {
   savedChatReplySelection,
   teachTurnSettings,
 } from "@/lib/server/teach-turn-settings"
-import { startFirstQuestionBank } from "@/lib/server/question-bank"
 import { registerChatRun } from "@/lib/server/chat-run-registry"
-import {
-  MAX_PROVIDER_ACTIVITY_EVENTS,
-  normalizeProviderActivity,
-  type ProviderActivityEvent,
-} from "@/lib/provider-activity"
-import {
-  buildTeachPrompt,
-  parseTeachOutline,
-  parseTeachPlan,
-  parseTeachSectionMarker,
-  TEACH_QUICK_REPLIES,
-  teachRedoMessage,
-  teachUnitTitle,
-} from "@/lib/teach"
 import {
   buildWorkspaceChatPrompt,
   combineWorkspaceChatContinuation,
-  mergeWorkspaceChatReplay,
   overflowContinuationMessage,
   parseWorkspaceChatRequest,
-  type WorkspaceChatCardContext,
-  type WorkspaceChatReplayContext,
-  type WorkspaceChatProjectContext,
-  type WorkspaceChatInlineAttachment,
-  type WorkspaceChatRequest,
 } from "@/lib/server/workspace-chat"
 import {
-  CHAT_IMAGE_MIME_TYPES,
-  MAX_CHAT_IMAGE_BYTES,
-  type ChatImageMimeType,
-} from "@/lib/server/chat-attachments"
+  appendReplayImages,
+  chatWorkspaceDirectory,
+  resolveSubmittedAttachments,
+  stageWorkspaceAttachments,
+} from "@/lib/server/chat-turn/attachments"
+import {
+  createActivityLog,
+  createTurnEvents,
+  type ActivityLog,
+} from "@/lib/server/chat-turn/events"
+import {
+  completeWorkspaceTurn,
+  failWorkspaceTurn,
+  getCardContext,
+  getProjectContext,
+  saveWorkspaceProgress,
+  startWorkspaceTurn,
+  type PersistedAttachment,
+} from "@/lib/server/chat-turn/functions"
+import { replayedChatPrompt } from "@/lib/server/chat-turn/replay"
+import {
+  spokenPrompt,
+  turnAgentSettings,
+  turnApprovalPolicy,
+  turnSandbox,
+  applySpokenModel,
+} from "@/lib/server/chat-turn/settings"
+import { finishTeachTurn, teachTurnPrompt } from "@/lib/server/chat-turn/teach"
 
 /** Uses Node.js because each turn starts the selected local provider process. */
 export const runtime = "nodejs"
@@ -103,391 +96,9 @@ export const maxDuration = 620
 /** Source lookups often need longer than the card-chat default deadline. */
 const WORKSPACE_CHAT_TIMEOUT_MS = 600_000
 
-const getProjectContext = makeFunctionReference<
-  "query",
-  { projectIds: Id<"projects">[]; question?: string },
-  WorkspaceChatProjectContext[]
->("chatContext:getProjects")
-
-/** Attachment shape persisted alongside the turn that introduced it. */
-type PersistedAttachment = {
-  documentId?: Id<"chatDocuments">
-  ownerToken?: string
-  kind: "card" | "project" | "file" | "link"
-  label: string
-  mimeType?: "image/png" | "image/jpeg" | "image/webp" | "image/gif"
-  projectId?: Id<"projects">
-  itemId?: Id<"learningItems">
-  text?: string
-  url?: string
-}
-
-/** Annotation shape persisted alongside the user message that introduced it. */
-type PersistedAnnotation = {
-  id: string
-  number?: number
-  messageId: string
-  selectedText: string
-  note: string
-  createdAt?: number
-}
-
-const getCardContext = makeFunctionReference<
-  "query",
-  { projectId: Id<"projects">; itemId: Id<"learningItems"> },
-  WorkspaceChatCardContext
->("chatContext:getCard")
-
-const startWorkspaceTurn = makeFunctionReference<
-  "mutation",
-  {
-    chatId?: Id<"workspaceChats">
-    projectId?: Id<"projects">
-    continuationOf?: Id<"workspaceChatMessages">
-    steeringPrompt?: string
-    providerId?: string
-    providerInstanceId?: string
-    providerModel?: string
-    providerEffort?: string
-    clientMessageId: string
-    message: string
-    attachments: PersistedAttachment[]
-    annotations?: PersistedAnnotation[]
-    redoOf?: Id<"workspaceChatMessages">
-    redoStyle?: TeachRedoStyle
-  },
-  {
-    chatId: Id<"workspaceChats">
-    assistantMessageId: Id<"workspaceChatMessages">
-    initialTitle?: string
-    steeringPrompt?: string
-    providerId: AiProviderId
-    providerInstanceId?: string
-    providerModel?: string
-    providerEffort?: string
-    providerSessionId: string | null
-    codexThreadId: string | null
-    shouldReplayContext: boolean
-    /** Chat whose folder the agent works in; null for the chat's own. */
-    workspaceFolderId: string | null
-    /** Runtime session a branch copies on this first turn, when it can. */
-    fork: { sessionId: string; throughTurnId: string } | null
-    /** Whether a Teach turn compacts first and restates its context. */
-    context: { compactFirst: boolean; restate: boolean }
-    /** The reply a redo replaces, its turn, and the request it answered. */
-    redo: {
-      beforeTurnId: string
-      replacedMessageIds: Id<"workspaceChatMessages">[]
-      originalMessage: string
-    } | null
-    /** Provider and session to carry over after a usage-limit handoff. */
-    providerHandoff: { fromProviderId: string; fromSessionId?: string } | null
-    /**
-     * The request a continued reply answers, sent again in place of the
-     * continue instruction because the reply stopped before any text.
-     */
-    resentMessage?: string
-    replyPrefix: string
-    replayContext: WorkspaceChatReplayContext
-  }
->("workspaceChats:startTurn")
-
-const bindWorkspaceTurn = makeFunctionReference<
-  "mutation",
-  {
-    chatId: Id<"workspaceChats">
-    messageId: Id<"workspaceChatMessages">
-    providerId?: string
-    providerInstanceId?: string
-    providerSessionId?: string
-    providerTurnId?: string
-    codexThreadId?: string
-    codexTurnId?: string
-  },
-  null
->("workspaceChats:bindTurn")
-
-const saveWorkspaceProgress = makeFunctionReference<
-  "mutation",
-  {
-    chatId: Id<"workspaceChats">
-    messageId: Id<"workspaceChatMessages">
-    reply: string
-    thought?: string
-  },
-  null
->("workspaceChats:progress")
-
-const saveWorkspaceProviderEvents = makeFunctionReference<
-  "mutation",
-  {
-    chatId: Id<"workspaceChats">
-    messageId: Id<"workspaceChatMessages">
-    events: ProviderActivityEvent[]
-  },
-  null
->("workspaceChats:saveProviderEvents")
-
-const completeWorkspaceTurn = makeFunctionReference<
-  "mutation",
-  {
-    chatId: Id<"workspaceChats">
-    messageId: Id<"workspaceChatMessages">
-    providerId?: string
-    providerInstanceId?: string
-    providerSessionId?: string
-    providerTurnId?: string
-    codexThreadId?: string
-    codexTurnId?: string
-    reply: string
-    thought?: string
-    durationMs?: number
-  },
-  null
->("workspaceChats:complete")
-
-const failWorkspaceTurn = makeFunctionReference<
-  "mutation",
-  {
-    chatId: Id<"workspaceChats">
-    messageId: Id<"workspaceChatMessages">
-    error: string
-    reason?: string
-    detail?: string
-  },
-  null
->("workspaceChats:fail")
-
-const addTurnNotice = makeFunctionReference<
-  "mutation",
-  {
-    chatId: Id<"workspaceChats">
-    messageId: Id<"workspaceChatMessages">
-    notice: TurnNotice
-  },
-  null
->("workspaceChats:addNotice")
-
-const dropReplacedMessages = makeFunctionReference<
-  "mutation",
-  {
-    chatId: Id<"workspaceChats">
-    activeMessageId: Id<"workspaceChatMessages">
-    messageIds: Id<"workspaceChatMessages">[]
-  },
-  null
->("workspaceChats:dropReplacedMessages")
-
-const recordCompaction = makeFunctionReference<
-  "mutation",
-  {
-    chatId: Id<"workspaceChats">
-    messageId: Id<"workspaceChatMessages">
-    origin: "auto" | "overflow" | "runtime"
-    beforeTokens?: number
-  },
-  null
->("workspaceChats:recordCompaction")
-
-const finishTurnContext = makeFunctionReference<
-  "mutation",
-  {
-    chatId: Id<"workspaceChats">
-    messageId: Id<"workspaceChatMessages">
-    usage?: NonNullable<CardChatResult["contextUsage"]> & { updatedAt: number }
-    restated: boolean
-    updateDelivered?: boolean
-  },
-  null
->("workspaceChats:finishTurnContext")
-
 /** Creates a server-side Convex client for resolving attached project context. */
 function convexClient(): ConvexHttpClient {
   return serverConvexClient(() => new Error("Project context is unavailable"))
-}
-
-/** Resolves and creates the dedicated local folder used for general chat turns. */
-async function chatWorkspaceDirectory(chatId: string): Promise<string> {
-  const directory = join(
-    process.env.BLITZ_CODEX_WORKSPACE?.trim() ||
-      join(homedir(), ".local", "share", "blitz", "codex-workspace"),
-    chatId
-  )
-  if (!isAbsolute(directory))
-    throw new Error("Chat workspace must be an absolute path")
-  await mkdir(directory, { recursive: true })
-  return directory
-}
-
-/**
- * Finds one attached chat document using the strongest ownership proof available.
- *
- * Draft uploads carry an owner token and stay unbound until the turn starts, so
- * the token is tried first. That keeps a file attached before the learner picks a
- * project readable after the chat joins that project. Project and chat ownership
- * cover files saved by earlier turns.
- *
- * @param client - Convex client for the personal deployment.
- * @param attachment - Submitted attachment with its document ID and optional token.
- * @param owners - Project and chat that may own the stored document.
- * @returns The owned document, or null when no ownership proof matches.
- */
-async function findAttachmentDocument(
-  client: ConvexHttpClient,
-  attachment: { documentId?: Id<"chatDocuments">; ownerToken?: string },
-  owners: { ownerProjectId?: Id<"projects">; chatId?: Id<"workspaceChats"> }
-) {
-  const documentId = attachment.documentId
-  if (!documentId) return null
-  const candidates = [
-    ...(attachment.ownerToken
-      ? [
-          {
-            ownerToken: attachment.ownerToken,
-            ...(owners.chatId ? { chatId: owners.chatId } : {}),
-          },
-          { ownerToken: attachment.ownerToken },
-        ]
-      : []),
-    ...(owners.ownerProjectId ? [{ projectId: owners.ownerProjectId }] : []),
-    ...(owners.chatId ? [{ chatId: owners.chatId }] : []),
-  ]
-  for (const ownership of candidates) {
-    const document = await client.query(api.chatCitations.getDocument, {
-      documentId,
-      ...ownership,
-    })
-    if (document) return document
-  }
-  return null
-}
-
-/** Copies attached chat documents into the workspace under attachments/ and annotates them with paths. */
-async function stageWorkspaceAttachments(
-  client: ConvexHttpClient,
-  workspaceDirectory: string,
-  attachments: WorkspaceChatInlineAttachment[],
-  options: {
-    ownerProjectId?: Id<"projects">
-    chatId?: Id<"workspaceChats">
-  } = {}
-): Promise<void> {
-  const attachmentsDir = join(workspaceDirectory, "attachments")
-  let dirCreated = false
-
-  for (const attachment of attachments) {
-    if (!attachment.documentId) continue
-    const document = await findAttachmentDocument(client, attachment, options)
-    if (!document) continue
-
-    const storageId =
-      document.projectId ??
-      (document.ownerToken ? chatStorageId(document.ownerToken) : null)
-    if (!storageId) continue
-
-    try {
-      const sourcePath = await resolveProjectFile(storageId, document.relativeKey)
-      if (!dirCreated) {
-        await mkdir(attachmentsDir, { recursive: true })
-        dirCreated = true
-      }
-      const targetName = `${document._id}-${safeSourceFilename(document.filename)}`
-      const targetPath = join(attachmentsDir, targetName)
-
-      if (resolve(sourcePath) !== resolve(targetPath)) {
-        // Clone on supporting filesystems so large attachments need no second full copy.
-        await copyFile(sourcePath, targetPath, fileConstants.COPYFILE_FICLONE)
-      }
-      attachment.workspacePath = join("attachments", targetName)
-      attachment.filePath = targetPath
-      if (document.textKey) {
-        // The inline text is only a preview; give the agent the whole document.
-        const textName = `${document._id}-${safeSourceFilename(document.filename)}.pages.txt`
-        const textSource = await resolveProjectFile(storageId, document.textKey)
-        await copyFile(
-          textSource,
-          join(attachmentsDir, textName),
-          fileConstants.COPYFILE_FICLONE
-        )
-        attachment.textWorkspacePath = join("attachments", textName)
-      }
-    } catch {
-      throw new Error(`Could not make ${document.filename} available in chat.`)
-    }
-  }
-}
-
-/** Most image bytes one turn hands a provider natively, across all its images. */
-const MAX_TURN_IMAGE_BYTES = 20_000_000
-
-/**
- * Whether a saved document's MIME type is exactly one of the native image
- * formats, as the upload route stores them.
- */
-function isStoredImageMimeType(
-  mimeType: string | undefined
-): mimeType is ChatImageMimeType {
-  return CHAT_IMAGE_MIME_TYPES.some((type) => type === mimeType)
-}
-
-/**
- * Fills in this turn's uploaded files from their saved documents. Each file's
- * text replaces what the browser sent, within a shared 96,000-character budget
- * (24,000 per file), and images small enough are also read for the provider to
- * see natively.
- *
- * @param client - Convex client for the personal deployment.
- * @param attachments - The request's attachments; file entries are updated in place.
- * @param owners - Project and chat that may own the saved documents.
- * @returns The native images and their total size in bytes.
- * @throws When a file is missing or not owned by this chat, or an image's storage is unavailable.
- */
-async function resolveSubmittedAttachments(
-  client: ConvexHttpClient,
-  attachments: WorkspaceChatRequest["attachments"],
-  owners: { ownerProjectId?: Id<"projects">; chatId?: Id<"workspaceChats"> }
-): Promise<{ images: ProviderImageAttachment[]; imageBytes: number }> {
-  const images: ProviderImageAttachment[] = []
-  let imageBytes = 0
-  let attachmentBudget = Math.max(
-    0,
-    96_000 -
-      attachments.reduce((sum, attachment) => sum + attachment.text.length, 0)
-  )
-  for (const attachment of attachments) {
-    if (!attachment.documentId) continue
-    const document = await findAttachmentDocument(client, attachment, owners)
-    if (!document)
-      throw new Error("Attached file was not found or is not owned by this chat")
-    attachment.label = document.filename
-    if (
-      document.sizeBytes <= MAX_CHAT_IMAGE_BYTES &&
-      imageBytes + document.sizeBytes <= MAX_TURN_IMAGE_BYTES &&
-      isStoredImageMimeType(document.mimeType)
-    ) {
-      attachment.mimeType = document.mimeType
-      const storageId =
-        document.projectId ??
-        (document.ownerToken ? chatStorageId(document.ownerToken) : null)
-      if (!storageId) throw new Error("Attached file storage is unavailable")
-      const bytes = await readProjectFileBytes(
-        storageId,
-        document.relativeKey,
-        MAX_CHAT_IMAGE_BYTES
-      )
-      imageBytes += bytes.byteLength
-      images.push({
-        type: "image",
-        mimeType: document.mimeType,
-        data: Buffer.from(bytes).toString("base64"),
-        name: document.filename,
-      })
-    }
-    attachment.text = document.text.slice(0, Math.min(24_000, attachmentBudget))
-    if (!attachment.text) attachment.text = `[Attached file: ${document.filename}]`
-    attachmentBudget = Math.max(0, attachmentBudget - attachment.text.length)
-  }
-  return { images, imageBytes }
 }
 
 /** Reads a bounded JSON request without allowing attachments to exhaust route memory. */
@@ -508,6 +119,42 @@ async function readRequestJson(request: Request): Promise<unknown> {
 /** Encodes one newline-delimited event for the browser stream. */
 function eventLine(value: unknown): Uint8Array {
   return new TextEncoder().encode(`${JSON.stringify(value)}\n`)
+}
+
+/**
+ * Replaces a new chat's first-message title with a short generated one,
+ * unless the learner renamed the chat meanwhile. Any failure keeps the
+ * first title.
+ */
+async function nameChat(
+  client: ConvexHttpClient,
+  chat: {
+    chatId: Id<"workspaceChats">
+    providerId: AiProviderId
+    providerInstanceId?: string
+  },
+  initialTitle: string,
+  message: string,
+  contextLabels: string[]
+): Promise<void> {
+  try {
+    const succinctTitle = await generateChatTitle({
+      message,
+      contextLabels,
+      providerId: chat.providerId,
+      providerInstanceId: chat.providerInstanceId,
+      fallbackTitle: initialTitle,
+    })
+    if (succinctTitle && succinctTitle !== initialTitle) {
+      await client.mutation(api.workspaceChats.setGeneratedTitle, {
+        chatId: chat.chatId,
+        title: succinctTitle,
+        expectedCurrentTitle: initialTitle,
+      })
+    }
+  } catch {
+    // Chat retains initialTitle on any unexpected generation or update failure.
+  }
 }
 
 /** Starts or resumes one read-only Blitz conversation with optional source context. */
@@ -544,13 +191,8 @@ export async function POST(request: Request): Promise<Response> {
           }
         | undefined
       let progress: ReturnType<typeof createChatProgress> | undefined
-      let providerEvents: ProviderActivityEvent[] = []
-      /** Notice, compaction, and redo writes made while the reply streams; awaited before it ends. */
-      const pendingWrites: Promise<unknown>[] = []
-      let providerEventsTimer: ReturnType<typeof setTimeout> | undefined
-      let providerEventsPending: Promise<void> | undefined
-      let flushProviderEvents: (() => Promise<void>) | undefined
-      let bindingPromise: Promise<unknown> | undefined
+      let activity: ActivityLog | undefined
+      let events: ReturnType<typeof createTurnEvents> | undefined
       let titlePromise: Promise<void> | undefined
       let unregisterRun: (() => void) | undefined
       /** Writes one event while tolerating a browser that has left the page. */
@@ -571,7 +213,7 @@ export async function POST(request: Request): Promise<Response> {
               })
             )?.projectId
           : input.projectId
-        const submitted = await resolveSubmittedAttachments(
+        const native = await resolveSubmittedAttachments(
           client,
           input.attachments,
           {
@@ -579,8 +221,6 @@ export async function POST(request: Request): Promise<Response> {
             ...(input.chatId ? { chatId: input.chatId } : {}),
           }
         )
-        const nativeImageAttachments = submitted.images
-        let nativeImageBytes = submitted.imageBytes
         // "What does this mean?" has no topic words, so quoted text counts too.
         const retrievalQuestion = [
           input.message.trim(),
@@ -650,6 +290,10 @@ export async function POST(request: Request): Promise<Response> {
           chatId: turn.chatId,
           assistantMessageId: turn.assistantMessageId,
         }
+        const replyIds = {
+          chatId: turn.chatId,
+          messageId: turn.assistantMessageId,
+        }
         unregisterRun = registerChatRun(
           turn.chatId,
           turn.assistantMessageId,
@@ -677,102 +321,10 @@ export async function POST(request: Request): Promise<Response> {
           teach && learnerMessage.trim() === TEACH_QUICK_REPLIES.precheckDone
             ? await client.query(api.teach.precheckResults, { chatId: turn.chatId })
             : undefined
-        // Recovery sessions need original image bytes because native blocks are
-        // not retained by a provider when a fresh session is created.
-        const nativeImageDocumentIds = new Set(
-          input.attachments
-            .map((attachment) => attachment.documentId)
-            .filter((id): id is Id<"chatDocuments"> => Boolean(id))
-        )
-        /** Loads bounded historical images only when rebuilding a native session. */
-        const appendReplayImages = async (): Promise<void> => {
-          for (const attachment of turn.replayContext.attachments) {
-            if (
-              !attachment.documentId ||
-              nativeImageDocumentIds.has(attachment.documentId) ||
-              !isStoredImageMimeType(attachment.mimeType)
-            )
-              continue
-            const document = await client.query(api.chatCitations.getDocument, {
-              documentId: attachment.documentId,
-              ...(ownerProjectId
-                ? { projectId: ownerProjectId }
-                : input.chatId ? { chatId: input.chatId } : {}),
-            })
-            if (!document) continue
-            if (
-              document.sizeBytes > MAX_CHAT_IMAGE_BYTES ||
-              nativeImageBytes + document.sizeBytes > MAX_TURN_IMAGE_BYTES
-            )
-              continue
-            const storageId =
-              document.projectId ??
-              (document.ownerToken ? chatStorageId(document.ownerToken) : null)
-            if (!storageId) continue
-            const bytes = await readProjectFileBytes(
-              storageId,
-              document.relativeKey,
-              MAX_CHAT_IMAGE_BYTES
-            )
-            nativeImageBytes += bytes.byteLength
-            nativeImageDocumentIds.add(attachment.documentId)
-            nativeImageAttachments.push({
-              type: "image",
-              mimeType: attachment.mimeType,
-              data: Buffer.from(bytes).toString("base64"),
-              name: document.filename,
-            })
-          }
-        }
-        /** Persists a coalesced snapshot of tool lifecycle records without blocking provider output. */
-        const saveProviderEvents = async (): Promise<void> => {
-          providerEventsTimer = undefined
-          const snapshot = providerEvents.map((event) => ({ ...event }))
-          providerEventsPending = client
-            .mutation(saveWorkspaceProviderEvents, {
-              chatId: turn.chatId,
-              messageId: turn.assistantMessageId,
-              events: snapshot,
-            })
-            .then(() => undefined)
-            .catch(() => undefined)
-            .finally(() => {
-              providerEventsPending = undefined
-              if (
-                JSON.stringify(providerEvents) !== JSON.stringify(snapshot) &&
-                !providerEventsTimer
-              )
-                providerEventsTimer = setTimeout(
-                  () => void saveProviderEvents(),
-                  250
-                )
-            })
-          await providerEventsPending
-        }
-        flushProviderEvents = saveProviderEvents
-        /** Queues one bounded activity snapshot and sends it to connected clients immediately. */
-        const appendProviderEvent = (event: ProviderActivityEvent): void => {
-          const existing = providerEvents.findIndex(
-            (item) => item.id === event.id
-          )
-          if (existing >= 0) providerEvents[existing] = event
-          else {
-            providerEvents = [...providerEvents, event].slice(
-              -MAX_PROVIDER_ACTIVITY_EVENTS
-            )
-          }
-          send({ type: "activity", event })
-          if (!providerEventsTimer && !providerEventsPending)
-            providerEventsTimer = setTimeout(
-              () => void saveProviderEvents(),
-              250
-            )
-        }
         progress = createChatProgress(
           (reply, thought) =>
             client.mutation(saveWorkspaceProgress, {
-              chatId: turn.chatId,
-              messageId: turn.assistantMessageId,
+              ...replyIds,
               reply,
               ...(thought ? { thought } : {}),
             }),
@@ -783,54 +335,22 @@ export async function POST(request: Request): Promise<Response> {
           chatId: turn.chatId,
           messageId: turn.assistantMessageId,
         })
-        if (turn.initialTitle !== undefined) {
-          const initialTitle = turn.initialTitle
-          const contextLabels = persistedAttachments.map(
-            (attachment) => attachment.label
+        if (turn.initialTitle !== undefined)
+          titlePromise = nameChat(
+            client,
+            turn,
+            turn.initialTitle,
+            input.message,
+            persistedAttachments.map((attachment) => attachment.label)
           )
-          titlePromise = (async () => {
-            try {
-              const succinctTitle = await generateChatTitle({
-                message: input.message,
-                contextLabels,
-                providerId: turn.providerId,
-                providerInstanceId: turn.providerInstanceId,
-                fallbackTitle: initialTitle,
-              })
-              if (succinctTitle && succinctTitle !== initialTitle) {
-                await client.mutation(api.workspaceChats.setGeneratedTitle, {
-                  chatId: turn.chatId,
-                  title: succinctTitle,
-                  expectedCurrentTitle: initialTitle,
-                })
-              }
-            } catch {
-              // Chat retains initialTitle on any unexpected generation or update failure.
-            }
-          })()
-        }
-        const savedAgentSettings = await client.query(
-          api.chatAgents.getSettings,
-          { chatId: turn.chatId }
-        )
-        // Agent controls from ordinary chats never apply to Teach sessions.
-        const autonomy = teach
-          ? "approval"
-          : (input.autonomy ?? savedAgentSettings.autonomy)
-        const additionalInstructions = teach
-          ? ""
-          : (input.additionalInstructions ??
-            savedAgentSettings.additionalInstructions)
-        const workingProjectId = teach
-          ? undefined
-          : input.autonomy === undefined
-            ? savedAgentSettings.workingProjectId
-            : input.workingProjectId
-        // Plan first applies to project agents, never to Teach.
-        const planFirst =
-          !teach &&
-          Boolean(workingProjectId) &&
-          (input.planFirst ?? savedAgentSettings.planFirst)
+        const { autonomy, additionalInstructions, workingProjectId, planFirst } =
+          turnAgentSettings(
+            input,
+            await client.query(api.chatAgents.getSettings, {
+              chatId: turn.chatId,
+            }),
+            Boolean(teach)
+          )
         const { resetContext } = await client.mutation(
           api.chatAgents.configure,
           {
@@ -852,65 +372,41 @@ export async function POST(request: Request): Promise<Response> {
             : await chatWorkspaceDirectory(
                 turn.workspaceFolderId ?? turn.chatId
               )
+        const owners = {
+          ...(ownerProjectId ? { ownerProjectId } : {}),
+          chatId: turn.chatId,
+        }
         await stageWorkspaceAttachments(
           client,
           workspaceDirectory,
           input.attachments,
-          {
-            ...(ownerProjectId ? { ownerProjectId } : {}),
-            chatId: turn.chatId,
-          }
+          owners
         )
         if (turn.replayContext.attachments.length) {
           await stageWorkspaceAttachments(
             client,
             workspaceDirectory,
             turn.replayContext.attachments,
-            {
-              ...(ownerProjectId ? { ownerProjectId } : {}),
-              chatId: turn.chatId,
-            }
+            owners
           )
         }
         const selection = savedChatReplySelection(configuredSelection, turn)
-        if (input.spoken && !teach) {
-          // Stay on the signed-in provider; discover its fast option rather than requiring another account.
-          if (selection.providerId === "claude-code") {
-            selection.model = process.env.BLITZ_VOICE_MODEL || "haiku"
-            selection.effort = undefined
-          } else if (selection.providerId === "codex") {
-            const models = await getCodexModelCatalog()
-            const fast = models.find(model => model.id === process.env.BLITZ_VOICE_MODEL) ??
-              models.find(model => /mini|spark/i.test(model.id))
-            if (fast) {
-              selection.model = fast.id
-              selection.effort = fast.reasoningEfforts?.includes("low") ? "low" : undefined
-            }
-          } else if (process.env.BLITZ_VOICE_MODEL) {
-            selection.model = process.env.BLITZ_VOICE_MODEL
-            selection.effort = undefined
-          }
-        }
-        // Teach reads untrusted course files, so it never inherits the global
-        // access setting: no approvals to wait on, and a read-only sandbox.
-        const approvalPolicy = teach
-          ? "never"
-          : autonomy === "approval"
-            ? resolveProviderApprovalPolicy(modelSettings, selection.providerId)
-            : autonomy === "full"
-              ? "full-access"
-              : "never"
-        {
-          agentSession = createChatAgentSession({
-            client,
-            chatId: turn.chatId,
-            messageId: turn.assistantMessageId,
-            autonomy: approvalPolicy === "full-access" ? "full" : autonomy,
-            approvalPolicy,
-            signal: turnSignal,
-            send,
-          })
-        }
+        if (input.spoken && !teach) await applySpokenModel(selection)
+        const approvalPolicy = turnApprovalPolicy(
+          Boolean(teach),
+          autonomy,
+          modelSettings,
+          selection.providerId
+        )
+        agentSession = createChatAgentSession({
+          client,
+          chatId: turn.chatId,
+          messageId: turn.assistantMessageId,
+          autonomy: approvalPolicy === "full-access" ? "full" : autonomy,
+          approvalPolicy,
+          signal: turnSignal,
+          send,
+        })
         if (
           !CHAT_PROVIDER_CAPABILITIES[
             selection.providerId
@@ -927,125 +423,62 @@ export async function POST(request: Request): Promise<Response> {
           turn.redo && input.redo
             ? teachRedoMessage(turn.redo.originalMessage, input.redo.style)
             : (teach?.updateInstruction ?? turnInput.message)
-        /**
-         * Builds a Teach turn's prompt, with the unit material when the
-         * session needs it. After a compaction the material, outline, and
-         * plan are restated but the dialogue is left to the runtime's summary.
-         */
+        /** Builds this Teach turn's prompt; see `teachTurnPrompt`. */
         const teachPrompt = (
           includeContext: boolean,
           options: { afterCompaction?: boolean; message?: string } = {}
         ): string =>
-          buildTeachPrompt({
-            moduleTitle: teach!.moduleTitle,
-            unitTitle: teach!.unitTitle,
-            sources: teach!.sources.map((source) => ({
-              filename: source.filename,
-              ...(source.relativeKey ? { relativeKey: source.relativeKey } : {}),
-              text: source.text,
-            })),
+          teachTurnPrompt(teach!, {
             message: options.message ?? teachMessage,
             includeContext,
             ...(options.afterCompaction ? { afterCompaction: true } : {}),
-            history: options.afterCompaction
-              ? []
-              : turn.replayContext.messages
-                  .filter((message) => message.content.trim())
-                  .map((message) => ({
-                    role: message.role,
-                    content: message.content,
-                  })),
-            ...(teach!.outline ? { outline: teach!.outline } : {}),
-            ...(teach!.sectionIndex !== null
-              ? { sectionIndex: teach!.sectionIndex }
-              : {}),
-            ...(teach!.plan ? { plan: teach!.plan } : {}),
-            ...(teach!.update ? { update: teach!.update } : {}),
+            history: turn.replayContext.messages,
             ...(precheck ? { precheck } : {}),
-            knownConcepts: teach!.knownConcepts,
-            references: teach!.referenceExcerpts,
           })
         let replayPrompt: Promise<string> | undefined
         /** Rebuilds prior dialogue and attachments only when thread continuity is uncertain. */
         const promptWithReplay = (): Promise<string> => {
           if (teach) return Promise.resolve(teachPrompt(true))
           replayPrompt ??= (async () => {
-            await appendReplayImages()
-            const merged = mergeWorkspaceChatReplay(turnInput, turn.replayContext)
-            const currentProjects = new Map(
-              projects.map((project) => [project.id, project] as const)
+            // A new session has not seen earlier turns' images.
+            await appendReplayImages(
+              client,
+              turn.replayContext.attachments,
+              {
+                ...(ownerProjectId ? { ownerProjectId } : {}),
+                ...(input.chatId ? { chatId: input.chatId } : {}),
+              },
+              native
             )
-            const missingProjectIds = merged.request.projectIds.filter(
-              (projectId) => !currentProjects.has(projectId)
-            )
-            const recoveredProjects = await Promise.all(
-              missingProjectIds.map(async (projectId) => {
-                try {
-                  return (
-                    await client.query(getProjectContext, {
-                      projectIds: [projectId],
-                      question: turnInput.message,
-                    })
-                  )[0]
-                } catch {
-                  return undefined
-                }
-              })
-            )
-            for (const project of recoveredProjects)
-              if (project) currentProjects.set(project.id, project)
-            let recoveredCard = card
-            if (!recoveredCard && merged.card) {
-              try {
-                recoveredCard = await client.query(getCardContext, merged.card)
-              } catch {
-                // Deleted or unprepared historical cards cannot block recovery.
-              }
-            }
-            return buildWorkspaceChatPrompt(
-              merged.request,
-              merged.request.projectIds
-                .map((projectId) => currentProjects.get(projectId))
-                .filter(
-                  (project): project is WorkspaceChatProjectContext =>
-                    project !== undefined
-                ),
-              recoveredCard,
-              merged.history
+            return replayedChatPrompt(
+              client,
+              turnInput,
+              turn.replayContext,
+              projects,
+              card
             )
           })()
           return replayPrompt
         }
         const features = providerThreadFeatures(selection.providerId)
-        let turnAccepted = false
-        /** Runtime thread of the accepted attempt, for compacting after an overflow. */
-        let boundThreadId: string | undefined
-        /** Reply text the current attempt has streamed. */
-        let attemptText = ""
-        /** Reply text kept from an attempt that ran out of room. */
-        let carriedText = ""
-        /** Whether Blitz's compaction ran before the current attempt. */
-        let requestedCompacted = false
-        /** Whether the runtime compacted by itself during the reply. */
-        let runtimeCompacted = false
-        /** How a compaction Blitz asks for is recorded: before a turn, or after an overflow. */
-        let compactionOrigin: "auto" | "overflow" = "auto"
-        /** Tracks one bookkeeping write, logging a failure instead of failing the reply. */
-        const track = (write: Promise<unknown>, label: string): void => {
-          pendingWrites.push(
-            write.catch((writeError: unknown) =>
-              console.warn(label, {
-                message:
-                  writeError instanceof Error ? writeError.message : "Unknown error",
-              })
-            )
-          )
-        }
+        activity = createActivityLog(client, replyIds, send)
+        events = createTurnEvents({
+          client,
+          reply: replyIds,
+          providerId: selection.providerId,
+          teach: Boolean(teach),
+          redo: turn.redo,
+          send,
+          progress,
+          activity,
+        })
+        const attempt = events.state
+        const turnEvents = events
         /** Runs one attempt and records its identifiers before any streamed failure. */
         const runTurn = async (
           prompt: string,
           threadId?: string,
-          attachments: readonly ProviderImageAttachment[] = nativeImageAttachments,
+          attachments: readonly ProviderImageAttachment[] = native.images,
           around: {
             fork?: { sessionId: string; throughTurnId: string }
             compactFirst?: boolean
@@ -1055,9 +488,7 @@ export async function POST(request: Request): Promise<Response> {
             seed?: PortableTranscript
           } = {}
         ): ReturnType<typeof runProviderTextTurn> => {
-          turnAccepted = false
-          attemptText = ""
-          requestedCompacted = false
+          turnEvents.startAttempt()
           const codexModelCatalog =
             selection.providerId === "codex"
               ? await getCodexModelCatalog({ requestTimeoutMs: 5_000 })
@@ -1067,24 +498,19 @@ export async function POST(request: Request): Promise<Response> {
               providerId: selection.providerId,
               workspaceDirectory,
               prompt: input.spoken
-                ? prompt + "\n\nThis is a spoken conversation. Recognition may contain small errors. Use short sentences and say maths in words. " +
-                  (teach ? "Keep lesson Markdown for the screen." : "Lead with the answer. Avoid Markdown, tables, code and links. Keep replies brief unless asked for detail.") +
-                  (input.voiceNote ? `\n\n${input.voiceNote}` : "")
+                ? spokenPrompt(prompt, Boolean(teach), input.voiceNote)
                 : prompt,
               ...(attachments.length ? { attachments } : {}),
               ...(threadId ? { threadId } : {}),
               ...(around.seed ? { seed: around.seed } : {}),
               model: selection.model,
               effort: selection.effort,
-              sandbox: teach
-                ? "read-only"
-                : selection.providerId === "codex"
-                  ? approvalPolicy === "full-access" || autonomy === "full"
-                    ? "danger-full-access"
-                    : autonomy === "project"
-                      ? "workspace-write"
-                      : "read-only"
-                  : undefined,
+              sandbox: turnSandbox(
+                Boolean(teach),
+                selection.providerId,
+                approvalPolicy,
+                autonomy
+              ),
               ...(teach
                 ? teachTurnSettings(selection.providerId, workspaceDirectory)
                 : {
@@ -1127,94 +553,7 @@ export async function POST(request: Request): Promise<Response> {
                 : {}),
               ...(codexModelCatalog ? { codexModelCatalog } : {}),
               onRequest: agentSession?.handleRequest,
-              onEvent: (event) => {
-                const activity = normalizeProviderActivity(event, providerEvents)
-                if (activity) appendProviderEvent(activity)
-                if (event.type === "notice") {
-                  send({ type: "notice", notice: event.notice })
-                  track(
-                    client.mutation(addTurnNotice, {
-                      chatId: turn.chatId,
-                      messageId: turn.assistantMessageId,
-                      notice: event.notice,
-                    }),
-                    "Workspace chat could not save a notice"
-                  )
-                  return
-                }
-                if (event.type === "compacted") {
-                  if (event.origin === "requested") requestedCompacted = true
-                  else runtimeCompacted = true
-                  if (teach)
-                    track(
-                      client.mutation(recordCompaction, {
-                        chatId: turn.chatId,
-                        messageId: turn.assistantMessageId,
-                        origin:
-                          event.origin === "requested"
-                            ? compactionOrigin
-                            : "runtime",
-                        ...(event.beforeTokens !== undefined
-                          ? { beforeTokens: event.beforeTokens }
-                          : {}),
-                      }),
-                      "Teach could not record a compaction"
-                    )
-                  return
-                }
-                if (event.type === "rewound") {
-                  // The runtime dropped the replaced turn; the transcript follows.
-                  if (turn.redo)
-                    track(
-                      client.mutation(dropReplacedMessages, {
-                        chatId: turn.chatId,
-                        activeMessageId: turn.assistantMessageId,
-                        messageIds: turn.redo.replacedMessageIds,
-                      }),
-                      "Teach could not remove the replaced reply"
-                    )
-                  return
-                }
-                if (event.type === "turn-started") {
-                  turnAccepted = true
-                  boundThreadId = event.threadId
-                  bindingPromise = client
-                    .mutation(bindWorkspaceTurn, {
-                      chatId: turn.chatId,
-                      messageId: turn.assistantMessageId,
-                      providerId: selection.providerId,
-                      providerSessionId: event.threadId,
-                      providerTurnId: event.turnId,
-                      ...(selection.providerId === "codex"
-                        ? {
-                            codexThreadId: event.threadId,
-                            codexTurnId: event.turnId,
-                          }
-                        : {}),
-                    })
-                    .catch((bindingError: unknown) => {
-                      console.error(
-                        "Workspace chat could not save provider IDs",
-                        {
-                          message:
-                            bindingError instanceof Error
-                              ? bindingError.message
-                              : "Unknown persistence error",
-                        }
-                      )
-                    })
-                  return
-                }
-                if (event.type === "thought-delta") {
-                  progress?.appendThought(event.delta)
-                  send({ type: "thought-delta", text: event.delta })
-                }
-                if (event.type === "text-delta") {
-                  attemptText += event.delta
-                  progress?.append(event.delta)
-                  send({ type: "delta", text: event.delta })
-                }
-              },
+              onEvent: turnEvents.onEvent,
             }
           )
         }
@@ -1311,7 +650,7 @@ export async function POST(request: Request): Promise<Response> {
             return await runTurn(
               `${initialPrompt}\n\n${citationContext}`,
               resetContext ? undefined : (turn.providerSessionId ?? undefined),
-              nativeImageAttachments,
+              native.images,
               {
                 ...(forkSource ? { fork: forkSource } : {}),
                 ...(compactFirst
@@ -1327,7 +666,7 @@ export async function POST(request: Request): Promise<Response> {
           } catch (error) {
             // A copy that failed, such as one cut at a turn ID saved by an
             // older runtime, replays the transcript instead without saying so.
-            if (forkSource && !turnAccepted) {
+            if (forkSource && !attempt.accepted) {
               console.warn("Workspace chat could not copy the branched session", {
                 reason: error instanceof CardChatError ? error.reason : "unknown",
               })
@@ -1335,7 +674,7 @@ export async function POST(request: Request): Promise<Response> {
             }
             if (
               !turn.providerSessionId ||
-              turnAccepted ||
+              attempt.accepted ||
               !(error instanceof CardChatError) ||
               error.reason !== "transport"
             )
@@ -1349,12 +688,14 @@ export async function POST(request: Request): Promise<Response> {
             return runTurn(`${await promptWithReplay()}\n\n${citationContext}`)
           }
         }
+        /** Reply text kept from an attempt that ran out of room. */
+        let carriedText = ""
         let result
         try {
           result = await firstAttempt()
         } catch (error) {
           // A reply that ran out of room is finished after compacting, once.
-          const threadId = boundThreadId
+          const threadId = attempt.threadId
           if (
             !(error instanceof CardChatError) ||
             error.reason !== "context-window" ||
@@ -1363,8 +704,8 @@ export async function POST(request: Request): Promise<Response> {
           )
             throw error
           console.warn("Workspace chat ran out of context; compacting to finish the reply")
-          carriedText += attemptText
-          compactionOrigin = "overflow"
+          carriedText += attempt.text
+          attempt.compactionOrigin = "overflow"
           const continuation = overflowContinuationMessage(
             teach ? teachMessage : turnInput.message,
             carriedText
@@ -1392,17 +733,14 @@ export async function POST(request: Request): Promise<Response> {
           }
         }
         await progress.finish()
-        if (providerEventsTimer) clearTimeout(providerEventsTimer)
-        await providerEventsPending
-        if (providerEvents.length) await saveProviderEvents()
-        await Promise.all(pendingWrites)
+        await activity.flush()
+        await events.settle()
         const reply = combineWorkspaceChatContinuation(
           turn.replyPrefix,
           `${carriedText}${result.text}`
         )
         await client.mutation(completeWorkspaceTurn, {
-          chatId: turn.chatId,
-          messageId: turn.assistantMessageId,
+          ...replyIds,
           providerId: selection.providerId,
           providerSessionId: result.threadId,
           providerTurnId: result.turnId,
@@ -1417,62 +755,15 @@ export async function POST(request: Request): Promise<Response> {
           durationMs: result.durationMs,
         })
         if (teach)
-          await client
-            .mutation(finishTurnContext, {
-              chatId: turn.chatId,
-              messageId: turn.assistantMessageId,
-              ...(result.contextUsage
-                ? { usage: { ...result.contextUsage, updatedAt: Date.now() } }
-                : {}),
-              // A turn that sent the unit material again clears a pending
-              // restatement, unless the runtime compacted after it.
-              restated:
-                (replay || restate || requestedCompacted) && !runtimeCompacted,
-              updateDelivered: Boolean(teach.update),
-            })
-            .catch((error: unknown) => {
-              console.warn("Teach could not save context usage", {
-                message: error instanceof Error ? error.message : "Unknown error",
-              })
-            })
-        if (teach) {
-          // Progress is derived from the finished reply, never from the client.
-          const outline = parseTeachOutline(reply)
-          const marker = parseTeachSectionMarker(reply)
-          const knownOutline = teach.outline ?? outline
-          const plan =
-            knownOutline && !teach.plan ? parseTeachPlan(reply, knownOutline) : undefined
-          await client
-            .mutation(api.units.recordTeachProgress, {
-              chatId: turn.chatId,
-              ...(outline ? { outline } : {}),
-              ...(plan ? { plan } : {}),
-              ...(marker
-                ? { sectionId: marker.kind === "done" ? "done" : marker.id }
-                : {}),
-              ...(outline && teach.unitTitleSource === "auto"
-                ? { unitTitle: teachUnitTitle(teach.unitTitle, outline.title) }
-                : {}),
-              // Fixes the files this outline was written from, for spotting later ones.
-              ...(outline && !teach.outline
-                ? { coveredSourceIds: teach.sources.map((source) => source.id) }
-                : {}),
-            })
-            .catch((error: unknown) => {
-              console.error("Teach progress could not be saved", {
-                message: error instanceof Error ? error.message : "Unknown error",
-              })
-            })
-          // As soon as a unit has an outline, write its first question bank in
-          // the background so Practice and Review have material by the time
-          // the learner wants them. The bank call is a no-op after the first.
-          if (knownOutline)
-            void startFirstQuestionBank(teach.unitId).catch((error: unknown) => {
-              console.error("First question bank could not start", {
-                message: error instanceof Error ? error.message : "Unknown error",
-              })
-            })
-        }
+          await finishTeachTurn(client, {
+            ...replyIds,
+            teach,
+            reply,
+            contextUsage: result.contextUsage,
+            restated:
+              (replay || restate || attempt.requestedCompacted) &&
+              !attempt.runtimeCompacted,
+          })
         send({
           type: "complete",
           chatId: turn.chatId,
@@ -1480,12 +771,10 @@ export async function POST(request: Request): Promise<Response> {
           durationMs: result.durationMs,
         })
       } catch (error) {
-        await bindingPromise
+        await events?.state.binding
         await progress?.finish().catch(() => undefined)
-        await Promise.all(pendingWrites)
-        if (providerEventsTimer) clearTimeout(providerEventsTimer)
-        await providerEventsPending
-        if (providerEvents.length) await flushProviderEvents?.()
+        await events?.settle()
+        await activity?.flush()
         const failure = workspaceChatFailure(error, Boolean(activeTurn))
         const detail = workspaceChatFailureDetail(error)
         console.error("Workspace chat turn failed", {
