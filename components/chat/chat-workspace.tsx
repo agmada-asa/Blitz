@@ -1008,11 +1008,6 @@ export function ChatWorkspace({
     contextualProject?.projectId ??
     activeChat?.projectId ??
     newChatProjectId
-  const contextProject = projects?.find(
-    (project) => project._id === contextProjectId
-  )
-  const contextProjectLabel =
-    contextProject?.title ?? contextualProject?.label ?? "Project"
   // Only a reply streaming into the visible chat makes this composer busy.
   const sending = Boolean(replyForView(inFlightReplies, activeChatId, view))
   const isStreaming = sending || activeChat?.status === "running"
@@ -2450,8 +2445,8 @@ export function ChatWorkspace({
               </Button>
             ) : null}
           </div>
-          {/* Beside a lesson the project is already on screen, so only chips earn a row. */}
-          {contextualAttachments.length || (contextProjectId && !embedded) ? (
+          {/* The row only appears when there are context chips to show; a bare project label adds nothing. */}
+          {contextualAttachments.length ? (
             <div
               className={cn(
                 "flex min-h-9 items-center justify-between gap-2 px-1 pb-2",
@@ -2487,13 +2482,7 @@ export function ChatWorkspace({
                     )
                   })}
                 </ul>
-              ) : (
-                <p className="min-w-0 truncate text-xs text-muted-foreground">
-                  <span className="font-medium text-foreground">Project</span>
-                  <span aria-hidden="true"> · </span>
-                  {contextProjectLabel}
-                </p>
-              )}
+              ) : null}
             </div>
           ) : null}
         </header>
