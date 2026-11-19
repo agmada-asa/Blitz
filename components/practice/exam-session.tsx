@@ -192,7 +192,7 @@ export function ExamSession({
           <LoadingIcon aria-hidden="true" className="size-4 motion-safe:animate-spin" />
           {paper.kind === "past"
             ? "Reading the paper's questions. This page updates when it is ready."
-            : "Writing the mock exam. This page updates when it is ready."}
+            : "Generating the mock exam. This page updates when it is ready."}
         </p>
       ) : paper.status === "failed" ? (
         <div role="alert" className="mt-4 text-sm">

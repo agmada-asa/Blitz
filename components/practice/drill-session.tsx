@@ -77,8 +77,19 @@ async function submitAnswer(
   return { correct: payload.isCorrect }
 }
 
-/** Renders a drill for a module, optionally limited to one unit. */
-export function DrillSession({ projectId, unitId }: { projectId: string; unitId?: string }) {
+/**
+ * Renders a drill for a project, optionally limited to one unit or, with
+ * `focus: "weak"`, to questions on weak topics.
+ */
+export function DrillSession({
+  projectId,
+  unitId,
+  focus,
+}: {
+  projectId: string
+  unitId?: string
+  focus?: "weak"
+}) {
   const convex = useConvex()
   const [deck, setDeck] = useState<DrillQuestion[] | null>(null)
   const [loadError, setLoadError] = useState("")
@@ -101,6 +112,7 @@ export function DrillSession({ projectId, unitId }: { projectId: string; unitId?
       convex.query(api.practice.drill, {
         projectId: projectId as Id<"projects">,
         ...(unitId ? { unitId: unitId as Id<"units"> } : {}),
+        ...(focus ? { focus } : {}),
         limit: DRILL_LENGTH,
         now,
       }),
@@ -124,7 +136,7 @@ export function DrillSession({ projectId, unitId }: { projectId: string; unitId?
     return () => {
       active = false
     }
-  }, [convex, projectId, unitId, round])
+  }, [convex, projectId, unitId, focus, round])
 
   const current = deck?.[index]
   const answered = current ? results[current.itemId] : undefined
@@ -202,9 +214,13 @@ export function DrillSession({ projectId, unitId }: { projectId: string; unitId?
         </div>
       ) : !deck.length ? (
         <section className="mt-10">
-          <h1 className="font-heading text-2xl font-semibold">No questions yet</h1>
+          <h1 className="font-heading text-2xl font-semibold">
+            {focus === "weak" ? "No weak topics right now" : "No questions yet"}
+          </h1>
           <p className="mt-2 text-sm text-muted-foreground">
-            Write questions for a unit on the Practice screen, then come back to drill.
+            {focus === "weak"
+              ? "Every topic you've practised is sticking. Start a full drill to keep it that way."
+              : "Generate questions for a unit on the Practice screen, then come back to drill."}
           </p>
           <Button asChild className="mt-5 min-h-11 rounded-full">
             <Link href={`${base}/practice`}>Go to Practice</Link>

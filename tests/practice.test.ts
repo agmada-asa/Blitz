@@ -3,7 +3,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 
-import { conceptStrength, selectDrillQuestions, type DrillCandidate } from "../lib/drill.ts"
+import { conceptStrength, mergeWeakTopics, selectDrillQuestions, type DrillCandidate } from "../lib/drill.ts"
 import {
   buildQuestionBankPrompt,
   extractJsonObject,
@@ -145,4 +145,27 @@ test("keeps real newlines and tabs before words that start like LaTeX commands",
   assert.equal(value.c, "x\ttop")
   assert.equal(value.d, String.raw`$\tan x \to \infty$ and $a \notin B$`)
   assert.equal(value.e, String.raw`$\textbf{v}$ and $\rightarrow$`)
+})
+
+test("mergeWeakTopics merges a concept repeated across units and puts the weakest first", () => {
+  const topics = mergeWeakTopics([
+    { title: "Path coverage", unitId: "u5", unitTitle: "Week 5", accuracy: 2 / 3, attempts: 3 },
+    { title: "Random weighted sampling", unitId: "u4", unitTitle: "Week 4", accuracy: 0, attempts: 1 },
+    { title: "random weighted sampling ", unitId: "u5", unitTitle: "Week 5", accuracy: 0.5, attempts: 2 },
+  ])
+  assert.deepEqual(
+    topics.map((topic) => [topic.title, topic.units.map((unit) => unit.id), topic.right, topic.answers]),
+    [
+      ["Random weighted sampling", ["u4", "u5"], 1, 3],
+      ["Path coverage", ["u5"], 2, 3],
+    ]
+  )
+})
+
+test("mergeWeakTopics sends Relearn to the unit where the topic is weakest", () => {
+  const [topic] = mergeWeakTopics([
+    { title: "wc chunks", unitId: "u6", unitTitle: "Week 6", accuracy: 0.5, attempts: 2 },
+    { title: "wc chunks", unitId: "u5", unitTitle: "Week 5", accuracy: 0, attempts: 1 },
+  ])
+  assert.deepEqual(topic.units.map((unit) => unit.id), ["u5", "u6"])
 })

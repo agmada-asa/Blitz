@@ -1,4 +1,7 @@
-/** Runs an adaptive drill for a module, or for one unit with `?unit=`. */
+/**
+ * Runs an adaptive drill for a project, for one unit with `?unit=`, or only
+ * on weak topics with `?focus=weak`.
+ */
 
 import { DrillSession } from "@/components/practice/drill-session"
 
@@ -8,8 +11,14 @@ export default async function DrillPage({
   searchParams,
 }: {
   params: Promise<{ projectId: string }>
-  searchParams: Promise<{ unit?: string }>
+  searchParams: Promise<{ unit?: string; focus?: string }>
 }) {
   const [{ projectId }, query] = await Promise.all([params, searchParams])
-  return <DrillSession projectId={projectId} unitId={query.unit} />
+  return (
+    <DrillSession
+      projectId={projectId}
+      unitId={query.unit}
+      focus={query.focus === "weak" ? "weak" : undefined}
+    />
+  )
 }

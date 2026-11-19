@@ -592,17 +592,26 @@ const drillArgs = {
   limit: v.optional(v.number()),
   /** Client clock, so concepts that fell due recently count as due. */
   now: v.number(),
+  /** `weak` keeps only questions on concepts that are not sticking, for the Weak topics drill. */
+  focus: v.optional(v.literal("weak")),
 }
 
 /**
  * Picks a drill's questions in order: questions answered wrongly first, then
  * concepts due for review, then unanswered questions on weak concepts, then
- * the rest (`selectDrillQuestions`).
+ * the rest (`selectDrillQuestions`). With `focus: "weak"`, only questions on
+ * weak concepts are considered.
  * @returns Each question's item, its unit title, and its last outcome.
  */
 async function drillQuestions(
   ctx: QueryCtx,
-  { projectId, unitId, limit, now }: { projectId: Id<"projects">; unitId?: Id<"units">; limit?: number; now: number }
+  {
+    projectId,
+    unitId,
+    limit,
+    now,
+    focus,
+  }: { projectId: Id<"projects">; unitId?: Id<"units">; limit?: number; now: number; focus?: "weak" }
 ) {
   const units = await ctx.db
     .query("units")
@@ -624,6 +633,8 @@ async function drillQuestions(
   const candidates: DrillCandidate[] = []
   for (const item of items) {
     const review = reviews.get(String(item.conceptId))
+    const strength = conceptStrength(historyOf(review))
+    if (focus === "weak" && strength !== "weak") continue
     candidates.push({
       itemId: String(item._id),
       conceptId: String(item.conceptId),
@@ -631,7 +642,7 @@ async function drillQuestions(
       ...(item.lastOutcome
         ? { lastOutcome: item.lastOutcome, lastAnsweredAt: item.lastAnsweredAt }
         : {}),
-      strength: conceptStrength(historyOf(review)),
+      strength,
       ...(review && review.attemptCount > 0 ? { conceptDueAt: review.dueAt } : {}),
     })
   }
