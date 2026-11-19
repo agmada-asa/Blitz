@@ -259,108 +259,6 @@
   background-color: color-mix(in oklab, var(--brand) 30%, transparent);
 }
 
-/* Ambient color stays behind the feed; only transforms animate to avoid repainting gradients. */
-.feed-backdrop::before,
-.feed-backdrop::after {
-  content: "";
-  position: absolute;
-  z-index: -1;
-  pointer-events: none;
-  width: min(110vw, 1000px);
-  height: min(110vh, 1000px);
-  border-radius: 50%;
-}
-
-.feed-backdrop::before {
-  top: -45%;
-  right: -30%;
-  background: radial-gradient(
-    ellipse,
-    color-mix(in srgb, var(--brand) 12%, transparent) 0%,
-    color-mix(in srgb, var(--brand) 4%, transparent) 35%,
-    transparent 68%
-  );
-  animation: feed-warm-drift 28s ease-in-out infinite alternate;
-}
-
-.dark .feed-backdrop::before {
-  background: radial-gradient(
-    ellipse,
-    color-mix(in srgb, var(--brand) 20%, transparent) 0%,
-    color-mix(in srgb, var(--brand) 6%, transparent) 35%,
-    transparent 68%
-  );
-}
-
-.feed-backdrop::after {
-  bottom: -50%;
-  left: -30%;
-  background: radial-gradient(
-    ellipse,
-    color-mix(in srgb, var(--ring) 10%, transparent) 0%,
-    color-mix(in srgb, var(--ring) 3%, transparent) 38%,
-    transparent 68%
-  );
-  animation: feed-cool-drift 32s ease-in-out infinite alternate;
-}
-
-.dark .feed-backdrop::after {
-  background: radial-gradient(
-    ellipse,
-    color-mix(in srgb, var(--ring) 16%, transparent) 0%,
-    color-mix(in srgb, var(--ring) 4%, transparent) 38%,
-    transparent 68%
-  );
-}
-
-@keyframes feed-warm-drift {
-  from {
-    transform: translate(-5%, 0) scale(1);
-  }
-  to {
-    transform: translate(-28%, 22%) scale(1.15);
-  }
-}
-
-@keyframes feed-cool-drift {
-  from {
-    transform: translate(0, 0) scale(1.1);
-  }
-  to {
-    transform: translate(24%, -22%) scale(0.95);
-  }
-}
-
-/* Scroll-linked motion follows each card's viewport crossing; unsupported browsers keep static content. */
-@supports (animation-timeline: view()) {
-  @media (prefers-reduced-motion: no-preference) {
-    .feed-card {
-      view-timeline: --feed-card block;
-    }
-    .feed-card-content {
-      animation: feed-card-arrive linear both;
-      animation-timeline: --feed-card;
-      animation-range: entry 0% exit 100%;
-    }
-  }
-}
-
-@keyframes feed-card-arrive {
-  0% {
-    opacity: 0.55;
-    transform: translateY(28px) scale(0.98);
-  }
-  35%,
-  65% {
-    opacity: 1;
-    transform: none;
-  }
-  100% {
-    opacity: 0.55;
-    transform: translateY(-28px) scale(0.98);
-  }
-}
-
 /* Answer cues run once when their class is added; see components/ui/interactive-blocks/answer-feedback.ts. */
 @keyframes answer-pulse {
   0% {
@@ -519,10 +417,6 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .feed-backdrop::before,
-  .feed-backdrop::after {
-    animation: none;
-  }
   *,
   *::before,
   *::after {

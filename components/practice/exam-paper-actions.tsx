@@ -44,18 +44,21 @@ export type ExamPaperActionTarget = {
 }
 
 /**
- * Renders the "⋯" menu with Edit questions (ready papers only) and Delete
- * paper, and the confirmation dialog for deleting.
+ * Renders the "⋯" menu with Review last attempt (when given), Edit questions
+ * (ready papers only) and Delete paper, and the confirmation dialog for deleting.
  * @param editHref Link to the paper's question editor.
+ * @param reviewHref Link to the latest marked attempt, when there is one.
  * @param onDeleted Called once the paper is deleted, such as to leave its page.
  */
 export function ExamPaperActions({
   paper,
   editHref,
+  reviewHref,
   onDeleted,
 }: {
   paper: ExamPaperActionTarget
   editHref: string
+  reviewHref?: string
   onDeleted?: () => void
 }) {
   const deletePaper = useMutation(api.exam.deletePaper)
@@ -103,6 +106,11 @@ export function ExamPaperActions({
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end">
+          {reviewHref ? (
+            <DropdownMenuItem asChild>
+              <Link href={reviewHref}>Review last attempt</Link>
+            </DropdownMenuItem>
+          ) : null}
           {paper.status === "ready" ? (
             <DropdownMenuItem asChild>
               <Link href={editHref}>Edit questions</Link>
@@ -138,7 +146,7 @@ export function ExamPaperActions({
           <DialogHeader>
             <DialogTitle>Delete this paper?</DialogTitle>
             <DialogDescription id={descriptionId} className="break-words">
-              {`“${paper.title}” and all its attempts and marks are removed${paper.hasOpenAttempt ? ", including the attempt you haven't submitted" : ""}. Answers you already gave still count toward your concept strengths. This can't be undone.`}
+              {`“${paper.title}” and all its attempts and marks are removed${paper.hasOpenAttempt ? ", including the attempt you haven't submitted" : ""}. Answers you already gave still count toward your topic strengths. This can't be undone.`}
             </DialogDescription>
           </DialogHeader>
           {paper.changeLock ? (

@@ -117,3 +117,73 @@ export function answersToStrong(history: ConceptHistory): number {
   const streak = history.lastOutcome === "incorrect" ? 0 : history.consecutiveCorrect
   return Math.max(0, 3 - streak, 4 * history.attempts - 5 * history.correct)
 }
+
+/** A weak concept in one unit, as the Practice overview reports it. */
+export type WeakConceptEntry<UnitId extends string = string> = {
+  title: string
+  unitId: UnitId
+  unitTitle: string
+  /** Share of answers right, or null before any answer. */
+  accuracy: number | null
+  attempts: number
+  /** Whether the unit has practice questions on it; exam-only concepts don't. */
+  drillable: boolean
+}
+
+/** A weak topic merged across the units it appears in. */
+export type WeakTopic<UnitId extends string = string> = {
+  title: string
+  /** Units the topic appears in, weakest first; the first is where Relearn goes. */
+  units: Array<{ id: UnitId; title: string }>
+  right: number
+  answers: number
+  /** Whether the weak-topics drill can ask about it in any of its units. */
+  drillable: boolean
+}
+
+/**
+ * Merges weak concepts that share a title (ignoring case and outer spaces)
+ * across units into one topic, since the same idea taught in two units is one
+ * thing to relearn. Right answers and answers add up; the unit where the
+ * concept is weakest comes first; a topic is drillable when any unit's concept
+ * is. Topics are ordered by share of right answers, lowest first, then by
+ * most answers.
+ */
+export function mergeWeakTopics<UnitId extends string>(
+  concepts: Array<WeakConceptEntry<UnitId>>
+): Array<WeakTopic<UnitId>> {
+  const byTitle = new Map<string, { topic: WeakTopic<UnitId>; worst: number }>()
+  for (const concept of concepts) {
+    const key = concept.title.trim().toLowerCase()
+    const accuracy = concept.accuracy ?? 0
+    const right = Math.round(accuracy * concept.attempts)
+    const unit = { id: concept.unitId, title: concept.unitTitle }
+    const entry = byTitle.get(key)
+    if (!entry) {
+      byTitle.set(key, {
+        topic: {
+          title: concept.title,
+          units: [unit],
+          right,
+          answers: concept.attempts,
+          drillable: concept.drillable,
+        },
+        worst: accuracy,
+      })
+      continue
+    }
+    entry.topic.right += right
+    entry.topic.answers += concept.attempts
+    entry.topic.drillable ||= concept.drillable
+    if (entry.topic.units.some((existing) => existing.id === unit.id)) continue
+    if (accuracy < entry.worst) {
+      entry.topic.units.unshift(unit)
+      entry.worst = accuracy
+    } else entry.topic.units.push(unit)
+  }
+  /** Share of a topic's answers that were right; 0 before any answer. */
+  const share = (topic: WeakTopic<UnitId>) => (topic.answers ? topic.right / topic.answers : 0)
+  return [...byTitle.values()]
+    .map((entry) => entry.topic)
+    .sort((a, b) => share(a) - share(b) || b.answers - a.answers)
+}

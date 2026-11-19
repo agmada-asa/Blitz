@@ -643,7 +643,7 @@ function QuestionEditDialog({
 
           <div className="grid gap-1.5">
             <label htmlFor={`${id}-concept`} className="text-sm font-medium">
-              Concept
+              Topic
             </label>
             <Input
               id={`${id}-concept`}
@@ -654,7 +654,7 @@ function QuestionEditDialog({
               className="min-h-11"
             />
             <p id={`${id}-concept-hint`} className="text-xs text-muted-foreground">
-              The idea the question tests. Results group questions by concept.
+              The idea the question tests. Results group questions by topic.
             </p>
           </div>
 

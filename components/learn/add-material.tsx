@@ -186,9 +186,9 @@ export function AddMaterial({
             ...(reference
               ? { detail: "Saved as a reference book that backs up every unit" }
               : duplicate && !inThisUnit
-                ? { detail: "Already in another unit of this module" }
+                ? { detail: "Already in another unit of this project" }
                 : duplicate
-                  ? { detail: "Already in this module" }
+                  ? { detail: "Already in this project" }
                   : {}),
           }
           succeeded += 1

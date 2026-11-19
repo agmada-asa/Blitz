@@ -422,7 +422,7 @@ export const saveChatQuiz = mutation({
     const chat = await ctx.db.get(chatId)
     const unit = await ctx.db.get(unitId)
     if (!chat?.projectId || !unit || unit.projectId !== chat.projectId)
-      throw new Error("Choose a unit in this chat's module")
+      throw new Error("Choose a unit in this chat's project")
     const message = await ctx.db.get(messageId)
     if (
       !message ||
@@ -491,6 +491,8 @@ type ConceptSummary = {
  * Summarises practice for a module: per unit, its question count, answered
  * and correct counts, concept strengths, and latest question run; plus the
  * module's weak concepts and how many questions are waiting to be retried.
+ * Each weak concept says whether it is `drillable`: a concept that only exam
+ * paper questions cover can be weak but gives a drill nothing to ask.
  */
 export const overview = query({
   args: {
@@ -507,7 +509,9 @@ export const overview = query({
     let missed = 0
     let unanswered = 0
     let due = 0
-    const weak: Array<ConceptSummary & { unitId: Id<"units">; unitTitle: string }> = []
+    const weak: Array<
+      ConceptSummary & { unitId: Id<"units">; unitTitle: string; drillable: boolean }
+    > = []
     const result = []
     for (const unit of units) {
       const allQuestions = (
@@ -529,6 +533,7 @@ export const overview = query({
         if (item.lastOutcome === "correct") correct += 1
         else missed += 1
       }
+      const drillableConcepts = new Set(items.map((item) => String(item.conceptId)))
       const concepts: ConceptSummary[] = []
       for (const conceptId of [...new Set(allQuestions.map((item) => item.conceptId))]) {
         const concept = await ctx.db.get(conceptId)
@@ -545,7 +550,12 @@ export const overview = query({
         }
         concepts.push(summary)
         if (summary.strength === "weak")
-          weak.push({ ...summary, unitId: unit._id, unitTitle: unit.title })
+          weak.push({
+            ...summary,
+            unitId: unit._id,
+            unitTitle: unit.title,
+            drillable: drillableConcepts.has(String(conceptId)),
+          })
       }
       const generation = await ctx.db
         .query("questionGenerations")
@@ -592,17 +602,26 @@ const drillArgs = {
   limit: v.optional(v.number()),
   /** Client clock, so concepts that fell due recently count as due. */
   now: v.number(),
+  /** `weak` keeps only questions on concepts that are not sticking, for the Weak topics drill. */
+  focus: v.optional(v.literal("weak")),
 }
 
 /**
  * Picks a drill's questions in order: questions answered wrongly first, then
  * concepts due for review, then unanswered questions on weak concepts, then
- * the rest (`selectDrillQuestions`).
+ * the rest (`selectDrillQuestions`). With `focus: "weak"`, only questions on
+ * weak concepts are considered.
  * @returns Each question's item, its unit title, and its last outcome.
  */
 async function drillQuestions(
   ctx: QueryCtx,
-  { projectId, unitId, limit, now }: { projectId: Id<"projects">; unitId?: Id<"units">; limit?: number; now: number }
+  {
+    projectId,
+    unitId,
+    limit,
+    now,
+    focus,
+  }: { projectId: Id<"projects">; unitId?: Id<"units">; limit?: number; now: number; focus?: "weak" }
 ) {
   const units = await ctx.db
     .query("units")
@@ -624,6 +643,8 @@ async function drillQuestions(
   const candidates: DrillCandidate[] = []
   for (const item of items) {
     const review = reviews.get(String(item.conceptId))
+    const strength = conceptStrength(historyOf(review))
+    if (focus === "weak" && strength !== "weak") continue
     candidates.push({
       itemId: String(item._id),
       conceptId: String(item.conceptId),
@@ -631,7 +652,7 @@ async function drillQuestions(
       ...(item.lastOutcome
         ? { lastOutcome: item.lastOutcome, lastAnsweredAt: item.lastAnsweredAt }
         : {}),
-      strength: conceptStrength(historyOf(review)),
+      strength,
       ...(review && review.attemptCount > 0 ? { conceptDueAt: review.dueAt } : {}),
     })
   }

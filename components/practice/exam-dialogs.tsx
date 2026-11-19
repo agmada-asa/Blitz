@@ -129,7 +129,7 @@ export function AddPastPaperDialog({
     <Dialog open={open} onOpenChange={changeOpen}>
       <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>Add a past paper</DialogTitle>
+          <DialogTitle>Upload a past paper</DialogTitle>
           <DialogDescription>
             Blitz reads the questions so you can sit the paper against the clock and have it
             marked. Add the solutions or mark scheme too if you have them; otherwise answers
@@ -181,7 +181,7 @@ export function AddPastPaperDialog({
             onClick={() => void addPaper()}
             className="min-h-11 rounded-full bg-brand px-6 text-brand-foreground hover:bg-brand/85"
           >
-            Add past paper
+            Upload paper
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -309,10 +309,10 @@ export function WriteMockExamDialog({
     <Dialog open={open} onOpenChange={changeOpen}>
       <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>Write a mock exam</DialogTitle>
+          <DialogTitle>Generate a mock exam</DialogTitle>
           <DialogDescription>
             A new timed paper from the units you choose, in the style of your past papers when you
-            have added any. Concepts you keep missing get more questions.
+            have added any. Topics you keep missing get more questions.
           </DialogDescription>
         </DialogHeader>
         <fieldset className="space-y-2">
@@ -376,7 +376,7 @@ export function WriteMockExamDialog({
                 <LoadingIcon aria-hidden="true" className="motion-safe:animate-spin" /> Starting
               </>
             ) : (
-              "Write mock exam"
+              "Generate exam"
             )}
           </Button>
         </DialogFooter>

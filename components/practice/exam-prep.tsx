@@ -1,9 +1,10 @@
 "use client"
 
 /**
- * The Exam prep section of the Practice screen: the module's past papers and
- * mock exams with their status, size, and best score, actions to take,
- * resume, review, edit, or delete each one, and the two ways to add a paper.
+ * The Exams tab of the Practice screen: the project's past papers and mock
+ * exams as rows in one list, each with its best score, one visible action
+ * (take, resume or try again) and a menu for reviewing, editing or deleting,
+ * plus the New exam menu that uploads a past paper or generates a mock exam.
  */
 
 import Link from "next/link"
@@ -14,13 +15,19 @@ import { useState } from "react"
 import { AddPastPaperDialog, WriteMockExamDialog } from "@/components/practice/exam-dialogs"
 import { ExamPaperActions } from "@/components/practice/exam-paper-actions"
 import { Button } from "@/components/ui/button"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import { ElapsedTime } from "@/components/ui/elapsed-time"
-import { LoadingIcon } from "@/components/ui/icon"
+import { AddIcon, LoadingIcon } from "@/components/ui/icon"
 import { Skeleton } from "@/components/ui/skeleton"
 import { api } from "@/convex/_generated/api"
 import type { Id } from "@/convex/_generated/dataModel"
 
-/** One paper in the Exam prep list. */
+/** One paper in the Exams list. */
 type PaperSummary = FunctionReturnType<typeof api.exam.listPapers>[number]
 
 /** Joins a count and a noun, adding "s" for anything but one. */
@@ -28,7 +35,7 @@ function plural(count: number, noun: string): string {
   return `${count} ${noun}${count === 1 ? "" : "s"}`
 }
 
-/** Renders the Exam prep section for one module. */
+/** Renders the Exams tab for one project. */
 export function ExamPrep({ projectId }: { projectId: string }) {
   const convexProjectId = projectId as Id<"projects">
   const papers = useQuery(api.exam.listPapers, { projectId: convexProjectId })
@@ -41,50 +48,36 @@ export function ExamPrep({ projectId }: { projectId: string }) {
     .map((unit) => ({ id: String(unit.id), title: unit.title }))
 
   return (
-    <section aria-labelledby="exam-heading" className="mt-10">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-        <div className="min-w-0">
-          <h2 id="exam-heading" className="font-heading text-lg font-semibold">
-            Exam prep
-          </h2>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Sit past papers and mock exams against the clock, then relearn what you missed.
-          </p>
-        </div>
-        <div className="flex shrink-0 flex-wrap gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => setPastOpen(true)}
-            className="min-h-10 rounded-full px-4"
-          >
-            Add a past paper
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            disabled={!unitsWithMaterial.length}
-            onClick={() => setMockOpen(true)}
-            className="min-h-10 rounded-full px-4"
-          >
-            Write a mock exam
-          </Button>
-        </div>
+    <section aria-label="Exams">
+      <div className="mb-3 flex justify-end">
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button type="button" variant="outline" className="min-h-10 rounded-full px-4">
+              <AddIcon aria-hidden="true" /> New exam
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem onSelect={() => setPastOpen(true)}>Upload a past paper</DropdownMenuItem>
+            <DropdownMenuItem disabled={!unitsWithMaterial.length} onSelect={() => setMockOpen(true)}>
+              Generate a mock exam
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
 
       {papers === undefined ? (
-        <Skeleton className="mt-3 h-20 w-full rounded-xl" aria-label="Loading exam papers" />
+        <Skeleton className="h-20 w-full rounded-xl" aria-label="Loading exams" />
       ) : papers.length ? (
-        <ul className="mt-3 space-y-3">
+        <ul className="divide-y divide-border rounded-xl border border-border bg-card">
           {papers.map((paper) => (
             <PaperRow key={paper.id} paper={paper} base={base} />
           ))}
         </ul>
       ) : (
-        <p className="mt-3 text-sm text-muted-foreground">
+        <p className="rounded-xl border border-dashed border-border px-4 py-6 text-center text-sm text-muted-foreground">
           {unitsWithMaterial.length
-            ? "No papers yet. Add a past paper, or write a mock exam from your units."
-            : "No papers yet. Add a past paper, or add material to a unit to write a mock exam."}
+            ? "No exams yet. Upload a past paper, or generate a mock exam from your units."
+            : "No exams yet. Upload a past paper, or add material to a unit to generate a mock exam."}
         </p>
       )}
 
@@ -99,7 +92,10 @@ export function ExamPrep({ projectId }: { projectId: string }) {
   )
 }
 
-/** Shows one paper with its status and the actions that fit it. */
+/**
+ * Shows one paper as a list row. Every ready paper gets the same outlined
+ * Take (or Resume) button; Review moves into the row's menu.
+ */
 function PaperRow({ paper, base }: { paper: PaperSummary; base: string }) {
   const [retrying, setRetrying] = useState(false)
   const [error, setError] = useState("")
@@ -109,7 +105,7 @@ function PaperRow({ paper, base }: { paper: PaperSummary; base: string }) {
     paper.status === "ready" ? plural(paper.questionCount, "question") : "",
     paper.status === "ready" && paper.totalMarks ? plural(paper.totalMarks, "mark") : "",
     paper.durationMinutes ? `${paper.durationMinutes} min` : "",
-    paper.bestPercentage !== null ? `Best ${paper.bestPercentage}%` : "",
+    paper.status === "ready" && paper.readFromScan ? "Scanned" : "",
   ].filter(Boolean)
 
   /** Starts preparing a failed paper again. */
@@ -126,74 +122,84 @@ function PaperRow({ paper, base }: { paper: PaperSummary; base: string }) {
   }
 
   return (
-    <li className="rounded-xl border border-border bg-card p-4 sm:p-5">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div className="min-w-0">
-          <h3 className="font-medium break-words">{paper.title}</h3>
-          <p className="mt-0.5 text-xs text-muted-foreground">{details.join(" · ")}</p>
-          {paper.status === "ready" && paper.readFromScan ? (
-            <p className="mt-0.5 text-xs text-muted-foreground">
-              Scanned PDF · read as a document
-            </p>
-          ) : null}
+    <li className="px-4 py-3">
+      <div className="flex items-center gap-3">
+        <div className="min-w-0 flex-1">
+          <h3 className="truncate font-medium" title={paper.title}>
+            {paper.title}
+          </h3>
+          <p className="text-xs text-muted-foreground">
+            {details.join(" · ")}
+            {/* The score column is hidden on narrow screens, so the best score joins the details there. */}
+            {paper.status === "ready" && paper.bestPercentage !== null ? (
+              <span className="sm:hidden">
+                {details.length ? " · " : ""}Best {paper.bestPercentage}%
+              </span>
+            ) : null}
+          </p>
         </div>
-        <div className="flex shrink-0 flex-wrap gap-2">
-          {paper.status === "ready" ? (
-            <>
-              <Button asChild variant="outline" className="min-h-10 rounded-full px-4">
-                <Link href={href}>{paper.inProgressAttemptId ? "Resume" : "Take"}</Link>
-              </Button>
-              {paper.latestAttemptId ? (
-                <Button asChild variant="ghost" className="min-h-10 rounded-full px-4">
-                  <Link href={`${href}?attempt=${encodeURIComponent(paper.latestAttemptId)}`}>
-                    Review
-                  </Link>
-                </Button>
-              ) : null}
-            </>
-          ) : paper.status === "failed" ? (
-            <Button
-              type="button"
-              variant="outline"
-              disabled={retrying}
-              onClick={() => void retry()}
-              className="min-h-10 rounded-full px-4"
-            >
-              {retrying ? (
-                <>
-                  <LoadingIcon aria-hidden="true" className="motion-safe:animate-spin" /> Retrying
-                </>
-              ) : (
-                "Try again"
-              )}
-            </Button>
-          ) : null}
-          <ExamPaperActions
-            paper={{
-              id: paper.id,
-              title: paper.title,
-              status: paper.status,
-              changeLock: paper.changeLock,
-              hasOpenAttempt: Boolean(paper.inProgressAttemptId),
-            }}
-            editHref={`${href}?edit=1`}
-          />
-        </div>
+        {paper.status === "ready" ? (
+          <span className="hidden w-20 text-right text-sm whitespace-nowrap tabular-nums sm:block">
+            {paper.bestPercentage !== null ? (
+              <>
+                {paper.bestPercentage}%<span className="sr-only"> best score</span>
+              </>
+            ) : (
+              <span className="text-muted-foreground">Not taken</span>
+            )}
+          </span>
+        ) : null}
+        {paper.status === "ready" ? (
+          <Button asChild variant="outline" className="min-h-10 w-24 rounded-full">
+            <Link href={href}>{paper.inProgressAttemptId ? "Resume" : "Take"}</Link>
+          </Button>
+        ) : paper.status === "failed" ? (
+          <Button
+            type="button"
+            variant="outline"
+            disabled={retrying}
+            onClick={() => void retry()}
+            className="min-h-10 rounded-full px-4"
+          >
+            {retrying ? (
+              <>
+                <LoadingIcon aria-hidden="true" className="motion-safe:animate-spin" /> Retrying
+              </>
+            ) : (
+              "Try again"
+            )}
+          </Button>
+        ) : null}
+        <ExamPaperActions
+          paper={{
+            id: paper.id,
+            title: paper.title,
+            status: paper.status,
+            changeLock: paper.changeLock,
+            hasOpenAttempt: Boolean(paper.inProgressAttemptId),
+          }}
+          editHref={`${href}?edit=1`}
+          reviewHref={
+            paper.status === "ready" && paper.latestAttemptId
+              ? `${href}?attempt=${encodeURIComponent(paper.latestAttemptId)}`
+              : undefined
+          }
+        />
       </div>
       {paper.status === "processing" ? (
-        <p role="status" className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
+        <p role="status" className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
           <LoadingIcon aria-hidden="true" className="size-3.5 motion-safe:animate-spin" />
-          {paper.kind === "past" ? "Reading the paper's questions…" : "Writing the mock exam…"}{" "}
+          {paper.kind === "past" ? "Reading the paper's questions…" : "Generating the mock exam…"}{" "}
           <ElapsedTime since={paper.runStartedAt} />
         </p>
       ) : null}
       {paper.status === "failed" && paper.error ? (
-        <p role="alert" className="mt-2 text-xs text-destructive">
+        <p role="alert" className="mt-1 text-xs text-destructive">
           {paper.error}
         </p>
       ) : null}
       {error ? (
-        <p role="alert" className="mt-2 text-xs text-destructive">
+        <p role="alert" className="mt-1 text-xs text-destructive">
           {error}
         </p>
       ) : null}

@@ -1,8 +1,10 @@
 "use client"
 
 /**
- * Renders one server-backed card and owns its answer selection and feedback state. Number keys,
- * letters, and Enter answer the card or move on once it is answered (see `hooks/use-quiz-shortcuts.ts`).
+ * Renders one server-backed Review card and owns its answer selection and feedback state. The card
+ * sits in the same bordered frame and option rows as `QuizBlockView`, so Review questions look like
+ * drill and Teach questions, with Next, Ask in chat and Skip below it. Number keys, letters, and
+ * Enter answer the card or move on once it is answered (see `hooks/use-quiz-shortcuts.ts`).
  * About half the single-choice questions start as recall: the learner answers in their head, reveals
  * the answer, and grades themselves, or shows the options instead (see `lib/learning/recall.ts`).
  */
@@ -18,7 +20,7 @@ import type {
 } from "@/lib/learning/client-contracts"
 import { startsAsRecall } from "@/lib/learning/recall"
 import { Button } from "@/components/ui/button"
-import { CancelIcon, CheckIcon } from "@/components/ui/icon"
+import { ArrowRightIcon, CancelIcon, ChatIcon, CheckCircleIcon } from "@/components/ui/icon"
 import { GuessToggle } from "@/components/ui/interactive-blocks/guess-toggle"
 import { plainMarkdownRenderer } from "@/components/ui/markdown"
 import { useQuizShortcuts } from "@/hooks/use-quiz-shortcuts"
@@ -40,20 +42,14 @@ import {
 } from "@/lib/interactive-blocks"
 import { cn } from "@/lib/utils"
 
-/** Headline sizes: short prompts read as a headline, long exam questions as body text. */
-function headlineClass(text: string): string {
-  if (text.length > 180 || text.includes("```"))
-    return "text-xl leading-snug font-medium tracking-tight sm:text-2xl"
-  if (text.length > 90)
-    return "text-[clamp(1.5rem,5vw,2rem)] leading-tight font-medium tracking-[-0.03em]"
-  return "text-[clamp(2rem,7vw,3.75rem)] leading-[0.99] font-medium tracking-[-0.045em] sm:text-[clamp(2rem,5vw,2.5rem)]"
-}
-
 /** Props required to render one card in the Review feed. */
 type FeedCardProps = {
   card: FeedCard
+  /** Where the card comes from, such as "SWE · Week 7 slides", shown above it. */
+  context: string
   onAsk: (card: FeedCard) => void
-  onSkip: (card: FeedCard) => void
+  /** Moves on: Next once answered, Got it on a recap, or Skip before answering. */
+  onNext: (card: FeedCard) => void
   onAnswer: (
     card: FeedCard,
     answer: LearningAnswer,
@@ -75,8 +71,9 @@ type RecallState =
 /** Renders a server-backed explanation or question card. */
 export function FeedCardView({
   card,
+  context,
   onAsk,
-  onSkip,
+  onNext,
   onAnswer,
   onReveal,
   onRecall,
@@ -118,7 +115,7 @@ export function FeedCardView({
     answerable: !pending && !feedback && !recall && card.type !== "explain",
     lettered: card.type !== "true-false",
     onAdvance:
-      feedback || recall?.step === "graded" ? () => onSkip(card) : undefined,
+      feedback || recall?.step === "graded" ? () => onNext(card) : undefined,
   })
   // Cloze blanks show as numbered gaps; every other prompt shows as written.
   const prompt =
@@ -235,60 +232,46 @@ export function FeedCardView({
   /** Returns the visual state for one answer option after server feedback. */
   function optionClass(optionId: string, isSelected: boolean) {
     const showFeedback = feedback !== null
+    // Matches the option rows in `QuizBlockView`, so feed, drill and Teach questions look alike.
     return cn(
-      "flex min-h-14 w-full items-center gap-4 rounded-2xl border border-border/80 bg-card/60 px-4 text-left text-sm text-foreground/90 transition-[background-color,border-color,transform] duration-200 hover:border-foreground/20 hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none active:scale-[0.99] disabled:cursor-default sm:px-5 sm:text-base",
-      isSelected &&
-        !showFeedback &&
-        "border-brand bg-brand/10 font-medium text-foreground",
+      "flex min-h-11 w-full items-center gap-3 rounded-xl border border-border bg-background px-3 py-2.5 text-left text-sm leading-5 text-foreground transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none disabled:cursor-default",
+      isSelected && !showFeedback && "border-brand/60 bg-brand/10",
       showFeedback &&
         optionIsCorrect(optionId) &&
-        "border-emerald-500/60 bg-emerald-500/10 text-emerald-800 dark:border-emerald-400/65 dark:bg-emerald-400/15 dark:text-emerald-100",
+        "border-emerald-500/45 bg-emerald-500/[0.06] hover:bg-emerald-500/[0.06]",
       showFeedback &&
         isSelected &&
         !optionIsCorrect(optionId) &&
-        "border-destructive/60 bg-destructive/10 text-destructive dark:border-red-400/60 dark:bg-red-400/15 dark:text-red-100",
+        "border-destructive/45 bg-destructive/[0.06] hover:bg-destructive/[0.06]",
       showFeedback && isSelected && answerCueClass(cue)
     )
   }
 
+  const handled = Boolean(feedback) || recall?.step === "graded"
+
   return (
-    <article
-      ref={cardRef}
-      data-quiz-scope=""
-      className="feed-card flex h-svh snap-start items-center px-4 pt-24 pb-10 sm:px-8 sm:pt-20 sm:pb-8"
-    >
-      <div className="feed-card-content mx-auto flex max-h-full min-h-0 w-full max-w-[680px] [scrollbar-width:none] flex-col overflow-y-auto [&::-webkit-scrollbar]:hidden">
+    <article ref={cardRef} data-quiz-scope="" aria-label={card.title}>
+      <p className="mb-3 truncate text-xs text-muted-foreground">{context}</p>
+      <div className="rounded-xl border border-border bg-card p-4 sm:p-5">
         {card.type === "explain" ? (
-          <p className="mb-3 text-xs font-medium text-brand">Recap</p>
-        ) : null}
-        {/* Questions may hold code blocks, so long ones render as Markdown blocks. */}
-        {card.type !== "explain" && prompt.includes("```") ? (
-          <div
-            className={cn(
-              "max-w-[620px] text-foreground",
-              headlineClass(prompt)
-            )}
-          >
-            {plainMarkdownRenderer(prompt)}
-          </div>
+          <p className="text-xs font-medium text-brand">Recap</p>
         ) : (
-          <h2
-            className={cn(
-              "max-w-[620px] text-foreground",
-              headlineClass(prompt)
-            )}
-          >
-            {plainMarkdownRenderer(prompt, { inline: true })}
-          </h2>
+          <p className="text-xs font-medium text-muted-foreground">{card.title}</p>
+        )}
+        {/* Questions may hold code blocks, so those render as Markdown blocks. */}
+        {card.type !== "explain" && prompt.includes("```") ? (
+          <div className="mt-1 font-medium">{plainMarkdownRenderer(prompt)}</div>
+        ) : (
+          <h2 className="mt-1 font-medium">{plainMarkdownRenderer(prompt, { inline: true })}</h2>
         )}
 
         {card.type === "explain" ? (
-          <div className="mt-6 max-w-[590px] text-base leading-[1.65] text-muted-foreground sm:mt-5 sm:text-lg">
+          <div className="mt-2 text-base leading-relaxed text-muted-foreground">
             {plainMarkdownRenderer(card.body)}
           </div>
         ) : shape ? (
           <>
-            <div className="mt-5 flex flex-wrap items-center justify-between gap-2">
+            <div className="mt-1 flex flex-wrap items-center justify-between gap-2">
               <p className="text-sm text-muted-foreground">
                 {structuredHints[shape.type as keyof typeof structuredHints]}
               </p>
@@ -296,7 +279,7 @@ export function FeedCardView({
                 <GuessToggle pressed={guessing} onPressedChange={setGuessing} />
               ) : null}
             </div>
-            <div className="mt-4" aria-busy={pending}>
+            <div className="mt-3" aria-busy={pending}>
               <StructuredAnswer
                 shape={shape}
                 value={structuredValue}
@@ -317,7 +300,7 @@ export function FeedCardView({
                   !structuredAnswerReady(shape.type, structuredValue) || pending
                 }
                 data-quiz-check=""
-                className="mt-5 h-11 rounded-full bg-brand px-5 text-sm font-medium text-brand-foreground hover:bg-brand/85 focus-visible:ring-ring"
+                className="mt-3 h-11 px-4 sm:h-9"
               >
                 Check answer
                 <kbd
@@ -330,27 +313,28 @@ export function FeedCardView({
             ) : null}
           </>
         ) : recall ? (
-          <div className="mt-6 sm:mt-5" aria-live="polite">
+          <div className="mt-1" aria-live="polite">
             {recall.step === "thinking" || recall.step === "revealing" ? (
               <>
                 <p className="text-sm text-muted-foreground">
                   Answer it in your head first, then check.
                 </p>
-                <div className="mt-4 flex flex-wrap gap-2">
+                <div className="mt-3 grid gap-2 sm:grid-cols-2">
                   <Button
                     type="button"
+                    variant="outline"
                     onClick={() => void reveal()}
                     disabled={recall.step === "revealing"}
-                    className="h-11 rounded-full bg-brand px-5 text-sm font-medium text-brand-foreground hover:bg-brand/85"
+                    className="h-11 rounded-xl"
                   >
                     Show answer
                   </Button>
                   <Button
                     type="button"
-                    variant="outline"
+                    variant="ghost"
                     onClick={() => setRecall(null)}
                     disabled={recall.step === "revealing"}
-                    className="h-11 rounded-full px-5 text-sm"
+                    className="h-11 rounded-xl text-muted-foreground"
                   >
                     Show options
                   </Button>
@@ -358,7 +342,7 @@ export function FeedCardView({
               </>
             ) : (
               <>
-                <div className="rounded-2xl border border-emerald-500/50 bg-emerald-500/10 px-4 py-3 text-base text-foreground sm:px-5">
+                <div className="mt-2 rounded-xl border border-emerald-500/45 bg-emerald-500/[0.06] px-3 py-2.5 text-sm text-foreground">
                   <p className="text-xs font-medium text-emerald-700 dark:text-emerald-300">
                     Answer
                   </p>
@@ -372,12 +356,13 @@ export function FeedCardView({
                   </div>
                 ) : null}
                 {recall.step === "revealed" ? (
-                  <div className="mt-5 flex flex-wrap gap-2">
+                  <div className="mt-3 grid grid-cols-2 gap-2">
                     <Button
                       type="button"
+                      variant="outline"
                       onClick={() => void grade(true)}
                       disabled={pending}
-                      className="h-11 rounded-full bg-brand px-5 text-sm font-medium text-brand-foreground hover:bg-brand/85"
+                      className="h-11 rounded-xl"
                     >
                       I knew it
                     </Button>
@@ -386,7 +371,7 @@ export function FeedCardView({
                       variant="outline"
                       onClick={() => void grade(false)}
                       disabled={pending}
-                      className="h-11 rounded-full px-5 text-sm"
+                      className="h-11 rounded-xl"
                     >
                       I didn&apos;t
                     </Button>
@@ -394,9 +379,9 @@ export function FeedCardView({
                 ) : (
                   <p
                     className={cn(
-                      "mt-4 text-sm font-medium",
+                      "mt-3 text-sm font-medium",
                       recall.knewIt
-                        ? "text-emerald-600 dark:text-emerald-400"
+                        ? "text-emerald-700 dark:text-emerald-300"
                         : "text-muted-foreground"
                     )}
                   >
@@ -408,7 +393,7 @@ export function FeedCardView({
           </div>
         ) : (
           <>
-            <div className="mt-5 flex flex-wrap items-center justify-between gap-2">
+            <div className="mt-1 flex flex-wrap items-center justify-between gap-2">
               <p className="text-sm text-muted-foreground">
                 {isMultipleAnswer ? "Select all that apply" : "Choose one"}
               </p>
@@ -417,7 +402,7 @@ export function FeedCardView({
               ) : null}
             </div>
             <div
-              className="mt-4 space-y-2.5"
+              className="mt-3 grid gap-2"
               role={isMultipleAnswer ? "group" : "radiogroup"}
               aria-label={
                 isMultipleAnswer ? "Select all that apply" : "Answer options"
@@ -452,34 +437,42 @@ export function FeedCardView({
                     )}
                     className={optionClass(option.id, isSelected)}
                   >
-                    <span
-                      className={cn(
-                        "flex size-8 shrink-0 items-center justify-center rounded-xl border border-border bg-muted/60 text-xs font-medium text-muted-foreground",
-                        isSelected &&
-                          !feedback &&
-                          "border-brand/60 bg-brand/15 text-brand",
-                        feedback &&
-                          optionIsCorrect(option.id) &&
-                          "border-emerald-500/60 bg-emerald-500/20 text-emerald-700 dark:border-emerald-400/50 dark:bg-emerald-400/20 dark:text-emerald-200",
-                        feedback &&
-                          isSelected &&
-                          !optionIsCorrect(option.id) &&
-                          "border-destructive/60 bg-destructive/20 text-destructive dark:border-red-400/50 dark:bg-red-400/20 dark:text-red-200"
-                      )}
-                    >
-                      {feedback && optionIsCorrect(option.id) ? (
-                        <CheckIcon aria-hidden="true" className="size-4" />
-                      ) : feedback && isSelected ? (
-                        <CancelIcon aria-hidden="true" className="size-4" />
-                      ) : card.type === "true-false" ? (
-                        option.text.slice(0, 1)
-                      ) : (
-                        String.fromCharCode(65 + optionIndex)
-                      )}
-                    </span>
+                    {card.type !== "true-false" ? (
+                      <span
+                        aria-hidden="true"
+                        className={cn(
+                          "flex size-7 shrink-0 items-center justify-center rounded-full border border-border text-xs text-muted-foreground",
+                          isSelected && !feedback && "border-brand/60 text-brand"
+                        )}
+                      >
+                        {String.fromCharCode(65 + optionIndex)}
+                      </span>
+                    ) : null}
                     <span className="min-w-0 flex-1 break-words">
                       {plainMarkdownRenderer(option.text, { inline: true })}
                     </span>
+                    {feedback && (optionIsCorrect(option.id) || isSelected) ? (
+                      <span
+                        aria-hidden="true"
+                        className={cn(
+                          "ml-auto flex shrink-0 items-center gap-1 text-xs font-medium",
+                          optionIsCorrect(option.id)
+                            ? "text-emerald-700 dark:text-emerald-300"
+                            : "text-destructive"
+                        )}
+                      >
+                        {optionIsCorrect(option.id) ? (
+                          <CheckCircleIcon size={15} />
+                        ) : (
+                          <CancelIcon size={15} />
+                        )}
+                        {optionIsCorrect(option.id)
+                          ? isSelected
+                            ? "Your answer, correct"
+                            : "Correct answer"
+                          : "Your answer"}
+                      </span>
+                    ) : null}
                   </button>
                 )
               })}
@@ -490,7 +483,7 @@ export function FeedCardView({
                 onClick={submitMultiple}
                 disabled={!selectedMany.length || pending || feedback !== null}
                 data-quiz-check=""
-                className="mt-5 h-11 rounded-full bg-brand px-5 text-sm font-medium text-brand-foreground hover:bg-brand/85 focus-visible:ring-ring"
+                className="mt-3 h-11 px-4 sm:h-9"
               >
                 Check answers
                 <kbd
@@ -504,24 +497,25 @@ export function FeedCardView({
           </>
         )}
 
-        <p className="mt-7 text-xs text-muted-foreground sm:mt-5">
-          Source · {card.sourceLabel}
-        </p>
-
         {feedback && feedback.status !== "invalid" ? (
-          <div className="mt-5 space-y-1.5" aria-live="polite">
+          <div className="mt-3 space-y-2" aria-live="polite">
             <p
               className={cn(
-                "text-sm font-medium",
+                "flex items-center gap-2 text-sm font-medium",
                 feedback.isCorrect
-                  ? "text-emerald-600 dark:text-emerald-400"
-                  : "text-destructive dark:text-red-400"
+                  ? "text-emerald-700 dark:text-emerald-300"
+                  : "text-destructive"
               )}
             >
+              {feedback.isCorrect ? (
+                <CheckCircleIcon size={16} aria-hidden="true" />
+              ) : (
+                <CancelIcon size={16} aria-hidden="true" />
+              )}
               {feedback.isCorrect ? "Correct" : "Not quite"}
             </p>
             {feedback.feedback?.body ? (
-              <div className="text-sm leading-relaxed text-muted-foreground">
+              <div className="text-sm leading-relaxed">
                 {plainMarkdownRenderer(feedback.feedback.body)}
               </div>
             ) : null}
@@ -529,29 +523,41 @@ export function FeedCardView({
         ) : null}
 
         {error ? (
-          <p className="mt-5 text-sm text-destructive" role="alert">
+          <p className="mt-3 text-sm text-destructive" role="alert">
             {error}
           </p>
         ) : null}
+      </div>
 
-        <div className="mt-8 flex flex-wrap items-center gap-3 sm:mt-6">
+      <div className="mt-5 flex flex-wrap items-center gap-2">
+        {handled || card.type === "explain" ? (
           <Button
             type="button"
-            variant="outline"
-            onClick={() => onAsk(card)}
-            className="h-11 rounded-full px-5 text-sm shadow-xs"
+            onClick={() => onNext(card)}
+            className="min-h-11 rounded-full bg-brand px-6 text-brand-foreground hover:bg-brand/85"
           >
-            Ask in chat
+            {card.type === "explain" ? "Got it" : "Next"}
+            <ArrowRightIcon aria-hidden="true" />
           </Button>
+        ) : null}
+        <Button
+          type="button"
+          variant="ghost"
+          onClick={() => onAsk(card)}
+          className="min-h-11 rounded-full px-4"
+        >
+          <ChatIcon aria-hidden="true" /> Ask in chat
+        </Button>
+        {!handled && card.type !== "explain" ? (
           <Button
             type="button"
             variant="ghost"
-            onClick={() => onSkip(card)}
-            className="h-11 rounded-full px-4 text-sm text-muted-foreground hover:text-foreground"
+            onClick={() => onNext(card)}
+            className="ml-auto min-h-11 rounded-full px-4 text-muted-foreground"
           >
-            {feedback || recall?.step === "graded" ? "Next" : "Skip"}
+            Skip
           </Button>
-        </div>
+        ) : null}
       </div>
     </article>
   )

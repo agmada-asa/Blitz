@@ -191,7 +191,7 @@ function ModuleOverview({ project }: { project: Doc<"projects"> }) {
       </header>
 
       {data === undefined ? (
-        <section aria-label="Loading module" className="mt-8 space-y-4">
+        <section aria-label="Loading project" className="mt-8 space-y-4">
           <Skeleton className="h-28 w-full rounded-2xl" />
           <Skeleton className="h-16 w-full rounded-xl" />
           <Skeleton className="h-16 w-full rounded-xl" />
@@ -199,7 +199,7 @@ function ModuleOverview({ project }: { project: Doc<"projects"> }) {
       ) : (
         <>
           {/* The module's other areas sit first, so they are reachable without scrolling past the path. */}
-          <nav aria-label="Module areas" className="mt-8 grid gap-2 sm:grid-cols-3">
+          <nav aria-label="Project areas" className="mt-8 grid gap-2 sm:grid-cols-3">
             {[
               {
                 href: `${base}/practice`,
@@ -269,9 +269,9 @@ function ModuleOverview({ project }: { project: Doc<"projects"> }) {
             </section>
           ) : !units.length && !data.unsortedSources.length && !data.referenceSources.length ? (
             <section className="mt-8 rounded-2xl border border-border bg-card p-6 text-center sm:p-10">
-              <h2 className="font-heading text-xl font-semibold">Add your first week</h2>
+              <h2 className="font-heading text-xl font-semibold">Add your first unit</h2>
               <p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">
-                Upload a week&apos;s transcripts, slides, and notes. Blitz starts
+                Upload a unit&apos;s transcripts, slides, and notes. Blitz starts
                 teaching them straight away.
               </p>
               <Button
@@ -612,7 +612,7 @@ function UnitListItem({
             <DialogTitle>Remove {unit.title}?</DialogTitle>
             <DialogDescription>
               Its Teach session and lesson progress are removed. Its {fileCount}{" "}
-              {fileCount === 1 ? "file stays" : "files stay"} in the module, and your
+              {fileCount === 1 ? "file stays" : "files stay"} in the project, and your
               answers and XP still count.
             </DialogDescription>
           </DialogHeader>
