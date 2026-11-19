@@ -436,9 +436,6 @@ export function ChatHistory({
                       <span className="min-w-0 flex-1 truncate">
                         {group.title}
                       </span>
-                      <span className="py-0.2 shrink-0 rounded-full bg-muted/80 px-1.5 text-[10px] text-muted-foreground">
-                        {group.chats.length}
-                      </span>
                     </button>
                     <Button
                       type="button"
