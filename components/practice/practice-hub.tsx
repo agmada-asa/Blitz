@@ -295,9 +295,12 @@ function Summary({
 
 /**
  * The Weak topics tab: concepts that aren't sticking, one row each with its
- * units, how many answers were right, and Relearn. One button drills them all.
+ * units, how many answers were right, and Relearn. One button drills every
+ * topic that has practice questions; topics only exam papers cover can be
+ * relearned but not drilled, so the button counts and appears only for the rest.
  */
 function WeakTopics({ topics, projectId, base }: { topics: WeakTopic[]; projectId: string; base: string }) {
+  const drillable = topics.filter((topic) => topic.drillable).length
   if (!topics.length)
     return (
       <p className="rounded-xl border border-dashed border-border px-4 py-6 text-center text-sm text-muted-foreground">
@@ -308,9 +311,11 @@ function WeakTopics({ topics, projectId, base }: { topics: WeakTopic[]; projectI
     <section aria-label="Weak topics">
       <div className="mb-3 flex min-h-10 flex-wrap items-center justify-between gap-x-4 gap-y-2">
         <p className="text-sm text-muted-foreground">Missed last time, or under 60% after two tries.</p>
-        <Button asChild variant="outline" className="min-h-10 rounded-full px-4">
-          <Link href={`${base}/practice/drill?focus=weak`}>Drill these {topics.length}</Link>
-        </Button>
+        {drillable ? (
+          <Button asChild variant="outline" className="min-h-10 rounded-full px-4">
+            <Link href={`${base}/practice/drill?focus=weak`}>Drill {plural(drillable, "topic")}</Link>
+          </Button>
+        ) : null}
       </div>
       <ul className="divide-y divide-border rounded-xl border border-border bg-card">
         {topics.map((topic) => (

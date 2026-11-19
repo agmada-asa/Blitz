@@ -491,6 +491,8 @@ type ConceptSummary = {
  * Summarises practice for a module: per unit, its question count, answered
  * and correct counts, concept strengths, and latest question run; plus the
  * module's weak concepts and how many questions are waiting to be retried.
+ * Each weak concept says whether it is `drillable`: a concept that only exam
+ * paper questions cover can be weak but gives a drill nothing to ask.
  */
 export const overview = query({
   args: {
@@ -507,7 +509,9 @@ export const overview = query({
     let missed = 0
     let unanswered = 0
     let due = 0
-    const weak: Array<ConceptSummary & { unitId: Id<"units">; unitTitle: string }> = []
+    const weak: Array<
+      ConceptSummary & { unitId: Id<"units">; unitTitle: string; drillable: boolean }
+    > = []
     const result = []
     for (const unit of units) {
       const allQuestions = (
@@ -529,6 +533,7 @@ export const overview = query({
         if (item.lastOutcome === "correct") correct += 1
         else missed += 1
       }
+      const drillableConcepts = new Set(items.map((item) => String(item.conceptId)))
       const concepts: ConceptSummary[] = []
       for (const conceptId of [...new Set(allQuestions.map((item) => item.conceptId))]) {
         const concept = await ctx.db.get(conceptId)
@@ -545,7 +550,12 @@ export const overview = query({
         }
         concepts.push(summary)
         if (summary.strength === "weak")
-          weak.push({ ...summary, unitId: unit._id, unitTitle: unit.title })
+          weak.push({
+            ...summary,
+            unitId: unit._id,
+            unitTitle: unit.title,
+            drillable: drillableConcepts.has(String(conceptId)),
+          })
       }
       const generation = await ctx.db
         .query("questionGenerations")

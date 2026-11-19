@@ -215,11 +215,11 @@ export function DrillSession({
       ) : !deck.length ? (
         <section className="mt-10">
           <h1 className="font-heading text-2xl font-semibold">
-            {focus === "weak" ? "No weak topics right now" : "No questions yet"}
+            {focus === "weak" ? "No weak topics to drill" : "No questions yet"}
           </h1>
           <p className="mt-2 text-sm text-muted-foreground">
             {focus === "weak"
-              ? "Every topic you've practised is sticking. Start a full drill to keep it that way."
+              ? "Nothing you've drilled is slipping right now. Go to Practice to drill everything or relearn a topic."
               : "Generate questions for a unit on the Practice screen, then come back to drill."}
           </p>
           <Button asChild className="mt-5 min-h-11 rounded-full">

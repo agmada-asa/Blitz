@@ -149,9 +149,9 @@ test("keeps real newlines and tabs before words that start like LaTeX commands",
 
 test("mergeWeakTopics merges a concept repeated across units and puts the weakest first", () => {
   const topics = mergeWeakTopics([
-    { title: "Path coverage", unitId: "u5", unitTitle: "Week 5", accuracy: 2 / 3, attempts: 3 },
-    { title: "Random weighted sampling", unitId: "u4", unitTitle: "Week 4", accuracy: 0, attempts: 1 },
-    { title: "random weighted sampling ", unitId: "u5", unitTitle: "Week 5", accuracy: 0.5, attempts: 2 },
+    { title: "Path coverage", unitId: "u5", unitTitle: "Week 5", accuracy: 2 / 3, attempts: 3, drillable: true },
+    { title: "Random weighted sampling", unitId: "u4", unitTitle: "Week 4", accuracy: 0, attempts: 1, drillable: true },
+    { title: "random weighted sampling ", unitId: "u5", unitTitle: "Week 5", accuracy: 0.5, attempts: 2, drillable: true },
   ])
   assert.deepEqual(
     topics.map((topic) => [topic.title, topic.units.map((unit) => unit.id), topic.right, topic.answers]),
@@ -164,8 +164,23 @@ test("mergeWeakTopics merges a concept repeated across units and puts the weakes
 
 test("mergeWeakTopics sends Relearn to the unit where the topic is weakest", () => {
   const [topic] = mergeWeakTopics([
-    { title: "wc chunks", unitId: "u6", unitTitle: "Week 6", accuracy: 0.5, attempts: 2 },
-    { title: "wc chunks", unitId: "u5", unitTitle: "Week 5", accuracy: 0, attempts: 1 },
+    { title: "wc chunks", unitId: "u6", unitTitle: "Week 6", accuracy: 0.5, attempts: 2, drillable: true },
+    { title: "wc chunks", unitId: "u5", unitTitle: "Week 5", accuracy: 0, attempts: 1, drillable: true },
   ])
   assert.deepEqual(topic.units.map((unit) => unit.id), ["u5", "u6"])
+})
+
+test("mergeWeakTopics keeps a topic drillable when any of its units has practice questions", () => {
+  const topics = mergeWeakTopics([
+    { title: "Mutation testing", unitId: "u7", unitTitle: "Week 7", accuracy: 0, attempts: 2, drillable: false },
+    { title: "Mutation testing", unitId: "u8", unitTitle: "Week 8", accuracy: 0.5, attempts: 2, drillable: true },
+    { title: "Exam only", unitId: "u8", unitTitle: "Week 8", accuracy: 0, attempts: 1, drillable: false },
+  ])
+  assert.deepEqual(
+    topics.map((topic) => [topic.title, topic.drillable]),
+    [
+      ["Exam only", false],
+      ["Mutation testing", true],
+    ]
+  )
 })

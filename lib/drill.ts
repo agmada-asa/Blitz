@@ -126,6 +126,8 @@ export type WeakConceptEntry<UnitId extends string = string> = {
   /** Share of answers right, or null before any answer. */
   accuracy: number | null
   attempts: number
+  /** Whether the unit has practice questions on it; exam-only concepts don't. */
+  drillable: boolean
 }
 
 /** A weak topic merged across the units it appears in. */
@@ -135,14 +137,17 @@ export type WeakTopic<UnitId extends string = string> = {
   units: Array<{ id: UnitId; title: string }>
   right: number
   answers: number
+  /** Whether the weak-topics drill can ask about it in any of its units. */
+  drillable: boolean
 }
 
 /**
  * Merges weak concepts that share a title (ignoring case and outer spaces)
  * across units into one topic, since the same idea taught in two units is one
  * thing to relearn. Right answers and answers add up; the unit where the
- * concept is weakest comes first. Topics are ordered by share of right
- * answers, lowest first, then by most answers.
+ * concept is weakest comes first; a topic is drillable when any unit's concept
+ * is. Topics are ordered by share of right answers, lowest first, then by
+ * most answers.
  */
 export function mergeWeakTopics<UnitId extends string>(
   concepts: Array<WeakConceptEntry<UnitId>>
@@ -156,13 +161,20 @@ export function mergeWeakTopics<UnitId extends string>(
     const entry = byTitle.get(key)
     if (!entry) {
       byTitle.set(key, {
-        topic: { title: concept.title, units: [unit], right, answers: concept.attempts },
+        topic: {
+          title: concept.title,
+          units: [unit],
+          right,
+          answers: concept.attempts,
+          drillable: concept.drillable,
+        },
         worst: accuracy,
       })
       continue
     }
     entry.topic.right += right
     entry.topic.answers += concept.attempts
+    entry.topic.drillable ||= concept.drillable
     if (entry.topic.units.some((existing) => existing.id === unit.id)) continue
     if (accuracy < entry.worst) {
       entry.topic.units.unshift(unit)
