@@ -19,7 +19,8 @@
  * Questions go to a side chat on the right rather than into the lesson: an
  * ordinary chat of its own, so the lesson's conversation stays on its plan and
  * a question can be asked while the tutor is writing. A passage picked from
- * the lesson (`teach-ask-overlay.tsx`) is quoted into it.
+ * the lesson (`teach-ask-overlay.tsx`) is quoted into it, and a suggested
+ * question picked under a section is asked there with that section attached.
  */
 
 import Link from "next/link"
@@ -595,6 +596,24 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
 
   const clearQuote = useCallback(() => setQuote(undefined), [])
 
+  // A suggested question picked under a section, waiting for the side chat to send it.
+  const [followUp, setFollowUp] = useState<{ id: number; text: string; messageId: string } | null>(null)
+  const followUpCount = useRef(0)
+
+  /** Asks a section's suggested question in the side chat, keeping the lesson to lesson content. */
+  const askFollowUp = useCallback(
+    (messageId: string, text: string) => {
+      setFollowUp({ id: ++followUpCount.current, text, messageId })
+      openSideChat()
+    },
+    [openSideChat]
+  )
+
+  /** The side chat sent the suggestion, or left it in its composer; either way it is settled. */
+  const onFollowUpAsked = useCallback((id: number) => {
+    setFollowUp((current) => (current?.id === id ? null : current))
+  }, [])
+
   /** Remembers a new side chat on this session, so it reopens with the lesson. */
   const rememberSideChat = useCallback(
     (sideChatId: Id<"workspaceChats">) => {
@@ -609,10 +628,11 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
     [activeChatId, setTeachSideChat]
   )
 
-  // Answers draw on the section the question is about: the quoted passage's
-  // section, otherwise the latest one.
-  const askedReply = quote
-    ? messages.find((message) => message.id === quote.messageId)
+  // Answers draw on the section the question is about: a picked suggestion's
+  // section, then the quoted passage's, otherwise the latest one.
+  const askedFrom = followUp?.messageId ?? quote?.messageId
+  const askedReply = askedFrom
+    ? messages.find((message) => message.id === askedFrom)
     : messages.findLast((message) => message.role === "assistant")
   const askedSection = useMemo(() => {
     if (!askedReply) return undefined
@@ -1093,8 +1113,7 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
                   answered={answered}
                   onCitation={openCitation}
                   onQuizAnswer={answerQuiz}
-                  onFollowUp={(text) => void send(text)}
-                  busy={running || compacting || updating}
+                  onFollowUp={askFollowUp}
                   sourceOpen={sideOpen}
                   compactions={chat.contextCompactions}
                   updates={lessonUpdates}
@@ -1222,6 +1241,8 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
                   }
                 : {}),
               ...(askedSection ? { section: askedSection } : {}),
+              ask: followUp ? { id: followUp.id, text: followUp.text } : null,
+              onAsked: onFollowUpAsked,
               onQuoteCleared: clearQuote,
               onChatStarted: rememberSideChat,
               ...(voiceOn
