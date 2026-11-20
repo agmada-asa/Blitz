@@ -11,6 +11,8 @@ import { VoiceTurns } from "./voice-turns.ts"
 const appPort = Number(process.env.BLITZ_PORT ?? 3007)
 const port = Number(process.env.BLITZ_VOICE_PORT ?? appPort + 100)
 const appOrigin = `http://127.0.0.1:${process.env.BLITZ_PORT ?? 3007}`
+// macOS paths on purpose: voice input needs an Apple silicon Mac, and the warm-up
+// check stops it elsewhere before these are used. Read-aloud's paths are in lib/server/kokoro.ts.
 const directory = join(homedir(), "Library", "Application Support", "Blitz", "voice")
 const python = process.env.BLITZ_KOKORO_PYTHON || join(process.env.BLITZ_KOKORO_DIR || join(homedir(), "Library", "Application Support", "Blitz", "kokoro"), "venv", "bin", "python3")
 const origins = new Set((process.env.BLITZ_VOICE_ORIGINS || `http://localhost:${appPort},http://127.0.0.1:${appPort}`).split(",").map(x => x.trim()))
@@ -130,7 +132,11 @@ sockets.on("connection", socket => {
         prompt = typeof message.prompt === "string" ? message.prompt.slice(-2000) : ""
         void (async () => {
           const warm = await fetch(appOrigin + "/api/audio/transcribe?warm=1", { method: "POST", signal: lifetime.signal })
-          if (!warm.ok) throw new Error("Speech is not ready. Run scripts/setup-kokoro.sh and retry.")
+          if (!warm.ok) {
+            // A 503 says why, e.g. that this computer can't run voice input at all.
+            const reason = warm.status === 503 ? await warm.json().then(body => body?.error, () => undefined) : undefined
+            throw new Error(typeof reason === "string" && reason ? reason : "Speech is not ready. Run scripts/setup-kokoro.sh and retry.")
+          }
           // Both modes listen with Silero and Smart Turn: voice mode to end turns, dictation to
           // commit segments so live captions and the final words stay quick on long dictations.
           await (models ??= ensureModels().catch(error => { models = undefined; throw error }))

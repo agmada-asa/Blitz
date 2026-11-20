@@ -4,11 +4,11 @@
 
 Blitz teaches you your own course material. Drop in a week's lecture slides, transcripts, and notes, and it teaches them back in short sessions, quizzes you, and keeps returning to what hasn't stuck. In exam season, import past papers and sit mock exams marked against the mark scheme.
 
-It runs on your Mac and uses the AI coding agent you already pay for (Codex, Claude Code, OpenCode, or Antigravity) instead of an API key. Your material and progress stay in a local database.
+It runs on your computer and uses the AI coding agent you already pay for (Codex, Claude Code, OpenCode, or Antigravity) instead of an API key. Your material and progress stay in a local database.
 
 ## Quick start
 
-You need Node.js 22.13 or newer and one supported agent installed and signed in. Codex is the default. Blitz is developed and tested on macOS. It starts on Windows too, but less has been tested there: see [Windows](#windows).
+You need Node.js 22.13 or newer and one supported agent installed and signed in. Codex is the default. Blitz is developed and tested on macOS. It starts on Windows and Linux too, but less has been tested there: see [Windows](#windows) and [Linux](#linux).
 
 ```bash
 git clone https://github.com/agmada-asa/Blitz.git
@@ -28,7 +28,7 @@ npm run server -- install    # the background server, at http://localhost:3007
 npm run desktop:install      # optional: Blitz.app in ~/Applications
 ```
 
-Open http://localhost:3007 in a browser, or open Blitz.app. The app is a window onto the same server, so you can use either or both. On Windows, use `npm run dev:lan` instead: it doesn't run in the background or update itself.
+Open http://localhost:3007 in a browser, or open Blitz.app. The app is a window onto the same server, so you can use either or both. On Windows and Linux, use `npm run dev:lan` instead: it doesn't run in the background or update itself.
 
 ### For development
 
@@ -98,9 +98,18 @@ The worker runs source recovery and Deep Research as two loops in one process; a
 `npm run dev` and `npm run dev:lan` work on Windows from PowerShell or Command Prompt. Provider CLIs installed with npm (such as `codex.cmd`) are found on PATH. Claude Code runs the copy bundled with Blitz's Claude SDK and uses your existing Claude sign-in, unless `BLITZ_CLAUDE_CODE_COMMAND` names another. What doesn't work on Windows yet:
 
 - `npm run server` installs a macOS background service, so it is macOS only.
-- Read-aloud, podcasts and spoken questions use local speech models that run only on macOS.
+- Read-aloud and podcasts use a local speech model that runs only on macOS and Linux, and spoken questions need an Apple silicon Mac.
 - Signing in to OpenCode or Antigravity from Settings opens a macOS Terminal window. On Windows, run `opencode auth login` or `agy acp --login` yourself.
 - Cleaning up processes left behind by a launcher that crashed is macOS and Linux only. If a later start says a port is taken, end the leftover `node` processes in Task Manager.
+
+### Linux
+
+`npm run dev` and `npm run dev:lan` work on Linux, and CI starts Blitz on Ubuntu for every pull request. Read-aloud and podcasts work too: run `sh scripts/setup-kokoro.sh` (on Debian and Ubuntu, first `sudo apt install python3-venv`). See [local Kokoro](docs/local-kokoro.md). What doesn't work on Linux yet:
+
+- `npm run server` installs a macOS background service, so it is macOS only. Use `npm run dev:lan`, which doesn't run in the background or update itself.
+- `npm run desktop:install` builds a macOS app, so it is macOS only. Use Blitz in a browser.
+- Spoken questions and voice mode need an Apple silicon Mac.
+- Signing in to OpenCode or Antigravity from Settings opens a macOS Terminal window. On Linux, run `opencode auth login` or `agy acp --login` yourself.
 
 ## Provider controls
 

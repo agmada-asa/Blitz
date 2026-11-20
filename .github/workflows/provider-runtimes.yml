@@ -50,13 +50,21 @@ jobs:
       - name: Run all tests
         run: npm test
 
-  # A fresh clone on Windows: `npm run dev` must create the local database,
-  # serve Blitz, and save, read back and show a project. The unit tests stay
-  # on macOS, where some rely on Unix process groups.
-  windows-start:
-    name: Starts on Windows
-    runs-on: windows-latest
+  # A fresh clone on Windows and Linux: `npm run dev` must create the local
+  # database, serve Blitz, and save, read back and show a project. The unit
+  # tests stay on macOS, where some rely on Unix process groups.
+  start:
+    name: Starts on ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows
+            os: windows-latest
+          - name: Linux
+            os: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
 
