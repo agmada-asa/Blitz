@@ -26,11 +26,21 @@ export { KokoroUnavailableError } from "./kokoro-worker"
 /** Maximum text accepted by a single inference request; callers can submit multiple chunks. */
 export const KOKORO_MAX_TEXT_LENGTH = 12_000
 
-/** Private folder for Kokoro's model, voices, cache and Python environment. */
+/**
+ * Private folder for Kokoro's model, voices, cache and Python environment:
+ * Application Support on macOS, the XDG data folder elsewhere. Must match
+ * `scripts/setup-kokoro.sh`.
+ */
 export const dataDirectory = resolve(
   /* turbopackIgnore: true */
   process.env.BLITZ_KOKORO_DIR ??
-    join(homedir(), "Library", "Application Support", "Blitz", "kokoro")
+    (process.platform === "darwin"
+      ? join(homedir(), "Library", "Application Support", "Blitz", "kokoro")
+      : join(
+          process.env.XDG_DATA_HOME || join(homedir(), ".local", "share"),
+          "blitz",
+          "kokoro"
+        ))
 )
 /** Stores only recent read-aloud WAV output, not the source text. */
 const readAloudCacheDirectory = join(dataDirectory, "read-aloud-cache")
@@ -67,9 +77,9 @@ function validateRequest(
   text: string,
   voiceId: string
 ): asserts voiceId is KokoroVoiceId {
-  if (process.platform !== "darwin") {
+  if (process.platform === "win32") {
     throw new KokoroUnavailableError(
-      "Local Kokoro speech is currently available on macOS only."
+      "Local Kokoro speech is currently available on macOS and Linux only."
     )
   }
   if (typeof text !== "string" || !text.trim()) {
@@ -107,7 +117,7 @@ async function runSynthesis(request: {
 
 /** Loads installed assets ahead of the first click without downloading anything at server startup. */
 export async function warmKokoro(): Promise<void> {
-  if (process.platform !== "darwin") return
+  if (process.platform === "win32") return
   try {
     await Promise.all([
       access(pythonExecutable),

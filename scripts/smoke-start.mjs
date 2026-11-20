@@ -2,8 +2,8 @@
  * Starts Blitz the way the README says (`npm run dev`) from a fresh clone, then
  * checks it end to end: the launcher reports ready, a project can be created
  * and read back through local Convex, and its page is served. CI runs this on
- * Windows, where Blitz is not used day to day, so a change that breaks starting
- * there fails a check instead of a friend's first try.
+ * Windows and Linux, where Blitz is not used day to day, so a change that breaks
+ * starting there fails a check instead of a friend's first try.
  *
  * Usage: node scripts/smoke-start.mjs
  */

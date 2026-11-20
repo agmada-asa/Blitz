@@ -3,7 +3,13 @@
 set -eu
 
 ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-DATA_DIR=${BLITZ_KOKORO_DIR:-"$HOME/Library/Application Support/Blitz/kokoro"}
+# Must match the default in lib/server/kokoro.ts.
+if [ "$(uname -s)" = Darwin ]; then
+  DEFAULT_DIR="$HOME/Library/Application Support/Blitz/kokoro"
+else
+  DEFAULT_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/blitz/kokoro"
+fi
+DATA_DIR=${BLITZ_KOKORO_DIR:-"$DEFAULT_DIR"}
 PYTHON=${PYTHON:-python3}
 
 if ! command -v "$PYTHON" >/dev/null 2>&1; then

@@ -300,8 +300,8 @@ test(
   {
     timeout: 8_000,
     // The watchdog notices reparenting, which Windows does not do, and local
-    // Kokoro is installed on macOS only.
-    skip: process.platform === "win32" && "Local Kokoro runs on macOS only",
+    // Kokoro is installed on macOS and Linux only.
+    skip: process.platform === "win32" && "Local Kokoro runs on macOS and Linux only",
   },
   async (t) => {
     if (spawnSync("python3", ["--version"]).error) {
