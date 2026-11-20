@@ -111,7 +111,7 @@ function KokoroVoiceEditor({
           <div>
             <p className="text-sm font-medium">Speech model</p>
             <p className="mt-1 text-sm text-muted-foreground">
-              Kokoro · runs on this Mac
+              Kokoro · runs on this computer
             </p>
           </div>
           <span className="rounded-md bg-muted px-2.5 py-1 text-xs font-medium text-muted-foreground">

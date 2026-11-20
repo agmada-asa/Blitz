@@ -130,7 +130,11 @@ sockets.on("connection", socket => {
         prompt = typeof message.prompt === "string" ? message.prompt.slice(-2000) : ""
         void (async () => {
           const warm = await fetch(appOrigin + "/api/audio/transcribe?warm=1", { method: "POST", signal: lifetime.signal })
-          if (!warm.ok) throw new Error("Speech is not ready. Run scripts/setup-kokoro.sh and retry.")
+          if (!warm.ok) {
+            // The route says why, e.g. that this computer can't run voice input at all.
+            const reason = await warm.json().then(body => body?.error, () => undefined)
+            throw new Error(typeof reason === "string" && reason ? reason : "Speech is not ready. Run scripts/setup-kokoro.sh and retry.")
+          }
           // Both modes listen with Silero and Smart Turn: voice mode to end turns, dictation to
           // commit segments so live captions and the final words stay quick on long dictations.
           await (models ??= ensureModels().catch(error => { models = undefined; throw error }))

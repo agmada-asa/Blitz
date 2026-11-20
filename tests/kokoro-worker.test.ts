@@ -298,7 +298,7 @@ test("a real missing executable fails startup without leaking timers", async () 
 test(
   "Python stops stalled inference after its Node parent is abruptly killed",
   {
-    timeout: 8_000,
+    timeout: 15_000,
     // The watchdog notices reparenting, which Windows does not do, and local
     // Kokoro is installed on macOS and Linux only.
     skip: process.platform === "win32" && "Local Kokoro runs on macOS and Linux only",
@@ -342,7 +342,8 @@ test(
     await new Promise<void>((resolve, reject) => {
       const timer = setTimeout(
         () => reject(new Error("Fixture did not start stalled inference.")),
-        3_000
+        // A cold Python start on a busy CI runner has taken over 3 seconds.
+        10_000
       )
       lines.on("line", (line) => {
         const message = JSON.parse(line) as { pid?: number; busy?: boolean }

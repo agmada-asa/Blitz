@@ -33,7 +33,7 @@ export const KOKORO_MAX_TEXT_LENGTH = 12_000
  */
 export const dataDirectory = resolve(
   /* turbopackIgnore: true */
-  process.env.BLITZ_KOKORO_DIR ??
+  process.env.BLITZ_KOKORO_DIR ||
     (process.platform === "darwin"
       ? join(homedir(), "Library", "Application Support", "Blitz", "kokoro")
       : join(

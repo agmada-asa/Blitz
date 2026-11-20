@@ -4,7 +4,7 @@
 
 Blitz teaches you your own course material. Drop in a week's lecture slides, transcripts, and notes, and it teaches them back in short sessions, quizzes you, and keeps returning to what hasn't stuck. In exam season, import past papers and sit mock exams marked against the mark scheme.
 
-It runs on your Mac and uses the AI coding agent you already pay for (Codex, Claude Code, OpenCode, or Antigravity) instead of an API key. Your material and progress stay in a local database.
+It runs on your computer and uses the AI coding agent you already pay for (Codex, Claude Code, OpenCode, or Antigravity) instead of an API key. Your material and progress stay in a local database.
 
 ## Quick start
 
