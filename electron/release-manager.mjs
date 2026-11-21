@@ -28,6 +28,7 @@ import { createWriteStream, existsSync } from "node:fs"
 import {
   copyFile,
   cp,
+  link,
   lstat,
   mkdir,
   readFile,
@@ -489,8 +490,11 @@ export class ReleaseManager {
    *
    * Windows only lets administrators and developer mode create symbolic links,
    * so there `.convex` is a directory junction, which needs no privilege, and
-   * `.env.local` is copied. Convex writes that file only when it creates the
-   * database, before any release exists, so a copy stays current.
+   * `.env.local` is a hard link, so settings the learner edits in the checkout
+   * reach the running release as they do elsewhere. A hard link only works on
+   * one drive, and an editor that saves by replacing the file breaks it, so
+   * a release on another drive gets a copy, and either way the next release
+   * links the file again.
    * @param {string} directory The new release.
    * @param {NodeJS.Platform} [platform] The operating system, for tests.
    */
@@ -504,7 +508,7 @@ export class ReleaseManager {
       await rm(target, { recursive: true, force: true })
       if (platform !== "win32") await symlink(source, target)
       else if (name === ".convex") await symlink(source, target, "junction")
-      else await copyFile(source, target)
+      else await link(source, target).catch(() => copyFile(source, target))
     }
   }
 

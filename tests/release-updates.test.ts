@@ -213,9 +213,12 @@ test("on Windows a release copies the settings, links the database, and swaps cu
     const release = join(root, "release")
     await mkdir(release)
     await manager.linkSharedFiles(release, "win32")
-    // Windows can't make a file symlink without privilege, so the settings are copied.
+    // Windows can't make a file symlink without privilege, so the settings are
+    // hard linked: an edit in the checkout still reaches the release.
     assert.equal(lstatSync(join(release, ".env.local")).isSymbolicLink(), false)
     assert.equal(await readFile(join(release, ".env.local"), "utf8"), "CONVEX_DEPLOYMENT=local\n")
+    await writeFile(join(shared, ".env.local"), "CONVEX_DEPLOYMENT=local\nBLITZ_PORT=3100\n")
+    assert.equal(await readFile(join(release, ".env.local"), "utf8"), "CONVEX_DEPLOYMENT=local\nBLITZ_PORT=3100\n")
     // A junction there; this test's platform makes it a symbolic link.
     assert.equal(realpathSync(join(release, ".convex")), realpathSync(join(shared, ".convex")))
 
