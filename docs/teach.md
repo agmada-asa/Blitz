@@ -7,18 +7,12 @@ citations, interactive blocks, and quizzes that count as study evidence.
 
 ## Flow
 
-1. **Add material.** `components/learn/add-material.tsx` creates a unit
-   (titled by `suggestUnitTitle` from the filenames) and uploads each file to
-   `POST /api/sources/upload` with `x-blitz-unit-id`. Pasted notes and links are
-   uploaded as Markdown text files, so every source gets the same extraction,
-   passages, and citations. A source is `ready` as soon as extraction finishes;
-   there is no generation step. Subtitle files (`.vtt`, `.srt`) become
-   `[m:ss]`-stamped paragraphs (`lib/transcript.ts`), and Word documents
-   (`.docx`) become Markdown with their headings. Sources found with **Find
-   sources** are imported into the unit the learner picks (or a new unit for
-   the research) with passages, the same way uploads are; see
-   `docs/research.md`. Each unit's menu on the module page opens Find
-   sources with that unit picked.
+1. **Add material.** `Add material` creates a unit (titled by
+   `suggestUnitTitle` from the filenames) and uploads each file into it; see
+   [adding material](source-import.md). A source is ready as soon as its text
+   is extracted; there is no generation step. Sources found with **Find
+   sources** are imported into a unit the same way; see [Find
+   sources](research.md).
 2. **Open the unit.** `/projects/[projectId]/learn/[unitId]` renders
    `components/learn/teach-session.tsx`. `units.startTeach` returns the unit's
    session, a workspace chat with `purpose: "teach"`, creating it on first visit.
@@ -45,9 +39,10 @@ citations, interactive blocks, and quizzes that count as study evidence.
 
 The header carries the unit title, the current section, a segmented progress
 bar (one segment per section: taught, current, or ahead), the XP earned this
-sitting, and a three-dot **Unit options** menu. The menu holds **Session context**,
-**Read replies aloud**, **Stop reading** during playback, **Finish for now**, and
-**Start this unit over**. On narrow screens the progress bar opens the
+sitting, and a three-dot **Unit options** menu. The menu holds **Pause
+writing** while the tutor is writing, **Session context** (on providers that
+report it), **Read replies aloud** (with **Stop reading** during playback;
+see [voice](voice.md)), **Finish for now**, and **Start this unit over**. On narrow screens the progress bar opens the
 outline; on wide ones the outline is a rail drawn as a path, with the unit's
 sources beneath it. Each section in the lesson opens with a numbered heading.
 
@@ -84,7 +79,8 @@ keeps today's XP in a chip above the feed.
 The tutor's rules live in `TEACH_RULES` in `lib/teach.ts`:
 
 - The first reply opens with ```outline JSON (`title`, 3–8 `sections`, each
-  with 2–5 `concepts`: the distinct examinable ideas it teaches). Quizzes and
+  with 2–5 `concepts`: the distinct examinable ideas it teaches). The parser
+  keeps at most 12 sections of 6 concepts (`lib/teach-limits.ts`). Quizzes and
   question banks tag questions with these names, so review is scheduled per
   idea rather than per section. Older outlines have no concepts and fall back
   to section titles.
@@ -106,8 +102,9 @@ The tutor's rules live in `TEACH_RULES` in `lib/teach.ts`:
   section id; the recap after the last section uses `done`.
 - Quick replies (`TEACH_QUICK_REPLIES`) have fixed meanings: next section,
   deeper, another example, and re-explain. Any other message is a question. The
-  dock now only sends `Next section`; the others stay for saved sessions, and
-  for follow-up chips and Relearn requests that still reach the lesson.
+  dock only sends `Next section` (labelled `Finish unit` on the last
+  section); the others stay for saved sessions, and for follow-up chips and
+  Relearn requests that still reach the lesson.
 - Interactive blocks (quiz, steps, viz, followups) follow
   `INTERACTIVE_BLOCKS_PROMPT` in `lib/interactive-blocks.ts`. Malformed blocks
   fall back to visible code; outline and section markers are hidden everywhere.
@@ -115,7 +112,7 @@ The tutor's rules live in `TEACH_RULES` in `lib/teach.ts`:
 ## Asking about the lesson
 
 The dock is one bar as wide as the lesson's text: `Next section`, or a disabled
-spinner while the tutor works (Pause is in Unit options). So questions go to a
+spinner while the tutor works (`Pause writing` is in Unit options). So questions go to a
 side chat on the right
 (`LearningSidePane`, the same panel as source citations). It is an ordinary
 chat in the module, remembered on the session as `teachSideChatId`, and it keeps
@@ -180,6 +177,13 @@ shown meanwhile. Each compaction appears in the lesson as a divider such as
 kept". If compacting cannot free enough room, the failure says so instead of a
 generic error. OpenCode sessions show no meter and never compact.
 
+## New material in a taught unit
+
+When files are added to a unit that has already been taught, the lesson
+doesn't pick them up on its own. The Teach screen shows a notice with
+**Update lesson**, which revises the outline and plan to cover the new files
+while keeping progress and past answers. See [lesson updates](lesson-updates.md).
+
 ## Measuring speed
 
 ```bash
@@ -194,7 +198,7 @@ first teaching text appeared about 13 seconds after opening the unit, and the
 first section finished within a minute with the configured reply provider.
 
 Opening a new session now prewarms the reply provider (see
-`docs/agent-engines.md`), so part of that wait overlaps with loading the unit.
+[agent-engines](agent-engines.md)), so part of that wait overlaps with loading the unit.
 The effect has not been measured yet; compare runs with and without
 `--prewarm`, which sends the same prewarm request alongside the turn.
 
@@ -212,8 +216,9 @@ The effect has not been measured yet; compare runs with and without
   teach them from their text, but they cannot be cited; add the link again
   with `Add material` to cite it.
 - Citations open the cited page, slide, timestamp, or heading as described
-  in `docs/chat-citations.md`. Slides and Word documents are shown as
-  extracted text; their originals download.
+  in [chat citations](chat-citations.md). Slides are drawn from the original
+  deck and Word documents shown as documents, but charts, SmartArt and some
+  effects are left out (see [source extraction](source-extraction.md#showing-the-original)).
 - Interactive visualisations run in a sandboxed frame with no network access,
   but a script can still navigate its own frame away. Treat source-driven
   prompt injection as possible, though it cannot reach Blitz data.

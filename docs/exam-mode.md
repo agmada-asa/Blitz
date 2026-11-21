@@ -182,7 +182,9 @@ All prompts and parsers live in `lib/exam.ts` and are covered by
   best answer and are labelled as worked out without solutions.
 - Editing a written question's mark scheme does not mark earlier written
   answers again.
-- A paper's uploaded files stay stored after the paper is deleted; there is no
-  way to delete a source yet.
+- A paper's uploaded files stay stored after the paper is deleted; remove them
+  from the module's Sources page.
+- A mock covers at most 40 units, and its default blueprint asks at most 50
+  choice and 8 written questions.
 - Only three provider turns exist: one per paper extraction, one per mock, and
   one per grading run.

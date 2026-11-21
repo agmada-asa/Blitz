@@ -6,12 +6,14 @@ against a recorded baseline instead of judged by eye.
 
 ## Ingestion eval
 
-`node --experimental-strip-types scripts/eval-ingestion.ts` runs each file through `prepareStoredSource`'s two
-stages, the same ones desktop uploads use, and reports:
+`node --experimental-strip-types scripts/eval-ingestion.ts` runs each file through the two
+stages `prepareStoredSource` uses for uploads (`extractNormalizedStoredSource`
+and `segmentPreparedDocument` in `lib/server/source-ingestion/prepare.ts`) and
+reports:
 
 - **Outcome**: whether the file reaches generation with sections, or where it
   stops: an extraction limit such as the PDF page cap, an unreadable file, the
-  500 KB persistence bound, or the section limit. The upload route saves every
+  25 MB preparation bound, or the 6,000 section limit. The upload route saves every
   stopped file without text or sections, so generation has no coverage check
   for it.
 - **Page density**: page count, pages with fewer than 150 characters of text,
