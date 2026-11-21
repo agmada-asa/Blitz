@@ -3,7 +3,11 @@ import assert from "node:assert/strict"
 import { execFileSync } from "node:child_process"
 import test from "node:test"
 
-import { terminalLaunches } from "../lib/server/providers/terminal-login.ts"
+import {
+  parseSessionEnvironment,
+  startLaunch,
+  terminalLaunches,
+} from "../lib/server/providers/terminal-login.ts"
 
 test("macOS opens the sign-in in Terminal with the CLI path quoted", () => {
   const [launch, ...rest] = terminalLaunches(
@@ -41,7 +45,46 @@ test("Windows opens a console window that stays open", () => {
 
 test("Windows refuses a CLI path that cmd would read as syntax", () => {
   assert.deepEqual(terminalLaunches("win32", "C:\\a&b\\opencode.cmd", ["auth", "login"], {}), [])
+  // `cmd /k` would strip the quotes around this path and run `C:\Program`.
+  assert.deepEqual(
+    terminalLaunches("win32", "C:\\Program Files (x86)\\agy\\agy.exe", ["acp", "--login"], {}),
+    []
+  )
 })
+
+test("the systemd manager's display variables are read, and nothing else", () => {
+  assert.deepEqual(
+    parseSessionEnvironment(
+      [
+        "HOME=/home/sam",
+        "DISPLAY=:0",
+        "WAYLAND_DISPLAY=wayland-0",
+        "XAUTHORITY=/run/user/1000/.mutter-Xwaylandauth.ABC123",
+        "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus",
+        "PATH=/usr/bin",
+        "",
+      ].join("\n")
+    ),
+    {
+      DISPLAY: ":0",
+      WAYLAND_DISPLAY: "wayland-0",
+      XAUTHORITY: "/run/user/1000/.mutter-Xwaylandauth.ABC123",
+      DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/1000/bus",
+    }
+  )
+  assert.deepEqual(parseSessionEnvironment("DISPLAY=$'odd\\nvalue'\n"), {})
+})
+
+test(
+  "a Linux terminal that is missing or fails at once is skipped; one that runs has opened",
+  { skip: process.platform === "win32" && "needs a POSIX shell" },
+  async () => {
+    assert.equal(await startLaunch({ command: "blitz-no-such-terminal", args: [] }, false), "unavailable")
+    assert.equal(await startLaunch({ command: "sh", args: ["-c", "exit 1"] }, false), "unavailable")
+    assert.equal(await startLaunch({ command: "sh", args: ["-c", "exit 0"] }, false), "opened")
+    assert.equal(await startLaunch({ command: "sleep", args: ["2"] }, false), "opened")
+  }
+)
 
 test("Linux tries the desktop's terminals, starting with the system default", () => {
   const launches = terminalLaunches("linux", "opencode", ["auth", "login"], {

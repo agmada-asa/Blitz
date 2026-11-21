@@ -5,11 +5,11 @@
  * need a real terminal, so Settings opens one on the computer running Blitz:
  * Terminal on macOS, the desktop's terminal emulator on Linux, and a console
  * window on Windows. Where no window can be opened (a Linux server without a
- * desktop, or no known terminal installed), the error names the command to run
- * by hand.
+ * desktop, or no terminal that starts), the error names the command to run by
+ * hand.
  */
 
-import { spawn } from "node:child_process"
+import { execFile, spawn } from "node:child_process"
 
 /** One way to open a terminal window running the sign-in command. */
 export type TerminalLaunch = Readonly<{ command: string; args: readonly string[] }>
@@ -42,10 +42,25 @@ const LINUX_TERMINALS: readonly TerminalLaunch[] = [
 ]
 
 /**
- * Characters that `cmd.exe` would treat as syntax in an unquoted Windows
- * command. A CLI path containing one is refused rather than escaped.
+ * Graphical-session variables a Linux terminal needs to reach the desktop.
+ * The background server starts with the systemd user manager, at login or at
+ * boot with lingering, before the desktop imports these into it, so its own
+ * environment often lacks them while the manager's has them.
  */
-const CMD_SYNTAX = /["%&|<>^]/
+const LINUX_SESSION_VARIABLES: readonly string[] = [
+  "DISPLAY",
+  "WAYLAND_DISPLAY",
+  "XAUTHORITY",
+  "DBUS_SESSION_BUS_ADDRESS",
+]
+
+/**
+ * Characters that `cmd.exe` would treat as syntax in a Windows command. A CLI
+ * path containing one is refused rather than escaped. `(`, `)` and `@` are
+ * included because `cmd /k` strips the quotes around a path with spaces that
+ * contains one, so `C:\Program Files (x86)\…` would run `C:\Program`.
+ */
+const CMD_SYNTAX = /["%&|<>^()@]/
 
 /**
  * Quotes a fixed local executable for a POSIX shell without evaluating it.
@@ -97,58 +112,118 @@ export function terminalLaunches(
   }))
 }
 
+/**
+ * Picks the graphical-session variables out of `systemctl --user
+ * show-environment` output.
+ *
+ * @param output - Lines of `NAME=value`.
+ * @returns Only the variables in `LINUX_SESSION_VARIABLES`. A value systemd
+ *   wrote in `$'…'` form is skipped, since none of these normally needs one.
+ */
+export function parseSessionEnvironment(output: string): Record<string, string> {
+  const environment: Record<string, string> = {}
+  for (const line of output.split("\n")) {
+    const separator = line.indexOf("=")
+    if (separator <= 0) continue
+    const name = line.slice(0, separator)
+    const value = line.slice(separator + 1)
+    if (LINUX_SESSION_VARIABLES.includes(name) && value && !value.startsWith("$'"))
+      environment[name] = value
+  }
+  return environment
+}
+
+/**
+ * Returns the environment a Linux terminal should start with. When this process
+ * has no display, as with a background server started before the desktop, the
+ * systemd user manager's current session variables are added.
+ *
+ * @param environment - This process's environment.
+ * @returns It unchanged when it has a display, otherwise with the manager's
+ *   session variables over it; unchanged too when `systemctl` is unavailable.
+ */
+async function linuxTerminalEnvironment(
+  environment: NodeJS.ProcessEnv
+): Promise<NodeJS.ProcessEnv> {
+  if (environment.DISPLAY || environment.WAYLAND_DISPLAY) return environment
+  const output = await new Promise<string>((resolve) =>
+    execFile(
+      "systemctl",
+      ["--user", "show-environment"],
+      { encoding: "utf8", timeout: 5_000 },
+      (error, stdout) => resolve(error ? "" : stdout)
+    )
+  )
+  return { ...environment, ...parseSessionEnvironment(output) }
+}
+
 /** How long a launcher that exits once the window is open may take. */
 const LAUNCH_TIMEOUT_MS = 15_000
 
 /**
+ * How long a Linux terminal must keep running to count as opened. One that
+ * cannot reach the display exits with an error well within this.
+ */
+const LINUX_EARLY_EXIT_MS = 1_500
+
+/**
  * Starts one terminal launcher and waits until it has handed the window off.
  *
- * On Linux the terminal itself stays running, so success means it started.
- * On macOS and Windows the launcher (`osascript`, `cmd /c start`) exits as soon
- * as the window is open, so success means it exited cleanly in time; macOS may
- * first ask the user to let Blitz control Terminal.
+ * On Linux the terminal itself usually stays running, so success means it is
+ * still running after `LINUX_EARLY_EXIT_MS`, or exited cleanly before then
+ * (a client that hands the window to its server). An early failed exit counts
+ * as unavailable, so the next terminal is tried. On macOS and Windows the
+ * launcher (`osascript`, `cmd /c start`) exits as soon as the window is open,
+ * so success means it exited cleanly in time; macOS may first ask the user to
+ * let Blitz control Terminal.
  *
  * @param launch - The launcher and its arguments.
  * @param waitForExit - Whether the launcher exits once the window is open.
- * @returns `"missing"` when the launcher is not installed, otherwise `"opened"`.
- * @throws When the launcher starts but fails or does not finish in time.
+ * @param environment - The environment to start the launcher with.
+ * @returns `"unavailable"` when the launcher is not installed or, on Linux,
+ *   failed at once; otherwise `"opened"`.
+ * @throws On macOS and Windows, when the launcher fails or does not finish in time.
  */
-function startLaunch(
+export function startLaunch(
   launch: TerminalLaunch,
-  waitForExit: boolean
-): Promise<"opened" | "missing"> {
+  waitForExit: boolean,
+  environment: NodeJS.ProcessEnv = process.env
+): Promise<"opened" | "unavailable"> {
   return new Promise((resolve, reject) => {
+    let settled = false
+    let timer: NodeJS.Timeout | undefined
     const child = spawn(launch.command, [...launch.args], {
       detached: !waitForExit,
+      env: environment,
       stdio: "ignore",
       windowsHide: true,
     })
-    // Child events arrive asynchronously, so `finish` never runs before this.
-    const timer = waitForExit
-      ? setTimeout(() => {
-          child.kill()
-          finish(new Error("The sign-in window did not open in time."))
-        }, LAUNCH_TIMEOUT_MS)
-      : undefined
-    const finish = (outcome: "opened" | "missing" | Error): void => {
+    const finish = (outcome: "opened" | "unavailable" | Error): void => {
+      if (settled) return
+      settled = true
       clearTimeout(timer)
+      if (!waitForExit) child.unref()
       if (outcome instanceof Error) reject(outcome)
       else resolve(outcome)
     }
     child.once("error", (error: NodeJS.ErrnoException) =>
       finish(
-        error.code === "ENOENT"
-          ? "missing"
+        error.code === "ENOENT" || !waitForExit
+          ? "unavailable"
           : new Error("The sign-in window could not open.")
       )
     )
     if (!waitForExit) {
       child.once("spawn", () => {
-        child.unref()
-        finish("opened")
+        timer = setTimeout(() => finish("opened"), LINUX_EARLY_EXIT_MS)
       })
+      child.once("exit", (code) => finish(code === 0 ? "opened" : "unavailable"))
       return
     }
+    timer = setTimeout(() => {
+      child.kill()
+      finish(new Error("The sign-in window did not open in time."))
+    }, LAUNCH_TIMEOUT_MS)
     child.once("close", (code) =>
       finish(code === 0 ? "opened" : new Error("The sign-in window could not open."))
     )
@@ -168,9 +243,13 @@ export async function openTerminalLogin(
   args: readonly string[],
   manual: string
 ): Promise<void> {
-  const launches = terminalLaunches(process.platform, executable, args, process.env)
+  const environment =
+    process.platform === "linux"
+      ? await linuxTerminalEnvironment(process.env)
+      : process.env
+  const launches = terminalLaunches(process.platform, executable, args, environment)
   const waitForExit = process.platform === "darwin" || process.platform === "win32"
   for (const launch of launches)
-    if ((await startLaunch(launch, waitForExit)) === "opened") return
+    if ((await startLaunch(launch, waitForExit, environment)) === "opened") return
   throw new Error(`Run \`${manual}\` in a terminal, then check again.`)
 }
