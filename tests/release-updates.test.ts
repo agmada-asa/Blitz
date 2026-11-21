@@ -365,8 +365,8 @@ test("a rebuild asked for during a check runs after it and gets its own answer",
 /** Skips tests of POSIX process groups and signals, which the supervisor does not use on Windows. */
 const posixOnly = process.platform === "win32" && "POSIX process groups and signals are not used on Windows"
 
-/** Skips tests of the launchd background server, which runs on macOS only. */
-const backgroundServerOnly = process.platform === "win32" && "The background server and its SIGUSR2 requests run on macOS only"
+/** Skips tests of the background server, which runs on macOS and Linux only. */
+const backgroundServerOnly = process.platform === "win32" && "The background server and its SIGUSR2 requests run on macOS and Linux only"
 
 test("requests sent while the server starts wait for it instead of ending it", { skip: backgroundServerOnly }, async () => {
   const home = await mkdtemp(join(tmpdir(), "blitz-update-"))

@@ -2,7 +2,8 @@
  * Sets up and controls the Blitz background server (`npm run server -- <command>`).
  *
  * `install` creates the Blitz home (`~/.blitz`, or `BLITZ_HOME`): a bare clone
- * of the repository, a first production release, and a launchd agent that
+ * of the repository, a first production release, and a per-user service (a
+ * launchd agent on macOS, a systemd user unit on Linux) that
  * serves it on port 3007 and keeps it on the newest commit of `main`. Coding
  * in this checkout then never affects the running app. The other commands
  * report on and control that agent; see `docs/local-server.md`.
@@ -20,13 +21,14 @@ import {
   waitForCheck,
 } from "../electron/auto-update.mjs"
 import {
-  installLaunchAgent,
+  installService,
   isServerInstalled,
-  launchAgentPath,
   serverProcess,
+  serviceFilePath,
   startServer,
   stopServer,
-  uninstallLaunchAgent,
+  supportsBackgroundServer,
+  uninstallService,
 } from "../electron/background-server.mjs"
 import {
   blitzHome,
@@ -60,7 +62,7 @@ function git(args) {
 
 /**
  * Turns an SSH GitHub remote into HTTPS, which a public repository can fetch
- * from without keys; launchd has no SSH agent.
+ * from without keys; the service has no SSH agent.
  * @param {string} url The remote URL.
  */
 function fetchableUrl(url) {
@@ -87,10 +89,10 @@ async function waitForServer(port, timeoutMs) {
   return false
 }
 
-/** Creates the Blitz home, builds the first release, and installs the launchd agent. */
+/** Creates the Blitz home, builds the first release, and installs the service. */
 async function install() {
-  if (process.platform !== "darwin")
-    throw new Error("The background server uses launchd, so it runs on macOS only.")
+  if (!supportsBackgroundServer())
+    throw new Error("The background server runs on macOS and Linux only. Use npm run dev:lan instead.")
   const commonDirectory = resolve(checkout, git(["rev-parse", "--git-common-dir"]))
   // The main checkout, even when this command runs from a linked worktree.
   const sharedRoot = resolve(option("shared-root") ?? dirname(commonDirectory))
@@ -147,7 +149,7 @@ async function install() {
     console.log(`Built ${built.directory}`)
   }
 
-  await installLaunchAgent({
+  await installService({
     home,
     nodePath: process.execPath,
     environment: {
@@ -156,14 +158,19 @@ async function install() {
       ...(process.env.BLITZ_HOME ? { BLITZ_HOME: home } : {}),
     },
   })
-  console.log(`Installed ${launchAgentPath()}. Waiting for Blitz to start…`)
+  console.log(`Installed ${serviceFilePath()}. Waiting for Blitz to start…`)
   if (await waitForServer(port, 3 * 60_000))
     console.log(`Blitz is running at http://localhost:${port} and updates itself from ${config.branch}.`)
   else
     console.log(
       `Blitz has not answered yet. If another Blitz is serving the database, stop it; the server starts when it can. Logs: ${join(paths.logs, "server.log")}`
     )
-  console.log("Run npm run desktop:install so Blitz.app opens this server.")
+  if (process.platform === "darwin")
+    console.log("Run npm run desktop:install so Blitz.app opens this server.")
+  else
+    console.log(
+      "To keep Blitz running while you are logged out, run loginctl enable-linger once."
+    )
 }
 
 /** Prints the server's process, release, and last update check. */
@@ -181,7 +188,7 @@ async function status() {
     process_.pid
       ? `Running (pid ${process_.pid}) on port ${state?.port ?? "?"}`
       : process_.loaded
-        ? "Loaded but not running; launchd will start it again shortly."
+        ? "Loaded but not running; it will start again shortly."
         : "Stopped. Start it with npm run server -- start."
   )
   if (state?.release)
@@ -224,7 +231,7 @@ const commands = {
     console.log("Stopped the Blitz server. It starts again at login, or with npm run server -- start.")
   },
   uninstall: async () => {
-    await uninstallLaunchAgent()
+    await uninstallService()
     console.log(`Removed the Blitz server. Releases and logs remain in ${home}.`)
   },
 }

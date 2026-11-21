@@ -291,7 +291,7 @@ async function openCodeAuthentication(): Promise<
         id: "opencode-login",
         name: "Add an OpenCode provider",
         description:
-          "Choose a model provider and finish its sign-in in Terminal.",
+          "Choose a model provider and finish its sign-in in the terminal window that opens.",
         type: "terminal",
       },
     ],
@@ -328,7 +328,7 @@ async function antigravityAuthentication(): Promise<
       {
         id: "antigravity-login",
         name: "Sign in to Antigravity",
-        description: "Finish the Google sign-in in Terminal.",
+        description: "Finish the Google sign-in in the terminal window that opens.",
         type: "terminal",
       },
     ],

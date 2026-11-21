@@ -52,7 +52,8 @@ jobs:
 
   # A fresh clone on Windows and Linux: `npm run dev` must create the local
   # database, serve Blitz, and save, read back and show a project. The unit
-  # tests stay on macOS, where some rely on Unix process groups.
+  # tests stay on macOS, where some rely on Unix process groups, except the
+  # sign-in terminal tests, which need each platform's real shell.
   start:
     name: Starts on ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
@@ -75,6 +76,9 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Open a provider sign-in terminal
+        run: node --test --experimental-strip-types tests/terminal-login.test.ts
 
       - name: Start Blitz and open a project
         run: node scripts/smoke-start.mjs
