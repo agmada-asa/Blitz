@@ -37,11 +37,17 @@ export function packIco(images) {
 /**
  * Quotes one argument for a `.desktop` file's `Exec` line, as the Desktop
  * Entry Specification requires for paths with spaces or reserved characters.
+ * The value is unescaped twice: once as a desktop entry string, where only
+ * `\\` and a few letters are valid escapes (GLib rejects the line otherwise),
+ * then as a quoted argument. So the quoting's backslashes are doubled, and a
+ * literal `%` is written `%%` so it can't start a field code such as `%u`.
  * @param {string} value The argument.
  * @returns {string} The argument as it is, or double-quoted with `"`, `` ` ``,
- *   `$` and `\` escaped.
+ *   `$` and `\` escaped, ready to write into the file.
  */
 export function desktopExecQuote(value) {
-  if (!/[\s"'\\`$<>~|&;*?#()]/.test(value)) return value
-  return `"${value.replace(/["`$\\]/g, (character) => `\\${character}`)}"`
+  const literal = value.replaceAll("%", "%%")
+  if (!/[\s"'\\`$<>~|&;*?#()]/.test(literal)) return literal
+  const quoted = `"${literal.replace(/["`$\\]/g, (character) => `\\${character}`)}"`
+  return quoted.replaceAll("\\", "\\\\")
 }

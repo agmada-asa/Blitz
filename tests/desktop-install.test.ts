@@ -35,7 +35,10 @@ test("packs PNGs into an icon whose directory points at each image", () => {
 test("quotes a desktop entry's program path only when it needs it", () => {
   assert.equal(desktopExecQuote("/home/sam/.local/share/blitz/app/blitz"), "/home/sam/.local/share/blitz/app/blitz")
   assert.equal(desktopExecQuote("/home/sam/My Apps/blitz"), '"/home/sam/My Apps/blitz"')
-  assert.equal(desktopExecQuote('/home/a"b/$x'), '"/home/a\\"b/\\$x"')
+  // The file holds `\\"` and `\\$`: the string escape `\\` comes first, then the quoting.
+  assert.equal(desktopExecQuote('/home/a"b/$x'), '"/home/a\\\\"b/\\\\$x"')
+  assert.equal(desktopExecQuote("/home/a\\b c"), '"/home/a\\\\\\\\b c"')
+  assert.equal(desktopExecQuote("/home/100%/blitz"), "/home/100%%/blitz")
 })
 
 /** Runs Git in a directory for fixture setup. */
