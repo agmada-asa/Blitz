@@ -29,7 +29,7 @@ import { homedir, tmpdir } from "node:os"
 import { dirname, join, resolve } from "node:path"
 import sharp from "sharp"
 import { isServerInstalled } from "../electron/background-server.mjs"
-import { blitzHome } from "../electron/release-manager.mjs"
+import { blitzHome, readServerConfig } from "../electron/release-manager.mjs"
 import { desktopExecQuote, packIco } from "./desktop-files.mjs"
 import { ensureLocalDatabase, mainCheckout, setUpHome } from "./install-home.mjs"
 
@@ -442,10 +442,13 @@ async function installLinux(bundle) {
     const owned = spawnSync("sudo", ["chown", "root:root", helper], { stdio: "inherit" })
     const setuid =
       owned.status === 0 && spawnSync("sudo", ["chmod", "4755", helper], { stdio: "inherit" })
-    if (!setuid || setuid.status !== 0)
+    if (!setuid || setuid.status !== 0) {
+      // Single-quoted for the shell, so a path with spaces pastes as one argument.
+      const quoted = `'${helper.replaceAll("'", `'\\''`)}'`
       console.log(
-        `Blitz won't open until this is done. Run:\n  sudo chown root:root ${helper} && sudo chmod 4755 ${helper}`
+        `Blitz won't open until this is done. Run:\n  sudo chown root:root ${quoted} && sudo chmod 4755 ${quoted}`
       )
+    }
   }
   return `Installed ${executable}. Open Blitz from your applications menu.`
 }
@@ -459,6 +462,8 @@ async function main() {
   const sharedRoot = mainCheckout(checkout)
   await ensureLocalDatabase(sharedRoot)
   await setUpHome({ home: blitzHome(), checkout, sharedRoot, ref: option("ref") })
+  // A home set up earlier may follow another branch, which it keeps.
+  const branch = (await readServerConfig(blitzHome()))?.branch ?? "main"
 
   console.log("Packaging the app…")
   const workDirectory = await mkdtemp(join(tmpdir(), "blitz-desktop-"))
@@ -468,7 +473,7 @@ async function main() {
     console.log(
       isServerInstalled()
         ? "It opens the background server, which keeps Blitz up to date."
-        : "While it is open, Blitz updates itself from main every 15 minutes."
+        : `While it is open, Blitz updates itself from ${branch} every 15 minutes.`
     )
   } finally {
     await rm(workDirectory, { recursive: true, force: true })

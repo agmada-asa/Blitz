@@ -70,7 +70,7 @@ async function waitForServer(port, timeoutMs) {
  */
 async function install() {
   if (!supportsBackgroundServer())
-    throw new Error("The background server runs on macOS and Linux only. On Windows, open the Blitz app from npm run desktop:install.")
+    throw new Error("The background server runs on macOS and Linux only. On Windows, run npm run desktop:install and use the Blitz app, which updates itself while it's open.")
   const sharedRoot = resolve(option("shared-root") ?? mainCheckout(checkout))
   const port = Number(option("port") ?? process.env.BLITZ_PORT ?? 3007)
   await ensureLocalDatabase(sharedRoot)
