@@ -1,18 +1,26 @@
-# Local Kokoro speech
+# Local speech
 
-Blitz runs Kokoro on the local Node.js host, on macOS or Linux. The first speech request downloads the Kokoro ONNX model and voice catalogue into `~/Library/Application Support/Blitz/kokoro` on macOS, or `~/.local/share/blitz/kokoro` on Linux (under `$XDG_DATA_HOME` when it is set); later requests reuse them. Apple silicon Macs run Kokoro through MLX; Linux and Intel Macs use the ONNX model. A Python worker keeps the model loaded while speech is in use and shuts down after one minute without inference. The next uncached speech request loads it again. Server startup warms the worker in the background when the Python environment and model assets already exist. Startup does not download missing assets; the first requested synthesis still performs initial setup. The worker completes a tiny inference before announcing readiness.
+Read aloud, podcasts and audiobooks use [Kokoro](https://huggingface.co/hexgrad/Kokoro-82M) on the computer hosting Blitz, on macOS or Linux. Spoken questions use Whisper, on Apple silicon Macs only. Both run as Python workers that Next.js starts on demand. How voice mode and dictation use them is in [voice](voice.md).
+
+## Setup
+
+Run `sh scripts/setup-kokoro.sh` from the repository with Python 3 installed (Debian and Ubuntu first need `sudo apt install python3-venv`). It creates an isolated environment in the speech data directory and installs the pinned packages in `scripts/kokoro-requirements.txt`; on Apple silicon these include `mlx-audio` for Kokoro and `mlx-whisper` for transcription. On macOS with Homebrew it also asks you to install `espeak-ng` (`brew install espeak-ng`) for English phonemes.
+
+The data directory is `~/Library/Application Support/Blitz/kokoro` on macOS, or `~/.local/share/blitz/kokoro` on Linux (under `$XDG_DATA_HOME` when it is set). Set `BLITZ_KOKORO_DIR` to move it, and `BLITZ_KOKORO_PYTHON` to pick the interpreter; by default Blitz uses `venv/bin/python3` inside the data directory.
+
+## Kokoro
+
+On Apple silicon, the worker (`scripts/kokoro-worker.py`) loads `mlx-community/Kokoro-82M-bf16` through MLX, which downloads it into the Hugging Face cache on first use. Elsewhere, or if MLX isn't installed, it uses the ONNX model and voice file, downloaded into the data directory on first use. Server startup warms the worker in the background only when the ONNX files are already there, so an MLX-only install loads on the first speech request instead. The worker runs a tiny inference before it reports ready, and shuts down after ten minutes without inference.
 
 ## CPU and worker lifetime
 
-Local inference uses two ONNX threads, sequential operator execution, and no thread-pool spinning. Numerical libraries also receive a two-thread limit before import. These settings reduce CPU use and power consumption; they are thread limits, not a hard percentage cap on total CPU usage.
+Numerical libraries get a two-thread limit before import. On the ONNX path, inference also uses two threads, sequential operator execution and no thread-pool spinning. These reduce CPU use and power; they are thread limits, not a cap on total CPU usage.
 
 Startup has a three-minute deadline, including any first-use model download. Each inference has a two-minute deadline, beginning after the worker is ready. A timeout or failed request rejects the caller, sends SIGTERM, and escalates to SIGKILL after one second if needed. The speech queue waits for the old process to exit before moving on, preventing overlapping replacement workers. A later request can start a fresh worker; a failed inference is never retried automatically. Idle shutdown does not interrupt an active inference.
 
 Node force-kills owned speech processes on exit. Python also checks its parent every second and exits if the owning server disappears, covering abrupt server termination that bypasses Node exit hooks. After switching Git branches, stop and restart the full `npm run dev` launcher so its servers use the same checkout (the background server runs from its own releases and is unaffected); stopping one supervised server alone causes the launcher to restart it.
 
-Install Python 3.10 through 3.13, then run `scripts/setup-kokoro.sh` from the repository. The script creates an isolated environment in the same data directory and installs pinned packages from `scripts/kokoro-requirements.txt`. For English phonemization on macOS, install `espeak-ng` with Homebrew (`brew install espeak-ng`) if it is not already available. On Linux, the ONNX packages bring their own `espeak-ng`; Debian and Ubuntu need `sudo apt install python3-venv` before the script can create the environment.
-
-Set `BLITZ_KOKORO_DIR` to move the model, voice files, and Python environment to another writable directory. Set `BLITZ_KOKORO_PYTHON` to select a Python interpreter explicitly; by default Blitz uses `venv/bin/python3` inside the data directory. The web speech route accepts text up to 12,000 characters per request. Longer audiobook and podcast jobs should split content into short chunks and call `synthesizeKokoroToFile` for each chunk.
+The speech route (`POST /api/audio/speech`) accepts up to 12,000 characters per request, and 120 for a preparation request. Audiobook and podcast jobs split their text into short pieces and call `synthesizeKokoroToFile` for each.
 
 ## Read aloud latency
 
@@ -24,12 +32,10 @@ The server queue gives active playback priority over audiobook and podcast recor
 
 Generated read aloud WAVs remain in a private disk cache capped at 500 MiB and seven days without access. Cache keys contain hashes of voice and text; the cache does not save source text. Disk eviction runs after generation without delaying the response. Fresh text still needs inference time; near-instant playback depends on its opening being prepared or cached. Full audiobook and podcast playback still begins after script preparation, recording, and final assembly complete.
 
-## Voice Teach
+## Speech to text
 
-The **Read replies aloud** setting in Teach's three-dot Unit options menu reads each new tutor reply with the same player once it finishes, starting with the section title. Only replies written while the screen is open are read, so returning to a unit does not read its history. The choice is kept in the browser. Starting a section's own Read aloud stops it, and so does the mic.
+`lib/server/speech-to-text.ts` runs `scripts/speech-to-text-worker.py` in the same Python environment. It transcribes with Whisper through `mlx_whisper`, using `mlx-community/whisper-large-v3-turbo` unless `BLITZ_WHISPER_MODEL` names another, and drops segments that look invented from silence. It needs an Apple silicon Mac; elsewhere transcription is refused and the rest of Blitz works as usual.
 
-The mic beside the question box turns a spoken question into text on the Mac. The browser streams the microphone to the local voice service only while the mic is on, and the service wraps each snapshot as 16 kHz mono 16-bit PCM WAV (the format in `lib/speech-wav.ts`), so the server needs no audio decoder. `/api/audio/transcribe` passes it to a second Python worker (`scripts/speech-to-text-worker.py`) in the Kokoro environment, which runs NVIDIA's Parakeet TDT 0.6B v2 (English, int8) on onnxruntime through `onnx-asr`. The text goes into the question box to edit or send. Recordings are capped at two minutes, written to a private temporary folder for the worker and deleted straight after; nothing is sent off the Mac.
+The voice service sends each finished stretch of speech to `POST /api/audio/transcribe` as 16 kHz mono 16-bit PCM WAV (the format in `lib/speech-wav.ts`), so the server needs no audio decoder. The worker gets a private temporary file that is deleted straight after, even if the caller has gone; a transcription cancelled while queued never writes one. Nothing leaves the computer.
 
-Cancelling a queued transcription creates no temporary files. If inference has already started, its files stay available until the worker finishes, then both recording and transcript are deleted even though the caller has left.
-
-The first use downloads the model, about 630 MB, into `speech-to-text/` in the Kokoro data folder, so startup allows up to 20 minutes. The mic warms the worker as recording starts. Once loaded it stays up for five idle minutes, and a short question takes under a second to transcribe. Set `BLITZ_SPEECH_TO_TEXT_MODEL` to try another `onnx-asr` model. After pulling this change, run `scripts/setup-kokoro.sh` again to install `onnx-asr`. macOS asks for microphone access the first time.
+The first use downloads the model, so startup is allowed 20 minutes. Each transcription has 60 seconds, and the worker stays loaded for five idle minutes. macOS asks for microphone access the first time.

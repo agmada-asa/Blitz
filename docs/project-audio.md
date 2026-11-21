@@ -1,6 +1,6 @@
 # Project audio
 
-Blitz can narrate a ready source as an audiobook or write a podcast from the ready sources in a project. Both features run Kokoro on the Mac hosting Blitz. Chat's **Read aloud** action uses the same local speech worker and the first voice saved in Settings.
+Blitz can narrate a ready source as an audiobook or write a podcast from the ready sources in a project. Both features run Kokoro on the computer hosting Blitz (macOS or Linux; see [local speech](local-kokoro.md)). Chat's **Read aloud** action uses the same local speech worker and the first voice saved in Settings.
 
 ## Voices and setup
 
@@ -20,4 +20,4 @@ The listening room at `/projects/[projectId]/listen/[audioId]` follows the timed
 
 The listening room saves each recording's playback position in the browser's local storage, keyed by project and recording. It restores the time after audio metadata loads and updates the transcript without starting playback. Time updates, seeks, pauses, page hides, and leaving the room save the position. When a recording finishes, its saved position is cleared so it opens at the start next time. Positions stay in that browser and do not sync across devices. If local storage is unavailable or its value is malformed, playback continues without resume data.
 
-Only one audio job per project starts at a time. A job interrupted when the local host exits is marked failed when the app next reads it; the user can create it again. Failed jobs retain their error so the interface can explain the recovery step. Source files and generated audio use the existing ignored project data directory, or `BLITZ_DATA_DIR` when configured.
+Only one audio job per project starts at a time. When the app reads a running job whose worker process has gone, or one older than 24 hours, it marks the job failed; the user can create it again. Failed jobs retain their error so the interface can explain the recovery step. Source files and generated audio use the existing ignored project data directory, or `BLITZ_DATA_DIR` when configured.
