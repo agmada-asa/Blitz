@@ -1,30 +1,27 @@
-# Shared learning HTTP API
+# Learning HTTP API
 
-The browser and native clients use the same small HTTP boundary under
-`/api/learning`. The contracts live in `lib/learning/client-contracts.ts` so
-clients do not need to import Convex types or know about the local personal-app
-deployment.
+Study screens talk to the learning core through a small HTTP boundary under `/api/learning`, implemented in `lib/server/learning-api.ts`. The request and response types live in `lib/learning/client-contracts.ts`, so a client doesn't need Convex types.
 
-`GET /api/learning/feed` accepts optional `projectId`, `topicId`, and `limit`
-(1–30), plus the opaque `cursor` returned by a prior response. It returns
-`FeedResponse` with mixed due or new cards plus project and topic filter
-options. `continueCursor` is present while more bounded pages remain;
-`isDone` is true only when the scan is exhausted. Feed cards expose actual
-source filenames and source IDs, but never expose correct answer keys.
-Explanations include `body`; question cards withhold their answer explanation
-until the answer endpoint responds.
+| Route | What it does |
+| --- | --- |
+| `GET /api/learning/feed` | A page of the Review feed |
+| `GET /api/learning/session` | A Study or Test deck; see [study sessions](study-sessions.md) |
+| `POST /api/learning/answer` | Scores and saves an answer |
+| `POST /api/learning/recall` | Reveals a recall card's answer, or saves a self-graded recall |
+| `POST /api/learning/event` | Saves a `skip` or `exposure` |
 
-`POST /api/learning/answer` accepts `AnswerRequest`. Convex evaluates the
-answer against the stored learning item, records only valid scored events, and
-returns `AnswerResponse` with status and server-owned feedback or correct keys.
-`POST /api/learning/event` accepts `EventRequest` for `skip` or `exposure`.
-These passive events do not update concept review state.
+## Feed
 
-Request bodies are capped at 32,000 bytes. Invalid JSON or payloads return 400.
-The server adapter gets its client from `serverConvexClient` in
-`lib/server/convex.ts`, shared by every API route and worker. It checks
-`BLITZ_CONVEX_URL`, then `NEXT_PUBLIC_CONVEX_URL`, then `CONVEX_URL`. Missing
-or invalid Convex configuration and backend failures return a generic 503;
-raw Convex errors and source content are never sent over the HTTP boundary.
-The current app is a personal local deployment and this API does not claim to
-provide public SaaS authentication or multi-user isolation.
+`GET /api/learning/feed` takes optional `projectId`, `limit` (1–30, default 20) and the `cursor` from the previous page, and serves `practice.feed` (see [practice](practice.md#review-feed)). The cursor is an opaque list of up to 300 item IDs already shown, so pages don't repeat; a malformed cursor returns 400. The feed never ends, so `isDone` is true only when a page comes back empty. `topicId` is accepted but currently ignored, and the returned topic list is always empty.
+
+Feed cards carry the unit title as `sourceLabel` and the source IDs, never an answer key. A question's explanation arrives only in the answer response.
+
+## Answers and events
+
+`POST /api/learning/answer` takes an `AnswerRequest`. Convex scores it against the stored item, saves only valid scored answers, and returns the outcome with feedback and the correct answer. `POST /api/learning/recall` either reveals the answer without saving anything, or saves the learner's "knew it" or "didn't" as a recall answer. `POST /api/learning/event` saves `skip` or `exposure`, which never change a review. The rules are in [learning core](learning-core.md#saving-answers).
+
+## Errors and configuration
+
+Bodies over 32,000 bytes, invalid JSON and invalid payloads return 400. The routes reach Convex through `serverConvexClient` (`lib/server/convex.ts`), which checks `BLITZ_CONVEX_URL`, then `NEXT_PUBLIC_CONVEX_URL`, then `CONVEX_URL`. A missing configuration or a backend failure returns a generic 503; raw Convex errors and source text never cross the boundary.
+
+Blitz is a personal local app, and this API has no authentication or multi-user isolation.

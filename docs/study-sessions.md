@@ -1,63 +1,24 @@
 # Study and test sessions
 
-Blitz has two deliberate modes at `/projects/:projectId/practice` and
-`/projects/:projectId/test`. Both accept an optional `topicId` query
-parameter. The older `/study` route remains separate.
+Two deliberate question sessions sit beside drills (see [practice](practice.md)). Both are `StudySession` (`components/study-session/study-session.tsx`) and show one question at a time.
 
-The session deck comes from the `listStudyQuestions` Convex query. It scans
-`learningItems` through `by_project_order`, returns at most 20 rows per page,
-and filters to single-choice, multiple-answer, and true-false questions. It
-includes reviewed and unreviewed concepts because deliberate practice and
-testing should revisit known material. It returns question text and choices,
-but never the answer key or the post-answer explanation. Explanation items,
-malformed items, and items outside the requested topic are skipped. The Convex
-query reads one bounded page per call. The HTTP route follows at most ten
-cursors, or 200 rows, to fill a sparse response without doing multiple
-pagination operations inside one Convex query. A non-final cursor means this
-is a limited initial deck; clients can request the cursor later.
+- **Study** (`/projects/[projectId]/practice/questions`) scores each answer as it's given and shows the explanation straight after.
+- **Test** (`/projects/[projectId]/test`), linked from the Practice screen as `Timed test`, keeps answers until **Finish** and only then shows results.
 
-Practice posts each selected answer to the existing `/api/learning/answer`
-endpoint immediately. The server evaluates it against the stored question,
-updates the concept review, and returns the explanation only after scoring.
-Skip advances locally and sends no answer event, so it cannot become an
-incorrect attempt.
+Both take an optional `topicId`. `/projects/[projectId]/study` is an old link and redirects to the Practice screen.
 
-Each distinct question item counts toward project concept completion after a
-valid answer, whether the answer is correct or incorrect. Re-answering the
-same item does not count again. This completion progress is separate from the
-correctness-based review schedule.
+## The deck
 
-Test keeps selections in memory until Finish. Finish submits answered
-questions one by one through `/api/learning/answer`. Unanswered questions are
-skipped and remain separate from incorrect results. The test locks selections
-and navigation once submission starts, so a partial retry cannot change an
-already submitted answer. `createAttemptId(sessionId, itemId, answer)` supplies
-the same event key when one answer is retried. A changed practice answer gets
-a different key, so a failed first request cannot collide with its replacement.
-The session also keeps one
-timestamp per mount for retries, allowing a lost response or partial Finish to
-repeat the same request safely through the existing event idempotency check.
+`GET /api/learning/session` builds the deck from `study.listStudyQuestions`. The query reads `learningItems` in order (`by_project_order`), 20 per page, and keeps single-choice, multiple-answer and true/false questions. It skips explanations, exam paper questions, malformed items and items outside the requested topic, and includes concepts already reviewed, because deliberate practice should revisit known material. It returns questions and choices without answer keys or explanations.
 
-The route is intentionally a small HTTP boundary so browser and React Native
-clients can share the contract. It validates identifiers and answer shapes,
-limits deck pages to 20, and never accepts client-provided correctness or
-review state. The scheduling and review summary remain the conservative
-heuristic already used by the learning core. They are useful bookkeeping for
-choosing what to show next, not a validated prediction of human mastery.
+The route follows up to ten pages to fill a sparse deck and stops once it has `limit` questions (default 20). A cursor in the response means there are more.
 
-The UI shows one question at a time with a short progress indicator. It does
-not record scrolling, exposure, or skip as mastery evidence. Test results list
-the server result for each question and the stored explanation when one is
-available.
+## Answers
 
-## Verification
+Study posts each answer to `POST /api/learning/answer` straight away; the server scores it, updates the concept's review and returns the explanation. Skipping moves on locally and sends nothing, so it can't count as wrong.
 
-The live browser flow was checked at 1280 × 720 and at 390 × 844 through a
-measured iframe viewport. Study returned immediate server feedback. A ten-question
-test with two answers returned one correct, one incorrect, and eight unanswered;
-no feedback appeared before Finish. Two-question cursor pages returned the same
-ordered question IDs as the full deck, without duplicates or answer keys.
+Test holds selections in memory. **Finish** submits answered questions one by one and locks the session while it does. Unanswered questions are reported as unanswered, not wrong. Each answer's idempotency key comes from `createAttemptId(sessionId, itemId, answer)` and the session keeps one timestamp, so retrying a failed Finish repeats the same requests safely; a changed answer gets a new key. If some answers fail to save, `Finish again` retries the rest.
 
-After scoring, correct options are green and selected incorrect options are red,
-with check/cancel icons and equivalent accessible labels. Test mode reveals
-these states only in the finished result view. Missing feedback stays neutral.
+After scoring, correct options turn green and a wrong choice red, with icons and matching accessible labels. Test shows these only on the results screen.
+
+Every valid answer, right or wrong, counts toward the concept's answered-question total. That's separate from the review schedule; see [learning core](learning-core.md).

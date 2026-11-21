@@ -2,8 +2,8 @@
 
 `/notifications` combines ongoing work and recent results from practice
 question banks, exam papers (past paper reading and mock writing), exam
-marking, research planning, research imports, card conversations, and
-workspace chat. Each row links to where the result is used: the module's
+marking, research planning, research imports, and chat replies (including
+chats about a card). The query is `activity.list` in `convex/activity.ts`. Each row links to where the result is used: the module's
 Practice page, the exam paper, the marked attempt, the research dialog, or the
 saved chat. Teach chats never notify; the lesson itself shows progress.
 `/activity` redirects here so older links remain valid.

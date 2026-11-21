@@ -25,7 +25,8 @@ how each is scored). Ordering and matching items are shuffled with a stable
 seed, so the browser and server always agree on the order shown.
 
 A unit's first bank starts automatically, once, as soon as its Teach session
-has an outline (`startFirstQuestionBank`, called from the chat route), so
+has an outline (`startFirstQuestionBank` in `lib/server/question-bank.ts`,
+called from the Teach turn in `lib/server/chat-turn/teach.ts`), so
 Practice and Review have questions by the time the pre-check is done. When the
 outline lists concepts, every generated question is tagged with one of them.
 Later batches are written on request from the Practice screen.
@@ -85,9 +86,19 @@ are left out of the mixed feed. The cursor holds the item IDs already shown;
 when everything has been shown, a new round begins that still skips the most
 recent eight. The feed never ends.
 
-Each visit to `/review` is a **session** with a target: the questions due
-today, capped at `REVIEW_SESSION_SIZE` (20), or a round of ten when nothing is
-due. The header counts answers against the target and shows the current run
+`/review` (`components/feed/feed.tsx`) loads 20 cards at a time and fetches
+the next page as the learner nears the end. Explanation and recap cards show
+their body at once; a question's explanation stays hidden until
+`POST /api/learning/answer` returns the scored result. Multiple-answer cards
+submit with **Check answers**. **Skip** records a passive event
+(`POST /api/learning/event`) and moves on without counting as wrong. **Ask in
+chat** opens `/chat` with the card and its module attached. A picker narrows
+the feed to one module. A load follows at most three pages in a row that add
+no new cards before it waits for the learner to scroll again.
+
+Each visit to `/review` is a **session** with a target: the number of concepts
+due for review, capped at `REVIEW_SESSION_SIZE` (20), or a round of ten when
+nothing is due. The header counts answers against the target and shows the current run
 of right answers; reaching the target opens the session summary, and **Keep
 going** carries on with the feed. The Today panel offers the same session as
 "Review 20 questions, about 7 min", with what is left after it.
@@ -99,9 +110,7 @@ nothing), then says **I knew it** or **I didn't**, which is recorded as a
 self-graded answer. **Show options** turns the card back into a normal
 question. Every question, here and in Teach and drills, has an **I'm
 guessing** toggle; a right guess schedules sooner (see
-`docs/learning-core.md`) and the Teach pre-check treats it as not known. The
-plug-in mini app's Review uses the same card through `app_answer`, `app_reveal`,
-and `app_recall`.
+`docs/learning-core.md`) and the Teach pre-check treats it as not known.
 
 ## XP, goals, and streaks
 
