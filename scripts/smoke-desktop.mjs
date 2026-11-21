@@ -14,6 +14,7 @@ import { execFileSync, spawn } from "node:child_process"
 import { existsSync, readFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
+import { readServerState } from "../electron/auto-update.mjs"
 import { blitzHome, homePaths } from "../electron/release-manager.mjs"
 
 /** The port the app serves on when it hosts the services itself. */
@@ -90,6 +91,8 @@ try {
   const page = await fetch(`${origin}/projects/${projectId}`)
   if (!page.ok) throw new Error(`The project page answered ${page.status}.`)
   console.log(`\n[smoke] The installed app started Blitz, saved project ${projectId} and served its page.`)
+  await waitForUpdateCheck()
+  console.log("[smoke] The app fetched main to check for updates.")
   exitCode = 0
 } catch (error) {
   console.error(`\n[smoke] ${error instanceof Error ? error.message : error}`)
@@ -120,6 +123,27 @@ async function waitFor(url) {
     await new Promise((resolve) => setTimeout(resolve, 1_000))
   }
   throw new Error(`${url} did not answer within ${READY_TIMEOUT_MS / 60_000} minutes.`)
+}
+
+/**
+ * Waits until the app's updater has fetched `main` at launch, which is what
+ * keeps an installed app up to date. CI installs the commit under test, so
+ * `main` usually differs and the updater moves on to building it; reaching
+ * any step after the fetch, or a recorded check other than `offline`, shows
+ * the fetch worked.
+ * @throws When the check could not fetch, or nothing happened in time.
+ */
+async function waitForUpdateCheck() {
+  const afterFetch = new Set(["building", "trying the new version", "waiting for replies to finish", "switching"])
+  const deadline = Date.now() + 3 * 60_000
+  while (Date.now() < deadline) {
+    const state = await readServerState(blitzHome())
+    if (state?.lastCheck?.status === "offline")
+      throw new Error(`The app could not fetch main: ${state.lastCheck.message}`)
+    if (state?.lastCheck || afterFetch.has(state?.phase?.name ?? "")) return
+    await new Promise((resolve) => setTimeout(resolve, 2_000))
+  }
+  throw new Error("The app did not check for updates within three minutes of starting.")
 }
 
 /**

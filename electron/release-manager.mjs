@@ -202,7 +202,7 @@ export function runCommand(command, args, options = {}) {
       tail = (tail + text).slice(-2_000)
       firstError ??= text
         .split("\n")
-        .find((line) => /\berror\b|ERR!|Failed to/i.test(line))
+        .find((line) => /\berror\b|ERR!|Failed to|^fatal:/i.test(line.trim()))
         ?.trim()
         .slice(0, 300)
       log?.write(chunk)

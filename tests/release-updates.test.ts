@@ -159,6 +159,15 @@ test("a failed command names its first error, not the warnings after it", async 
       error.message.split("\n")[0] ===
       "next build exited with 2: x.ts(1,1): error TS2322: bad"
   )
+  // Git explains a failed fetch on a `fatal:` line.
+  await assert.rejects(
+    runCommand("sh", ["-c", "echo \"fatal: unable to access 'https://example.com/'\" >&2; exit 128"], {
+      label: "git fetch",
+    }),
+    (error: Error) =>
+      error.message.split("\n")[0] ===
+      "git fetch exited with 128: fatal: unable to access 'https://example.com/'"
+  )
 })
 
 test("pruning keeps the served release and the newest builds", async () => {
