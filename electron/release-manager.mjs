@@ -22,10 +22,13 @@
  * a running server is reading.
  */
 
-import { spawn } from "node:child_process"
+import { execFile } from "node:child_process"
 import { createHash } from "node:crypto"
 import { createWriteStream, existsSync } from "node:fs"
 import {
+  copyFile,
+  cp,
+  link,
   lstat,
   mkdir,
   readFile,
@@ -36,6 +39,8 @@ import {
   symlink,
   writeFile,
 } from "node:fs/promises"
+// Finds Windows `.cmd` shims such as `npm.cmd`, which Node cannot spawn itself.
+import spawn from "cross-spawn"
 import { homedir } from "node:os"
 import { join, resolve } from "node:path"
 
@@ -183,6 +188,8 @@ export function runCommand(command, args, options = {}) {
       env,
       stdio: ["ignore", "pipe", "pipe"],
       detached: process.platform !== "win32",
+      // The Windows app has no console, so each Git or npm run would open one.
+      windowsHide: true,
     })
     const pid = child.pid
     if (pid) processes?.trackGroup(pid)
@@ -196,7 +203,7 @@ export function runCommand(command, args, options = {}) {
       tail = (tail + text).slice(-2_000)
       firstError ??= text
         .split("\n")
-        .find((line) => /\berror\b|ERR!|Failed to/i.test(line))
+        .find((line) => /\berror\b|ERR!|Failed to|^fatal:/i.test(line.trim()))
         ?.trim()
         .slice(0, 300)
       log?.write(chunk)
@@ -204,6 +211,12 @@ export function runCommand(command, args, options = {}) {
     child.stdout.on("data", collect(true))
     child.stderr.on("data", collect(false))
     const timer = setTimeout(() => {
+      if (process.platform === "win32") {
+        // Windows has no process groups; taskkill stops the command's whole tree.
+        if (child.pid)
+          execFile("taskkill", ["/pid", String(child.pid), "/t", "/f"], { windowsHide: true }, () => undefined)
+        return
+      }
       try {
         process.kill(-child.pid, "SIGKILL")
       } catch {}
@@ -474,16 +487,28 @@ export class ReleaseManager {
    * every release talks to the same database. The `.convex` folder is created
    * first when missing, so Convex never keeps a database inside a release that
    * will later be deleted.
+   *
+   * Windows only lets administrators and developer mode create symbolic links,
+   * so there `.convex` is a directory junction, which needs no privilege, and
+   * `.env.local` is a hard link, so settings the learner edits in the checkout
+   * reach the running release as they do elsewhere. A hard link only works on
+   * one drive, and an editor that saves by replacing the file breaks it, so
+   * a release on another drive gets a copy, and either way the next release
+   * links the file again.
    * @param {string} directory The new release.
+   * @param {NodeJS.Platform} [platform] The operating system, for tests.
    */
-  async linkSharedFiles(directory) {
+  async linkSharedFiles(directory, platform = process.platform) {
     const { sharedRoot } = this.config
     await mkdir(join(sharedRoot, ".convex"), { recursive: true })
     for (const name of SHARED_FILES) {
       const source = join(sharedRoot, name)
       if (!existsSync(source)) continue
-      await rm(join(directory, name), { recursive: true, force: true })
-      await symlink(source, join(directory, name))
+      const target = join(directory, name)
+      await rm(target, { recursive: true, force: true })
+      if (platform !== "win32") await symlink(source, target)
+      else if (name === ".convex") await symlink(source, target, "junction")
+      else await link(source, target).catch(() => copyFile(source, target))
     }
   }
 
@@ -506,23 +531,29 @@ export class ReleaseManager {
       )
         continue
       try {
+        const source = join(release.directory, "node_modules")
+        const target = join(directory, "node_modules")
+        if (process.platform === "win32") {
+          // Windows has no `cp`; npm's `.bin` shims there are plain files.
+          await cp(source, target, { recursive: true, verbatimSymlinks: true })
+          return lockfileHash
+        }
         // macOS `cp -c` clones on APFS. GNU `cp --reflink=auto` clones on
         // Btrfs and XFS and copies elsewhere, which is still faster than npm.
         const cloneFlags = process.platform === "darwin" ? ["-cR"] : ["-R", "--reflink=auto"]
-        await this.run(
-          "cp",
-          [...cloneFlags, join(release.directory, "node_modules"), join(directory, "node_modules")],
-          { logPath, timeoutMs: 5 * 60_000 }
-        )
+        await this.run("cp", [...cloneFlags, source, target], { logPath, timeoutMs: 5 * 60_000 })
         return lockfileHash
       } catch {
         // A failed clone falls back to a clean install below.
         await rm(join(directory, "node_modules"), { recursive: true, force: true })
       }
     }
+    const install = ["npm", "ci", "--no-audit", "--no-fund"]
+    // Windows has no `nice`, so there npm runs at normal priority.
+    const [command, ...args] = process.platform === "win32" ? install : ["nice", "-n", "10", ...install]
     await this.run(
-      "nice",
-      ["-n", "10", "npm", "ci", "--no-audit", "--no-fund"],
+      command,
+      args,
       {
         cwd: directory,
         env: this.environment,
@@ -536,10 +567,20 @@ export class ReleaseManager {
 
   /**
    * Points `current` at a finished release with an atomic rename, so readers
-   * never see a missing link.
+   * never see a missing link. On Windows `current` is a directory junction,
+   * which needs no privilege but cannot be renamed over another, so it is
+   * replaced in two steps; a reader in between finds no release and waits for
+   * the next launch, which reads it again.
    * @param {string} directory The release to serve.
+   * @param {NodeJS.Platform} [platform] The operating system, for tests.
    */
-  async activate(directory) {
+  async activate(directory, platform = process.platform) {
+    if (platform === "win32") {
+      // Without `recursive`, `rm` removes the junction, never the release it points at.
+      await rm(this.paths.current, { force: true })
+      await symlink(directory, this.paths.current, "junction")
+      return
+    }
     const pending = `${this.paths.current}.${process.pid}.pending`
     await rm(pending, { force: true })
     await symlink(directory, pending)
@@ -598,6 +639,11 @@ export class ReleaseManager {
    * @param {string} directory The release to remove.
    */
   async remove(directory) {
+    // Unlink the shared database first, so no recursive delete below can
+    // follow a link (or a Windows junction) into it. Without `recursive`,
+    // `rm` removes a link and refuses a real folder.
+    for (const name of SHARED_FILES)
+      await rm(join(directory, name), { force: true }).catch(() => undefined)
     try {
       await this.git(["worktree", "remove", "--force", directory])
     } catch {

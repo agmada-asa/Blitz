@@ -1,18 +1,16 @@
 /**
  * Sets up and controls the Blitz background server (`npm run server -- <command>`).
  *
- * `install` creates the Blitz home (`~/.blitz`, or `BLITZ_HOME`): a bare clone
- * of the repository, a first production release, and a per-user service (a
+ * `install` creates the local database if there is none, then the Blitz home
+ * (`~/.blitz`, or `BLITZ_HOME`; see `install-home.mjs`): a bare clone of the
+ * repository, a first production release, and a per-user service (a
  * launchd agent on macOS, a systemd user unit on Linux) that
  * serves it on port 3007 and keeps it on the newest commit of `main`. Coding
  * in this checkout then never affects the running app. The other commands
  * report on and control that agent; see `docs/local-server.md`.
  */
 
-import { execFileSync } from "node:child_process"
-import { existsSync } from "node:fs"
-import { readFile, writeFile, mkdir } from "node:fs/promises"
-import { dirname, join, resolve } from "node:path"
+import { join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import {
   readServerState,
@@ -30,13 +28,8 @@ import {
   supportsBackgroundServer,
   uninstallService,
 } from "../electron/background-server.mjs"
-import {
-  blitzHome,
-  currentRelease,
-  homePaths,
-  readServerConfig,
-  ReleaseManager,
-} from "../electron/release-manager.mjs"
+import { blitzHome, homePaths, readServerConfig } from "../electron/release-manager.mjs"
+import { ensureLocalDatabase, mainCheckout, setUpHome } from "./install-home.mjs"
 
 const checkout = fileURLToPath(new URL("..", import.meta.url))
 const home = blitzHome()
@@ -50,24 +43,6 @@ const [command = "status", ...rest] = process.argv.slice(2)
 function option(name) {
   const index = rest.indexOf(`--${name}`)
   return index === -1 ? undefined : rest[index + 1]
-}
-
-/**
- * Runs Git in this checkout and returns its trimmed output.
- * @param {string[]} args Git arguments.
- */
-function git(args) {
-  return execFileSync("git", args, { cwd: checkout, encoding: "utf8" }).trim()
-}
-
-/**
- * Turns an SSH GitHub remote into HTTPS, which a public repository can fetch
- * from without keys; the service has no SSH agent.
- * @param {string} url The remote URL.
- */
-function fetchableUrl(url) {
-  const ssh = url.match(/^git@github\.com:(.+)$/)
-  return ssh ? `https://github.com/${ssh[1]}` : url
 }
 
 /**
@@ -89,65 +64,25 @@ async function waitForServer(port, timeoutMs) {
   return false
 }
 
-/** Creates the Blitz home, builds the first release, and installs the service. */
+/**
+ * Creates the local database if there is none, sets up the Blitz home with a
+ * first release, and installs the service.
+ */
 async function install() {
   if (!supportsBackgroundServer())
-    throw new Error("The background server runs on macOS and Linux only. Use npm run dev:lan instead.")
-  const commonDirectory = resolve(checkout, git(["rev-parse", "--git-common-dir"]))
-  // The main checkout, even when this command runs from a linked worktree.
-  const sharedRoot = resolve(option("shared-root") ?? dirname(commonDirectory))
-  const convexConfigPath = join(sharedRoot, ".convex", "local", "default", "config.json")
-  if (!existsSync(join(sharedRoot, ".env.local")) || !existsSync(convexConfigPath))
-    throw new Error(
-      `${sharedRoot} has no local Convex database yet. Run npm run dev:lan -- --dev there once, stop it, then install again.`
-    )
+    throw new Error("The background server runs on macOS and Linux only. On Windows, run npm run desktop:install and use the Blitz app, which updates itself while it's open.")
+  const sharedRoot = resolve(option("shared-root") ?? mainCheckout(checkout))
   const port = Number(option("port") ?? process.env.BLITZ_PORT ?? 3007)
-  const config = {
-    repository: option("repository") ?? fetchableUrl(git(["remote", "get-url", "origin"])),
-    branch: option("branch") ?? "main",
+  await ensureLocalDatabase(sharedRoot)
+  await setUpHome({
+    home,
+    checkout,
     sharedRoot,
-  }
-  await mkdir(home, { recursive: true })
-  await writeFile(paths.config, JSON.stringify(config, null, 2))
-
-  if (!existsSync(paths.repository)) {
-    console.log(`Cloning the repository into ${paths.repository}…`)
-    execFileSync("git", ["clone", "--bare", "--quiet", "--no-tags", commonDirectory, paths.repository])
-  }
-  execFileSync("git", ["--git-dir", paths.repository, "remote", "set-url", "origin", config.repository])
-
-  const releases = new ReleaseManager({ home, config })
-  const ref = option("ref")
-  let commit
-  if (ref) {
-    // A local branch that is not on GitHub yet, such as one under review.
-    await releases.git(["fetch", "--quiet", "--no-tags", commonDirectory, `+${ref}:refs/blitz/install`])
-    commit = await releases.resolveCommit("refs/blitz/install")
-  } else {
-    commit = await releases.fetchTarget()
-  }
-  if (!(await releases.canServe(commit)))
-    throw new Error(
-      `${ref ?? config.branch} (${shortCommit(commit)}) does not include the Blitz server yet. Install from a branch that does with --ref <branch>.`
-    )
-
-  const { ports } = JSON.parse(await readFile(convexConfigPath, "utf8"))
-  const buildEnvironment = {
-    NEXT_PUBLIC_CONVEX_URL: `http://127.0.0.1:${ports.cloud}`,
-    NEXT_PUBLIC_CONVEX_SITE_URL: `http://127.0.0.1:${ports.site}`,
-  }
-  const current = await currentRelease(home)
-  if (
-    current?.commit === commit &&
-    current.convexUrl === buildEnvironment.NEXT_PUBLIC_CONVEX_URL
-  ) {
-    console.log(`Release ${shortCommit(commit)} is already built.`)
-  } else {
-    console.log(`Building Blitz ${shortCommit(commit)}. This takes about a minute…`)
-    const built = await releases.build(commit, buildEnvironment)
-    await releases.activate(built.directory)
-    console.log(`Built ${built.directory}`)
-  }
+    repository: option("repository"),
+    branch: option("branch"),
+    ref: option("ref"),
+  })
+  const config = await readServerConfig(home)
 
   await installService({
     home,
@@ -160,14 +95,12 @@ async function install() {
   })
   console.log(`Installed ${serviceFilePath()}. Waiting for Blitz to start…`)
   if (await waitForServer(port, 3 * 60_000))
-    console.log(`Blitz is running at http://localhost:${port} and updates itself from ${config.branch}.`)
+    console.log(`Blitz is running at http://localhost:${port} and updates itself from ${config?.branch ?? "main"}.`)
   else
     console.log(
       `Blitz has not answered yet. If another Blitz is serving the database, stop it; the server starts when it can. Logs: ${join(paths.logs, "server.log")}`
     )
-  if (process.platform === "darwin")
-    console.log("Run npm run desktop:install so Blitz.app opens this server.")
-  else
+  if (process.platform === "linux")
     console.log(
       "To keep Blitz running while you are logged out, run loginctl enable-linger once."
     )

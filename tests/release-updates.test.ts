@@ -7,7 +7,7 @@
 import assert from "node:assert/strict"
 import { type ChildProcess, execFileSync, spawn } from "node:child_process"
 import { EventEmitter } from "node:events"
-import { existsSync, readlinkSync } from "node:fs"
+import { existsSync, lstatSync, readlinkSync, realpathSync } from "node:fs"
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -159,6 +159,15 @@ test("a failed command names its first error, not the warnings after it", async 
       error.message.split("\n")[0] ===
       "next build exited with 2: x.ts(1,1): error TS2322: bad"
   )
+  // Git explains a failed fetch on a `fatal:` line.
+  await assert.rejects(
+    runCommand("sh", ["-c", "echo \"fatal: unable to access 'https://example.com/'\" >&2; exit 128"], {
+      label: "git fetch",
+    }),
+    (error: Error) =>
+      error.message.split("\n")[0] ===
+      "git fetch exited with 128: fatal: unable to access 'https://example.com/'"
+  )
 })
 
 test("pruning keeps the served release and the newest builds", async () => {
@@ -177,6 +186,48 @@ test("pruning keeps the served release and the newest builds", async () => {
     assert.equal(kept.length, 4)
     assert.ok(kept.some((release) => release.directory === served.directory))
     assert.equal((await currentRelease(home))?.directory, served.directory)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("removing a release never deletes the shared database it links to", async () => {
+  const { root, shared, first, manager } = await releaseFixture()
+  try {
+    await manager.fetchTarget()
+    const built = await manager.build(first, { NEXT_PUBLIC_CONVEX_URL: "u" })
+    const data = join(shared, ".convex", "local", "default", "convex_local_backend.sqlite3")
+    await writeFile(data, "learner data")
+    await manager.remove(built.directory)
+    assert.equal(existsSync(built.directory), false)
+    assert.equal(await readFile(data, "utf8"), "learner data")
+    assert.equal(await readFile(join(shared, ".env.local"), "utf8"), "CONVEX_DEPLOYMENT=local\n")
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("on Windows a release copies the settings, links the database, and swaps current in place", async () => {
+  const { root, shared, home, manager } = await releaseFixture()
+  try {
+    const release = join(root, "release")
+    await mkdir(release)
+    await manager.linkSharedFiles(release, "win32")
+    // Windows can't make a file symlink without privilege, so the settings are
+    // hard linked: an edit in the checkout still reaches the release.
+    assert.equal(lstatSync(join(release, ".env.local")).isSymbolicLink(), false)
+    assert.equal(await readFile(join(release, ".env.local"), "utf8"), "CONVEX_DEPLOYMENT=local\n")
+    await writeFile(join(shared, ".env.local"), "CONVEX_DEPLOYMENT=local\nBLITZ_PORT=3100\n")
+    assert.equal(await readFile(join(release, ".env.local"), "utf8"), "CONVEX_DEPLOYMENT=local\nBLITZ_PORT=3100\n")
+    // A junction there; this test's platform makes it a symbolic link.
+    assert.equal(realpathSync(join(release, ".convex")), realpathSync(join(shared, ".convex")))
+
+    const other = join(root, "other")
+    await mkdir(other)
+    await manager.activate(release, "win32")
+    await manager.activate(other, "win32")
+    assert.equal(realpathSync(join(home, "current")), realpathSync(other))
+    assert.equal(existsSync(release), true)
   } finally {
     await rm(root, { recursive: true, force: true })
   }

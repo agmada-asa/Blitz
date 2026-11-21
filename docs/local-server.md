@@ -14,7 +14,7 @@ hundred megabytes.
 | `npm run server -- install` | The background server: a launchd agent (macOS) or systemd user service (Linux) serving the newest release of `main`, updated automatically | 3007 |
 | `npm run dev:lan` | Points at the background server when it is installed; otherwise builds this checkout into `.next-production` (again only after the code changes) and serves it | 3007 |
 | `npm run dev` | `next dev` from this checkout, for coding | 3007, or 3009 beside a running server |
-| Blitz.app | Opens the running server, starting the background server if it is installed; otherwise hosts the stack itself in production mode | 3007, else 3008 |
+| The desktop app (`npm run desktop:install`) | Opens the running server, starting the background server if it is installed; otherwise hosts the newest release itself and updates it while open | 3007, else 3008 |
 
 `npm run dev` checks whether another Blitz already serves the database. If one
 does, it starts only Next, on port 3009, against that database, and does not
@@ -36,7 +36,8 @@ code, and the browser does not open. To make that the default for
 
 ## The background server
 
-`npm run server -- install` sets up the Blitz home, `~/.blitz` (or `BLITZ_HOME`):
+`npm run server -- install` and `npm run desktop:install` both set up the Blitz
+home, `~/.blitz` (or `BLITZ_HOME`):
 
 - `config.json`: the repository to fetch, the branch to follow (`main`), and
   `sharedRoot`, the checkout whose `.env.local` and local Convex database the
@@ -56,27 +57,31 @@ The service `dev.blitz.server` runs `scripts/dev-lan.mjs --service` from
 launchd agent in `~/Library/LaunchAgents`; on Linux it is a systemd user unit in
 `~/.config/systemd/user`, so it needs `systemctl --user` (most desktop
 distributions have it; WSL needs systemd turned on). A Linux user service stops
-when you log out unless you run `loginctl enable-linger` once. Installing needs
-a local Convex database in the checkout, so run `npm run dev` there once
-before the first install. `--ref <branch>` installs a local branch that is not
-on GitHub yet; the server still follows `main` afterwards and switches as soon
-as `main` contains the server code. The service file records the Node binary
-that ran the install, so run `install` again after changing Node versions. On
-macOS, run `npm run desktop:install` afterwards so Blitz.app loads its code from
-`current`.
+when you log out unless you run `loginctl enable-linger` once. Installing
+creates the checkout's local Convex database first if it has none
+(`scripts/install-home.mjs`, shared with `npm run desktop:install`). A home
+that already has a release built for that database keeps it, and keeps its
+`config.json`, so installing the server after the desktop app (or again)
+builds nothing; `--repository` and `--branch` change what it follows. `--ref
+<branch>` builds a local branch that is not on GitHub yet; the server still
+follows `main` afterwards and switches as soon as `main` contains the server
+code. The service file records the Node binary that ran the install, so run
+`install` again after changing Node versions.
 
 On Linux, a new release's dependencies are copied from the previous release
 with `cp --reflink=auto`, which is instant on Btrfs and XFS and a full copy on
 ext4, so keep a few gigabytes free in `~/.blitz` for the three kept releases.
+Windows, where only the desktop app updates Blitz, always makes a full copy.
 
 Other commands: `status`, `check` (check for updates now), `rebuild` (build
 the newest commit again, even after a failure), `stop`, `start`, and
-`uninstall` (keeps `~/.blitz`). Blitz.app has `Check for updates…` and
+`uninstall` (keeps `~/.blitz`). The desktop app has `Check for updates…` and
 `Rebuild Blitz now` in its Blitz menu.
 
 ## How an update works
 
-On launch and every 15 minutes the server fetches `main`. When it has moved:
+On launch and every 15 minutes the server fetches `main`. The desktop app does
+the same while it is open and hosting Blitz itself. When `main` has moved:
 
 1. The new commit is checked out into a fresh release. Dependencies are cloned
    from a kept release with the same `package-lock.json` (APFS copy on write,
@@ -136,7 +141,7 @@ seconds, so nothing keeps a port or the database open into the next start.
 ## Phone access
 
 The server listens on every interface at port 3007. Over Tailscale, open
-`http://<Mac's full Tailscale DNS name>:3007`; Convex must be reachable on its
+`http://<this computer's full Tailscale DNS name>:3007`; Convex must be reachable on its
 own port (3212 by default) too. A page served over HTTPS (for example through
 `tailscale serve`) cannot open the plain `ws://` Convex connection, so use the
 HTTP address.

@@ -8,45 +8,30 @@ It runs on your computer and uses the AI coding agent you already pay for (Codex
 
 ## Quick start
 
-You need Node.js 22.13 or newer and one supported agent installed and signed in. Codex is the default. Blitz is developed and tested on macOS. It starts on Windows and Linux too, but less has been tested there: see [Windows](#windows) and [Linux](#linux).
+You need Node.js 22.13 or newer, Git, and one supported agent installed and signed in. Codex is the default. Blitz works on macOS, Windows, and Linux. It's built on a Mac, so Windows and Linux have had less real use; see [Windows](#windows) and [Linux](#linux) for what's different there.
 
 ```bash
 git clone https://github.com/agmada-asa/Blitz.git
 cd Blitz
 npm ci
+npm run desktop:install
 ```
 
-Then pick one of the two below. Either way, create a project, add a week's material, and open its first unit to start a Teach session. The address also works on a phone on the same Wi-Fi.
+That's the whole setup. It creates the local database, builds Blitz (a few minutes the first time), and installs the app: in `~/Applications` on macOS, the Start menu on Windows, and the applications menu on Linux. Open Blitz from there, create a project, add a week's material, and open its first unit to start a Teach session.
 
-### For everyday use (macOS)
+While it's open, Blitz checks for a new version every 15 minutes and switches to it on its own, so you don't need to install it again to get updates. The Blitz menu also has `Check for updates…`. See [the desktop app](docs/local-desktop-host.md#the-desktop-app).
 
-Blitz runs in the background, starts when you log in, and updates itself from `main`.
+### Keeping it running in the background
 
-```bash
-npm run dev                  # once, to create the local database; stop it with Ctrl+C when it has started
-npm run server -- install    # the background server, at http://localhost:3007
-npm run desktop:install      # optional: Blitz.app in ~/Applications
-```
+To use Blitz from a phone or a browser without the app open, run `npm run server -- install` as well (macOS and Linux). Blitz then runs in the background at http://localhost:3007, starts when you log in, and keeps updating itself. The app then opens that server instead of running its own copy. See [local server](docs/local-server.md).
 
-Open http://localhost:3007 in a browser, or open Blitz.app. The app is a window onto the same server, so you can use either or both. On Windows and Linux, use `npm run dev:lan` instead: it doesn't run in the background or update itself.
-
-### For development
+### Working on the code
 
 ```bash
 npm run dev
 ```
 
-This runs Blitz from your checkout and reloads as you edit. It opens in your browser when it has started; if it doesn't, open the printed address. If the background server is already running, it starts on port `3009` against the same database.
-
-## Which one to run
-
-| For | Run | Updates itself |
-| --- | --- | --- |
-| Everyday use on a Mac | `npm run server -- install` once, then `npm run desktop:install` for Blitz.app | Yes, from `main` every 15 minutes |
-| A long session from this checkout | `npm run dev:lan` | No |
-| Working on the code | `npm run dev` | No, it reloads as you edit |
-
-The background server and Blitz.app are one Blitz: the app opens the server on port `3007`, and so does any browser or phone, so they always run the same version. A browser tab that was already open keeps the old version until you reload it. When the server is installed, `npm run dev:lan` opens it rather than starting a second copy, and `npm run dev` starts only Next on port `3009` against the same database. See [local server](docs/local-server.md) and [Blitz.app](docs/local-desktop-host.md).
+This runs Blitz from your checkout and reloads as you edit. It opens in your browser when it has started; if it doesn't, open the printed address. If the installed app or the background server is already serving the database, it starts on port `3009` against the same database. See [Run locally in detail](#run-locally-in-detail).
 
 ## What it does
 
@@ -79,7 +64,7 @@ npm ci
 npm run dev
 ```
 
-`npm run dev` starts Next.js in development mode, local Convex, and one background worker for source recovery and Deep Research, then prints "Blitz has started" with its address and the phone address, and opens it in your browser. Their output goes to `~/.blitz/logs/dev.log`; only errors and restarts reach the terminal. To keep the full output as it was, with the QR code and no browser, run `npm run dev:verbose`, or set `BLITZ_VERBOSE=1` to make that the default. Add `-- --no-open` to keep the browser closed. Pages compile the first time you open them, so the first visit to each is slow. For long everyday use, `npm run dev:lan` runs the same stack from a production build instead (about a minute to build the first time, and again only after the code changes), which stays faster and uses less memory over a long session. To keep Blitz running in the background and updating itself from `main`, run `npm run server -- install`; see [local server](docs/local-server.md). Open that address on a phone connected to the same Wi-Fi. A crashed or unresponsive service restarts automatically with backoff instead of stopping Blitz; restarts are printed as `[blitz] <service> stopped … Restarting`. Without Wi-Fi, Blitz still runs on this Mac. Pressing `Ctrl+C` or closing its terminal stops every process group; a service whose processes have not all exited within five seconds is killed so it cannot retain a development port. Set `BLITZ_PORT` to change the web port from `3007`.
+`npm run dev` starts Next.js in development mode, local Convex, and one background worker for source recovery and Deep Research, then prints "Blitz has started" with its address and the phone address, and opens it in your browser. Their output goes to `~/.blitz/logs/dev.log`; only errors and restarts reach the terminal. To keep the full output as it was, with the QR code and no browser, run `npm run dev:verbose`, or set `BLITZ_VERBOSE=1` to make that the default. Add `-- --no-open` to keep the browser closed. Pages compile the first time you open them, so the first visit to each is slow. For long everyday use, `npm run dev:lan` runs the same stack from a production build instead (about a minute to build the first time, and again only after the code changes), which stays faster and uses less memory over a long session. To use Blitz on a phone, open the phone address it prints on a phone connected to the same Wi-Fi. A crashed or unresponsive service restarts automatically with backoff instead of stopping Blitz; restarts are printed as `[blitz] <service> stopped … Restarting`. Without Wi-Fi, Blitz still runs on this computer. Pressing `Ctrl+C` or closing its terminal stops every process group; a service whose processes have not all exited within five seconds is killed so it cannot retain a development port. Set `BLITZ_PORT` to change the web port from `3007`.
 
 For separate terminals:
 
@@ -91,13 +76,13 @@ node --experimental-strip-types scripts/worker.ts
 
 These run the development server, which grows in memory over a long session; use them for coding rather than everyday use.
 
-The worker runs source recovery and Deep Research as two loops in one process; a failing loop is logged and retried with backoff while the other keeps running. `--only ingestion` or `--only research` runs only one loop, and `--once` runs a single pass. The worker loads `.env.local`. `BLITZ_CONVEX_URL` points server code and the worker at Convex through `lib/server/convex.ts`. Browsers rewrite a local `NEXT_PUBLIC_CONVEX_URL` to the hostname that served the page, so one value works on the Mac, on the LAN, and through Tailscale IPs or full `.ts.net` DNS names. With Tailscale connected on both devices, open `http://<Mac's full Tailscale DNS name>:3007`. Both the web port and the local Convex port must be reachable over the tailnet. Next.js discovers this Mac's exact Tailscale names and IPs using `tailscale status --json` so development scripts can load through those addresses. If the CLI is unavailable, set `BLITZ_TAILNET_HOST` to the full DNS hostname before starting Next.js. Restart Next.js after changing the Mac's tailnet identity. No cloud deployment or API key is required for this local setup.
+The worker runs source recovery and Deep Research as two loops in one process; a failing loop is logged and retried with backoff while the other keeps running. `--only ingestion` or `--only research` runs only one loop, and `--once` runs a single pass. The worker loads `.env.local`. `BLITZ_CONVEX_URL` points server code and the worker at Convex through `lib/server/convex.ts`. Browsers rewrite a local `NEXT_PUBLIC_CONVEX_URL` to the hostname that served the page, so one value works on this computer, on the LAN, and through Tailscale IPs or full `.ts.net` DNS names. With Tailscale connected on both devices, open `http://<this computer's full Tailscale DNS name>:3007`. Both the web port and the local Convex port must be reachable over the tailnet. Next.js discovers this computer's exact Tailscale names and IPs using `tailscale status --json` so development scripts can load through those addresses. If the CLI is unavailable, set `BLITZ_TAILNET_HOST` to the full DNS hostname before starting Next.js. Restart Next.js after changing this computer's tailnet identity. No cloud deployment or API key is required for this local setup.
 
 ### Windows
 
-`npm run dev` and `npm run dev:lan` work on Windows from PowerShell or Command Prompt. Provider CLIs installed with npm (such as `codex.cmd`) are found on PATH. Claude Code runs the copy bundled with Blitz's Claude SDK and uses your existing Claude sign-in, unless `BLITZ_CLAUDE_CODE_COMMAND` names another. What doesn't work on Windows yet:
+Run the commands from PowerShell or Command Prompt. `npm run desktop:install` installs Blitz for your user only, with no administrator prompt, and adds it to the Start menu. It isn't signed, so Windows may show a SmartScreen warning the first time; choose `More info`, then `Run anyway`. Quit Blitz before installing again. Provider CLIs installed with npm (such as `codex.cmd`) are found on PATH. Claude Code runs the copy bundled with Blitz's Claude SDK and uses your existing Claude sign-in, unless `BLITZ_CLAUDE_CODE_COMMAND` names another. What doesn't work on Windows yet:
 
-- `npm run server` installs a background service on macOS and Linux only. Use `npm run dev:lan`, which doesn't run in the background or update itself.
+- `npm run server` installs a background service on macOS and Linux only, so on Windows Blitz runs and updates while the app is open.
 - Read-aloud and podcasts use a local speech model that runs only on macOS and Linux, and spoken questions need an Apple silicon Mac.
 - Cleaning up processes left behind by a launcher that crashed is macOS and Linux only. If a later start says a port is taken, end the leftover `node` processes in Task Manager.
 
@@ -105,9 +90,8 @@ Signing in to OpenCode or Antigravity from Settings opens a Command Prompt windo
 
 ### Linux
 
-`npm run dev` and `npm run dev:lan` work on Linux, and CI starts Blitz on Ubuntu for every pull request. Read-aloud and podcasts work too: run `sh scripts/setup-kokoro.sh` (on Debian and Ubuntu, first `sudo apt install python3-venv`). See [local Kokoro](docs/local-kokoro.md). What doesn't work on Linux yet:
+`npm run desktop:install` installs Blitz for your user and adds it to your applications menu. On Ubuntu 23.10 and later, the app's sandbox helper has to be owned by root, so the installer runs `sudo` once and may ask for your password. Read-aloud and podcasts work too: run `sh scripts/setup-kokoro.sh` (on Debian and Ubuntu, first `sudo apt install python3-venv`). See [local Kokoro](docs/local-kokoro.md). What doesn't work on Linux yet:
 
-- `npm run desktop:install` builds a macOS app, so it is macOS only. Use Blitz in a browser.
 - Spoken questions and voice mode need an Apple silicon Mac.
 
 `npm run server -- install` runs Blitz in the background as a systemd user service; see [local server](docs/local-server.md). Signing in to OpenCode or Antigravity from Settings opens your desktop's terminal. On a machine without a desktop, run `opencode auth login` or `agy acp --login` yourself.
@@ -156,7 +140,7 @@ The ACP client negotiates `session/load` and `session/resume`. If neither is sup
 
 ## Checks and implementation
 
-The CI workflow in `.github/workflows/provider-runtimes.yml` runs the full `npm test` suite on macOS with Node.js 24 for every pull request and every push to `main`, without path filters. The macOS runner also exercises the two transcription tests that would skip on Linux because transcription is restricted to macOS. It uses the npm download cache and `npm ci`; test failures fail the job, and the log includes test totals. Tests use local fixtures and doubles, so no running database, provider login, or deployment is needed. The same workflow retains the scheduled provider compatibility check and supports manual runs.
+The CI workflow in `.github/workflows/provider-runtimes.yml` runs the full `npm test` suite on macOS with Node.js 24 for every pull request and every push to `main`, without path filters. The macOS runner also exercises the two transcription tests that would skip on Linux because transcription is restricted to macOS. It uses the npm download cache and `npm ci`; test failures fail the job, and the log includes test totals. Tests use local fixtures and doubles, so no running database, provider login, or deployment is needed. On Windows and Linux it starts Blitz from the checkout and opens a project (`scripts/smoke-start.mjs`). On macOS, Windows, and Linux it runs `npm run desktop:install`, opens the installed app, saves a project through it, and checks that the app can fetch `main` for updates (`scripts/smoke-desktop.mjs`). The same workflow retains the scheduled provider compatibility check and supports manual runs.
 
 ```bash
 npm test

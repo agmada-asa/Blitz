@@ -1,4 +1,5 @@
-# Runs the full offline test suite and checks provider runtime compatibility.
+# Runs the full offline test suite, starts Blitz and installs the desktop app on
+# macOS, Windows and Linux, and checks provider runtime compatibility.
 # Every pull request and push to main runs tests, including test-only changes.
 # npm caching reuses downloaded packages; npm ci still installs the lockfile.
 # Test failures propagate directly to the job, and Node prints the test totals.
@@ -82,6 +83,47 @@ jobs:
 
       - name: Start Blitz and open a project
         run: node scripts/smoke-start.mjs
+
+  # `npm run desktop:install` on each system, the one command the README
+  # gives: it must create the database, build a release, and install the app;
+  # the installed app must then start Blitz on its own. The release is built
+  # from this commit (`--ref HEAD`), since `main` may not have the change yet.
+  desktop:
+    name: Desktop app on ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS
+            os: macos-latest
+          - name: Windows
+            os: windows-latest
+          - name: Linux
+            os: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install the desktop app
+        run: npm run desktop:install -- --ref HEAD
+
+      - name: Open the app and use Blitz
+        if: runner.os != 'Linux'
+        run: node scripts/smoke-desktop.mjs
+
+      # The app needs a display; Xvfb provides one without a desktop.
+      - name: Open the app and use Blitz (Linux)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a node scripts/smoke-desktop.mjs
 
   check:
     runs-on: ubuntu-latest

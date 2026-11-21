@@ -9,7 +9,7 @@
     "dev:verbose": "node scripts/dev-lan.mjs --dev --verbose",
     "dev:lan": "node scripts/dev-lan.mjs",
     "server": "node scripts/server.mjs",
-    "desktop:install": "node scripts/package-desktop.mjs --install",
+    "desktop:install": "node scripts/install-desktop.mjs",
     "build": "next build",
     "lint": "eslint",
     "test": "node --test --experimental-strip-types tests/*.test.ts",
