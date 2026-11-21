@@ -187,6 +187,8 @@ export function runCommand(command, args, options = {}) {
       env,
       stdio: ["ignore", "pipe", "pipe"],
       detached: process.platform !== "win32",
+      // The Windows app has no console, so each Git or npm run would open one.
+      windowsHide: true,
     })
     const pid = child.pid
     if (pid) processes?.trackGroup(pid)
@@ -210,7 +212,8 @@ export function runCommand(command, args, options = {}) {
     const timer = setTimeout(() => {
       if (process.platform === "win32") {
         // Windows has no process groups; taskkill stops the command's whole tree.
-        if (child.pid) execFile("taskkill", ["/pid", String(child.pid), "/t", "/f"], () => undefined)
+        if (child.pid)
+          execFile("taskkill", ["/pid", String(child.pid), "/t", "/f"], { windowsHide: true }, () => undefined)
         return
       }
       try {

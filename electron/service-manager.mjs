@@ -487,6 +487,8 @@ export class ServiceManager {
         env: this.environment,
         stdio: this.stdio,
         detached: process.platform !== "win32",
+        // Without it the Windows app, which has no console, opens one per service.
+        windowsHide: true,
       }
     )
     // Recorded so a launcher killed during the trial does not leave it running.
@@ -680,6 +682,8 @@ export class ServiceManager {
       env: this.environment,
       stdio: this.stdio,
       detached: process.platform !== "win32",
+      // Without it the Windows app, which has no console, opens one per service.
+      windowsHide: true,
     })
     const startedAt = Date.now()
     this.startedAt.set(name, startedAt)
