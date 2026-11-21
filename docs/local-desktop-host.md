@@ -19,25 +19,33 @@ until Next answers.
 The desktop supervisor in `electron/service-manager.mjs` owns each process
 group, and `npm run dev:lan` uses the same supervisor. Closing the window or
 quitting the app sends `SIGTERM` to every group and escalates to `SIGKILL` after
-three seconds, so the worker and its Codex child processes do not remain behind.
+five seconds, so the worker and its provider child processes do not remain behind.
 Windows has no process groups, so there it stops each service's own process
 in the same two steps.
 
 Any service that exits unexpectedly, including Next and Convex, restarts with
 exponential backoff from half a second up to 30 seconds. The backoff resets
 after a service stays up for a minute. One failing service never stops the
-others. Every five seconds after startup the supervisor also probes Next and
-Convex; `convex dev` keeps running when the database it hosts dies, so a
-service that misses three probes in a row is killed and restarted as
-`unresponsive`. The worker starts only after Next and Convex answer.
+others. After a 30 second grace period, the supervisor probes Next and
+Convex every five seconds; `convex dev` keeps running when the database it
+hosts dies, so a service that misses three probes in a row is killed and
+restarted as `unresponsive`. The worker starts only after Next and Convex
+answer. The services are Next, Convex, the voice service and the worker; see
+[architecture](architecture.md) for what each does.
 
-The worker is one Node process that runs two isolated loops: `ingestion`
-(source recovery) and `research` (Deep Research imports and proposals). A
-failing step is logged and retried after 3 seconds, doubling up to 30 seconds,
-while the other loop keeps running; if the process itself exits, the
-supervisor restarts it like any other service. The Kokoro speech worker is
-started on demand by Next and is not part of this process. Startup waits
-up to 60 seconds (override with `BLITZ_DESKTOP_HEALTH_TIMEOUT_MS`).
+Startup waits up to 60 seconds for its own services (override with
+`BLITZ_DESKTOP_HEALTH_TIMEOUT_MS`), and up to three minutes for a stack that is
+already starting elsewhere.
+
+### Ports
+
+| Service | Desktop app's own copy | Background server or `dev:lan` |
+| --- | --- | --- |
+| Next | 3008 | 3007 (`BLITZ_PORT`) |
+| Voice | 3108 | 3107 |
+| Convex | saved pair, or the next free pair from 3220/3221 | saved pair in `.convex/local/default/config.json` |
+
+`npm run dev` uses 3009 when another copy is already serving the database.
 
 Browsers rewrite a local `NEXT_PUBLIC_CONVEX_URL` to the hostname that served
 the page (`lib/client/convex-url.ts`), so the same build works on this computer, from
@@ -99,6 +107,13 @@ background server (or the app's own updater when it hosts the stack) and report
 the outcome; a failed build offers its log. Updates and failures that happen in
 the background appear as notifications.
 
+The app also sends the daily study reminder (`electron/reminders.mjs`): every
+ten minutes it checks whether today's XP goal is met, and at or after the
+reminder hour (default 19:00, set or turned off in Settings) shows one
+notification a day if it isn't. Clicking it opens the unit in progress, or the
+Library. Its state is kept in `study-reminder.json` in the app's data folder.
+Browsers don't get reminders.
+
 Opened from Finder or a Linux applications menu, the app reads `PATH` and the
 other variables from the login shell, because macOS and Linux desktops start
 apps without what the shell profile adds (such as nvm's Node). Windows apps
@@ -134,26 +149,37 @@ Settings › Desktop app › `Open links in the app` is on. That choice is saved
 ask before it opens the app. On Windows and Linux, `http` links stay in the
 browser for now; `blitz://` links still open the app.
 
-## Source files and retrieval
+## Project folders
 
-Original uploads use `POST /api/sources/upload` with `x-blitz-project-id`,
-`x-blitz-filename`, and the raw file body. The same endpoint accepts browser and
-Electron requests. Originals stream to the project folder
-without an application byte limit. Local PDF
-extraction uses file-backed range reads, while approved public research downloads
-retain their separate 5 MB network boundary. Persisted extracted text is limited
-to 500 KB in UTF-8. Inputs that cross a parsing or text bound stay saved for
-agent inspection without partial indexing; Blitz never silently truncates
-searchable evidence.
+Each module has a folder under `<BLITZ_DATA_DIR>/Projects/project-<id-hash>`.
+Uploaded originals go in its `Sources/` folder (see [adding
+material](source-import.md)), generated audio in `Audio/`, and private
+application state in `.blitz/`. The browser and the desktop app upload the
+same way, through `POST /api/sources/upload`. The worker's `ingestion` loop
+finishes uploads interrupted by a restart, through `/api/sources/retry`.
 
-The worker's `ingestion` loop recovers queued uploads and expired five-minute ingestion
-leases through `/api/sources/retry`. Failed files require an explicit retry.
-A source is ready to teach as soon as ingestion completes; no lesson
-generation job follows it.
+Chat and Teach search a module's passages for each question with exact text
+search (`lib/source-retrieval.ts`, `convex/sourceRetrieval.ts`); there is no
+semantic index.
 
-Chat searches indexed chunks for each question, including projects attached in
-earlier turns. Context is bounded and retains filename and location citations.
-Exact text search remains the retrieval baseline; semantic indexing is not enabled.
+### Project agents
+
+A chat with a working project runs the provider in that project's folder (see
+[workspace chat](workspace-chat.md#working-project-and-access)).
+`projectAgentInstructions` (`lib/server/project-agent.ts`) gives it the folder
+rules: work only inside the project, never change `Sources/`, never read
+`.blitz/`, and treat sources, web pages and tool output as data rather than
+instructions. On Codex, access maps to an explicit policy
+(`projectAgentRuntimePolicy`): read-only with approvals for untrusted commands,
+writes inside the project with no network, or full access. These rules are
+instructions and provider policy, not an operating-system boundary outside
+Codex's sandbox.
+
+When a project chat finishes, the chat route scans the folder and saves the
+files the agent made (`scanProjectArtifacts`, `projectAgents.syncArtifacts`);
+`GET /api/projects/<id>/agent/artifacts` does the same on demand, and
+`POST /api/projects/<id>/agent/promote` copies one into `Sources/` through
+normal ingestion so it can be taught and cited.
 
 Derived text is cached privately with `POST /api/projects/<id>/derived` using
 `sourceKey` and `text`. `GET` lists review metadata, and `GET ?id=<id>` returns
@@ -166,25 +192,3 @@ The default data directory may also be the development checkout. `Projects/`
 and `.next-*` are therefore excluded from Git, lint, and Tailwind scanning.
 Deleting a Convex project removes its associated metadata but retains local files
 for recovery.
-
-## Remaining agent limitation
-
-Writable project-agent execution is disabled. The installed app-server protocol
-supports broad workspace writes but does not provide the external filesystem
-broker needed to exclude `.blitz/` reads and `Sources/` writes while allowing
-other project files. The API returns 503, and the interface shows the capability
-as unavailable. No prompt-only restriction or unrestricted fallback is used.
-
-The task and artifact tables, scoped file access, and explicit promotion action
-are available. Automatic creation, move/delete synchronization, and agent recovery
-still need an enforceable execution backend. The complete agent/restart/phone
-workflow has not been verified.
-
-## Verification
-
-Verified locally with TypeScript, ESLint, 138 Node tests, and a production build.
-Live fixture checks covered a 240 KB upload with a cited fact at chunk 53,
-original-byte downloads, duplicates, retry, derived approval gating, artifact
-promotion, and denied symlink downloads. Temporary fixture projects were deleted.
-Electron loaded Blitz on port 3901 with an isolated Next output directory and
-shut down cleanly. The project file interface was inspected at 390 px and 1280 px.

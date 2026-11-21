@@ -6,7 +6,9 @@ Blitz runs Codex, Claude Code, OpenCode and Antigravity through [agent-engines](
 
 | File | Owns |
 | --- | --- |
-| `lib/server/providers/engines.ts` | Creates each engine on the configured executable (`BLITZ_CODEX_COMMAND`, `BLITZ_CLAUDE_CODE_COMMAND`, or `codex` and `claude` on `PATH`), and maps availability and model catalogues into Blitz's provider shapes. |
+| `lib/server/providers/registry.ts` | Resolves each provider's command (`BLITZ_CODEX_COMMAND`, `BLITZ_CLAUDE_CODE_COMMAND`, `BLITZ_OPENCODE_COMMAND`, or the usual command on `PATH`). |
+| `lib/server/providers/engines.ts` | Creates each engine on that executable, and maps availability and model catalogues into Blitz's provider shapes. |
+| `lib/server/providers/runtime-compat.ts` | Blitz's own version floors for OpenCode (2.3.0, within v2) and Antigravity (1.5.0). |
 | `lib/server/providers/run-text-turn.ts` | Turns Blitz's access settings into each runtime's thread options, checks a Codex selection against its catalogue, and checks an ACP provider's install before its turn. |
 | `lib/server/providers/acp-providers.ts` | What the two ACP providers share: the engine for one turn, how access maps onto the engine's levels, and application instructions put ahead of the prompt, since ACP has no instruction channel. |
 | `lib/server/providers/opencode.ts` | Creates OpenCode's ACP engine with the turn's permission environment (`opencode-policy.ts`). |
@@ -27,7 +29,7 @@ The one exception is prewarm. Opening a new Teach session calls `POST /api/teach
 
 ## Sign-in
 
-Both engines run on the sign-in already on the Mac. Blitz allows an API key as well as a subscription (`requireSubscription: false`), since the learner chooses how each runtime is signed in. The settings page's connect and disconnect buttons run the CLIs' own login commands (`lib/server/providers/auth.ts`); the library only reports sign-in state.
+Every engine runs on the sign-in already on this computer. Blitz allows an API key as well as a subscription (`requireSubscription: false`), since the learner chooses how each runtime is signed in. The settings page's connect and disconnect buttons run the CLIs' own login commands (`lib/server/providers/auth.ts`); the library only reports sign-in state.
 
 ## Access
 
@@ -35,7 +37,7 @@ Blitz never sets the library's neutral `access` level on Codex threads, and on C
 
 Plan first (project agents only) runs the turn with `mode: "plan"`. Claude Code asks to leave plan mode with a `plan` approval; Codex ends the turn with its proposal, which `engine-turn.ts` turns into the same `plan` approval and, once approved, carries out as a second turn in default mode. The reply is saved under that second turn, so a branch forked through it keeps the work. OpenCode turns ignore Plan first; the chat keeps the choice for when it is back on a provider with plan mode.
 
-Codex threads get an explicit approval policy and sandbox on start and resume. Workspace-write threads also set `sandbox_workspace_write` so writes stay in the workspace, with no network and no shared temporary directories. The chat agent sends `approvalsReviewer: "user"` so approvals always reach the learner.
+Codex threads get an explicit approval policy and sandbox on start and resume. Workspace-write threads also set `sandbox_workspace_write` so writes stay in the workspace, with no network and no shared temporary directories. Project agent turns (`projectAgentRuntimePolicy` in `lib/server/project-agent.ts`) send `approvalsReviewer: "user"` so approvals always reach the learner rather than Codex's own reviewer.
 
 Claude Code background turns load no settings, skills, plugins, hooks, MCP servers, or tools. Chat turns load the learner's user-level Claude Code setup with hooks off (and the SDK's hook lifecycle events off, which the library otherwise turns on), and map access onto permission modes: full access bypasses prompts, approval mode routes them to Blitz, and read-only or no-approval modes refuse anything that would need one. Claude approvals are always once only; Blitz never writes a permission rule to Claude's settings.
 
@@ -60,7 +62,7 @@ Around a turn, `engine-turn.ts` can also:
 - compact before the turn, sending a different prompt only when compaction ran;
 - read context usage after a completed turn, for the Teach context meter.
 
-`runEngineCompaction` compacts a saved thread outside any turn (Compact now). Turn IDs saved under agent-engines 0.2.0 may not match what `forkThread` and `rewind` take on Claude Code; both fall back as above. OpenCode supports none of these, so its branches replay and its Teach sessions have no meter, compaction or redo in place.
+`runEngineCompaction` compacts a saved thread outside any turn (Compact now). Turn IDs saved under early agent-engines versions may not match what `forkThread` and `rewind` take on Claude Code; both fall back as above. OpenCode supports none of these, so its branches replay and its Teach sessions have no meter, compaction or redo in place.
 
 Each chat's Codex or Claude Code thread takes the chat's title, and is deleted with the chat. A branch's copied thread is its own, named after the branch, and runs in its source chat's folder. Deleting a chat whose handoff has not run yet also deletes the old provider's thread.
 
@@ -74,4 +76,4 @@ A lesson update (`lib/server/teach-update.ts`) runs on the provider teaching the
 
 ## Checks
 
-The library refuses a runtime below its floor when a thread starts: Codex CLI 0.164.0 (within v0) and Claude Code 2.1.248 as of agent-engines 0.4.0. Its own weekly check watches the latest Codex and Claude Code. `npm run check:runtimes` covers the rest: OpenCode's and Antigravity's versions, and the live Codex catalogue against `CODEX_MODEL_OPTIONS`. Tests use an in-memory engine (`tests/fixtures/fake-engine.ts`) and never start a model turn. It models only the methods Blitz calls; the rest of the engine and thread surface throws `UnsupportedFeatureError`.
+The library refuses a runtime below its floor when a thread starts (Codex CLI 0.164.0 within v0, and Claude Code 2.1.248, at the time of writing; the library's `compat` module has the current values). Its own weekly check watches the latest Codex and Claude Code. `npm run check:runtimes` covers the rest: OpenCode's and Antigravity's versions, and the live Codex catalogue against `CODEX_MODEL_OPTIONS`. Tests use an in-memory engine (`tests/fixtures/fake-engine.ts`) and never start a model turn. It models only the methods Blitz calls; the rest of the engine and thread surface throws `UnsupportedFeatureError`.

@@ -25,7 +25,7 @@ Material goes through the same upload and extraction routes as the web app's Add
 
 A lesson already planned doesn't use new files until it is updated. `add_material` and `read_module` say when a unit needs that; `update_unit`, or `update_lesson: true` on `add_material`, starts it. The update runs in the app in the background, so the tool returns straight away and `read_module` shows when it has finished.
 
-The server keeps no state and needs Blitz running on the same Mac. It finds the app on `3007` (`npm run dev:lan`) or `3008` (the desktop shell) and the Convex deployment from `.convex/local/default/config.json`. `BLITZ_URL` and `BLITZ_CONVEX_URL` override them. Links in its answers use the Mac's Tailscale name when it has one, so they open on a phone too; `BLITZ_PUBLIC_URL` overrides that.
+The server keeps no state and needs Blitz running on the same computer. It finds the app on `3007` (the background server or `npm run dev:lan`) or `3008` (the desktop app's own copy); a `npm run dev` checkout on `3009` needs `BLITZ_URL`. It reads the Convex deployment from `.convex/local/default/config.json`. `BLITZ_URL` and `BLITZ_CONVEX_URL` override them. Links in its answers use the Mac's Tailscale name when it has one, so they open on a phone too; `BLITZ_PUBLIC_URL` overrides that.
 
 It's built on the official MCP SDK. Each tool declares its risk through annotations, and every read also returns its data as `structuredContent` for clients with a UI.
 

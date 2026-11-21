@@ -142,6 +142,8 @@ seconds, so nothing keeps a port or the database open into the next start.
 
 The server listens on every interface at port 3007. Over Tailscale, open
 `http://<this computer's full Tailscale DNS name>:3007`; Convex must be reachable on its
-own port (3212 by default) too. A page served over HTTPS (for example through
-`tailscale serve`) cannot open the plain `ws://` Convex connection, so use the
-HTTP address.
+own port too (the one saved in `.convex/local/default/config.json`, 3220 for a
+new database). A page served over HTTPS (for example through `tailscale
+serve`, which the microphone needs) can't open a plain `ws://` connection, so
+it reaches Convex through `/convex` on its own origin; proxy that path to
+Convex as shown in [voice](voice.md#phone-access).

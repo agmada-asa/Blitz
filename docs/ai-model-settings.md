@@ -1,21 +1,31 @@
 # AI model settings
 
-`/settings` stores one global model and reasoning selection for each AI task in this personal Blitz deployment. There is no account-level configuration yet, so every browser and local worker connected to the same Convex deployment reads the same choices.
+Settings stores one provider, model and reasoning level for each of three tasks. Blitz is a personal local app, so every browser and worker connected to the same Convex database reads the same choices.
 
-- Research controls proposal planning and source discovery.
-- Card generation controls source preparation and the legacy `/api/generate` endpoint.
-- Replies controls answers to questions attached to individual study cards.
+| Setting | Used by |
+| --- | --- |
+| **Research** (`research*`) | Find sources planning, podcast and audiobook scripts |
+| **Practice questions** (`cardGeneration*`) | Question banks, past paper reading, mock exams and marking |
+| **Teaching and chat** (`reply*`) | Teach, chat, lesson updates, compaction and prewarming |
 
-Each local worker reads the saved choices before it starts an AI turn. A turn that is already running keeps the model and reasoning level it started with. Queued work uses the latest saved choices when the worker begins its next turn.
+A chat can override the reply choice for itself from its own model picker (see [workspace chat](workspace-chat.md#providers-and-limits)). Chat titles always use the cheapest available model with the lowest reasoning: on Codex, from the live catalogue, or from `CODEX_MODEL_OPTIONS` if it can't be read.
 
-The settings page uses one combined model-and-reasoning picker per task rather than free-text model IDs or separate dropdowns. Its menu separates model generations, and each model opens a nested reasoning menu limited to the levels it supports. Existing custom saved model IDs remain visible so they can be replaced without losing a prior configuration. Picker changes stay local until `Save AI settings`; Blitz saves every model and reasoning choice together so a worker never receives a partial configuration.
+## The picker
 
-The general `/chat` workspace also includes one compact Reply model picker alongside the attachment button. Its menu separates model generations, and each model opens a nested reasoning menu. Changing a selection saves the shared Reply setting immediately and briefly pauses the composer until the change is confirmed. The next general or card-chat reply then uses that saved pair.
+Each task has one combined picker (`components/settings/model-reasoning-picker.tsx`): providers and favourites on the left, models in generations on the right, and a nested reasoning menu limited to what each model supports. A saved model the provider no longer lists stays visible under older models, so it can be replaced without losing it. Every change saves straight away as one complete configuration, so a worker never sees half a change; a turn already running keeps what it started with.
 
-Where a provider publishes a model catalog, the picker uses its model IDs and reasoning levels, and the settings page checks the selection against that catalog before saving. Convex checks the setting shape and effort format because it cannot query a local provider. The local adapter validates the model and effort again before starting a turn. Providers without a live catalog keep their adapter's curated choices until they expose one.
+Where a provider publishes a catalogue, the picker uses its model IDs and reasoning levels. Loading them takes a few seconds because `/api/providers` checks every runtime, so each response is cached in the browser's local storage and shown until the next one arrives. Without one, Codex falls back to `CODEX_MODEL_OPTIONS`, which is kept identical to the runtime's catalogue. Convex checks the shape of a setting, and the provider adapter checks the model and reasoning again before a turn starts.
 
-Loading the live catalogs takes a few seconds because `/api/providers` checks every runtime. Each response is saved in the browser's local storage, and the picker shows that last live catalog until the next response arrives. Without one, it falls back to the built-in Codex list, `CODEX_MODEL_OPTIONS`, which is kept identical to the runtime's catalog. A saved model missing from the list it is showing appears as "(saved model)". Chat titles use the cheapest ranked model from the live Codex catalog, so a model the runtime has retired is not chosen. If the catalog cannot be read, they use `CODEX_MODEL_OPTIONS`.
+Claude Code offers the `sonnet`, `opus`, `haiku` and `fable` aliases with their reasoning levels. OpenCode and Antigravity only expose the provider's default reasoning.
 
-`npm run check:runtimes` checks OpenCode's and Antigravity's versions against Blitz's requirements in `lib/server/providers/runtime-compat.ts` and, when Codex is signed in, compares the live catalog with `CODEX_MODEL_OPTIONS`. Codex and Claude Code versions and the Codex protocol are checked by agent-engines, which refuses an unsupported runtime when a thread starts and runs its own weekly check. The Provider runtimes GitHub workflow runs Blitz's check weekly against the latest OpenCode v2 from its Homebrew tap, without signing in, so it skips Antigravity and the catalog comparison.
+## Defaults
 
-Until settings are saved for the first time, the local workers retain the existing `BLITZ_CODEX_MODEL` and `BLITZ_CODEX_EFFORT` fallbacks, then use `gpt-6-luna` with task-specific defaults: `medium` for research and card generation, and `low` for replies. Once a settings record exists, its task-specific values take precedence over those legacy fallbacks. If Convex is temporarily unavailable, a worker falls back to the environment values or defaults rather than blocking a queued job.
+Until settings are first saved, workers use `BLITZ_CODEX_MODEL` and `BLITZ_CODEX_EFFORT` if set, then Codex with `gpt-6-luna`: `medium` reasoning for Research and Practice questions, `low` for Teaching and chat. If Convex is briefly unavailable, a worker uses the same fallbacks rather than blocking queued work.
+
+## Spending limits
+
+A subscription has its own usage limits, but an API key bills every token. When Claude Code is signed in with an API key, each background turn (question banks, exams, podcasts, research, never chat or Teach) runs with a dollar cap and a cap on model round trips, which Claude Code enforces itself (`lib/spending-limits.ts`, `components/settings/spending-limit-settings.tsx`). The defaults are $3 and 10 steps per task, adjustable in Settings from $0.10 to $50. Codex and OpenCode have no equivalent control, and a subscription is never capped.
+
+## Runtime checks
+
+`npm run check:runtimes` checks the installed OpenCode and Antigravity against Blitz's requirements, and compares the live Codex catalogue with `CODEX_MODEL_OPTIONS`. Codex and Claude Code versions are checked by agent-engines. See [providers through agent-engines](agent-engines.md#checks).
