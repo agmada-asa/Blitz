@@ -1,9 +1,15 @@
 /** Verifies how each platform opens a terminal window for a provider sign-in. */
 import assert from "node:assert/strict"
 import { execFileSync } from "node:child_process"
+import { existsSync } from "node:fs"
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import test from "node:test"
+import { setTimeout as delay } from "node:timers/promises"
 
 import {
+  openTerminalLogin,
   parseSessionEnvironment,
   startLaunch,
   terminalLaunches,
@@ -42,6 +48,30 @@ test("Windows opens a console window that stays open", () => {
     ]
   )
 })
+
+test(
+  "Windows runs the sign-in in a new console with the CLI path and arguments intact",
+  { skip: process.platform !== "win32" && "needs cmd.exe" },
+  async () => {
+    // A folder with spaces makes cmd /k see a quoted path, the case its quote
+    // rules are most likely to break.
+    const directory = await mkdtemp(join(tmpdir(), "blitz sign in "))
+    try {
+      const output = join(directory, "args.txt")
+      // `exit` closes the console once the fake CLI has recorded its arguments.
+      await writeFile(
+        join(directory, "fake cli.cmd"),
+        '@echo off\r\necho %*> "%~dp0args.txt"\r\nexit\r\n'
+      )
+      await openTerminalLogin(join(directory, "fake cli.cmd"), ["acp", "--login"], "x")
+      for (let waited = 0; !existsSync(output) && waited < 15_000; waited += 250)
+        await delay(250)
+      assert.equal((await readFile(output, "utf8")).trim(), "acp --login")
+    } finally {
+      await rm(directory, { recursive: true, force: true, maxRetries: 5 })
+    }
+  }
+)
 
 test("Windows refuses a CLI path that cmd would read as syntax", () => {
   assert.deepEqual(terminalLaunches("win32", "C:\\a&b\\opencode.cmd", ["auth", "login"], {}), [])
