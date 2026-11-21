@@ -79,9 +79,11 @@ try {
     readFileSync(join(current, ".convex", "local", "default", "config.json"), "utf8")
   )
   const convexUrl = `http://127.0.0.1:${config.ports.cloud}`
-  const projectId = await convex(convexUrl, "mutation", "projects:createProject", {
-    title: "Desktop smoke test",
-  })
+  // Next answers before Convex has started and pushed the functions, so the
+  // first call is retried until the database takes it.
+  const projectId = await retry(() =>
+    convex(convexUrl, "mutation", "projects:createProject", { title: "Desktop smoke test" })
+  )
   const project = await convex(convexUrl, "query", "projects:getProject", { projectId })
   if (project?.title !== "Desktop smoke test")
     throw new Error(`The new project read back as ${JSON.stringify(project)}.`)
@@ -118,6 +120,26 @@ async function waitFor(url) {
     await new Promise((resolve) => setTimeout(resolve, 1_000))
   }
   throw new Error(`${url} did not answer within ${READY_TIMEOUT_MS / 60_000} minutes.`)
+}
+
+/**
+ * Runs a call until it succeeds, for a service that is still starting.
+ * @template T
+ * @param {() => Promise<T>} call The call.
+ * @param {number} [timeoutMs] How long to keep trying.
+ * @returns {Promise<T>} Its first successful result.
+ * @throws The last error once the time is up, or when the app exits.
+ */
+async function retry(call, timeoutMs = 3 * 60_000) {
+  const deadline = Date.now() + timeoutMs
+  for (;;) {
+    try {
+      return await call()
+    } catch (error) {
+      if (Date.now() > deadline || app?.exitCode !== null || app?.signalCode) throw error
+      await new Promise((resolve) => setTimeout(resolve, 2_000))
+    }
+  }
 }
 
 /**
