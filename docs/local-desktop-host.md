@@ -20,6 +20,8 @@ The desktop supervisor in `electron/service-manager.mjs` owns each process
 group, and `npm run dev:lan` uses the same supervisor. Closing the window or
 quitting the app sends `SIGTERM` to every group and escalates to `SIGKILL` after
 three seconds, so the worker and its Codex child processes do not remain behind.
+Windows has no process groups, so there it stops each service's own process
+in the same two steps.
 
 Any service that exits unexpectedly, including Next and Convex, restarts with
 exponential backoff from half a second up to 30 seconds. The backoff resets
@@ -38,15 +40,15 @@ started on demand by Next and is not part of this process. Startup waits
 up to 60 seconds (override with `BLITZ_DESKTOP_HEALTH_TIMEOUT_MS`).
 
 Browsers rewrite a local `NEXT_PUBLIC_CONVEX_URL` to the hostname that served
-the page (`lib/client/convex-url.ts`), so the same build works on the Mac, from
-a phone on the LAN, over Tailscale, and after the Mac changes networks. The
+the page (`lib/client/convex-url.ts`), so the same build works on this computer, from
+a phone on the LAN, over Tailscale, and after the computer changes networks. The
 app shows `Reconnecting to Blitz…` while its live connection is down.
 
 The host takes the normal `.env.local` configuration and supports
 `BLITZ_PORT` plus `BLITZ_DATA_DIR`. The data root defaults to
 `~/Documents/Blitz`; project-scoped native actions resolve files under the
 same hashed `Projects/project-<id-hash>` layout used by the local file store.
-The preload bridge exposes only service status, open, and Finder reveal methods.
+The preload bridge exposes only service status, open, and show-in-folder methods.
 Uploads use Chromium's file input and streaming request body, avoiding a second
 full-file copy through Electron IPC. Renderer access uses
 context isolation, disabled Node integration, and a sandboxed preload. Native
@@ -54,7 +56,7 @@ paths are checked after realpath resolution to block traversal and symlink
 escapes.
 
 For a desktop session that
-also serves browser clients, set `BLITZ_LAN_ADDRESS` to the Mac's
+also serves browser clients, set `BLITZ_LAN_ADDRESS` to the computer's
 LAN address before opening the app; the host then binds Next for that LAN
 while the BrowserWindow continues to use loopback.
 
@@ -104,7 +106,8 @@ inherit the user's full `PATH`. Service output goes to `blitz.log` in the
 app's log folder (`~/Library/Logs/Blitz` on macOS, `%APPDATA%\Blitz\logs` on
 Windows, `~/.config/Blitz/logs` on Linux), with the last launch's beside it as
 `blitz.log.previous`. Next is bound to loopback unless `BLITZ_LAN_ADDRESS` is
-set, which a Finder launch only picks up from the login shell.
+set, which an app opened from Finder or the applications menu only picks up
+from the login shell.
 
 If Convex and Next already answer, from the background server (preferred),
 `npm run dev:lan`, or a host that crashed, the window loads that stack instead
@@ -120,15 +123,16 @@ arrives while Blitz is starting waits until the app has loaded
 Windows and Linux start a second copy with the link on its command line, which
 passes it to the first and quits.
 
-Ordinary `http` links keep working on a phone. When one opens in a browser on
-this Mac, the page hands itself to the app through a hidden frame, so the
+Ordinary `http` links keep working on a phone. On macOS, when one opens in a
+browser on this Mac, the page hands itself to the app through a hidden frame, so the
 browser tab stays usable, and shows a notice with `Open again`. It does this
 only on a fresh arrival from a link (not a reload, back or forward, or a page
 reached from Blitz itself), only in a browser on the Mac that runs the server
 and finds an installed app that declares the scheme (`/api/desktop`; another
 Mac or a browser driven by an agent or test stays put), and only while
 Settings › Desktop app › `Open links in the app` is on. That choice is saved per browser and address. A browser may
-ask before it opens the app.
+ask before it opens the app. On Windows and Linux, `http` links stay in the
+browser for now; `blitz://` links still open the app.
 
 ## Source files and retrieval
 
