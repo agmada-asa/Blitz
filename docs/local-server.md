@@ -14,7 +14,7 @@ hundred megabytes.
 | `npm run server -- install` | The background server: a launchd agent (macOS) or systemd user service (Linux) serving the newest release of `main`, updated automatically | 3007 |
 | `npm run dev:lan` | Points at the background server when it is installed; otherwise builds this checkout into `.next-production` (again only after the code changes) and serves it | 3007 |
 | `npm run dev` | `next dev` from this checkout, for coding | 3007, or 3009 beside a running server |
-| Blitz.app | Opens the running server, starting the background server if it is installed; otherwise hosts the stack itself in production mode | 3007, else 3008 |
+| The desktop app (`npm run desktop:install`) | Opens the running server, starting the background server if it is installed; otherwise hosts the newest release itself and updates it while open | 3007, else 3008 |
 
 `npm run dev` checks whether another Blitz already serves the database. If one
 does, it starts only Next, on port 3009, against that database, and does not
@@ -56,14 +56,16 @@ The service `dev.blitz.server` runs `scripts/dev-lan.mjs --service` from
 launchd agent in `~/Library/LaunchAgents`; on Linux it is a systemd user unit in
 `~/.config/systemd/user`, so it needs `systemctl --user` (most desktop
 distributions have it; WSL needs systemd turned on). A Linux user service stops
-when you log out unless you run `loginctl enable-linger` once. Installing needs
-a local Convex database in the checkout, so run `npm run dev` there once
-before the first install. `--ref <branch>` installs a local branch that is not
-on GitHub yet; the server still follows `main` afterwards and switches as soon
-as `main` contains the server code. The service file records the Node binary
-that ran the install, so run `install` again after changing Node versions. On
-macOS, run `npm run desktop:install` afterwards so Blitz.app loads its code from
-`current`.
+when you log out unless you run `loginctl enable-linger` once. Installing
+creates the checkout's local Convex database first if it has none
+(`scripts/install-home.mjs`, shared with `npm run desktop:install`). A home
+that already has a release built for that database keeps it, and keeps its
+`config.json`, so installing the server after the desktop app (or again)
+builds nothing; `--repository` and `--branch` change what it follows. `--ref
+<branch>` builds a local branch that is not on GitHub yet; the server still
+follows `main` afterwards and switches as soon as `main` contains the server
+code. The service file records the Node binary that ran the install, so run
+`install` again after changing Node versions.
 
 On Linux, a new release's dependencies are copied from the previous release
 with `cp --reflink=auto`, which is instant on Btrfs and XFS and a full copy on
@@ -71,7 +73,7 @@ ext4, so keep a few gigabytes free in `~/.blitz` for the three kept releases.
 
 Other commands: `status`, `check` (check for updates now), `rebuild` (build
 the newest commit again, even after a failure), `stop`, `start`, and
-`uninstall` (keeps `~/.blitz`). Blitz.app has `Check for updates…` and
+`uninstall` (keeps `~/.blitz`). The desktop app has `Check for updates…` and
 `Rebuild Blitz now` in its Blitz menu.
 
 ## How an update works

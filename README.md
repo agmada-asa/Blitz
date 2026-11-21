@@ -8,45 +8,30 @@ It runs on your computer and uses the AI coding agent you already pay for (Codex
 
 ## Quick start
 
-You need Node.js 22.13 or newer and one supported agent installed and signed in. Codex is the default. Blitz is developed and tested on macOS. It starts on Windows and Linux too, but less has been tested there: see [Windows](#windows) and [Linux](#linux).
+You need Node.js 22.13 or newer, Git, and one supported agent installed and signed in. Codex is the default. Blitz runs on macOS, Windows, and Linux; it is used day to day on macOS, and CI installs and opens it on all three.
 
 ```bash
 git clone https://github.com/agmada-asa/Blitz.git
 cd Blitz
 npm ci
+npm run desktop:install
 ```
 
-Then pick one of the two below. Either way, create a project, add a week's material, and open its first unit to start a Teach session. The address also works on a phone on the same Wi-Fi.
+That's the whole setup. It creates the local database, builds Blitz (a few minutes the first time), and installs the app: in `~/Applications` on macOS, the Start menu on Windows, and the applications menu on Linux. Open Blitz from there, create a project, add a week's material, and open its first unit to start a Teach session.
 
-### For everyday use (macOS)
+While it's open, Blitz checks for a new version every 15 minutes and switches to it on its own, so you don't need to install it again to get updates. The Blitz menu also has `Check for updates…`. See [the desktop app](docs/local-desktop-host.md#the-desktop-app).
 
-Blitz runs in the background, starts when you log in, and updates itself from `main`.
+### Keeping it running in the background
 
-```bash
-npm run dev                  # once, to create the local database; stop it with Ctrl+C when it has started
-npm run server -- install    # the background server, at http://localhost:3007
-npm run desktop:install      # optional: Blitz.app in ~/Applications
-```
+To use Blitz from a phone or a browser without the app open, run `npm run server -- install` as well (macOS and Linux). Blitz then runs in the background at http://localhost:3007, starts when you log in, and keeps updating itself; the app becomes a window onto that server. See [local server](docs/local-server.md).
 
-Open http://localhost:3007 in a browser, or open Blitz.app. The app is a window onto the same server, so you can use either or both. On Windows and Linux, use `npm run dev:lan` instead: it doesn't run in the background or update itself.
-
-### For development
+### Working on the code
 
 ```bash
 npm run dev
 ```
 
-This runs Blitz from your checkout and reloads as you edit. It opens in your browser when it has started; if it doesn't, open the printed address. If the background server is already running, it starts on port `3009` against the same database.
-
-## Which one to run
-
-| For | Run | Updates itself |
-| --- | --- | --- |
-| Everyday use on a Mac | `npm run server -- install` once, then `npm run desktop:install` for Blitz.app | Yes, from `main` every 15 minutes |
-| A long session from this checkout | `npm run dev:lan` | No |
-| Working on the code | `npm run dev` | No, it reloads as you edit |
-
-The background server and Blitz.app are one Blitz: the app opens the server on port `3007`, and so does any browser or phone, so they always run the same version. A browser tab that was already open keeps the old version until you reload it. When the server is installed, `npm run dev:lan` opens it rather than starting a second copy, and `npm run dev` starts only Next on port `3009` against the same database. See [local server](docs/local-server.md) and [Blitz.app](docs/local-desktop-host.md).
+This runs Blitz from your checkout and reloads as you edit. It opens in your browser when it has started; if it doesn't, open the printed address. If the installed app or the background server is already serving the database, it starts on port `3009` against the same database. See [Run locally in detail](#run-locally-in-detail).
 
 ## What it does
 
@@ -95,9 +80,9 @@ The worker runs source recovery and Deep Research as two loops in one process; a
 
 ### Windows
 
-`npm run dev` and `npm run dev:lan` work on Windows from PowerShell or Command Prompt. Provider CLIs installed with npm (such as `codex.cmd`) are found on PATH. Claude Code runs the copy bundled with Blitz's Claude SDK and uses your existing Claude sign-in, unless `BLITZ_CLAUDE_CODE_COMMAND` names another. What doesn't work on Windows yet:
+Run the commands from PowerShell or Command Prompt. `npm run desktop:install` installs Blitz for your user only, with no administrator prompt, and adds it to the Start menu. It isn't signed, so Windows may show a SmartScreen warning the first time; choose `More info`, then `Run anyway`. Quit Blitz before installing again. Provider CLIs installed with npm (such as `codex.cmd`) are found on PATH. Claude Code runs the copy bundled with Blitz's Claude SDK and uses your existing Claude sign-in, unless `BLITZ_CLAUDE_CODE_COMMAND` names another. What doesn't work on Windows yet:
 
-- `npm run server` installs a background service on macOS and Linux only. Use `npm run dev:lan`, which doesn't run in the background or update itself.
+- `npm run server` installs a background service on macOS and Linux only, so on Windows Blitz runs and updates while the app is open.
 - Read-aloud and podcasts use a local speech model that runs only on macOS and Linux, and spoken questions need an Apple silicon Mac.
 - Cleaning up processes left behind by a launcher that crashed is macOS and Linux only. If a later start says a port is taken, end the leftover `node` processes in Task Manager.
 
@@ -105,9 +90,8 @@ Signing in to OpenCode or Antigravity from Settings opens a Command Prompt windo
 
 ### Linux
 
-`npm run dev` and `npm run dev:lan` work on Linux, and CI starts Blitz on Ubuntu for every pull request. Read-aloud and podcasts work too: run `sh scripts/setup-kokoro.sh` (on Debian and Ubuntu, first `sudo apt install python3-venv`). See [local Kokoro](docs/local-kokoro.md). What doesn't work on Linux yet:
+`npm run desktop:install` installs Blitz for your user and adds it to your applications menu. On Ubuntu 23.10 and later, Linux only lets the app's window sandbox start if its helper is owned by root, so the installer runs `sudo` once for it and may ask for your password. Read-aloud and podcasts work too: run `sh scripts/setup-kokoro.sh` (on Debian and Ubuntu, first `sudo apt install python3-venv`). See [local Kokoro](docs/local-kokoro.md). What doesn't work on Linux yet:
 
-- `npm run desktop:install` builds a macOS app, so it is macOS only. Use Blitz in a browser.
 - Spoken questions and voice mode need an Apple silicon Mac.
 
 `npm run server -- install` runs Blitz in the background as a systemd user service; see [local server](docs/local-server.md). Signing in to OpenCode or Antigravity from Settings opens your desktop's terminal. On a machine without a desktop, run `opencode auth login` or `agy acp --login` yourself.
