@@ -2,8 +2,8 @@
  * Turns `blitz://` links into pages of the local app, so a link to Blitz can
  * open in the desktop window instead of a browser.
  *
- * The packaged app registers the `blitz` scheme with macOS (see
- * `scripts/package-desktop.mjs`). A link names a page by its path:
+ * The installed app registers the `blitz` scheme with the operating system
+ * (see `scripts/install-desktop.mjs`). A link names a page by its path:
  * `blitz://projects/abc/learn/xyz` and `blitz:///projects/abc/learn/xyz` both
  * open `/projects/abc/learn/xyz`, and `blitz://` alone opens the Library.
  * A browser page hands itself to the app the same way (`lib/client/desktop-links.ts`).
@@ -45,6 +45,18 @@ export function linkTarget(link, origin) {
   if (path === undefined) return undefined
   const target = new URL(path, origin)
   return target.origin === new URL(origin).origin ? target.href : undefined
+}
+
+/**
+ * Finds the `blitz://` link in a command line. Windows and Linux open a link
+ * by starting the app with it as an argument, after any switches Chromium adds.
+ * @param {readonly string[]} argv The command line, executable first.
+ * @returns {string | undefined} The last `blitz://` argument, if any.
+ */
+export function linkArgument(argv) {
+  return argv.findLast((argument) =>
+    argument.toLowerCase().startsWith(`${LINK_SCHEME}:`)
+  )
 }
 
 /**

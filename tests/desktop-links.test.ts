@@ -6,6 +6,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
 import {
+  linkArgument,
   linkPath,
   linkTarget,
   takeQueuedLinks,
@@ -30,6 +31,15 @@ test("a blitz link names a page by its path, with or without a host", () => {
   assert.equal(linkPath("blitz://"), "/")
   assert.equal(linkPath("https://example.com/projects"), undefined)
   assert.equal(linkPath("not a url"), undefined)
+})
+
+test("finds the blitz link Windows and Linux pass on the command line", () => {
+  assert.equal(
+    linkArgument(["C:\\Blitz\\Blitz.exe", "--allow-file-access", "blitz://projects/abc"]),
+    "blitz://projects/abc"
+  )
+  assert.equal(linkArgument(["/opt/blitz", "BLITZ://review"]), "BLITZ://review")
+  assert.equal(linkArgument(["/opt/blitz", "--no-sandbox"]), undefined)
 })
 
 test("a blitz link can't leave the app's origin", () => {

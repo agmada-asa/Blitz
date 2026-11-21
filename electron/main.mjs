@@ -1,13 +1,15 @@
 /**
- * Boots the Mac desktop shell, local Blitz services, and project-scoped native bridge.
+ * Boots the desktop shell on macOS, Windows, and Linux, with the local Blitz
+ * services and the project-scoped native bridge.
  *
  * The window prefers a Blitz that is already serving: the background server
  * (`npm run server -- install`), which it starts if it is installed but not
  * running, or `npm run dev:lan`. Only when neither exists does the app host
  * the stack itself, in production mode: from the current release with the
- * updater when the app runs from `~/.blitz`, or from a production build of
- * its checkout otherwise. The Blitz menu checks for updates or rebuilds.
- * `blitz://` links open their page in the window (`./open-links.mjs`).
+ * updater when the app runs from `~/.blitz` (what `npm run desktop:install`
+ * sets up), or from a production build of its checkout otherwise. The Blitz
+ * menu checks for updates or rebuilds. `blitz://` links open their page in
+ * the window (`./open-links.mjs`).
  */
 
 import {
@@ -39,7 +41,7 @@ import {
 } from "./auto-update.mjs"
 import { isServerInstalled, startServer } from "./background-server.mjs"
 import { loadLoginEnvironment } from "./login-environment.mjs"
-import { LINK_SCHEME, linkTarget, takeQueuedLinks } from "./open-links.mjs"
+import { LINK_SCHEME, linkArgument, linkTarget, takeQueuedLinks } from "./open-links.mjs"
 import {
   blitzHome,
   buildCheckout,
@@ -176,17 +178,21 @@ function registerIpc() {
   })
 }
 
-/** Installs the app menu with the update actions beside the standard macOS items. */
+/**
+ * Installs the app menu with the update actions: beside the standard items in
+ * macOS's app menu, and in a Blitz menu in the window's menu bar elsewhere.
+ */
 function installMenu() {
-  Menu.setApplicationMenu(
-    Menu.buildFromTemplate([
-      {
-        label: app.name,
-        submenu: [
+  const updateItems = [
+    { label: "Check for updates…", click: () => void runUpdate("check") },
+    { label: "Rebuild Blitz now", click: () => void runUpdate("rebuild") },
+  ]
+  const appMenu =
+    process.platform === "darwin"
+      ? [
           { role: "about" },
           { type: "separator" },
-          { label: "Check for updates…", click: () => void runUpdate("check") },
-          { label: "Rebuild Blitz now", click: () => void runUpdate("rebuild") },
+          ...updateItems,
           { type: "separator" },
           { role: "services" },
           { type: "separator" },
@@ -195,8 +201,11 @@ function installMenu() {
           { role: "unhide" },
           { type: "separator" },
           { role: "quit" },
-        ],
-      },
+        ]
+      : [...updateItems, { type: "separator" }, { role: "quit" }]
+  Menu.setApplicationMenu(
+    Menu.buildFromTemplate([
+      { label: app.name, submenu: appMenu },
       { role: "editMenu" },
       { role: "viewMenu" },
       { role: "windowMenu" },
@@ -373,17 +382,6 @@ async function hostStack() {
 
 /** Ensures a single desktop host, finds or starts local services, and opens the app. */
 async function boot() {
-  if (
-    process.platform !== "darwin" &&
-    process.env.BLITZ_ALLOW_NON_MAC !== "1"
-  ) {
-    dialog.showErrorBox(
-      "Blitz desktop",
-      "The local desktop host currently supports macOS only."
-    )
-    app.quit()
-    return
-  }
   if (!isOnlyInstance) {
     app.quit()
     return
@@ -394,7 +392,11 @@ async function boot() {
   // The bundle declares the scheme; this makes it the handler even when an
   // older copy of Blitz.app is also on the Mac.
   if (app.isPackaged) app.setAsDefaultProtocolClient(LINK_SCHEME)
-  app.on("second-instance", () => {
+  // Windows and Linux start a second copy for a `blitz://` link, with the link
+  // on its command line; the lock hands that command line to this copy.
+  app.on("second-instance", (_event, argv) => {
+    const link = linkArgument(argv)
+    if (link) openLink(link)
     if (mainWindow?.isMinimized()) mainWindow.restore()
     mainWindow?.show()
     mainWindow?.focus()
@@ -402,7 +404,10 @@ async function boot() {
   registerIpc()
   installMenu()
   await createWindow()
-  if (app.isPackaged) Object.assign(process.env, await loadLoginEnvironment())
+  // Windows apps get the user's full PATH from Explorer; macOS and Linux
+  // desktops start apps without what the login shell adds, such as nvm's Node.
+  if (app.isPackaged && process.platform !== "win32")
+    Object.assign(process.env, await loadLoginEnvironment())
   let running = await findRunningStack(repositoryRoot(), [lanPort, desktopPort])
   if (!running && isServerInstalled()) {
     await startServer().catch(() => undefined)
@@ -483,12 +488,15 @@ function shutdown() {
 }
 
 // macOS delivers `blitz://` links here, to the running app or, at launch,
-// before it is ready. Links the entry point queued earlier come first.
+// before it is ready. Links the entry point queued earlier come first. On
+// Windows and Linux the link that launched the app is on its command line.
 app.on("open-url", (event, link) => {
   event.preventDefault()
   openLink(link)
 })
 for (const link of takeQueuedLinks()) openLink(link)
+const launchLink = linkArgument(process.argv)
+if (launchLink) openLink(launchLink)
 
 app
   .whenReady()

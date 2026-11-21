@@ -1,4 +1,8 @@
-/** Recovers the user's shell environment for an app opened from Finder or the Dock. */
+/**
+ * Recovers the user's shell environment for an app opened from Finder, the
+ * Dock, or a Linux applications menu. Windows apps inherit the user's PATH,
+ * so the desktop app skips this there.
+ */
 
 import { execFile } from "node:child_process"
 
@@ -38,7 +42,7 @@ export function parseLoginEnvironment(output) {
  * @throws When the shell cannot run or reports no environment.
  */
 export function loadLoginEnvironment({
-  shell = process.env.SHELL || "/bin/zsh",
+  shell = process.env.SHELL || (process.platform === "darwin" ? "/bin/zsh" : "/bin/sh"),
   timeoutMs = 15_000,
 } = {}) {
   return new Promise((resolve, reject) => {
