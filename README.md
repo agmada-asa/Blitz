@@ -49,9 +49,9 @@ Open a project or topic for a focused feed, Study with immediate feedback, or a 
 
 Choose `Study` then `Written answers` for a separate writing activity. Save a draft or compare your response with the prepared reference. Written activities resume where you left off and do not award an automatic score.
 
-Questions use single choice, multiple answers, or true/false. Answers receive server-scored feedback. Reading and skipping never count as knowing a concept. `Ask in chat` attaches a card and its source section to your own question, and follow-ups reuse the conversation. Web replies stream as they arrive, with Markdown formatting and saved history after reconnecting.
+Questions are mostly single choice, multiple answers, or true/false, with fill-in-the-blank, ordering, matching, and code output where they fit. Answers receive server-scored feedback. Reading and skipping never count as knowing a concept. `Ask in chat` attaches a card and its source section to your own question, and follow-ups reuse the conversation. Web replies stream as they arrive, with Markdown formatting and saved history after reconnecting.
 
-Imports accept text PDFs, Markdown, plain text, and PowerPoint `.pptx` files. Public links can return those formats or HTML. Source URLs and page/slide markers are retained. Scanned PDFs need OCR elsewhere, and each extracted source is currently limited to 120,000 characters.
+Imports accept text PDFs, PowerPoint `.pptx`, Word `.docx`, Markdown, plain text, `.vtt` and `.srt` subtitles, HTML, and code files. Public links can return PDF, PowerPoint, Markdown, text, or HTML. Source URLs and page, slide, and timestamp markers are retained. Scanned PDFs need OCR elsewhere. A whole textbook can be imported (up to 3,000 PDF pages or 20 million characters) and becomes a reference the tutor searches. See [adding material](docs/source-import.md).
 
 Use `Find sources` within a project to ask Blitz for a proposed learning scope and references discovered through web search. Review the links before selecting which to import. Imported sources appear as unsorted sources; use `Group into a unit` on the module page to teach them. Proposed note outlines are previews only.
 
@@ -76,7 +76,7 @@ node --experimental-strip-types scripts/worker.ts
 
 These run the development server, which grows in memory over a long session; use them for coding rather than everyday use.
 
-The worker runs source recovery and Deep Research as two loops in one process; a failing loop is logged and retried with backoff while the other keeps running. `--only ingestion` or `--only research` runs only one loop, and `--once` runs a single pass. The worker loads `.env.local`. `BLITZ_CONVEX_URL` points server code and the worker at Convex through `lib/server/convex.ts`. Browsers rewrite a local `NEXT_PUBLIC_CONVEX_URL` to the hostname that served the page, so one value works on this computer, on the LAN, and through Tailscale IPs or full `.ts.net` DNS names. With Tailscale connected on both devices, open `http://<this computer's full Tailscale DNS name>:3007`. Both the web port and the local Convex port must be reachable over the tailnet. Next.js discovers this computer's exact Tailscale names and IPs using `tailscale status --json` so development scripts can load through those addresses. If the CLI is unavailable, set `BLITZ_TAILNET_HOST` to the full DNS hostname before starting Next.js. Restart Next.js after changing this computer's tailnet identity. No cloud deployment or API key is required for this local setup.
+The worker runs source recovery, Find sources research, and chat thread housekeeping as three loops in one process; a failing loop is logged and retried with backoff while the others keep running. `--only ingestion`, `--only research`, or `--only threads` runs only one loop, and `--once` runs a single pass. See [architecture](docs/architecture.md#the-background-worker). The worker loads `.env.local`. `BLITZ_CONVEX_URL` points server code and the worker at Convex through `lib/server/convex.ts`. Browsers rewrite a local `NEXT_PUBLIC_CONVEX_URL` to the hostname that served the page, so one value works on this computer, on the LAN, and through Tailscale IPs or full `.ts.net` DNS names. With Tailscale connected on both devices, open `http://<this computer's full Tailscale DNS name>:3007`. Both the web port and the local Convex port must be reachable over the tailnet. Next.js discovers this computer's exact Tailscale names and IPs using `tailscale status --json` so development scripts can load through those addresses. If the CLI is unavailable, set `BLITZ_TAILNET_HOST` to the full DNS hostname before starting Next.js. Restart Next.js after changing this computer's tailnet identity. No cloud deployment or API key is required for this local setup.
 
 ### Windows
 
@@ -98,7 +98,7 @@ Signing in to OpenCode or Antigravity from Settings opens a Command Prompt windo
 
 ## Provider controls
 
-Settings reports installation and account state separately for every provider. The Provider connections panel starts login, refreshes status, and clears local provider credentials after confirmation. Blitz also rejects a disconnected provider before saving settings or starting a turn. Claude Code uses the documented `sonnet`, `opus`, and `haiku` aliases; older saved `claude-*` aliases are translated when a turn starts.
+Settings reports installation and account state separately for every provider. The Provider connections panel starts login, refreshes status, and clears local provider credentials after confirmation. Blitz also rejects a disconnected provider before saving settings or starting a turn. Claude Code uses the documented `sonnet`, `opus`, `haiku`, and `fable` aliases; older saved `claude-*` aliases are translated when a turn starts.
 
 Provider access is saved separately for each provider. Chat's **Provider policy** option uses that setting; explicit **Full access** uses the provider's native bypass mode. **Project access** remains Codex-only because the other adapters do not supply an equivalent workspace-only OS sandbox. Provider-native tool rules are not an OS sandbox, and administrator policies still apply.
 
@@ -130,7 +130,7 @@ findings stay separate from attached source citations.
 
 Background card preparation and card replies always use restricted policies regardless of saved full access. Claude removes all tools; OpenCode denies all native tools; Antigravity runs sandboxed and every permission request is refused.
 
-Claude passes supported reasoning selections with `--effort`. Haiku, OpenCode and Antigravity expose only the provider default. Legacy unsupported effort selections are normalized to the provider default. Native permission references: [Claude CLI](https://code.claude.com/docs/en/cli-reference), [Claude SDK approvals](https://code.claude.com/docs/en/agent-sdk/user-input), [OpenCode permissions](https://opencode.ai/docs/permissions/). Settings saved under Blitz's first Antigravity integration move to Gemini 3.8 Flash.
+Claude passes supported reasoning selections with `--effort`. OpenCode and Antigravity expose only the provider default. Legacy unsupported effort selections are normalized to the provider default. Native permission references: [Claude CLI](https://code.claude.com/docs/en/cli-reference), [Claude SDK approvals](https://code.claude.com/docs/en/agent-sdk/user-input), [OpenCode permissions](https://opencode.ai/docs/permissions/). Settings saved under Blitz's first Antigravity integration move to Gemini 3.8 Flash.
 
 The ACP client negotiates `session/load` and `session/resume`. If neither is supported, it fails before accepting a turn so workspace chat can rebuild its saved history in a new session. Historical load notifications are excluded from the new answer. Both adapters bound stdout and assistant output, decode split UTF-8 safely, and terminate on transport failures or deadlines.
 
@@ -152,19 +152,19 @@ npm run check:runtimes
 
 `npm run check:runtimes` reports when OpenCode, Antigravity or the Codex model catalogue no longer matches what Blitz relies on; Codex and Claude Code compatibility is checked by [agent-engines](docs/agent-engines.md). See [AI model settings](docs/ai-model-settings.md).
 
-Implementation details are in [Teach](docs/teach.md), [source ingestion](docs/source-ingestion.md), [learning API](docs/learning-api.md), [provider text turns and legacy card chat](docs/card-chat.md), and [providers through agent-engines](docs/agent-engines.md).
+Implementation details are in [the docs](docs/README.md), starting with [architecture](docs/architecture.md).
 
 ## Known limits
 
 This version is a personal local app without account authentication. It is not configured for public hosting. The local agent is separate from any future cloud sync service. Creating proposed notes, richer diagrams, and moving topics are still outside this version.
 
 - The agents, local database, and speech run on the computer hosting Blitz; a phone is only a client of it.
-- Three local processes (Next.js, Convex, and one worker) run under one supervisor; the speech worker starts on demand.
+- Four local services (Next.js, Convex, the voice service, and one worker) run under one supervisor; the speech workers start on demand.
 - Citations land on a page, slide, timestamp, or heading when the source has one; other passages only get a section label.
 
 ## Credits
 
-Read aloud and podcasts use [Kokoro](https://huggingface.co/hexgrad/Kokoro-82M) (Apache 2.0), downloaded on first use. Spoken Teach questions are transcribed on the Mac with [Parakeet TDT 0.6B v2](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v2) (CC-BY-4.0), also downloaded on first use; see [local Kokoro speech](docs/local-kokoro.md). The voice previews in `public/audio/voices/` were generated with it.
+Read aloud and podcasts use [Kokoro](https://huggingface.co/hexgrad/Kokoro-82M) (Apache 2.0), downloaded on first use. Spoken questions are transcribed on the Mac with [Whisper large-v3-turbo](https://huggingface.co/openai/whisper-large-v3-turbo) (MIT) through MLX, also downloaded on first use; see [local speech](docs/local-kokoro.md). The voice previews in `public/audio/voices/` were generated with Kokoro.
 
 ## License
 
