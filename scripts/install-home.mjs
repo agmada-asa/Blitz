@@ -68,11 +68,20 @@ function convexConfigPath(root) {
  * @param {string} sharedRoot The main checkout, with its dependencies installed.
  * @param {{log?: (message: string) => void}} [options]
  * @returns {Promise<boolean>} Whether a database was created.
- * @throws When the Convex CLI fails; its output ends the message.
+ * @throws When `.env.local` names a Convex cloud or self-hosted deployment,
+ *   which `convex dev` would push to instead of making a local database, or
+ *   when the Convex CLI fails; its output ends the message.
  */
 export async function ensureLocalDatabase(sharedRoot, { log = console.log } = {}) {
-  if (existsSync(join(sharedRoot, ".env.local")) && existsSync(convexConfigPath(sharedRoot)))
-    return false
+  const envPath = join(sharedRoot, ".env.local")
+  if (existsSync(envPath) && existsSync(convexConfigPath(sharedRoot))) return false
+  // Anonymous mode only decides what an unconfigured checkout gets; a
+  // configured cloud deployment would still receive this checkout's functions.
+  const settings = existsSync(envPath) ? await readFile(envPath, "utf8") : ""
+  if (/^\s*CONVEX_DEPLOYMENT\s*=\s*["']?(dev|prod|preview):/m.test(settings) || /^\s*CONVEX_SELF_HOSTED_URL\s*=/m.test(settings))
+    throw new Error(
+      `${envPath} points at a Convex deployment that isn't on this computer. Blitz installs run on a local database: remove its CONVEX_DEPLOYMENT and CONVEX_SELF_HOSTED_URL lines, then install again.`
+    )
   const cli = join(sharedRoot, "node_modules", "convex", "bin", "main.js")
   if (!existsSync(cli))
     throw new Error(`${sharedRoot} has no dependencies installed. Run npm ci there first.`)
@@ -111,6 +120,8 @@ export async function ensureLocalDatabase(sharedRoot, { log = console.log } = {}
  * Sets up the Blitz home and makes sure `current` is a release built for this
  * database. An existing `config.json` is kept, so a home that follows another
  * repository or branch keeps doing so, unless `repository` or `branch` is given.
+ * Its database is kept too, unless that database no longer exists; then the
+ * home switches to `sharedRoot` and builds a release that links it.
  * @param {{
  *   home: string,
  *   checkout: string,
@@ -140,6 +151,13 @@ export async function setUpHome({
     execFileSync("git", ["rev-parse", "--git-common-dir"], { cwd: checkout, encoding: "utf8" }).trim()
   )
   const saved = await readServerConfig(home)
+  // A saved database that is gone, such as a deleted or moved checkout, gives
+  // way to this one; the release built for it links the missing folder, so
+  // a new one is built below.
+  const savedDatabaseMissing =
+    saved !== undefined && !existsSync(convexConfigPath(saved.sharedRoot))
+  if (savedDatabaseMissing)
+    log(`The database this Blitz home used in ${saved.sharedRoot} is gone, so it now uses ${sharedRoot}.`)
   const config = {
     repository:
       repository ??
@@ -148,7 +166,7 @@ export async function setUpHome({
         execFileSync("git", ["remote", "get-url", "origin"], { cwd: checkout, encoding: "utf8" }).trim()
       ),
     branch: branch ?? saved?.branch ?? "main",
-    sharedRoot: saved?.sharedRoot ?? sharedRoot,
+    sharedRoot: savedDatabaseMissing ? sharedRoot : (saved?.sharedRoot ?? sharedRoot),
   }
   if (resolve(config.sharedRoot) !== resolve(sharedRoot))
     log(`This Blitz home already uses the database in ${config.sharedRoot}, so it keeps that one.`)
@@ -167,13 +185,14 @@ export async function setUpHome({
     NEXT_PUBLIC_CONVEX_SITE_URL: `http://127.0.0.1:${ports.site}`,
   }
   const current = await currentRelease(home)
+  // A release built for this database, unless it links a database that is gone.
+  const currentFits =
+    current !== undefined &&
+    !savedDatabaseMissing &&
+    current.convexUrl === buildEnvironment.NEXT_PUBLIC_CONVEX_URL
   // Without a ref, any release built for this database will do: the updater
   // moves it to the newest commit on its own, and it may be running right now.
-  if (
-    !ref &&
-    current &&
-    current.convexUrl === buildEnvironment.NEXT_PUBLIC_CONVEX_URL
-  ) {
+  if (!ref && current && currentFits) {
     log(`Blitz ${shortCommit(current.commit)} is already built.`)
     return current
   }
@@ -190,7 +209,7 @@ export async function setUpHome({
     throw new Error(
       `${ref ?? config.branch} (${shortCommit(commit)}) does not include the Blitz server yet. Install from a branch that does with --ref <branch>.`
     )
-  if (current?.commit === commit && current.convexUrl === buildEnvironment.NEXT_PUBLIC_CONVEX_URL) {
+  if (current && currentFits && current.commit === commit) {
     log(`Blitz ${shortCommit(commit)} is already built.`)
     return current
   }

@@ -56,6 +56,58 @@ test("a checkout that already has a database is left alone", async () => {
   }
 })
 
+test("a checkout set up for a cloud deployment is refused, not pushed to", async () => {
+  const root = await mkdtemp(join(tmpdir(), "blitz-database-"))
+  try {
+    await writeFile(join(root, ".env.local"), "OTHER=1\nCONVEX_DEPLOYMENT=dev:happy-cat-123\n")
+    await assert.rejects(ensureLocalDatabase(root, { log: () => undefined }), /isn't on this computer/)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("a home whose database is gone switches to this checkout and builds again", async () => {
+  const root = await mkdtemp(join(tmpdir(), "blitz-home-"))
+  try {
+    const checkout = join(root, "checkout")
+    const home = join(root, "home")
+    await mkdir(join(checkout, ".convex", "local", "default"), { recursive: true })
+    await writeFile(
+      join(checkout, ".convex", "local", "default", "config.json"),
+      JSON.stringify({ ports: { cloud: 4100, site: 4101 } })
+    )
+    git(checkout, "init", "-q", "-b", "main")
+    git(checkout, "remote", "add", "origin", checkout)
+    git(checkout, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-q", "--allow-empty", "-m", "start")
+
+    // A release for the same ports, built for a checkout that has since been deleted.
+    const release = join(home, "releases", "abc")
+    await mkdir(release, { recursive: true })
+    await writeFile(
+      join(release, ".blitz-release.json"),
+      JSON.stringify({ commit: "a".repeat(40), id: "abc", builtAt: "t", convexUrl: "http://127.0.0.1:4100" })
+    )
+    await symlink(release, join(home, "current"))
+    const gone = join(root, "deleted-checkout")
+    await writeFile(
+      join(home, "config.json"),
+      JSON.stringify({ repository: checkout, branch: "main", sharedRoot: gone })
+    )
+    git(root, "clone", "-q", "--bare", checkout, join(home, "repo.git"))
+
+    // Reaching the build step, which this empty commit can't pass, shows the
+    // release linking the missing database was not kept.
+    await assert.rejects(
+      setUpHome({ home, checkout, sharedRoot: checkout, log: () => undefined }),
+      /does not include the Blitz server/
+    )
+    const config = JSON.parse(await readFile(join(home, "config.json"), "utf8"))
+    assert.equal(config.sharedRoot, checkout)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 test("installing again keeps the home's settings and its release for this database", async () => {
   const root = await mkdtemp(join(tmpdir(), "blitz-home-"))
   try {
