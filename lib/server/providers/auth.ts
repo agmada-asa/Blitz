@@ -9,6 +9,7 @@ import {
   providerCommand,
   readOpenCodeIntegrations,
 } from "./registry.ts"
+import { openTerminalLogin } from "./terminal-login.ts"
 
 const AUTH_TIMEOUT_MS = 15_000
 
@@ -65,30 +66,6 @@ async function startNativeLogin(
   })
 }
 
-/** Quotes a fixed local executable for a Terminal command without evaluating user input. */
-function shellQuote(value: string): string {
-  return `'${value.replaceAll("'", `'"'"'`)}'`
-}
-
-/**
- * Runs a provider's interactive sign-in in a visible macOS Terminal window.
- *
- * @param executable - The provider CLI, quoted for the shell.
- * @param args - Fixed sign-in arguments; never user input.
- * @param manual - The command named in the error on other platforms.
- */
-async function openTerminalLogin(
-  executable: string,
-  args: string,
-  manual: string
-): Promise<void> {
-  if (process.platform !== "darwin")
-    throw new Error(`Run \`${manual}\` in a terminal, then check again.`)
-  const command = `${shellQuote(executable)} ${args}`
-  const script = `tell application "Terminal" to do script ${JSON.stringify(command)}`
-  await runCredentialCommand("/usr/bin/osascript", ["-e", script])
-}
-
 /** Applies one explicit provider authentication action from the settings page. */
 export async function changeProviderAuthentication(input: {
   providerId: AiProviderId
@@ -116,10 +93,10 @@ export async function changeProviderAuthentication(input: {
     }
     if (input.providerId === "antigravity") {
       // `agy acp --login` signs in with Google, then exits.
-      await openTerminalLogin(command.executable, "acp --login", "agy acp --login")
+      await openTerminalLogin(command.executable, ["acp", "--login"], "agy acp --login")
       return
     }
-    await openTerminalLogin(command.executable, "auth login", "opencode auth login")
+    await openTerminalLogin(command.executable, ["auth", "login"], "opencode auth login")
     return
   }
 
