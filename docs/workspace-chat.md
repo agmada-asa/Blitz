@@ -1,120 +1,54 @@
 # Workspace chat
 
-The Chat tab starts a general Codex conversation inside a project without
-requiring a study card. A learner can attach up to eight context items. Supported context includes
-study cards, Blitz projects, public links, and arbitrary files (with text previews for code/documents, descriptors for binaries, and automatic staging into the agent's working directory under `attachments/`).
+The Chat tab (`components/chat/chat-workspace.tsx`) is a general conversation with the provider picked in its model picker: Codex, Claude Code, OpenCode or Antigravity. A chat can stand alone or belong to a module, and can work in a module's project folder. Teach sessions and Teach side chats are workspace chats too (see [Teach](teach.md)).
 
-`components/chat/chat-workspace.tsx` extracts selected files in the browser and
-uses the existing protected source-fetch route for public links. It sends only
-new attachments with each message. A card opened from the learning feed is a
-locked pending attachment. Its first question always starts a new workspace
-chat, even if another chat is currently selected. Card actions may provide an
-unsent, focused prompt in the composer; the learner reviews or edits it before
-sending. The card's project becomes the owning and writable project
-automatically. The empty-chat heading and the composer's project control both
-show that project. Context chips sit above the message field. Once an
-attachment enters the Codex thread, its chip stays visible because removing it
-cannot remove content from the thread history.
-`New chat` clears the active conversation and starts a standalone chat session. A
-learner can also start a project-scoped chat from a project group in the chat
-history sidebar, or attach projects and other material as context from the composer.
-Projectless chats are fully supported and can be branched, renamed, pinned, or archived.
-Opening the Chat tab itself presents a fresh conversation ready for any question.
+## Context
 
-Each saved message has a copy action. Editing a user message creates a branch
-immediately before that message, sends the revision there, and leaves the
-original transcript unchanged. Branching an assistant response copies the
-transcript and attachments through that response into a new chat. On Codex and
-Claude Code the branch's first message forks the original runtime thread
-through the last kept reply (`forkSource` on the chat), so it keeps everything
-the original had read, tool results included, without later turns. A branch
-shares its source's working folder, because Claude Code keeps sessions per
-folder; a Claude Code chat with a working project, and every OpenCode chat,
-replays the bounded transcript into a fresh session instead, as does a fork that
-fails (for example at a turn ID saved by an older runtime).
+The composer attaches context as chips above the message field:
 
-A chat stopped at a provider's usage limit can move to another signed-in
-provider. Before starting a turn, the route reads the chat's saved selection
-through `workspaceChats.replySelection`; global settings supply defaults only
-for the same provider. This keeps continuations and later messages on the
-chosen provider without carrying over an incompatible model or reasoning level.
+- **A study card**, opened from **Ask in chat** in the feed. It's locked to the message, its first question always starts a new chat, and the card's module becomes the chat's module.
+- **Modules**: up to three, sharing 48,000 characters of material (`convex/chatContext.ts`).
+- **Public links**, fetched through the same pinned route as `Add material`.
+- **Files**: text and code are read into the message, images (up to 5 MB) go to the provider as images, and every file is saved as a chat document and copied into the turn's `attachments/` folder (see [chat citations](chat-citations.md#source-storage)).
 
-When a reply stops short because a tool was blocked, the model refused, or a
-safety check held part of it back, the reply carries a short notice saying so
-(`lib/turn-notices.ts`). Other runtime notices go to the server log only.
+Only new attachments are sent with each message. Once an attachment is in the provider's thread its chip stays, because removing it can't remove it from the thread. Every attachment is wrapped as untrusted context. The server caps the message (4,000 characters), attachment text (96,000 characters) and the whole request (140,000 bytes).
 
-While a reply is streaming, the send control and the latest assistant message
-offer `Pause`. Typing notes into the composer while streaming allows in-flight
-hot steering: submitting these notes pauses the active turn and immediately
-continues with the learner's guidance. Pausing closes the browser request and
-keeps any generated text as an interrupted response. The composer docks to the
-paused reply with the prompt `Add notes before continuing, or press Play to resume`.
-The learner can click `Play` to resume generation as-is, or submit steering
-notes to guide the continuation. `Continue response` directly on the assistant
-message also resumes into the same message; if no text arrived before the pause,
-the recovery action is labeled `Retry response`. A continuation cannot add new
-context attachments. If the learner prefers to start a fresh turn instead of
-continuing, they can dismiss the continuation dock.
+Attached material is the main evidence for a reply. When it can't answer the question, or a tool would clearly help, the provider may use what it has, such as live web search on Codex; outside findings are kept apart from source citations.
 
-When the provider asks for a decision or structured input, the active assistant
-turn stores one short-lived request envelope. The composer shows the request in
-a single panel anchored above the message field. It supports command, file,
-permission, and native tool approvals, Codex questions, and supported MCP form
-or URL handoffs. The panel stays available while the message field is paused,
-and the response is posted to the existing approval endpoint so the provider
-turn can continue. Reloading or switching back to a running chat restores the
-same pending panel from the saved assistant message.
+## Working project and access
 
-New Codex chat sessions also receive two Blitz-owned dynamic tools. One asks up
-to three structured questions and the other creates an explicit confirmation
-checkpoint when the user requests one that would not otherwise invoke a native
-runtime approval. These tools work in the ordinary chat collaboration mode;
-they do not depend on Codex's mode-gated built-in user-input tool. Command, file,
-and permission operations continue to use native runtime approvals. Explicit
-confirmation checkpoints remain available in every access mode because they do
-not grant filesystem, command, or network access. Existing
-chats refresh their provider context once when this tool set is first enabled,
-replaying the bounded saved transcript into the replacement session.
+The composer's project control picks a **working project**. Without one, a chat runs in its own folder outside the repository (see [provider text turns](provider-turns.md#working-folders)); with one, it runs in that project's folder, and **Plan first** runs the turn in the provider's plan mode (Codex and Claude Code), so the agent proposes a plan before it edits anything.
 
-`app/api/chat/route.ts` validates a bounded request, loads selected project
-context through `convex/chatContext.ts`, resolves a card and its prepared source
-snapshot when present, and starts or resumes a local Codex thread. A card
-reference cannot be sent with an existing `chatId`, so card chats never inherit
-another workspace session. `convex/workspaceChats.ts` creates and updates chats
-with or without an owning project, stores each user message before Codex starts,
-records any card or context attachments, coalesces streaming reply snapshots, and
-saves the Codex thread and turn IDs as soon as Codex accepts the turn. If a chat predates that guarantee or its saved thread cannot be resumed,
-Blitz passes a bounded copy of the saved transcript and attachments with the
-next message. A thread that cannot be resumed is replaced after that failed
-resume attempt. The route streams newline-delimited lifecycle events to the
-open browser while Convex keeps the transcript available across reloads. Codex
-runs in the shared Blitz chat workspace with a read-only sandbox. Workspace
-turns have a ten-minute deadline so source lookups are not cut off by the
-shorter card-chat limit.
+The model picker's **Access level** menu sets what the provider may do, with labels from each provider's own permission model (see [provider controls](../README.md#provider-controls)). On Codex, a chat is read-only by default, can write in the working project, or has full access. Teach turns are always read-only.
 
-When a turn fails, the chat shows recovery copy from `lastError`. The same
-record keeps `lastErrorReason`, a stable category such as `turn-failed`,
-`transport`, or `interrupted`, and `lastErrorDetail`, the underlying error
-including the provider's own message. Neither is shown in chat; read them with
-`npx convex run workspaceChats:get '{"chatId":"..."}'` to diagnose a failure
-without the server log. Starting a new turn clears all three. When a project
-chat finishes, Blitz refreshes the project's artifact list, skipping the
-`Sources`, `.blitz`, `attachments`, and generated `Audio` folders. A failure
-there is logged and never discards the finished reply.
+## Requests
 
-Every attachment is wrapped in an explicit untrusted-context boundary before
-it reaches Codex. The server caps project count, source count, request bytes,
-attachment text, and total project text. Public URLs still pass through the
-existing DNS-pinned source ingestion path.
+When the provider asks for a decision or input, the reply saves one short-lived request and the composer shows it in a panel above the message field: command, file, permission and tool approvals, Codex questions, and supported MCP form or URL handoffs. Answers go to `POST /api/chat/approval`. Reloading or switching back restores the panel. Every decision covers one operation or turn; Blitz never saves a permanent rule.
 
-Attached project and card sources are the primary evidence for a reply. When
-they cannot resolve the question, are incomplete or outdated, or another tool
-would materially improve the answer, interactive Codex chat may use an
-available tool such as live web search. External findings must remain distinct
-from attached source citations, and the selected access policy still governs
-the provider's other tool actions.
+New Codex chats also get two Blitz tools (`lib/server/agent-request.ts`): one asks up to three structured questions, and one creates a confirmation checkpoint when the learner wants to approve a step that wouldn't otherwise ask. They work in every access level because they grant nothing.
 
-The sidebar lists the 60 most recently active workspace chats, including chats
-started from cards. Selecting a row opens its saved transcript through a stable
-`chatId` URL. Older card conversations opened with `projectId` and `itemId`
-continue to use their existing flow.
+## Pausing and steering
+
+While a reply streams, the send button and the reply offer **Pause** (`POST /api/chat/pause`). Pausing keeps what was written as an interrupted reply. Typing notes while it streams and sending them pauses the turn and carries on with that guidance. A paused reply docks the composer with `Add notes before continuing, or press Play to resume`; **Play** resumes as is, and notes steer the continuation. **Continue response** on the reply does the same, or **Retry response** if nothing arrived. A continuation can't add attachments.
+
+## Branching and editing
+
+Editing a user message branches the chat just before it and sends the edit there; the original stays as it was. Branching from a reply copies the transcript and attachments up to that reply into a new chat. On Codex and Claude Code the branch forks the original thread at that reply (`forkSource`), so it keeps everything the original had read; branches share the original's folder because Claude Code keeps sessions per folder. A Claude Code chat with a working project, every OpenCode and Antigravity chat, and any fork that fails replay the saved transcript into a new session instead.
+
+## Providers and limits
+
+The chat saves its own provider, model and reasoning (`workspaceChats.replySelection`), so later messages stay on it. When a reply stops at a provider's usage limit, the chat offers to move to another signed-in provider (`components/chat/provider-handoff-offer.tsx`, `workspaceChats.handOff`), which carries the conversation over with `handoffPrompt`.
+
+A chat turn has ten minutes. A reply cut short by a blocked tool, a refusal or a safety check shows a short notice (`lib/turn-notices.ts`); other runtime notices go to the server log.
+
+## Saving and failures
+
+`app/api/chat/route.ts` saves the user's message before the provider starts, and the thread and turn IDs as soon as the provider accepts the turn. Streamed text is saved as it arrives, so the reply survives a reload. If the saved thread can't be resumed, the next message carries a bounded copy of the transcript (the latest 24 messages and 8 attachments) into a new session.
+
+A failed turn shows recovery copy from `lastError`. The chat also keeps `lastErrorReason` (such as `turn-failed`, `transport`, `interrupted` or `usage-limit`) and `lastErrorDetail` with the provider's own message. Neither is shown; read them with `npx convex run workspaceChats:get '{"chatId":"..."}'`. A new turn clears all three.
+
+When a chat with a working project finishes, Blitz refreshes the project's artifact list, skipping `Sources`, `attachments` and `Audio`. A failure there is logged and never loses the reply.
+
+## The sidebar and chat menu
+
+The sidebar lists the 60 most recently active chats, grouped by module, with a stable `chatId` URL for each. Chats can be renamed, pinned, archived and deleted; the worker's `threads` loop names new chats and deletes the provider threads of deleted ones. The chat menu's **Export chat** copies or downloads the chat as Markdown, with or without the agent's working notes and tool calls. Replies have copy and read-aloud actions.
