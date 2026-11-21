@@ -11,7 +11,7 @@ hundred megabytes.
 
 | Command | What runs | Port |
 | --- | --- | --- |
-| `npm run server -- install` | The background server: a launchd agent serving the newest release of `main`, updated automatically | 3007 |
+| `npm run server -- install` | The background server: a launchd agent (macOS) or systemd user service (Linux) serving the newest release of `main`, updated automatically | 3007 |
 | `npm run dev:lan` | Points at the background server when it is installed; otherwise builds this checkout into `.next-production` (again only after the code changes) and serves it | 3007 |
 | `npm run dev` | `next dev` from this checkout, for coding | 3007, or 3009 beside a running server |
 | Blitz.app | Opens the running server, starting the background server if it is installed; otherwise hosts the stack itself in production mode | 3007, else 3008 |
@@ -51,14 +51,23 @@ code, and the browser does not open. To make that the default for
 - `run/state.json`: the release, the last check, and the last failure, read by
   the desktop app and `npm run server -- status`.
 
-The agent `dev.blitz.server` runs `scripts/dev-lan.mjs --service` from
-`current`, restarts it after a crash, and starts it at login. Installing needs
+The service `dev.blitz.server` runs `scripts/dev-lan.mjs --service` from
+`current`, restarts it after a crash, and starts it at login. On macOS it is a
+launchd agent in `~/Library/LaunchAgents`; on Linux it is a systemd user unit in
+`~/.config/systemd/user`, so it needs `systemctl --user` (most desktop
+distributions have it; WSL needs systemd turned on). A Linux user service stops
+when you log out unless you run `loginctl enable-linger` once. Installing needs
 a local Convex database in the checkout, so run `npm run dev` there once
 before the first install. `--ref <branch>` installs a local branch that is not
 on GitHub yet; the server still follows `main` afterwards and switches as soon
-as `main` contains the server code. The plist records the Node binary that ran
-the install, so run `install` again after changing Node versions. Run
-`npm run desktop:install` afterwards so Blitz.app loads its code from `current`.
+as `main` contains the server code. The service file records the Node binary
+that ran the install, so run `install` again after changing Node versions. On
+macOS, run `npm run desktop:install` afterwards so Blitz.app loads its code from
+`current`.
+
+On Linux, a new release's dependencies are copied from the previous release
+with `cp --reflink=auto`, which is instant on Btrfs and XFS and a full copy on
+ext4, so keep a few gigabytes free in `~/.blitz` for the three kept releases.
 
 Other commands: `status`, `check` (check for updates now), `rebuild` (build
 the newest commit again, even after a failure), `stop`, `start`, and
@@ -95,7 +104,7 @@ A commit that fails is not retried every 15 minutes; a newer commit, `rebuild`,
 or `Rebuild Blitz now` tries again. The desktop app shows a notification with
 the build log. When an update changes the server code itself
 (`RUNNER_FILES` in `electron/auto-update.mjs`), the server exits after
-switching and launchd starts it again from the new release.
+switching and launchd or systemd starts it again from the new release.
 
 `check` and `rebuild` write a request file to `run/requests/` and signal the
 server, which answers each request by ID in `run/state.json`. A request sent

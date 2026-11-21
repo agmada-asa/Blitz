@@ -489,8 +489,9 @@ export class ReleaseManager {
 
   /**
    * Installs dependencies. When a kept release has the same lockfile, its
-   * `node_modules` is cloned copy-on-write (APFS `cp -c`), which takes seconds
-   * and almost no disk; otherwise `npm ci` runs.
+   * `node_modules` is cloned copy-on-write where the file system allows (APFS,
+   * Btrfs, XFS), which takes seconds and almost no disk, or copied; otherwise
+   * `npm ci` runs.
    * @param {string} directory The new release.
    * @param {string} logPath The build log.
    * @returns {Promise<string | undefined>} The lockfile hash.
@@ -505,9 +506,12 @@ export class ReleaseManager {
       )
         continue
       try {
+        // macOS `cp -c` clones on APFS. GNU `cp --reflink=auto` clones on
+        // Btrfs and XFS and copies elsewhere, which is still faster than npm.
+        const cloneFlags = process.platform === "darwin" ? ["-cR"] : ["-R", "--reflink=auto"]
         await this.run(
           "cp",
-          ["-cR", join(release.directory, "node_modules"), join(directory, "node_modules")],
+          [...cloneFlags, join(release.directory, "node_modules"), join(directory, "node_modules")],
           { logPath, timeoutMs: 5 * 60_000 }
         )
         return lockfileHash

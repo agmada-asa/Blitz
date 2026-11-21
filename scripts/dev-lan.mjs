@@ -15,7 +15,7 @@
  *   restarts, and the browser opens when Blitz is ready. `--verbose`
  *   (`npm run dev:verbose`, or `BLITZ_VERBOSE=1`) keeps the full output as it
  *   was before, and `--no-open` (or `BLITZ_OPEN=0`) keeps the browser closed.
- * - `--service`: the background server's launchd entry. It serves
+ * - `--service`: the background server's entry, run by launchd or systemd. It serves
  *   `~/.blitz/current` and keeps it on the newest tracked commit
  *   (`electron/auto-update.mjs`).
  *
@@ -77,7 +77,7 @@ const configuredPort = Number(process.env.BLITZ_PORT ?? "3007")
 const home = blitzHome()
 
 if (mode === "service")
-  // launchd starts the server with almost no environment; recover the login
+  // launchd and systemd start the server with almost no environment; recover the login
   // shell's PATH so Node, Git, the provider CLIs, and Tailscale are found.
   Object.assign(process.env, await loadLoginEnvironment().catch(() => ({})))
 
@@ -246,7 +246,7 @@ async function runDevelopment() {
 
 /**
  * Runs the background server: serves the current release, checks for updates,
- * and waits instead of exiting when something blocks it, so launchd does not
+ * and waits instead of exiting when something blocks it, so the service manager does not
  * restart it in a tight loop.
  */
 async function runService() {
@@ -303,7 +303,7 @@ async function runService() {
 }
 
 /**
- * Stops the stack and exits so launchd starts the server again, now running
+ * Stops the stack and exits so the service manager starts the server again, now running
  * the updater and supervisor code from the new release.
  */
 async function restartForNewRunner() {

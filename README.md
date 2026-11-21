@@ -97,19 +97,20 @@ The worker runs source recovery and Deep Research as two loops in one process; a
 
 `npm run dev` and `npm run dev:lan` work on Windows from PowerShell or Command Prompt. Provider CLIs installed with npm (such as `codex.cmd`) are found on PATH. Claude Code runs the copy bundled with Blitz's Claude SDK and uses your existing Claude sign-in, unless `BLITZ_CLAUDE_CODE_COMMAND` names another. What doesn't work on Windows yet:
 
-- `npm run server` installs a macOS background service, so it is macOS only.
+- `npm run server` installs a background service on macOS and Linux only. Use `npm run dev:lan`, which doesn't run in the background or update itself.
 - Read-aloud and podcasts use a local speech model that runs only on macOS and Linux, and spoken questions need an Apple silicon Mac.
-- Signing in to OpenCode or Antigravity from Settings opens a macOS Terminal window. On Windows, run `opencode auth login` or `agy acp --login` yourself.
 - Cleaning up processes left behind by a launcher that crashed is macOS and Linux only. If a later start says a port is taken, end the leftover `node` processes in Task Manager.
+
+Signing in to OpenCode or Antigravity from Settings opens a Command Prompt window for the sign-in.
 
 ### Linux
 
 `npm run dev` and `npm run dev:lan` work on Linux, and CI starts Blitz on Ubuntu for every pull request. Read-aloud and podcasts work too: run `sh scripts/setup-kokoro.sh` (on Debian and Ubuntu, first `sudo apt install python3-venv`). See [local Kokoro](docs/local-kokoro.md). What doesn't work on Linux yet:
 
-- `npm run server` installs a macOS background service, so it is macOS only. Use `npm run dev:lan`, which doesn't run in the background or update itself.
 - `npm run desktop:install` builds a macOS app, so it is macOS only. Use Blitz in a browser.
 - Spoken questions and voice mode need an Apple silicon Mac.
-- Signing in to OpenCode or Antigravity from Settings opens a macOS Terminal window. On Linux, run `opencode auth login` or `agy acp --login` yourself.
+
+`npm run server -- install` runs Blitz in the background as a systemd user service; see [local server](docs/local-server.md). Signing in to OpenCode or Antigravity from Settings opens your desktop's terminal. On a machine without a desktop, run `opencode auth login` or `agy acp --login` yourself.
 
 ## Provider controls
 
