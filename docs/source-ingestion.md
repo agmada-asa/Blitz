@@ -1,22 +1,38 @@
-# Source ingestion boundary
+# Source ingestion
 
-`lib/server/source-ingestion` is the server-side boundary between source extraction and later concept or card generation. It accepts already extracted text, normalizes line endings, keeps source identity stable, preserves explicit attribution markers, and emits bounded chunks with deterministic IDs.
+`lib/server/source-ingestion/` turns extracted text into the passages Teach, chat and citations search. It sits between [extraction](source-extraction.md) and persistence:
 
-Supported normalized kinds are `pdf`, `markdown`, `text`, `transcript`, `powerpoint`, and `url`. The kind describes an upstream adapter; this layer does not pretend to parse binary PowerPoint files or HTML. The current browser extractor supports PDF, Markdown, and text. A future PowerPoint adapter should pass extracted text with explicit `[Slide …]` markers, and a future PDF adapter can continue to pass the existing `[Page N]` markers.
+1. **Extract**: `extract.ts` reads a file into text.
+2. **Normalize**: `normalize.ts` cleans the text, gives the source a stable ID and finds page, slide and timestamp markers.
+3. **Segment**: `segment.ts` cuts the text into overlapping passages with deterministic IDs.
+4. **Rows**: `chunk-rows.ts` turns passages into `sourceChunks` rows.
 
-Markers are recognized only when they are explicit line prefixes: `[Page …]`, `[Slide …]`, bracketed timestamps such as `[00:01:23]`, and timestamp prefixes such as `00:01:23 Speaker:`. The marker label is retained in the normalized text and in each intersecting source reference. No page, slide, or timestamp marker is manufactured when the input does not contain one. A filename is retained when supplied; paste sources can remain unattributed beyond their stable source ID.
+`prepareStoredSource` (`prepare.ts`) runs all four for uploads. Research imports call `prepareTextSource` (`chunk-rows.ts`) on each downloaded part. Both produce identical passages and references.
 
-`segmentSourceDocument` defaults to 5,000 characters per chunk, 400 characters of overlap, and at most 1,000 chunks. It chooses paragraph, line, or whitespace boundaries where possible, but falls back to an exact hard boundary for long unbroken text. Chunks are exact slices of normalized text, so removing each adjacent overlap reconstructs the complete normalized source. Chunk IDs hash the source ID, ordinal, offsets, and text, making repeated processing deterministic without exposing source text in identifiers.
+## Normalization
 
-Normalization rejects empty input, filenames longer than 255 characters, and text above 2,000,000 characters or 8,000,000 UTF-8 bytes. Segmentation reports the source ID and configured chunk limit when the maximum chunk count is exceeded. `SourceIngestionError` exposes a stable error code and safe bounded context without storing source contents.
+`normalizeSourceDocument` strips a byte-order mark, turns CRLF into LF and checks the kind (`pdf`, `markdown`, `text`, `transcript`, `powerpoint` or `url`). Extraction currently produces only `pdf`, `markdown` and `text`; the other kinds are there for adapters. Without a supplied `sourceId`, it hashes the kind, filename and text into one.
 
-`chunk-rows.ts` turns chunks into the rows stored in `sourceChunks`. Uploads
-use `persistedChunkRows` after `prepareStoredSource`; approved research imports
-use `prepareTextSource` on each downloaded part, so both get identical passages
-and page, slide, and timestamp references for citations.
+Markers are recognised only as explicit line prefixes: `[Page …]`, `[Slide …]`, bracketed timestamps such as `[00:01:23]`, and timestamp prefixes such as `00:01:23 Speaker:`. The marker label stays in the text and in every passage it covers. No marker is invented when the text has none, so pasted notes are cited by section only.
 
-Large browser imports use the shared bounded splitter described in
-`docs/source-splitting.md`; source parts retain their complete extracted text
-and visible part attribution instead of truncating at the persistence limit.
+It rejects empty text, filenames over 255 characters, and text over 20,000,000 characters or 25,000,000 UTF-8 bytes.
 
-`fetchPublicSource` is a small optional URL adapter. It accepts only HTTP(S), rejects userinfo and nonstandard ports, blocks localhost and local hostnames, resolves every hostname and rejects private, link-local, documentation, multicast, and other non-public addresses, validates each redirect, and enforces one total deadline plus a response byte cap. Its default Node `http`/`https` transport connects through the validated DNS address while retaining the original hostname for TLS SNI and `Host`, which prevents a second DNS lookup from rebinding the request. The injectable fetch implementation exists for deterministic tests and must not be used as an unpinned production transport. It returns bounded bytes and content type; it does not parse HTML. Requests do not use browser cookies or local file access. HTML extraction needs a vetted parser dependency or a dedicated upstream adapter before web pages can be treated as faithful learning sources.
+## Segmentation
+
+`segmentSourceDocument` defaults to 5,000 characters per passage, 400 characters of overlap and at most 1,000 passages. Uploads raise the cap to 6,000 passages (`MAX_PREPARED_CHUNKS`), about 25 MB of text, which is enough for a whole textbook. Cuts fall on paragraph, line or whitespace boundaries where possible, and fall back to a hard cut in long unbroken text.
+
+Passages are exact slices of the normalized text, so removing each overlap gives back the full source. Passage IDs hash the source ID, position, offsets and text, so processing the same source twice gives the same IDs without putting source text in the ID.
+
+`SourceIngestionError` (`errors.ts`) carries a stable code (for example `input-too-large`, `invalid-input`, `url-timeout`) and small, safe context, never the source text. Upload and import routes use the code to choose their recovery message.
+
+## Public URLs
+
+`fetchPublicSource` (`url.ts`) downloads a public page for [adding material](source-import.md) and [Find sources](research.md). It:
+
+- accepts only HTTP(S) URLs, with no user info and no non-standard ports;
+- blocks localhost and local hostnames, resolves every hostname and rejects private, link-local, documentation, multicast and other non-public addresses;
+- checks every redirect the same way, with a single deadline for the whole request and a cap on response bytes;
+- connects to the checked IP address while keeping the original hostname for TLS and `Host`, so a second DNS lookup can't point the request somewhere else;
+- sends no cookies and never reads local files.
+
+It returns the bytes and content type and does not parse anything. Callers set the limits: the link route uses 5 MB, 15 seconds and three redirects, and research imports use a 20 second deadline. The `fetchImpl` option is for tests only and must not be used in production, because it skips the pinned connection.

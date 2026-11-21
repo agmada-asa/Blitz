@@ -1,48 +1,47 @@
-# Downloaded source extraction
+# Source extraction
 
-`extractDownloadedSource` is the server boundary for approved research
-downloads. It accepts the bounded bytes and final URL returned by the public
-HTTP(S) fetcher and returns a persistence-compatible filename, source kind, and
-readable text.
+`lib/server/source-ingestion/extract.ts` turns a file into readable text. It has two entry points that share the same format readers:
 
-Supported formats are PDF, Markdown, plain text, HTML, and small PPTX and Word
-(DOCX) files. The same extractor serves project uploads (`extractStoredSource`)
-and chat attachments.
-PPTX extraction reads only bounded `ppt/slides/slideN.xml` entries with the
-installed ZIP runtime, caps each slide XML entry at 1 MB and all slide XML at
-20 MB, and returns readable slides with `[Slide N]` markers. Empty slide-only
-decks fail as unreadable. DOCX extraction reads only `word/document.xml`
-(at most 30 MB uncompressed, 20 MB compressed for local files) and returns
-Markdown: `Title` and `Heading N` styles or outline levels become `#`
-headings, numbered or bulleted paragraphs become `- ` items, and tabs and
-line breaks are kept. Word has no fixed pages, so no page markers are
-invented; citations are labelled by heading instead. Text boxes, tables, and
-footnotes are read only as far as their paragraphs appear in the body.
-Word links added through `Add material` are not fetched yet. PDF extraction
-uses the installed `pdfjs-dist` runtime and reads at most 500 pages. Research
-downloads use bounded in-memory bytes. Project-local PDFs use file-backed range
-reads so a large original does not need an equally large server heap allocation.
-PDF parsing disables evaluation when supported, sorts positioned text into lines
-and common two- or three-column reading order, and keeps `[Page N]` markers in page order.
-Scanned or image-only PDFs fail with an OCR message; this boundary
-does not perform OCR.
+- `extractStoredSource` reads an original saved in the project folder. Uploads, retries and chat attachments use it, through `prepareStoredSource` (`prepare.ts`), which also normalizes and chunks the text (see [source ingestion](source-ingestion.md)).
+- `extractDownloadedSource` reads bytes already downloaded by `fetchPublicSource`. Research imports use it.
 
-Research downloads are capped at 5 MB. Original project uploads stream to the
-local project folder without an application byte limit. Extracted text is capped
-at 2,000,000 characters by the parser and 500 KB at the current Convex
-persistence boundary. Local PPTX parsing keeps a separate 20 MB compressed-file
-limit because its ZIP parser operates in memory. A parsing or text bound leaves
-the original saved for an agent to inspect with its available tools.
-Empty downloads and empty documents return structured ingestion errors with
-actionable messages. HTML extraction selects the first `main` or `article`
-region when present, removes scripts and styles, decodes common entities,
-turns `h1`–`h6` into Markdown headings so citations name the article section,
-and normalizes block boundaries. The browser extractor used by `Add material`
-links keeps headings the same way. It is a small server fallback rather than a full
-HTML parser, so callers should use a vetted parser dependency if exact web page
-fidelity becomes necessary.
+Neither fetches URLs, follows links, runs downloaded markup or does OCR.
 
-The helper does not fetch URLs, execute downloaded markup, follow links, or run
-OCR. The research import flow should call it only after the public URL helper
-has validated and bounded the download, then persist the returned text and the
-original approved URL as provenance. The validated final URL is used only to identify the downloaded format and filename.
+## Formats
+
+The format comes from the file's first bytes, its content type and its extension.
+
+| Format | How it's read | Saved as |
+| --- | --- | --- |
+| PDF | `pdfjs-dist` | `pdf` |
+| PowerPoint `.pptx` | slide XML, `[Slide N]` markers | `text` |
+| Word `.docx` | `word/document.xml` to Markdown | `markdown` |
+| Markdown | as is | `markdown` |
+| HTML | main text, headings kept | `text` |
+| Text, code, CSV, JSON, subtitles | as is | `text` |
+
+**PDF.** Evaluation is turned off where supported. Positioned text is sorted into lines and into common two- or three-column reading order (`pdf-reading-order.ts`), and each page starts with a `[Page N]` marker. Project files are read with file-backed range reads, so a large PDF doesn't need the same amount of memory. A PDF with no text layer fails with a message saying it needs OCR.
+
+**PowerPoint.** Only `ppt/slides/slideN.xml` entries are read: at most 1 MB per slide and 20 MB across all slides. Slides are numbered by part name (`slide7.xml` is Slide 7). A deck with no readable slide text fails as unreadable.
+
+**Word.** Only `word/document.xml` is read (at most 30 MB unzipped). `Title` and `Heading N` styles or outline levels become `#` headings, numbered and bulleted paragraphs become `- ` items, and tabs and line breaks are kept. Word has no fixed pages, so no page markers are invented; citations name the heading instead. Text boxes, tables and footnotes come through only as far as their paragraphs sit in the body.
+
+**HTML.** A small server-side reader, not a full HTML parser: it takes the first `main` or `article` region if there is one, removes scripts and styles, decodes common entities, turns `h1`–`h6` into Markdown headings and keeps block boundaries. Links added in the browser are parsed with `DOMParser` instead; see [adding material](source-import.md).
+
+**Subtitles.** `.vtt` and `.srt` files are turned into a timestamped transcript, so citations can point at a time.
+
+## Limits
+
+| Limit | Stored files | Downloads |
+| --- | --- | --- |
+| File size | none for most formats; PPTX and DOCX 20 MB | 5 MB |
+| PDF pages | 3,000 | 500 |
+| Extracted text | 20,000,000 characters | 2,000,000 characters |
+
+Text over the limit fails with `input-too-large` rather than being cut short. Empty documents fail with a clear message. When extraction fails, the original stays saved, so an agent can still open it with its own tools.
+
+## Showing the original
+
+`lib/source-viewers.ts` picks how a source opens in the reader: PDFs in a PDF viewer, Word files in a document view (`docx-preview`, in a shadow root), and PowerPoint decks as slides. `lib/client/pptx-slides.ts` reads a deck in the browser into a simple slide model that `components/ui/slides-reader.tsx` draws. It keeps positioned text with its styling, pictures, tables, solid fills and backgrounds, resolves layout and master inheritance, and applies theme colours. It leaves out charts, SmartArt, effects, gradients and EMF/WMF pictures. It uses the same slide numbering as extraction, so a cited slide and the drawn slide always match.
+
+Everything else opens as `Formatted` Markdown, up to 400,000 characters. See [chat citations](chat-citations.md) for how a citation finds its passage.
