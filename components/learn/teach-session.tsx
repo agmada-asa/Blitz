@@ -749,7 +749,15 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
   useEffect(() => {
     if (!nextHeld || !voiceOn || running || sending || nextSent.current === nextFrom) return
     nextSent.current = nextFrom
-    void send(TEACH_QUICK_REPLIES.next, undefined, true, nextFrom)
+    // A failed reply is resumed, as the dock does; moving on from it could
+    // repeat its section if its progress wasn't saved.
+    const failed = lastMessage?.role === "assistant" && lastMessage.status === "failed"
+    void send(
+      failed ? "" : TEACH_QUICK_REPLIES.next,
+      failed ? nextFrom : undefined,
+      true,
+      failed ? undefined : nextFrom
+    )
       .then((sent) => {
         if (sent) return
         // Saying "next" again retries it; the dock that shows send errors is hidden during voice.
@@ -757,7 +765,7 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
         report("The next section didn't start. Say next again.")
       })
       .finally(() => setNextFrom(null))
-  }, [nextHeld, nextFrom, voiceOn, running, sending, send, report])
+  }, [nextHeld, nextFrom, voiceOn, running, sending, send, report, lastMessage])
   /** Starts voice afresh, without a question or "next" left from an earlier session. */
   const startVoice = voice.start
   const voiceStarter = useMemo(

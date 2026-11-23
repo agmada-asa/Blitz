@@ -846,6 +846,10 @@ export const startTurn = mutation({
       : []
     if (args.after && priorMessages[0]?._id !== args.after)
       throw new Error(TEACH_MOVED_ON)
+    // A failed reply may not have saved its progress, so moving on from it
+    // could repeat its section. It is resumed instead.
+    if (args.after && priorMessages[0]?.status === "failed")
+      throw new Error("Resume the last reply before moving on.")
     const priorAttachments = chat
       ? await ctx.db
           .query("workspaceChatAttachments")
