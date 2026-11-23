@@ -711,6 +711,46 @@ test("a Teach turn runs read-only on the unit, then records the outline it set",
   assert.deepEqual(harness.questionBanks, ["unit-1"])
 })
 
+test("Teach progress is saved before the reply completes, and only a planning reply sets the plan", async () => {
+  const outline = {
+    title: "Caches",
+    sections: [
+      { id: "s1", title: "Why caches" },
+      { id: "s2", title: "Write policies" },
+    ],
+  }
+  harness.handlers["units:teachContext"] = () => teachContext({ outline, sectionIndex: 0 })
+  harness.handlers["teach:precheckResults"] = () => []
+  harness.handlers["workspaceChats:startTurn"] = () => startedTurn({ providerSessionId: "thread-1" })
+  const plan = '```plan\n{"s1":"skim","s2":"teach"}\n```'
+  harness.attempts = [replies(plan), replies(`${plan}\n\`\`\`section\ns2\n\`\`\`\nWrite-back.`)]
+
+  await post(message({ message: "Plan my lesson" }))
+  await post(message({ message: "Next section" }))
+
+  const names = harness.calls.map((call) => call.name)
+  assert.ok(names.indexOf("units:recordTeachProgress") < names.indexOf("workspaceChats:complete"))
+  const [planning, next] = calls("units:recordTeachProgress")
+  assert.deepEqual(planning.plan, [
+    { id: "s1", mode: "skim" },
+    { id: "s2", mode: "teach" },
+  ])
+  // A plan block repeated in a teaching reply is ignored.
+  assert.equal(next.plan, undefined)
+  assert.equal(next.sectionId, "s2")
+})
+
+test("a resumed Teach reply cites for the section it had opened", async () => {
+  harness.handlers["units:teachContext"] = () => teachContext()
+  harness.handlers["workspaceChats:startTurn"] = () =>
+    startedTurn({ providerSessionId: "thread-1", replyPrefix: "```section\ns2\n```\nWrite-back keeps" })
+  harness.attempts = [replies(" dirty lines.")]
+
+  await post(message({ message: "Continue", continuationOf: "reply-0" }))
+
+  assert.equal(calls("units:teachContext")[0].resumedSectionId, "s2")
+})
+
 test("a long Teach session compacts first and restates the unit afterwards", async () => {
   harness.handlers["units:teachContext"] = () => teachContext()
   harness.handlers["workspaceChats:startTurn"] = () =>

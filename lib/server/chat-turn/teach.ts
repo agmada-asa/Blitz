@@ -86,7 +86,8 @@ export function teachTurnPrompt(
  * outline, plan, and section the reply set, and the unit's title. Once the
  * unit has an outline, its first question bank starts in the background so
  * Practice and Review have material by the time the learner wants them.
- * Failures are logged; the reply is already saved.
+ * Failures are logged. It runs before the reply is marked complete, so the
+ * chat never goes idle with stale progress.
  *
  * @param client - Convex client for the personal deployment.
  * @param turn - The reply and the session it belongs to.
@@ -100,6 +101,8 @@ export async function finishTeachTurn(
     messageId: Id<"workspaceChatMessages">
     teach: TeachContext
     reply: string
+    /** Whether the reply answers `Plan my lesson`. */
+    planning: boolean
     contextUsage: CardChatResult["contextUsage"]
     restated: boolean
   }
@@ -124,11 +127,13 @@ export async function finishTeachTurn(
   const outline = parseTeachOutline(reply)
   const marker = parseTeachSectionMarker(reply)
   const knownOutline = teach.outline ?? outline
-  // A plan read from the planning reply but not yet saved is saved now.
-  const plan =
-    knownOutline && !teach.planSaved
-      ? (parseTeachPlan(reply, knownOutline) ?? teach.plan ?? undefined)
-      : undefined
+  // Only the reply to `Plan my lesson` sets the plan. A later turn saves the
+  // plan recovered from that reply if saving it failed the first time.
+  const plan = !knownOutline || teach.planSaved
+    ? undefined
+    : turn.planning
+      ? parseTeachPlan(reply, knownOutline)
+      : (teach.plan ?? undefined)
   await client
     .mutation(api.units.recordTeachProgress, {
       chatId,

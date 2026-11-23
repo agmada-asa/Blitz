@@ -533,8 +533,10 @@ export const teachContext = query({
     chatId: v.id("workspaceChats"),
     /** The learner's message for this turn, used to pick relevant citable passages. */
     message: v.optional(v.string()),
+    /** The section a resumed reply had already opened, which its citations follow. */
+    resumedSectionId: v.optional(v.string()),
   },
-  handler: async (ctx, { chatId, message }) => {
+  handler: async (ctx, { chatId, message, resumedSectionId }) => {
     const chat = await ctx.db.get(chatId)
     if (!chat || chat.purpose !== "teach" || !chat.unitId) return null
     const unit = await ctx.db.get(chat.unitId)
@@ -547,9 +549,8 @@ export const teachContext = query({
         .withIndex("by_unit", (q) => q.eq("unitId", unit._id))
         .collect()
     ).sort((a, b) => a.createdAt - b.createdAt)
-    // The plan is saved just after the planning reply finishes. Until then, or
-    // if saving failed, it is read from that reply, so `Next section` never
-    // runs without it.
+    // The plan is saved before the planning reply completes. If saving failed,
+    // it is read from that reply, so `Next section` never runs without it.
     const plan =
       chat.teachSectionPlan ??
       (chat.teachOutline ? await planFromReplies(ctx, chatId, chat.teachOutline) : undefined)
@@ -564,11 +565,14 @@ export const teachContext = query({
             sectionIndex: chat.teachSectionIndex ?? 0,
           })
         : undefined
+    const resumed = chat.teachOutline?.sections.find(
+      (section) => section.id === resumedSectionId
+    )
     const focus = teachTurnFocus(
       message ?? "",
       chat.teachOutline,
       chat.teachSectionIndex,
-      instruction?.focus
+      resumed?.title ?? instruction?.focus
     )
     // Every chunk is citable when the unit is small; otherwise the passages
     // closest to this turn's focus win, with document order as the tiebreak.

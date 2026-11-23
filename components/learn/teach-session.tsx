@@ -1233,7 +1233,8 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
               <TeachDock
                 state={dockState}
                 error={error}
-                onSend={(message) => void send(message)}
+                // Tied to the reply on screen, so a stale tab can't move the lesson twice.
+                onSend={(message) => void send(message, undefined, false, lastMessage?.id)}
                 onResume={() =>
                   lastMessage?.role === "assistant"
                     ? void send("", lastMessage.id)
