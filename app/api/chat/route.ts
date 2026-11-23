@@ -20,6 +20,7 @@ import { providerThreadFeatures } from "@/lib/provider-thread-features"
 import { providerLabel } from "@/lib/provider-handoff"
 import { citationPrompt } from "@/lib/citations"
 import { TEACH_QUICK_REPLIES, teachRedoMessage } from "@/lib/teach"
+import { TEACH_MOVED_ON } from "@/lib/teach-focus"
 import type { AiProviderId } from "@/lib/ai-model-settings"
 import { createChatAgentSession } from "@/lib/server/chat-agent"
 import {
@@ -264,7 +265,8 @@ export async function POST(request: Request): Promise<Response> {
             ? await client.query(api.workspaceChats.replySelection, { chatId: input.chatId })
             : null
         )
-        const turn = await client.mutation(startWorkspaceTurn, {
+        const turn = await client
+          .mutation(startWorkspaceTurn, {
           ...(input.chatId ? { chatId: input.chatId } : {}),
           ...(input.projectId ? { projectId: input.projectId } : {}),
           providerId: requestedSelection.providerId,
@@ -285,7 +287,14 @@ export async function POST(request: Request): Promise<Response> {
           ...(input.redo
             ? { redoOf: input.redo.messageId, redoStyle: input.redo.style }
             : {}),
-        })
+          ...(input.after ? { after: input.after } : {}),
+          })
+          .catch((error: unknown) => {
+            // Said plainly, so the Teach screen knows another tab moved on.
+            if (error instanceof Error && error.message.includes(TEACH_MOVED_ON))
+              throw new CardChatError("invalid-input", TEACH_MOVED_ON, error)
+            throw error
+          })
         activeTurn = {
           chatId: turn.chatId,
           assistantMessageId: turn.assistantMessageId,

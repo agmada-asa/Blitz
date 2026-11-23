@@ -471,6 +471,9 @@ export function teachTurnInstruction(
 ): { message: string; focus?: string } | undefined {
   const trimmed = message.trim()
   const modes = new Map(state.plan?.map((entry) => [entry.id, entry.mode]))
+  // A redone recap arrives as the recap instruction itself.
+  if (trimmed === RECAP_INSTRUCTION)
+    return { message: RECAP_INSTRUCTION, focus: state.outline.title }
   if (trimmed.toLowerCase() === NEXT_SECTION) {
     const target = nextTeachTarget(state)
     if (target.kind === "done")

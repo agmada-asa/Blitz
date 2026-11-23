@@ -8,6 +8,7 @@ import { shouldCompactBeforeTurn } from "../lib/context-usage"
 import { providerThreadFeatures } from "../lib/provider-thread-features"
 import { stoppedRequestToResend } from "../lib/stopped-reply"
 import { parseTeachSectionMarker } from "../lib/teach"
+import { TEACH_MOVED_ON } from "../lib/teach-focus"
 import { isTeachUpdateRunning, teachRedoRequest } from "../lib/teach-updates"
 import { addTurnNotice } from "../lib/turn-notices"
 import {
@@ -747,6 +748,12 @@ export const startTurn = mutation({
      */
     redoOf: v.optional(v.id("workspaceChatMessages")),
     redoStyle: v.optional(teachRedoStyleField),
+    /**
+     * The reply this message answers. The turn is refused once a newer
+     * message exists, so an automatic or spoken `Next section` sent from two
+     * tabs teaches one section, not two.
+     */
+    after: v.optional(v.id("workspaceChatMessages")),
   },
   handler: async (ctx, args) => {
     const clientMessageId = boundedText(
@@ -825,8 +832,9 @@ export const startTurn = mutation({
     const selectedInstance = chat?.providerInstanceId ?? requestedInstance
     const selectedModel = chat?.providerModel ?? requestedModel
     const selectedEffort = chat?.providerEffort ?? requestedEffort
+    // A running turn means a newer reply exists, so a send tied to a reply has moved on.
     if (chat?.status === "running" && !args.continuationOf)
-      throw new Error("Wait for the active reply to finish")
+      throw new Error(args.after ? TEACH_MOVED_ON : "Wait for the active reply to finish")
     const priorMessages = chat
       ? await ctx.db
           .query("workspaceChatMessages")
@@ -836,6 +844,8 @@ export const startTurn = mutation({
           .order("desc")
           .take(MAX_REPLAY_MESSAGES)
       : []
+    if (args.after && priorMessages[0]?._id !== args.after)
+      throw new Error(TEACH_MOVED_ON)
     const priorAttachments = chat
       ? await ctx.db
           .query("workspaceChatAttachments")

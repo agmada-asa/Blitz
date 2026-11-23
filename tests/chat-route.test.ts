@@ -532,6 +532,18 @@ test("a failure before the turn starts is streamed but saves nothing", async () 
   assert.deepEqual(harness.requests, [])
 })
 
+test("a send tied to a reply another tab moved past says so plainly", async () => {
+  harness.handlers["workspaceChats:startTurn"] = () => {
+    throw new Error("[CONVEX M(workspaceChats:startTurn)] Uncaught Error: This lesson has already moved on.")
+  }
+
+  const { events } = await post(message({ message: "Next section", after: "reply-3" }))
+
+  assert.equal(calls("workspaceChats:startTurn")[0].after, "reply-3")
+  assert.deepEqual(events, [{ type: "error", message: "This lesson has already moved on." }])
+  assert.deepEqual(harness.requests, [])
+})
+
 test("project access is refused on a provider without a workspace sandbox", async () => {
   harness.handlers["workspaceChats:startTurn"] = () =>
     startedTurn({ providerId: "claude-code" })
@@ -753,4 +765,24 @@ test("a Teach redo rewinds the replaced turn and drops its reply", async () => {
     { chatId: CHAT, activeMessageId: REPLY, messageIds: ["question-4", "reply-4"] },
   ])
   assert.equal(calls("workspaceChats:complete")[0].reply, "Simpler version.")
+})
+
+test("a Teach redo of Next section asks for the section its reply taught", async () => {
+  harness.handlers["units:teachContext"] = () => teachContext()
+  harness.handlers["workspaceChats:startTurn"] = () =>
+    startedTurn({
+      providerSessionId: "thread-1",
+      redo: {
+        beforeTurnId: "turn-4",
+        replacedMessageIds: ["question-4", "reply-4"],
+        originalMessage: "Next section",
+        tutorMessage: "Teach section 2: Write policies. Begin with a section block for s2 and follow the protocol. Teach it in full.",
+      },
+    })
+  harness.attempts = [replies("Again.", { before: [{ type: "rewound", droppedTurns: 1 }] })]
+
+  await post(message({ message: undefined, redo: { messageId: "reply-4", style: "simpler" } }))
+
+  assert.match(harness.requests[0].prompt, /Teach section 2: Write policies/)
+  assert.match(String(calls("units:teachContext")[0].message), /^Teach section 2:/)
 })

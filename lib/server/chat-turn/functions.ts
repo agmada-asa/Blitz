@@ -72,6 +72,7 @@ export const startWorkspaceTurn = makeFunctionReference<
     annotations?: PersistedAnnotation[]
     redoOf?: Id<"workspaceChatMessages">
     redoStyle?: TeachRedoStyle
+    after?: Id<"workspaceChatMessages">
   },
   {
     chatId: Id<"workspaceChats">

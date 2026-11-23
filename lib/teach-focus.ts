@@ -6,6 +6,12 @@
 /** Quick-reply wording that advances to the next section, lower-cased. Mirrors `TEACH_QUICK_REPLIES.next`. */
 export const NEXT_SECTION = "next section"
 
+/**
+ * Why a send tied to a reply was refused: a newer reply already exists, so
+ * another tab or device has already moved the lesson on.
+ */
+export const TEACH_MOVED_ON = "This lesson has already moved on."
+
 /** Outline shape needed to resolve a turn's focus. */
 type FocusOutline = { title: string; sections: Array<{ id: string; title: string }> }
 

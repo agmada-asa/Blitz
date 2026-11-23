@@ -396,7 +396,7 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
 
   /** Sends a quick reply or resumes a paused reply. */
   const send = useCallback(
-    async (message: string, continuationOf?: string, spoken = false) => {
+    async (message: string, continuationOf?: string, spoken = false, after?: string) => {
       if (!activeChatId || sending || chat?.status === "running") return false
       setSending(true)
       setError("")
@@ -408,12 +408,15 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
         spoken,
         message,
         ...(continuationOf ? { continuationOf } : {}),
+        ...(after ? { after } : {}),
         signal: controller.signal,
       })
       abortRef.current = undefined
       setSending(false)
-      if (!result.ok && !result.paused) setError(result.error)
-      return result.ok || Boolean(result.paused)
+      // Another tab or device already moved the lesson on; nothing went wrong.
+      const movedOn = !result.ok && Boolean(after && result.movedOn)
+      if (!result.ok && !result.paused && !movedOn) setError(result.error)
+      return result.ok || Boolean(result.paused) || movedOn
     },
     [activeChatId, sending, chat?.status]
   )
@@ -452,8 +455,9 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
   // The planning reply only plans; Blitz then starts on the first section the
   // plan keeps. The server reads the plan from that reply if it isn't saved
   // yet, and a reply that brought no plan still moves on, to section 1 in full.
-  // A reload before it moves on sends it then; a second tab's send is refused
-  // while the first runs.
+  // A reload before it moves on sends it then. The server refuses the send
+  // once the planning reply is no longer the latest, so a second tab or
+  // device can't teach a section twice.
   const continuedPlanRef = useRef<string | undefined>(undefined)
   const planRequest = messages.at(-2)
   useEffect(() => {
@@ -468,7 +472,8 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
       return
     if (parseTeachSectionMarker(lastMessage.content)) return
     continuedPlanRef.current = lastMessage.id
-    queueMicrotask(() => void send(TEACH_QUICK_REPLIES.next))
+    const planReply = lastMessage.id
+    queueMicrotask(() => void send(TEACH_QUICK_REPLIES.next, undefined, false, planReply))
   }, [chat, sending, lastMessage, planRequest, send])
 
   // Brings a new reply's opening into view once it appears.
@@ -744,7 +749,7 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
   useEffect(() => {
     if (!nextHeld || !voiceOn || running || sending || nextSent.current === nextFrom) return
     nextSent.current = nextFrom
-    void send(TEACH_QUICK_REPLIES.next, undefined, true)
+    void send(TEACH_QUICK_REPLIES.next, undefined, true, nextFrom)
       .then((sent) => {
         if (sent) return
         // Saying "next" again retries it; the dock that shows send errors is hidden during voice.

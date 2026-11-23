@@ -394,6 +394,12 @@ test("a redo of Next section asks for the section its reply taught", () => {
   )
   assert.equal(teachRedoRequest("Why?", { kind: "section", id: "s2" }, outline, plan), undefined)
   assert.equal(teachRedoRequest("Next section", undefined, outline, plan), undefined)
+  // A redone recap's citations follow the unit, as the first recap's did.
+  const recap = teachRedoRequest("Next section", { kind: "done" }, outline, plan)!
+  assert.equal(
+    teachTurnInstruction(recap, { outline, taughtSectionIds: new Set(), pending: [], sectionIndex: 2 })?.focus,
+    outline.title
+  )
 })
 
 test("a jump to a queued section carries its note; other messages pass through", () => {

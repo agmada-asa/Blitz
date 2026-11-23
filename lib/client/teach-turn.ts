@@ -7,11 +7,12 @@
  */
 
 import { readChatStream } from "../chat-stream.ts"
+import { TEACH_MOVED_ON } from "../teach-focus.ts"
 
 /** Outcome of one Teach turn request. */
 export type TeachTurnResult =
   | { ok: true }
-  | { ok: false; error: string; paused?: boolean }
+  | { ok: false; error: string; paused?: boolean; movedOn?: boolean }
 
 /** Creates a unique message identity so retries never send a turn twice. */
 export function createClientMessageId(): string {
@@ -27,6 +28,8 @@ export function createClientMessageId(): string {
  * @param input.chatId The unit's Teach session.
  * @param input.message Learner text or a quick reply; ignored when continuing.
  * @param input.continuationOf Paused assistant message to resume in place.
+ * @param input.after The reply this message answers; the server refuses it,
+ *   with `movedOn`, once a newer message exists.
  * @param input.signal Aborts the browser request; the server keeps the saved partial reply.
  */
 export async function sendTeachTurn(input: {
@@ -34,6 +37,7 @@ export async function sendTeachTurn(input: {
   chatId: string
   message: string
   continuationOf?: string
+  after?: string
   signal?: AbortSignal
 }): Promise<TeachTurnResult> {
   let response: Response
@@ -49,6 +53,7 @@ export async function sendTeachTurn(input: {
         projectIds: [],
         attachments: [],
         ...(input.continuationOf ? { continuationOf: input.continuationOf } : {}),
+        ...(input.after ? { after: input.after } : {}),
       }),
       ...(input.signal ? { signal: input.signal } : {}),
     })
@@ -85,7 +90,10 @@ export async function sendTeachTurn(input: {
     if (input.signal?.aborted) return { ok: false, error: "", paused: true }
     return { ok: false, error: "The connection to the tutor dropped. Try again." }
   }
-  return failure ? { ok: false, error: failure } : { ok: true }
+  if (!failure) return { ok: true }
+  return failure === TEACH_MOVED_ON
+    ? { ok: false, error: failure, movedOn: true }
+    : { ok: false, error: failure }
 }
 
 /**

@@ -17,7 +17,12 @@ import { searchTerms } from "../lib/search-terms"
 import { conceptStrength } from "../lib/drill"
 import { MAX_UPDATED_TEACH_SECTIONS } from "../lib/teach-limits"
 import { teachNewSources, teachTurnInstruction } from "../lib/teach-updates"
-import { parseTeachPlan, type TeachOutline, type TeachSectionPlan } from "../lib/teach"
+import {
+  parseTeachPlan,
+  TEACH_QUICK_REPLIES,
+  type TeachOutline,
+  type TeachSectionPlan,
+} from "../lib/teach"
 import { teachOutlineFields, teachSectionPlanFields } from "./teachFields"
 
 /** Reference-book passages added to one Teach turn. */
@@ -69,7 +74,8 @@ async function latestTeachChat(
 
 /**
  * Reads the pre-check plan from the session's latest tutor replies, for the
- * moment between the planning reply finishing and its plan being saved.
+ * moment between the planning reply finishing and its plan being saved. Only
+ * a finished reply to `Plan my lesson` counts, never a failed or partial one.
  */
 async function planFromReplies(
   ctx: Pick<QueryCtx, "db">,
@@ -81,29 +87,19 @@ async function planFromReplies(
     .withIndex("by_chat_createdAt", (q) => q.eq("chatId", chatId))
     .order("desc")
     .take(6)
-  for (const message of recent) {
-    if (message.role !== "assistant") continue
+  for (const [index, message] of recent.entries()) {
+    const request = recent[index + 1]
+    if (
+      message.role !== "assistant" ||
+      message.status !== "completed" ||
+      request?.role !== "user" ||
+      request.content.trim() !== TEACH_QUICK_REPLIES.precheckDone
+    )
+      continue
     const plan = parseTeachPlan(message.content, outline)
     if (plan) return plan
   }
   return undefined
-}
-
-/**
- * The sections a session has taught. Sessions saved before taught sections
- * were recorded fall back to everything up to their furthest section.
- */
-function taughtSections(
-  chat: Doc<"workspaceChats">,
-  outline: TeachOutline
-): Set<string> {
-  if (chat.teachTaughtSectionIds) return new Set(chat.teachTaughtSectionIds)
-  if (chat.teachSectionIndex === undefined) return new Set()
-  return new Set(
-    outline.sections
-      .slice(0, chat.teachSectionIndex + 1)
-      .map((section) => section.id)
-  )
 }
 
 /** Summarises a source for lists without its extracted text. */
@@ -563,7 +559,7 @@ export const teachContext = query({
         ? teachTurnInstruction(message ?? "", {
             outline: chat.teachOutline,
             plan: plan ?? null,
-            taughtSectionIds: taughtSections(chat, chat.teachOutline),
+            taughtSectionIds: new Set(chat.teachTaughtSectionIds ?? []),
             pending: chat.teachPendingSections ?? [],
             sectionIndex: chat.teachSectionIndex ?? 0,
           })
