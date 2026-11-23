@@ -759,6 +759,8 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
       failed ? undefined : nextFrom
     )
       .then((sent) => {
+        // A resumed reply keeps its id, so the next "next" must be free to go.
+        if (sent && failed) nextSent.current = null
         if (sent) return
         // Saying "next" again retries it; the dock that shows send errors is hidden during voice.
         nextSent.current = null
