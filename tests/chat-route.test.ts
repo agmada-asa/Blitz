@@ -164,7 +164,7 @@ function teachContext(overrides: Record<string, unknown> = {}) {
     sources: [
       { id: "source-1", filename: "week3.pdf", text: "Caches keep hot data close.", truncated: false },
     ],
-    updateInstruction: null,
+    turnInstruction: null,
     update: null,
     citationChunkIds: ["chunk-1"],
     citationFocus: null,

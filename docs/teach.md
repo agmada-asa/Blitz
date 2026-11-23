@@ -89,8 +89,11 @@ The tutor's rules live in `TEACH_RULES` in `lib/teach.ts`:
   "Quick check" with **Plan my lesson** and **Skip the check**. Plan my lesson
   sends the learner's saved answers (`teach.precheckResults`, never trusted
   from the browser) and the tutor replies with a ```plan block marking each
-  section `skip`, `skim`, or `teach`, then teaches the first section not
-  skipped. The plan is saved on the chat (`teachSectionPlan`); the outline
+  section `skip`, `skim`, or `teach`, and nothing else. Once the plan is
+  saved, the Teach screen sends `Next section` itself, and from then on Blitz
+  walks the outline (`teachTurnInstruction`): each turn names the section to
+  teach and asks for a shorter one where the plan says skim, so the tutor never
+  chooses where the lesson goes next. The plan is saved on the chat (`teachSectionPlan`); the outline
   shows skipped sections as **Known** and skimmed ones as **Quick**, and a
   skipped section counts as covered in unit progress. Jumping to a skipped
   section teaches it in full. A first message that is a question (such as

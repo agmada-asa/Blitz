@@ -32,4 +32,4 @@ Messages, quiz answers, the side chat and progress already earned are never touc
 
 ## Afterwards
 
-Once a lesson has been updated, "next in the outline" is no longer enough. `nextTeachTarget` decides what `Next section` teaches: changed sections first, along with added sections the learner has already passed, then the next untaught section, skipping any the pre-check marked as known. `teachUpdateInstruction` turns the learner's message into an explicit instruction naming that section, so the tutor doesn't have to work it out.
+Blitz, not the tutor, decides what `Next section` teaches in every lesson with an outline. `nextTeachTarget` picks it: after an update, changed sections first, along with added sections the learner has already passed; then the next untaught section, skipping any the pre-check marked as known. `teachTurnInstruction` turns the learner's message into an explicit instruction naming that section, and asks for a shorter section where the plan says skim.

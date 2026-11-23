@@ -400,42 +400,53 @@ export function nextTeachTarget(state: {
   return { kind: "section", index: ahead, section, pending: pending.get(section.id) }
 }
 
-/** Words the instruction for teaching one section after an update. */
-function sectionInstruction(index: number, target: Extract<TeachNextTarget, { kind: "section" }>): string {
+/**
+ * Words the instruction for teaching one section: in full, or briefly when the
+ * pre-check plan marks it as skim, plus what changed when an update queued it.
+ */
+function sectionInstruction(
+  index: number,
+  target: Extract<TeachNextTarget, { kind: "section" }>,
+  mode: TeachSectionMode | undefined
+): string {
   const { section, pending } = target
   const opening = `Teach section ${index + 1}: ${section.title}. Begin with a section block for ${section.id} and follow the protocol.`
   if (pending?.change === "updated")
     return `${opening} New course material changed this section. What changed, according to Blitz's analysis of the new files: ${pending.note || "see the new material."} Teach the section as it now stands from all the material. If you have already taught it, go through what is new or different properly and keep what the learner already saw brief. Write new quiz questions.`
   if (pending?.change === "added")
     return `${opening} This section was added because of new course material: ${pending.note || "see the new material."} Teach it in full.`
-  return opening
+  if (mode === "skim")
+    return `${opening} The plan marks it as skim: the pre-check showed the learner partly knows it, so cover only what they missed or were not checked on, in 150 to 300 words, then its quiz.`
+  return `${opening} Teach it in full.`
 }
 
 /**
- * Turns a learner's navigation into an explicit instruction once the lesson
- * has been updated. The protocol's "next in the outline" is wrong by then, as
- * the lesson may need to go back over a changed section first, so Blitz decides
- * and tells the tutor.
+ * Turns `Next section` into an explicit instruction once the lesson has an
+ * outline. Blitz walks the outline itself, passing over sections the pre-check
+ * plan marks as skip and asking for a shorter section where it says skim, so
+ * the tutor never has to work out which section comes next. After an update,
+ * changed sections come first.
  *
  * @param message The learner's message for this turn.
  * @param state The lesson's outline, plan, progress and queue.
  * @returns The message to send the tutor, with the section it teaches when
  *   there is one, or undefined to send the learner's message unchanged.
  */
-export function teachUpdateInstruction(
+export function teachTurnInstruction(
   message: string,
   state: Parameters<typeof nextTeachTarget>[0]
 ): { message: string; focus?: string } | undefined {
   const trimmed = message.trim()
+  const modes = new Map(state.plan?.map((entry) => [entry.id, entry.mode]))
   if (trimmed.toLowerCase() === NEXT_SECTION) {
     const target = nextTeachTarget(state)
     if (target.kind === "done")
       return {
         message:
-          "Every section is now covered. Send the ```section block with body done, the short recap of the unit's key ideas including anything the new material added, and the final mixed quiz.",
+          "Every section is now covered. Send the ```section block with body done, the short recap of the unit's key ideas (including anything new course material added, if the lesson was updated), and the final mixed quiz.",
       }
     return {
-      message: sectionInstruction(target.index, target),
+      message: sectionInstruction(target.index, target, modes.get(target.section.id)),
       focus: target.section.title,
     }
   }
@@ -446,7 +457,7 @@ export function teachUpdateInstruction(
   const pending = section && state.pending.find((entry) => entry.id === section.id)
   if (!section || !pending) return undefined
   return {
-    message: sectionInstruction(index, { kind: "section", index, section, pending }),
+    message: sectionInstruction(index, { kind: "section", index, section, pending }, modes.get(section.id)),
     focus: section.title,
   }
 }

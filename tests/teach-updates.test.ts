@@ -27,7 +27,7 @@ import {
   teachNewSources,
   teachReplyUpdateLabels,
   teachUpdateDividerText,
-  teachUpdateInstruction,
+  teachTurnInstruction,
   type TeachUpdateReply,
   type TeachUpdateState,
 } from "../lib/teach-updates.ts"
@@ -341,15 +341,39 @@ test("Next section starts at the first section when nothing has been taught", ()
 })
 
 test("an instruction replaces Next section and carries what changed", () => {
-  const instruction = teachUpdateInstruction("Next section", merged())
+  const instruction = teachTurnInstruction("Next section", merged())
   assert.ok(instruction)
   assert.match(instruction.message, /^Teach section 1: What a hash table is/)
   assert.match(instruction.message, /universal hashing/)
   assert.equal(instruction.focus, "What a hash table is")
 })
 
+test("after the plan, a skimmed section 1 is taught first, briefly", () => {
+  const plan = [
+    { id: "s1", mode: "skim" as const },
+    { id: "s2", mode: "skip" as const },
+    { id: "s3", mode: "teach" as const },
+  ]
+  const first = teachTurnInstruction("Next section", {
+    outline,
+    plan,
+    taughtSectionIds: new Set(),
+    pending: [],
+    sectionIndex: 0,
+  })
+  assert.match(first!.message, /^Teach section 1: .*plans? marks it as skim/)
+  const second = teachTurnInstruction("Next section", {
+    outline,
+    plan,
+    taughtSectionIds: new Set(["s1"]),
+    pending: [],
+    sectionIndex: 0,
+  })
+  assert.match(second!.message, /^Teach section 3: .*Teach it in full\./)
+})
+
 test("the instruction asks for the recap when nothing is left", () => {
-  const instruction = teachUpdateInstruction("Next section", {
+  const instruction = teachTurnInstruction("Next section", {
     outline,
     taughtSectionIds: new Set(["s1", "s2", "s3"]),
     pending: [],
@@ -359,10 +383,10 @@ test("the instruction asks for the recap when nothing is left", () => {
 })
 
 test("a jump to a queued section carries its note; other messages pass through", () => {
-  const jump = teachUpdateInstruction("Teach section 1: What a hash table is", merged())
+  const jump = teachTurnInstruction("Teach section 1: What a hash table is", merged())
   assert.match(jump!.message, /universal hashing/)
-  assert.equal(teachUpdateInstruction("Teach section 3: Collisions", merged()), undefined)
-  assert.equal(teachUpdateInstruction("Why does chaining work?", merged()), undefined)
+  assert.equal(teachTurnInstruction("Teach section 3: Collisions", merged()), undefined)
+  assert.equal(teachTurnInstruction("Why does chaining work?", merged()), undefined)
 })
 
 test("citations follow the section an update chose", () => {

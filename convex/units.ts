@@ -16,7 +16,7 @@ import { teachTurnFocus } from "../lib/teach-focus"
 import { searchTerms } from "../lib/search-terms"
 import { conceptStrength } from "../lib/drill"
 import { MAX_UPDATED_TEACH_SECTIONS } from "../lib/teach-limits"
-import { teachNewSources, teachUpdateInstruction } from "../lib/teach-updates"
+import { teachNewSources, teachTurnInstruction } from "../lib/teach-updates"
 import { teachOutlineFields, teachSectionPlanFields } from "./teachFields"
 
 /** Reference-book passages added to one Teach turn. */
@@ -511,10 +511,10 @@ export const teachContext = query({
         .withIndex("by_unit", (q) => q.eq("unitId", unit._id))
         .collect()
     ).sort((a, b) => a.createdAt - b.createdAt)
-    // Once a lesson has been updated, Blitz decides what `Next section` teaches.
+    // Once the lesson has an outline, Blitz decides what `Next section` teaches.
     const instruction =
-      chat.teachOutline && chat.teachUpdates?.length
-        ? teachUpdateInstruction(message ?? "", {
+      chat.teachOutline
+        ? teachTurnInstruction(message ?? "", {
             outline: chat.teachOutline,
             plan: chat.teachSectionPlan ?? null,
             taughtSectionIds: new Set(chat.teachTaughtSectionIds ?? []),
@@ -632,8 +632,8 @@ export const teachContext = query({
       plan: chat.teachSectionPlan ?? null,
       knownConcepts: await knownConcepts(ctx, unit.projectId, unit._id),
       sources: readableSources,
-      /** Replaces the learner's message for the tutor when an update decided the next section. */
-      updateInstruction: instruction?.message ?? null,
+      /** Replaces the learner's message for the tutor when Blitz decided the next section. */
+      turnInstruction: instruction?.message ?? null,
       /** An update this session has not been told about yet; cleared when a turn delivers it. */
       update:
         chat.teachOutline && chat.teachUnsentSummaries?.length

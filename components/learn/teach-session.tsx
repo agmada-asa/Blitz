@@ -363,25 +363,19 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
     }
     return null
   }, [unit.plan, outline, messages])
-  // Sections after the current one that the tutor will still teach. Once a
-  // lesson has been updated, the queue decides what is left, as it does on the server.
+  // Whether `Next section` still has a section to teach, decided as the server
+  // decides it.
   const sectionsLeft = !outline
     ? 0
-    : lessonUpdates.length
-      ? nextTeachTarget({
+    : nextTeachTarget({
           outline,
           plan,
           taughtSectionIds,
           pending: pendingSections,
           sectionIndex,
         }).kind === "done"
-        ? 0
-        : 1
-      : outline.sections.filter(
-          (section, index) =>
-            index > sectionIndex &&
-            plan?.find((entry) => entry.id === section.id)?.mode !== "skip"
-        ).length
+      ? 0
+      : 1
   // Celebrate only when the recap arrived in this sitting, not on every revisit.
   const finishedThisSitting =
     complete &&
@@ -454,6 +448,24 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
     autoStartedRef.current = chat.id
     queueMicrotask(() => void send(TEACH_QUICK_REPLIES.start))
   }, [ask, chat, send, unit.sources])
+
+  // The planning reply only plans; Blitz then starts on the first section the
+  // plan keeps. It waits for the saved plan, which lands just after the reply
+  // finishes, so the server picks the section from it.
+  const continuedPlanRef = useRef<string | undefined>(undefined)
+  useEffect(() => {
+    if (!chat || chat.status !== "idle" || !unit.plan) return
+    if (
+      lastMessage?.role !== "assistant" ||
+      lastMessage.status !== "completed" ||
+      continuedPlanRef.current === lastMessage.id
+    )
+      return
+    if (!outline || !parseTeachPlan(lastMessage.content, outline)) return
+    if (parseTeachSectionMarker(lastMessage.content)) return
+    continuedPlanRef.current = lastMessage.id
+    queueMicrotask(() => void send(TEACH_QUICK_REPLIES.next))
+  }, [chat, unit.plan, lastMessage, outline, send])
 
   // Brings a new reply's opening into view once it appears.
   const lastAssistantId = [...messages]

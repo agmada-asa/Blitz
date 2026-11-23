@@ -240,6 +240,8 @@ test("the planning turn carries pre-check results and known concepts", () => {
   assert.match(prompt, /WRONG \[Cursors\]/)
   assert.match(prompt, /Known well: SELECT basics/)
   assert.match(prompt, /Still shaky: GROUP BY/)
+  // Blitz picks the first section from the plan, so the tutor only plans.
+  assert.match(prompt, /Reply with only the plan block/)
 
   const live = buildTeachPrompt({
     moduleTitle: "Databases",

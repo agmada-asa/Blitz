@@ -422,7 +422,7 @@ export async function POST(request: Request): Promise<Response> {
         const teachMessage =
           turn.redo && input.redo
             ? teachRedoMessage(turn.redo.originalMessage, input.redo.style)
-            : (teach?.updateInstruction ?? turnInput.message)
+            : (teach?.turnInstruction ?? turnInput.message)
         /** Builds this Teach turn's prompt; see `teachTurnPrompt`. */
         const teachPrompt = (
           includeContext: boolean,
