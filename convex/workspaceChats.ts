@@ -7,7 +7,9 @@ import { AI_PROVIDER_IDS } from "../lib/ai-model-settings"
 import { shouldCompactBeforeTurn } from "../lib/context-usage"
 import { providerThreadFeatures } from "../lib/provider-thread-features"
 import { stoppedRequestToResend } from "../lib/stopped-reply"
-import { isTeachUpdateRunning } from "../lib/teach-updates"
+import { parseTeachSectionMarker } from "../lib/teach"
+import { TEACH_MOVED_ON } from "../lib/teach-focus"
+import { isTeachUpdateRunning, teachRedoRequest } from "../lib/teach-updates"
 import { addTurnNotice } from "../lib/turn-notices"
 import {
   contextUsageFields,
@@ -746,6 +748,12 @@ export const startTurn = mutation({
      */
     redoOf: v.optional(v.id("workspaceChatMessages")),
     redoStyle: v.optional(teachRedoStyleField),
+    /**
+     * The reply this message answers. The turn is refused once a newer
+     * message exists, so an automatic or spoken `Next section` sent from two
+     * tabs teaches one section, not two.
+     */
+    after: v.optional(v.id("workspaceChatMessages")),
   },
   handler: async (ctx, args) => {
     const clientMessageId = boundedText(
@@ -824,8 +832,9 @@ export const startTurn = mutation({
     const selectedInstance = chat?.providerInstanceId ?? requestedInstance
     const selectedModel = chat?.providerModel ?? requestedModel
     const selectedEffort = chat?.providerEffort ?? requestedEffort
+    // A running turn means a newer reply exists, so a send tied to a reply has moved on.
     if (chat?.status === "running" && !args.continuationOf)
-      throw new Error("Wait for the active reply to finish")
+      throw new Error(args.after ? TEACH_MOVED_ON : "Wait for the active reply to finish")
     const priorMessages = chat
       ? await ctx.db
           .query("workspaceChatMessages")
@@ -835,6 +844,12 @@ export const startTurn = mutation({
           .order("desc")
           .take(MAX_REPLAY_MESSAGES)
       : []
+    if (args.after && priorMessages[0]?._id !== args.after)
+      throw new Error(TEACH_MOVED_ON)
+    // A failed reply may not have saved its progress, so moving on from it
+    // could repeat its section. It is resumed instead.
+    if (args.after && priorMessages[0]?.status === "failed")
+      throw new Error("Resume the last reply before moving on.")
     const priorAttachments = chat
       ? await ctx.db
           .query("workspaceChatAttachments")
@@ -1017,6 +1032,7 @@ export const startTurn = mutation({
           beforeTurnId: string
           replacedMessageIds: Id<"workspaceChatMessages">[]
           originalMessage: string
+          tutorMessage?: string
         }
       | undefined
     if (args.redoOf) {
@@ -1041,10 +1057,18 @@ export const startTurn = mutation({
         !providerThreadFeatures(selectedProvider).rewind
       )
         throw new Error("This reply can't be redone in place")
+      // `Next section` already moved on, so ask for the section the reply taught.
+      const tutorMessage = teachRedoRequest(
+        request.content,
+        parseTeachSectionMarker(latest.content),
+        chat.teachOutline,
+        chat.teachSectionPlan
+      )
       redo = {
         beforeTurnId,
         replacedMessageIds: [request._id, latest._id],
         originalMessage: request.content,
+        ...(tutorMessage ? { tutorMessage } : {}),
       }
     }
     const turnMessage = redo?.originalMessage ?? message

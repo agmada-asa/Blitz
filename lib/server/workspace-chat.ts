@@ -89,6 +89,8 @@ export interface WorkspaceChatRequest {
   continuationOf?: Id<"workspaceChatMessages">
   /** Latest Teach reply to redo in place, and how to explain it this time. */
   redo?: { messageId: Id<"workspaceChatMessages">; style: TeachRedoStyle }
+  /** The reply this message answers; refused once a newer one exists. */
+  after?: Id<"workspaceChatMessages">
   /** A card reference always starts a new workspace chat. */
   card?: WorkspaceChatCardReference
   clientMessageId: string
@@ -250,6 +252,10 @@ export function parseWorkspaceChatRequest(
           "Continuation message ID",
           200
         ) as Id<"workspaceChatMessages">)
+  const after =
+    input.after === undefined
+      ? undefined
+      : (requiredString(input.after, "Answered message ID", 200) as Id<"workspaceChatMessages">)
   const rawAnnotations = input.annotations
   if (rawAnnotations !== undefined && !Array.isArray(rawAnnotations))
     throw new Error("Annotations must be an array")
@@ -464,6 +470,7 @@ export function parseWorkspaceChatRequest(
     ...(continuationOf ? { continuationOf } : {}),
     ...(steeringPrompt ? { steeringPrompt } : {}),
     ...(redo ? { redo } : {}),
+    ...(after ? { after } : {}),
   }
 }
 

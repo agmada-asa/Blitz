@@ -240,6 +240,8 @@ test("the planning turn carries pre-check results and known concepts", () => {
   assert.match(prompt, /WRONG \[Cursors\]/)
   assert.match(prompt, /Known well: SELECT basics/)
   assert.match(prompt, /Still shaky: GROUP BY/)
+  // Blitz picks the first section from the plan, so the tutor only plans.
+  assert.match(prompt, /Reply with only the plan block/)
 
   const live = buildTeachPrompt({
     moduleTitle: "Databases",
@@ -250,4 +252,23 @@ test("the planning turn carries pre-check results and known concepts", () => {
     precheck: [],
   })
   assert.match(live, /answered none of the pre-check questions/)
+  assert.match(live, /Reply with only the plan block/)
+})
+
+test("a rebuilt session keeps the pre-check answers behind a skim plan", () => {
+  const prompt = buildTeachPrompt({
+    moduleTitle: "Databases",
+    unitTitle: "Week 4",
+    sources: [],
+    message: "Teach section 1: Triggers. Begin with a section block for s1 and follow the protocol.",
+    includeContext: true,
+    outline: { title: "Triggers", sections: [{ id: "s1", title: "Triggers" }] },
+    plan: [{ id: "s1", mode: "skim" }],
+    precheckContext: [
+      { concept: "Trigger timing", question: "When does a BEFORE trigger run?", correct: false },
+    ],
+  })
+  assert.match(prompt, /answers behind it/)
+  assert.match(prompt, /WRONG \[Trigger timing\]/)
+  assert.doesNotMatch(prompt, /Reply with only the plan block/)
 })

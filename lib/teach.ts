@@ -395,6 +395,8 @@ export type TeachPromptInput = {
   references?: Array<{ filename: string; text: string }>
   /** Answered pre-check questions, sent with the `Plan my lesson` reply. */
   precheck?: TeachPrecheckResult[]
+  /** The same answers on later turns, restated with the plan when rebuilding. */
+  precheckContext?: TeachPrecheckResult[]
   /** What the learner already knows from the module's other units. */
   knownConcepts?: TeachKnownConcepts
   /** The skip, skim, or teach plan agreed after the pre-check, restated when rebuilding. */
@@ -450,15 +452,31 @@ function updateBlock(update: TeachPromptInput["update"], includeContext: boolean
 function precheckBlock(precheck: TeachPromptInput["precheck"]): string[] {
   if (!precheck) return []
   if (!precheck.length)
-    return ["PRE-CHECK RESULTS: the learner answered none of the pre-check questions. Plan every section as teach."]
+    return [
+      "PRE-CHECK RESULTS: the learner answered none of the pre-check questions. Plan every section as teach.",
+      PLAN_ONLY,
+    ]
   return [
     "PRE-CHECK RESULTS (questions not listed were left unanswered):",
-    ...precheck.map(
-      (result) =>
-        `- ${result.correct ? (result.guessed ? "RIGHT BUT GUESSED (treat as not known)" : "RIGHT") : "WRONG"} [${result.concept}] ${result.question.replace(/\s+/g, " ").slice(0, 300)}`
-    ),
+    ...precheckLines(precheck),
+    PLAN_ONLY,
   ]
 }
+
+/** One line per answered pre-check question. */
+function precheckLines(precheck: TeachPrecheckResult[]): string[] {
+  return precheck.map(
+    (result) =>
+      `- ${result.correct ? (result.guessed ? "RIGHT BUT GUESSED (treat as not known)" : "RIGHT") : "WRONG"} [${result.concept}] ${result.question.replace(/\s+/g, " ").slice(0, 300)}`
+  )
+}
+
+/**
+ * Restated on the planning turn. Blitz picks each section from the plan, so
+ * the tutor never chooses where the lesson starts: it used to read skim as
+ * skip and open on section 2.
+ */
+const PLAN_ONLY = "Reply with only the plan block. Do not teach any section yet."
 
 /** Formats what the learner already knows from earlier units, or nothing. */
 function knownConceptsBlock(known: TeachPromptInput["knownConcepts"]): string[] {
@@ -520,10 +538,10 @@ const TEACH_RULES = [
   "Protocol:",
   "1. On the first turn, start with an ```outline fenced block containing JSON {\"title\": string, \"sections\": [{\"id\": \"s1\", \"title\": string, \"concepts\": [string, ...]}, ...]}. The title names the unit's topic in a few words (no week numbers). Plan 3 to 8 sections of about five minutes each, ordered from foundations to the hardest ideas, together covering everything examinable in the material. Give each section 2 to 5 concepts: short names (at most 60 characters) for the distinct examinable ideas it teaches, specific enough to test on their own (\"Clustered vs secondary index\", not \"Indexes\"), unique across the whole outline.",
   `2. Still on the first turn, after the outline, do not teach yet. Write a \`\`\`precheck fenced block with an empty body, one sentence saying this quick check lets you skip what the learner already knows, then 4 to 6 quiz blocks spread across the sections, favouring the foundations later sections build on. Each checks understanding rather than trivia; set its concept to one of the outline's concept names, copied exactly. No followups block. If the first message is a question rather than a request to teach the unit, send the outline, skip the pre-check, and answer the question.`,
-  `3. When the learner sends "${TEACH_QUICK_REPLIES.precheckDone}", their pre-check results follow it. Reply with a \`\`\`plan fenced block holding JSON that maps every section id to "skip" (every check on it was right and nothing later depends on detail they have not shown), "skim" (partly right, or covered only indirectly by a right answer), or "teach" (wrong, unanswered, or unchecked, unless the learner's known concepts clearly cover it). Then, with no preamble, teach the first section not marked skip. When the learner sends "${TEACH_QUICK_REPLIES.skipPrecheck}", send no plan and teach section 1.`,
+  `3. When the learner sends "${TEACH_QUICK_REPLIES.precheckDone}", their pre-check results follow it. Reply with a \`\`\`plan fenced block holding JSON that maps every section id to "skip" (every check on it was right and nothing later depends on detail they have not shown), "skim" (partly right, or covered only indirectly by a right answer), or "teach" (wrong, unanswered, or unchecked, unless the learner's known concepts clearly cover it). Send only the plan block: do not teach yet. Blitz then asks for each section in turn. When the learner sends "${TEACH_QUICK_REPLIES.skipPrecheck}", send no plan and teach section 1.`,
   "4. Begin every reply that teaches a section with a ```section fenced block whose body is only the section id, for example:\n```section\ns2\n```",
   "5. Blitz shows each section's number and title above your text, so never repeat the section title as a heading or bold line. A section: open with the intuition and why it matters, then precise definitions, notation and formulas, then a worked example. Include at least one visual (a graph, mermaid diagram, or viz, as the Visuals section describes) wherever the section's idea has a shape, placed where it explains rather than at the end; a purely verbal idea needs none. End with one or two quiz blocks that check the section's key ideas, then a followups block with two or three short questions the learner might ask next. Set each quiz's concept to one of this section's concept names from the outline, copied exactly (the section title only if the outline has no concepts), so practice can track each idea. Aim for 300 to 700 words of prose per section, plus blocks. A section planned as skim gets 150 to 300 words on the parts the learner missed or was not checked on, then its quiz.",
-  `6. When the learner sends "${TEACH_QUICK_REPLIES.next}", teach the next section in the outline that is not planned as skip. "Teach section N: …" jumps to that section and teaches it in full, even if it was planned as skip. "${TEACH_QUICK_REPLIES.deeper}" adds depth to the current section, "${TEACH_QUICK_REPLIES.example}" gives a fresh worked example, and "${TEACH_QUICK_REPLIES.confused}" re-explains the current idea from a different angle with a simpler example. These replies stay in the current section and do not start with a section block.`,
+  `6. Blitz names the section to teach next and whether to skim it; follow that. If the learner sends "${TEACH_QUICK_REPLIES.next}" on its own, teach the next section in the outline planned as skim or teach. "Teach section N: …" jumps to that section and teaches it in full, even if it was planned as skip. "${TEACH_QUICK_REPLIES.deeper}" adds depth to the current section, "${TEACH_QUICK_REPLIES.example}" gives a fresh worked example, and "${TEACH_QUICK_REPLIES.confused}" re-explains the current idea from a different angle with a simpler example. These replies stay in the current section and do not start with a section block.`,
   `7. Any other message is the learner's own question: ${TUTOR_REPLY_GUIDANCE} Then offer to continue. Do not start a section block for an answer.`,
   "8. After the last section, or when every remaining section is planned as skip, when the learner continues, send a ```section block with body done, a short recap of the unit's key ideas, and a final mixed quiz of three to five questions across the unit.",
   "Use the material below as the primary evidence. If it assumes background the learner may lack, teach that background briefly and label it as background. Never contradict the material without saying so.",
@@ -585,7 +603,13 @@ export function buildTeachPrompt(input: TeachPromptInput): string {
     )
   if (input.outline && input.plan)
     parts.push(
-      `The plan agreed after the pre-check: ${input.plan.map((entry) => `${entry.id} ${entry.mode}`).join(", ")}. Keep following it and do not send a new plan.`
+      `The plan agreed after the pre-check: ${input.plan.map((entry) => `${entry.id} ${entry.mode}`).join(", ")}. Keep following it and do not send a new plan.`,
+      ...(input.precheckContext?.length
+        ? [
+            "The pre-check answers behind it, so a skimmed section covers what the learner missed:",
+            ...precheckLines(input.precheckContext),
+          ]
+        : [])
     )
   parts.push(...updateBlock(input.update, true))
   parts.push(...knownConceptsBlock(input.knownConcepts))

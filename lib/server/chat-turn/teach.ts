@@ -40,6 +40,8 @@ export type TeachPrecheck = FunctionReturnType<typeof api.teach.precheckResults>
  * @param options.afterCompaction - Whether the session was just compacted.
  * @param options.history - The session's saved messages.
  * @param options.precheck - Pre-check answers, for `Plan my lesson`.
+ * @param options.precheckContext - The same answers on later turns, restated
+ *   with the plan when the session is rebuilt so skimmed sections stay targeted.
  */
 export function teachTurnPrompt(
   teach: TeachContext,
@@ -49,6 +51,7 @@ export function teachTurnPrompt(
     afterCompaction?: boolean
     history: readonly WorkspaceChatHistoryMessage[]
     precheck?: TeachPrecheck
+    precheckContext?: TeachPrecheck
   }
 ): string {
   return buildTeachPrompt({
@@ -72,6 +75,7 @@ export function teachTurnPrompt(
     ...(teach.plan ? { plan: teach.plan } : {}),
     ...(teach.update ? { update: teach.update } : {}),
     ...(options.precheck ? { precheck: options.precheck } : {}),
+    ...(options.precheckContext ? { precheckContext: options.precheckContext } : {}),
     knownConcepts: teach.knownConcepts,
     references: teach.referenceExcerpts,
   })
@@ -82,7 +86,9 @@ export function teachTurnPrompt(
  * outline, plan, and section the reply set, and the unit's title. Once the
  * unit has an outline, its first question bank starts in the background so
  * Practice and Review have material by the time the learner wants them.
- * Failures are logged; the reply is already saved.
+ * It runs before the reply is marked complete, so the chat never goes idle
+ * with stale progress: a failed progress save fails the reply. Other failures
+ * are only logged.
  *
  * @param client - Convex client for the personal deployment.
  * @param turn - The reply and the session it belongs to.
@@ -96,6 +102,8 @@ export async function finishTeachTurn(
     messageId: Id<"workspaceChatMessages">
     teach: TeachContext
     reply: string
+    /** Whether the reply answers `Plan my lesson`. */
+    planning: boolean
     contextUsage: CardChatResult["contextUsage"]
     restated: boolean
   }
@@ -120,8 +128,13 @@ export async function finishTeachTurn(
   const outline = parseTeachOutline(reply)
   const marker = parseTeachSectionMarker(reply)
   const knownOutline = teach.outline ?? outline
-  const plan =
-    knownOutline && !teach.plan ? parseTeachPlan(reply, knownOutline) : undefined
+  // Only the reply to `Plan my lesson` sets the plan. A later turn saves the
+  // plan recovered from that reply if saving it failed the first time.
+  const plan = !knownOutline || teach.planSaved
+    ? undefined
+    : turn.planning
+      ? parseTeachPlan(reply, knownOutline)
+      : (teach.plan ?? undefined)
   await client
     .mutation(api.units.recordTeachProgress, {
       chatId,
@@ -142,6 +155,9 @@ export async function finishTeachTurn(
       console.error("Teach progress could not be saved", {
         message: error instanceof Error ? error.message : "Unknown error",
       })
+      // The reply then fails rather than completing over stale progress,
+      // which would let `Next section` teach the same section again.
+      throw error
     })
   // The bank call is a no-op after the first.
   if (knownOutline)

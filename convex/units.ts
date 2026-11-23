@@ -16,7 +16,13 @@ import { teachTurnFocus } from "../lib/teach-focus"
 import { searchTerms } from "../lib/search-terms"
 import { conceptStrength } from "../lib/drill"
 import { MAX_UPDATED_TEACH_SECTIONS } from "../lib/teach-limits"
-import { teachNewSources, teachUpdateInstruction } from "../lib/teach-updates"
+import { teachNewSources, teachTurnInstruction } from "../lib/teach-updates"
+import {
+  parseTeachPlan,
+  TEACH_QUICK_REPLIES,
+  type TeachOutline,
+  type TeachSectionPlan,
+} from "../lib/teach"
 import { teachOutlineFields, teachSectionPlanFields } from "./teachFields"
 
 /** Reference-book passages added to one Teach turn. */
@@ -64,6 +70,36 @@ async function latestTeachChat(
     .withIndex("by_unit_updatedAt", (q) => q.eq("unitId", unitId))
     .order("desc")
     .first()
+}
+
+/**
+ * Reads the pre-check plan from the session's latest tutor replies, for the
+ * moment between the planning reply finishing and its plan being saved. Only
+ * a finished reply to `Plan my lesson` counts, never a failed or partial one.
+ */
+async function planFromReplies(
+  ctx: Pick<QueryCtx, "db">,
+  chatId: Id<"workspaceChats">,
+  outline: TeachOutline
+): Promise<TeachSectionPlan | undefined> {
+  const recent = await ctx.db
+    .query("workspaceChatMessages")
+    .withIndex("by_chat_createdAt", (q) => q.eq("chatId", chatId))
+    .order("desc")
+    .take(6)
+  for (const [index, message] of recent.entries()) {
+    const request = recent[index + 1]
+    if (
+      message.role !== "assistant" ||
+      message.status !== "completed" ||
+      request?.role !== "user" ||
+      request.content.trim() !== TEACH_QUICK_REPLIES.precheckDone
+    )
+      continue
+    const plan = parseTeachPlan(message.content, outline)
+    if (plan) return plan
+  }
+  return undefined
 }
 
 /** Summarises a source for lists without its extracted text. */
@@ -497,8 +533,10 @@ export const teachContext = query({
     chatId: v.id("workspaceChats"),
     /** The learner's message for this turn, used to pick relevant citable passages. */
     message: v.optional(v.string()),
+    /** The section a resumed reply had already opened, which its citations follow. */
+    resumedSectionId: v.optional(v.string()),
   },
-  handler: async (ctx, { chatId, message }) => {
+  handler: async (ctx, { chatId, message, resumedSectionId }) => {
     const chat = await ctx.db.get(chatId)
     if (!chat || chat.purpose !== "teach" || !chat.unitId) return null
     const unit = await ctx.db.get(chat.unitId)
@@ -511,22 +549,30 @@ export const teachContext = query({
         .withIndex("by_unit", (q) => q.eq("unitId", unit._id))
         .collect()
     ).sort((a, b) => a.createdAt - b.createdAt)
-    // Once a lesson has been updated, Blitz decides what `Next section` teaches.
+    // The plan is saved before the planning reply completes. If saving failed,
+    // it is read from that reply, so `Next section` never runs without it.
+    const plan =
+      chat.teachSectionPlan ??
+      (chat.teachOutline ? await planFromReplies(ctx, chatId, chat.teachOutline) : undefined)
+    // Once the lesson has an outline, Blitz decides what `Next section` teaches.
     const instruction =
-      chat.teachOutline && chat.teachUpdates?.length
-        ? teachUpdateInstruction(message ?? "", {
+      chat.teachOutline
+        ? teachTurnInstruction(message ?? "", {
             outline: chat.teachOutline,
-            plan: chat.teachSectionPlan ?? null,
+            plan: plan ?? null,
             taughtSectionIds: new Set(chat.teachTaughtSectionIds ?? []),
             pending: chat.teachPendingSections ?? [],
             sectionIndex: chat.teachSectionIndex ?? 0,
           })
         : undefined
+    const resumed = chat.teachOutline?.sections.find(
+      (section) => section.id === resumedSectionId
+    )
     const focus = teachTurnFocus(
       message ?? "",
       chat.teachOutline,
       chat.teachSectionIndex,
-      instruction?.focus
+      resumed?.title ?? instruction?.focus
     )
     // Every chunk is citable when the unit is small; otherwise the passages
     // closest to this turn's focus win, with document order as the tiebreak.
@@ -629,11 +675,13 @@ export const teachContext = query({
       unitTitleSource: unit.titleSource,
       outline: chat.teachOutline ?? null,
       sectionIndex: chat.teachSectionIndex ?? null,
-      plan: chat.teachSectionPlan ?? null,
+      plan: plan ?? null,
+      /** False while the plan is only read from the planning reply; the turn then saves it. */
+      planSaved: Boolean(chat.teachSectionPlan),
       knownConcepts: await knownConcepts(ctx, unit.projectId, unit._id),
       sources: readableSources,
-      /** Replaces the learner's message for the tutor when an update decided the next section. */
-      updateInstruction: instruction?.message ?? null,
+      /** Replaces the learner's message for the tutor when Blitz decided the next section. */
+      turnInstruction: instruction?.message ?? null,
       /** An update this session has not been told about yet; cleared when a turn delivers it. */
       update:
         chat.teachOutline && chat.teachUnsentSummaries?.length

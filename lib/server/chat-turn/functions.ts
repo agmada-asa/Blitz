@@ -72,6 +72,7 @@ export const startWorkspaceTurn = makeFunctionReference<
     annotations?: PersistedAnnotation[]
     redoOf?: Id<"workspaceChatMessages">
     redoStyle?: TeachRedoStyle
+    after?: Id<"workspaceChatMessages">
   },
   {
     chatId: Id<"workspaceChats">
@@ -96,6 +97,8 @@ export const startWorkspaceTurn = makeFunctionReference<
       beforeTurnId: string
       replacedMessageIds: Id<"workspaceChatMessages">[]
       originalMessage: string
+      /** What the tutor is asked again, when it differs from the learner's request. */
+      tutorMessage?: string
     } | null
     /** Provider and session to carry over after a usage-limit handoff. */
     providerHandoff: { fromProviderId: string; fromSessionId?: string } | null

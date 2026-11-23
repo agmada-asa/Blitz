@@ -19,7 +19,12 @@ import { CHAT_PROVIDER_CAPABILITIES } from "@/lib/provider-capabilities"
 import { providerThreadFeatures } from "@/lib/provider-thread-features"
 import { providerLabel } from "@/lib/provider-handoff"
 import { citationPrompt } from "@/lib/citations"
-import { TEACH_QUICK_REPLIES, teachRedoMessage } from "@/lib/teach"
+import {
+  parseTeachSectionMarker,
+  TEACH_QUICK_REPLIES,
+  teachRedoMessage,
+} from "@/lib/teach"
+import { TEACH_MOVED_ON } from "@/lib/teach-focus"
 import type { AiProviderId } from "@/lib/ai-model-settings"
 import { createChatAgentSession } from "@/lib/server/chat-agent"
 import {
@@ -264,7 +269,8 @@ export async function POST(request: Request): Promise<Response> {
             ? await client.query(api.workspaceChats.replySelection, { chatId: input.chatId })
             : null
         )
-        const turn = await client.mutation(startWorkspaceTurn, {
+        const turn = await client
+          .mutation(startWorkspaceTurn, {
           ...(input.chatId ? { chatId: input.chatId } : {}),
           ...(input.projectId ? { projectId: input.projectId } : {}),
           providerId: requestedSelection.providerId,
@@ -285,7 +291,14 @@ export async function POST(request: Request): Promise<Response> {
           ...(input.redo
             ? { redoOf: input.redo.messageId, redoStyle: input.redo.style }
             : {}),
-        })
+          ...(input.after ? { after: input.after } : {}),
+          })
+          .catch((error: unknown) => {
+            // Said plainly, so the Teach screen knows another tab moved on.
+            if (error instanceof Error && error.message.includes(TEACH_MOVED_ON))
+              throw new CardChatError("invalid-input", TEACH_MOVED_ON, error)
+            throw error
+          })
         activeTurn = {
           chatId: turn.chatId,
           assistantMessageId: turn.assistantMessageId,
@@ -307,18 +320,29 @@ export async function POST(request: Request): Promise<Response> {
             ? input
             : { ...input, message: turn.resentMessage }
         // A redo resends the request its replaced reply answered.
-        const learnerMessage = turn.redo?.originalMessage ?? turnInput.message
+        const learnerMessage =
+          turn.redo?.tutorMessage ?? turn.redo?.originalMessage ?? turnInput.message
+        const resumedSection = turn.replyPrefix
+          ? parseTeachSectionMarker(turn.replyPrefix)
+          : undefined
         // A Teach session is a chat with its unit's material and protocol.
         const teach = input.chatId
           ? await client.query(api.units.teachContext, {
               chatId: turn.chatId,
               message: learnerMessage,
+              // A resumed reply already named its section; cite for that one.
+              ...(resumedSection?.kind === "section"
+                ? { resumedSectionId: resumedSection.id }
+                : {}),
             })
           : null
         // `Plan my lesson` carries the learner's pre-check answers, read from
-        // the saved answers rather than trusted from the browser.
+        // the saved answers rather than trusted from the browser. A plan with
+        // skimmed sections keeps them, so a rebuilt session knows what to cover.
+        const planning =
+          learnerMessage.trim() === TEACH_QUICK_REPLIES.precheckDone
         const precheck =
-          teach && learnerMessage.trim() === TEACH_QUICK_REPLIES.precheckDone
+          teach && (planning || teach.plan?.some((entry) => entry.mode === "skim"))
             ? await client.query(api.teach.precheckResults, { chatId: turn.chatId })
             : undefined
         progress = createChatProgress(
@@ -421,8 +445,8 @@ export async function POST(request: Request): Promise<Response> {
         // What the tutor is asked this turn: a redo adds its steer.
         const teachMessage =
           turn.redo && input.redo
-            ? teachRedoMessage(turn.redo.originalMessage, input.redo.style)
-            : (teach?.updateInstruction ?? turnInput.message)
+            ? teachRedoMessage(learnerMessage, input.redo.style)
+            : (teach?.turnInstruction ?? turnInput.message)
         /** Builds this Teach turn's prompt; see `teachTurnPrompt`. */
         const teachPrompt = (
           includeContext: boolean,
@@ -433,7 +457,7 @@ export async function POST(request: Request): Promise<Response> {
             includeContext,
             ...(options.afterCompaction ? { afterCompaction: true } : {}),
             history: turn.replayContext.messages,
-            ...(precheck ? { precheck } : {}),
+            ...(precheck ? (planning ? { precheck } : { precheckContext: precheck }) : {}),
           })
         let replayPrompt: Promise<string> | undefined
         /** Rebuilds prior dialogue and attachments only when thread continuity is uncertain. */
@@ -739,6 +763,19 @@ export async function POST(request: Request): Promise<Response> {
           turn.replyPrefix,
           `${carriedText}${result.text}`
         )
+        // Teach progress (section, plan) is saved before the chat goes idle,
+        // so a `Next section` sent the moment it does sees where the lesson is.
+        if (teach)
+          await finishTeachTurn(client, {
+            ...replyIds,
+            teach,
+            reply,
+            planning,
+            contextUsage: result.contextUsage,
+            restated:
+              (replay || restate || attempt.requestedCompacted) &&
+              !attempt.runtimeCompacted,
+          })
         await client.mutation(completeWorkspaceTurn, {
           ...replyIds,
           providerId: selection.providerId,
@@ -754,16 +791,6 @@ export async function POST(request: Request): Promise<Response> {
           thought: result.thought,
           durationMs: result.durationMs,
         })
-        if (teach)
-          await finishTeachTurn(client, {
-            ...replyIds,
-            teach,
-            reply,
-            contextUsage: result.contextUsage,
-            restated:
-              (replay || restate || attempt.requestedCompacted) &&
-              !attempt.runtimeCompacted,
-          })
         send({
           type: "complete",
           chatId: turn.chatId,

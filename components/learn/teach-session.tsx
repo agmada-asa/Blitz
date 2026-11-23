@@ -363,25 +363,19 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
     }
     return null
   }, [unit.plan, outline, messages])
-  // Sections after the current one that the tutor will still teach. Once a
-  // lesson has been updated, the queue decides what is left, as it does on the server.
+  // Whether `Next section` still has a section to teach, decided as the server
+  // decides it.
   const sectionsLeft = !outline
     ? 0
-    : lessonUpdates.length
-      ? nextTeachTarget({
+    : nextTeachTarget({
           outline,
           plan,
           taughtSectionIds,
           pending: pendingSections,
           sectionIndex,
         }).kind === "done"
-        ? 0
-        : 1
-      : outline.sections.filter(
-          (section, index) =>
-            index > sectionIndex &&
-            plan?.find((entry) => entry.id === section.id)?.mode !== "skip"
-        ).length
+      ? 0
+      : 1
   // Celebrate only when the recap arrived in this sitting, not on every revisit.
   const finishedThisSitting =
     complete &&
@@ -402,7 +396,7 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
 
   /** Sends a quick reply or resumes a paused reply. */
   const send = useCallback(
-    async (message: string, continuationOf?: string, spoken = false) => {
+    async (message: string, continuationOf?: string, spoken = false, after?: string) => {
       if (!activeChatId || sending || chat?.status === "running") return false
       setSending(true)
       setError("")
@@ -414,12 +408,15 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
         spoken,
         message,
         ...(continuationOf ? { continuationOf } : {}),
+        ...(after ? { after } : {}),
         signal: controller.signal,
       })
       abortRef.current = undefined
       setSending(false)
-      if (!result.ok && !result.paused) setError(result.error)
-      return result.ok || Boolean(result.paused)
+      // Another tab or device already moved the lesson on; nothing went wrong.
+      const movedOn = !result.ok && Boolean(after && result.movedOn)
+      if (!result.ok && !result.paused && !movedOn) setError(result.error)
+      return result.ok || Boolean(result.paused) || movedOn
     },
     [activeChatId, sending, chat?.status]
   )
@@ -454,6 +451,30 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
     autoStartedRef.current = chat.id
     queueMicrotask(() => void send(TEACH_QUICK_REPLIES.start))
   }, [ask, chat, send, unit.sources])
+
+  // The planning reply only plans; Blitz then starts on the first section the
+  // plan keeps. The server reads the plan from that reply if it isn't saved
+  // yet, and a reply that brought no plan still moves on, to section 1 in full.
+  // A reload before it moves on sends it then. The server refuses the send
+  // once the planning reply is no longer the latest, so a second tab or
+  // device can't teach a section twice.
+  const continuedPlanRef = useRef<string | undefined>(undefined)
+  const planRequest = messages.at(-2)
+  useEffect(() => {
+    if (!chat || chat.status !== "idle" || sending) return
+    if (
+      lastMessage?.role !== "assistant" ||
+      lastMessage.status !== "completed" ||
+      planRequest?.role !== "user" ||
+      planRequest.content.trim() !== TEACH_QUICK_REPLIES.precheckDone ||
+      continuedPlanRef.current === lastMessage.id
+    )
+      return
+    if (parseTeachSectionMarker(lastMessage.content)) return
+    continuedPlanRef.current = lastMessage.id
+    const planReply = lastMessage.id
+    queueMicrotask(() => void send(TEACH_QUICK_REPLIES.next, undefined, false, planReply))
+  }, [chat, sending, lastMessage, planRequest, send])
 
   // Brings a new reply's opening into view once it appears.
   const lastAssistantId = [...messages]
@@ -728,15 +749,25 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
   useEffect(() => {
     if (!nextHeld || !voiceOn || running || sending || nextSent.current === nextFrom) return
     nextSent.current = nextFrom
-    void send(TEACH_QUICK_REPLIES.next, undefined, true)
+    // A failed reply is resumed, as the dock does; moving on from it could
+    // repeat its section if its progress wasn't saved.
+    const failed = lastMessage?.role === "assistant" && lastMessage.status === "failed"
+    void send(
+      failed ? "" : TEACH_QUICK_REPLIES.next,
+      failed ? nextFrom : undefined,
+      true,
+      failed ? undefined : nextFrom
+    )
       .then((sent) => {
+        // A resumed reply keeps its id, so the next "next" must be free to go.
+        if (sent && failed) nextSent.current = null
         if (sent) return
         // Saying "next" again retries it; the dock that shows send errors is hidden during voice.
         nextSent.current = null
         report("The next section didn't start. Say next again.")
       })
       .finally(() => setNextFrom(null))
-  }, [nextHeld, nextFrom, voiceOn, running, sending, send, report])
+  }, [nextHeld, nextFrom, voiceOn, running, sending, send, report, lastMessage])
   /** Starts voice afresh, without a question or "next" left from an earlier session. */
   const startVoice = voice.start
   const voiceStarter = useMemo(
@@ -1212,7 +1243,8 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
               <TeachDock
                 state={dockState}
                 error={error}
-                onSend={(message) => void send(message)}
+                // Tied to the reply on screen, so a stale tab can't move the lesson twice.
+                onSend={(message) => void send(message, undefined, false, lastMessage?.id)}
                 onResume={() =>
                   lastMessage?.role === "assistant"
                     ? void send("", lastMessage.id)
