@@ -25,6 +25,7 @@ import {
   nextTeachTarget,
   TEACH_UPDATE_LEASE_MS,
   teachNewSources,
+  teachRedoRequest,
   teachReplyUpdateLabels,
   teachUpdateDividerText,
   teachTurnInstruction,
@@ -380,6 +381,19 @@ test("the instruction asks for the recap when nothing is left", () => {
     sectionIndex: 2,
   })
   assert.match(instruction!.message, /section block with body done/)
+  assert.equal(instruction!.focus, outline.title)
+})
+
+test("a redo of Next section asks for the section its reply taught", () => {
+  const plan = [{ id: "s2", mode: "skim" as const }]
+  const redo = teachRedoRequest("Next section", { kind: "section", id: "s2" }, outline, plan)
+  assert.match(redo!, /^Teach section 2: .*skim/)
+  assert.match(
+    teachRedoRequest("Next section", { kind: "done" }, outline, plan)!,
+    /body done/
+  )
+  assert.equal(teachRedoRequest("Why?", { kind: "section", id: "s2" }, outline, plan), undefined)
+  assert.equal(teachRedoRequest("Next section", undefined, outline, plan), undefined)
 })
 
 test("a jump to a queued section carries its note; other messages pass through", () => {

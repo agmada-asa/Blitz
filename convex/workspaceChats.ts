@@ -7,7 +7,8 @@ import { AI_PROVIDER_IDS } from "../lib/ai-model-settings"
 import { shouldCompactBeforeTurn } from "../lib/context-usage"
 import { providerThreadFeatures } from "../lib/provider-thread-features"
 import { stoppedRequestToResend } from "../lib/stopped-reply"
-import { isTeachUpdateRunning } from "../lib/teach-updates"
+import { parseTeachSectionMarker } from "../lib/teach"
+import { isTeachUpdateRunning, teachRedoRequest } from "../lib/teach-updates"
 import { addTurnNotice } from "../lib/turn-notices"
 import {
   contextUsageFields,
@@ -1017,6 +1018,7 @@ export const startTurn = mutation({
           beforeTurnId: string
           replacedMessageIds: Id<"workspaceChatMessages">[]
           originalMessage: string
+          tutorMessage?: string
         }
       | undefined
     if (args.redoOf) {
@@ -1041,10 +1043,18 @@ export const startTurn = mutation({
         !providerThreadFeatures(selectedProvider).rewind
       )
         throw new Error("This reply can't be redone in place")
+      // `Next section` already moved on, so ask for the section the reply taught.
+      const tutorMessage = teachRedoRequest(
+        request.content,
+        parseTeachSectionMarker(latest.content),
+        chat.teachOutline,
+        chat.teachSectionPlan
+      )
       redo = {
         beforeTurnId,
         replacedMessageIds: [request._id, latest._id],
         originalMessage: request.content,
+        ...(tutorMessage ? { tutorMessage } : {}),
       }
     }
     const turnMessage = redo?.originalMessage ?? message

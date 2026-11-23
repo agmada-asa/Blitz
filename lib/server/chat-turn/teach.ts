@@ -40,6 +40,8 @@ export type TeachPrecheck = FunctionReturnType<typeof api.teach.precheckResults>
  * @param options.afterCompaction - Whether the session was just compacted.
  * @param options.history - The session's saved messages.
  * @param options.precheck - Pre-check answers, for `Plan my lesson`.
+ * @param options.precheckContext - The same answers on later turns, restated
+ *   with the plan when the session is rebuilt so skimmed sections stay targeted.
  */
 export function teachTurnPrompt(
   teach: TeachContext,
@@ -49,6 +51,7 @@ export function teachTurnPrompt(
     afterCompaction?: boolean
     history: readonly WorkspaceChatHistoryMessage[]
     precheck?: TeachPrecheck
+    precheckContext?: TeachPrecheck
   }
 ): string {
   return buildTeachPrompt({
@@ -72,6 +75,7 @@ export function teachTurnPrompt(
     ...(teach.plan ? { plan: teach.plan } : {}),
     ...(teach.update ? { update: teach.update } : {}),
     ...(options.precheck ? { precheck: options.precheck } : {}),
+    ...(options.precheckContext ? { precheckContext: options.precheckContext } : {}),
     knownConcepts: teach.knownConcepts,
     references: teach.referenceExcerpts,
   })
@@ -120,8 +124,11 @@ export async function finishTeachTurn(
   const outline = parseTeachOutline(reply)
   const marker = parseTeachSectionMarker(reply)
   const knownOutline = teach.outline ?? outline
+  // A plan read from the planning reply but not yet saved is saved now.
   const plan =
-    knownOutline && !teach.plan ? parseTeachPlan(reply, knownOutline) : undefined
+    knownOutline && !teach.planSaved
+      ? (parseTeachPlan(reply, knownOutline) ?? teach.plan ?? undefined)
+      : undefined
   await client
     .mutation(api.units.recordTeachProgress, {
       chatId,

@@ -395,6 +395,8 @@ export type TeachPromptInput = {
   references?: Array<{ filename: string; text: string }>
   /** Answered pre-check questions, sent with the `Plan my lesson` reply. */
   precheck?: TeachPrecheckResult[]
+  /** The same answers on later turns, restated with the plan when rebuilding. */
+  precheckContext?: TeachPrecheckResult[]
   /** What the learner already knows from the module's other units. */
   knownConcepts?: TeachKnownConcepts
   /** The skip, skim, or teach plan agreed after the pre-check, restated when rebuilding. */
@@ -450,15 +452,23 @@ function updateBlock(update: TeachPromptInput["update"], includeContext: boolean
 function precheckBlock(precheck: TeachPromptInput["precheck"]): string[] {
   if (!precheck) return []
   if (!precheck.length)
-    return ["PRE-CHECK RESULTS: the learner answered none of the pre-check questions. Plan every section as teach."]
+    return [
+      "PRE-CHECK RESULTS: the learner answered none of the pre-check questions. Plan every section as teach.",
+      PLAN_ONLY,
+    ]
   return [
     "PRE-CHECK RESULTS (questions not listed were left unanswered):",
-    ...precheck.map(
-      (result) =>
-        `- ${result.correct ? (result.guessed ? "RIGHT BUT GUESSED (treat as not known)" : "RIGHT") : "WRONG"} [${result.concept}] ${result.question.replace(/\s+/g, " ").slice(0, 300)}`
-    ),
+    ...precheckLines(precheck),
     PLAN_ONLY,
   ]
+}
+
+/** One line per answered pre-check question. */
+function precheckLines(precheck: TeachPrecheckResult[]): string[] {
+  return precheck.map(
+    (result) =>
+      `- ${result.correct ? (result.guessed ? "RIGHT BUT GUESSED (treat as not known)" : "RIGHT") : "WRONG"} [${result.concept}] ${result.question.replace(/\s+/g, " ").slice(0, 300)}`
+  )
 }
 
 /**
@@ -593,7 +603,13 @@ export function buildTeachPrompt(input: TeachPromptInput): string {
     )
   if (input.outline && input.plan)
     parts.push(
-      `The plan agreed after the pre-check: ${input.plan.map((entry) => `${entry.id} ${entry.mode}`).join(", ")}. Keep following it and do not send a new plan.`
+      `The plan agreed after the pre-check: ${input.plan.map((entry) => `${entry.id} ${entry.mode}`).join(", ")}. Keep following it and do not send a new plan.`,
+      ...(input.precheckContext?.length
+        ? [
+            "The pre-check answers behind it, so a skimmed section covers what the learner missed:",
+            ...precheckLines(input.precheckContext),
+          ]
+        : [])
     )
   parts.push(...updateBlock(input.update, true))
   parts.push(...knownConceptsBlock(input.knownConcepts))

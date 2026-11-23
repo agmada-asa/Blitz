@@ -20,6 +20,7 @@ import {
 import type {
   TeachOutline,
   TeachSection,
+  TeachSectionMarker,
   TeachSectionMode,
   TeachSectionPlan,
 } from "./teach.ts"
@@ -420,6 +421,38 @@ function sectionInstruction(
   return `${opening} Teach it in full.`
 }
 
+/** What `Next section` asks for once every section is covered. */
+const RECAP_INSTRUCTION =
+  "Every section is now covered. Send the ```section block with body done, the short recap of the unit's key ideas (including anything new course material added, if the lesson was updated), and the final mixed quiz."
+
+/**
+ * Restates what a `Next section` reply was asked, from the section its reply
+ * opened, so a redo teaches that section again rather than the one after it.
+ *
+ * @param request The learner's message the reply answered.
+ * @param marker The replaced reply's section marker.
+ * @param outline The lesson's outline.
+ * @param plan The pre-check plan, for whether the section is skimmed.
+ * @returns The instruction to redo, or undefined to resend the request as it was.
+ */
+export function teachRedoRequest(
+  request: string,
+  marker: TeachSectionMarker | undefined,
+  outline: TeachOutline | undefined,
+  plan: TeachSectionPlan | null | undefined
+): string | undefined {
+  if (request.trim().toLowerCase() !== NEXT_SECTION || !marker || !outline) return undefined
+  if (marker.kind === "done") return RECAP_INSTRUCTION
+  const index = outline.sections.findIndex((section) => section.id === marker.id)
+  if (index < 0) return undefined
+  const section = outline.sections[index]
+  return sectionInstruction(
+    index,
+    { kind: "section", index, section },
+    plan?.find((entry) => entry.id === section.id)?.mode
+  )
+}
+
 /**
  * Turns `Next section` into an explicit instruction once the lesson has an
  * outline. Blitz walks the outline itself, passing over sections the pre-check
@@ -442,8 +475,9 @@ export function teachTurnInstruction(
     const target = nextTeachTarget(state)
     if (target.kind === "done")
       return {
-        message:
-          "Every section is now covered. Send the ```section block with body done, the short recap of the unit's key ideas (including anything new course material added, if the lesson was updated), and the final mixed quiz.",
+        message: RECAP_INSTRUCTION,
+        // The recap covers the whole unit, not the section after the last one.
+        focus: state.outline.title,
       }
     return {
       message: sectionInstruction(target.index, target, modes.get(target.section.id)),

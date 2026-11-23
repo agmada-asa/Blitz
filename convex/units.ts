@@ -17,6 +17,7 @@ import { searchTerms } from "../lib/search-terms"
 import { conceptStrength } from "../lib/drill"
 import { MAX_UPDATED_TEACH_SECTIONS } from "../lib/teach-limits"
 import { teachNewSources, teachTurnInstruction } from "../lib/teach-updates"
+import { parseTeachPlan, type TeachOutline, type TeachSectionPlan } from "../lib/teach"
 import { teachOutlineFields, teachSectionPlanFields } from "./teachFields"
 
 /** Reference-book passages added to one Teach turn. */
@@ -64,6 +65,45 @@ async function latestTeachChat(
     .withIndex("by_unit_updatedAt", (q) => q.eq("unitId", unitId))
     .order("desc")
     .first()
+}
+
+/**
+ * Reads the pre-check plan from the session's latest tutor replies, for the
+ * moment between the planning reply finishing and its plan being saved.
+ */
+async function planFromReplies(
+  ctx: Pick<QueryCtx, "db">,
+  chatId: Id<"workspaceChats">,
+  outline: TeachOutline
+): Promise<TeachSectionPlan | undefined> {
+  const recent = await ctx.db
+    .query("workspaceChatMessages")
+    .withIndex("by_chat_createdAt", (q) => q.eq("chatId", chatId))
+    .order("desc")
+    .take(6)
+  for (const message of recent) {
+    if (message.role !== "assistant") continue
+    const plan = parseTeachPlan(message.content, outline)
+    if (plan) return plan
+  }
+  return undefined
+}
+
+/**
+ * The sections a session has taught. Sessions saved before taught sections
+ * were recorded fall back to everything up to their furthest section.
+ */
+function taughtSections(
+  chat: Doc<"workspaceChats">,
+  outline: TeachOutline
+): Set<string> {
+  if (chat.teachTaughtSectionIds) return new Set(chat.teachTaughtSectionIds)
+  if (chat.teachSectionIndex === undefined) return new Set()
+  return new Set(
+    outline.sections
+      .slice(0, chat.teachSectionIndex + 1)
+      .map((section) => section.id)
+  )
 }
 
 /** Summarises a source for lists without its extracted text. */
@@ -511,13 +551,19 @@ export const teachContext = query({
         .withIndex("by_unit", (q) => q.eq("unitId", unit._id))
         .collect()
     ).sort((a, b) => a.createdAt - b.createdAt)
+    // The plan is saved just after the planning reply finishes. Until then, or
+    // if saving failed, it is read from that reply, so `Next section` never
+    // runs without it.
+    const plan =
+      chat.teachSectionPlan ??
+      (chat.teachOutline ? await planFromReplies(ctx, chatId, chat.teachOutline) : undefined)
     // Once the lesson has an outline, Blitz decides what `Next section` teaches.
     const instruction =
       chat.teachOutline
         ? teachTurnInstruction(message ?? "", {
             outline: chat.teachOutline,
-            plan: chat.teachSectionPlan ?? null,
-            taughtSectionIds: new Set(chat.teachTaughtSectionIds ?? []),
+            plan: plan ?? null,
+            taughtSectionIds: taughtSections(chat, chat.teachOutline),
             pending: chat.teachPendingSections ?? [],
             sectionIndex: chat.teachSectionIndex ?? 0,
           })
@@ -629,7 +675,9 @@ export const teachContext = query({
       unitTitleSource: unit.titleSource,
       outline: chat.teachOutline ?? null,
       sectionIndex: chat.teachSectionIndex ?? null,
-      plan: chat.teachSectionPlan ?? null,
+      plan: plan ?? null,
+      /** False while the plan is only read from the planning reply; the turn then saves it. */
+      planSaved: Boolean(chat.teachSectionPlan),
       knownConcepts: await knownConcepts(ctx, unit.projectId, unit._id),
       sources: readableSources,
       /** Replaces the learner's message for the tutor when Blitz decided the next section. */

@@ -307,7 +307,8 @@ export async function POST(request: Request): Promise<Response> {
             ? input
             : { ...input, message: turn.resentMessage }
         // A redo resends the request its replaced reply answered.
-        const learnerMessage = turn.redo?.originalMessage ?? turnInput.message
+        const learnerMessage =
+          turn.redo?.tutorMessage ?? turn.redo?.originalMessage ?? turnInput.message
         // A Teach session is a chat with its unit's material and protocol.
         const teach = input.chatId
           ? await client.query(api.units.teachContext, {
@@ -316,9 +317,12 @@ export async function POST(request: Request): Promise<Response> {
             })
           : null
         // `Plan my lesson` carries the learner's pre-check answers, read from
-        // the saved answers rather than trusted from the browser.
+        // the saved answers rather than trusted from the browser. A plan with
+        // skimmed sections keeps them, so a rebuilt session knows what to cover.
+        const planning =
+          learnerMessage.trim() === TEACH_QUICK_REPLIES.precheckDone
         const precheck =
-          teach && learnerMessage.trim() === TEACH_QUICK_REPLIES.precheckDone
+          teach && (planning || teach.plan?.some((entry) => entry.mode === "skim"))
             ? await client.query(api.teach.precheckResults, { chatId: turn.chatId })
             : undefined
         progress = createChatProgress(
@@ -421,7 +425,7 @@ export async function POST(request: Request): Promise<Response> {
         // What the tutor is asked this turn: a redo adds its steer.
         const teachMessage =
           turn.redo && input.redo
-            ? teachRedoMessage(turn.redo.originalMessage, input.redo.style)
+            ? teachRedoMessage(learnerMessage, input.redo.style)
             : (teach?.turnInstruction ?? turnInput.message)
         /** Builds this Teach turn's prompt; see `teachTurnPrompt`. */
         const teachPrompt = (
@@ -433,7 +437,7 @@ export async function POST(request: Request): Promise<Response> {
             includeContext,
             ...(options.afterCompaction ? { afterCompaction: true } : {}),
             history: turn.replayContext.messages,
-            ...(precheck ? { precheck } : {}),
+            ...(precheck ? (planning ? { precheck } : { precheckContext: precheck }) : {}),
           })
         let replayPrompt: Promise<string> | undefined
         /** Rebuilds prior dialogue and attachments only when thread continuity is uncertain. */

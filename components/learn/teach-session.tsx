@@ -450,22 +450,26 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
   }, [ask, chat, send, unit.sources])
 
   // The planning reply only plans; Blitz then starts on the first section the
-  // plan keeps. It waits for the saved plan, which lands just after the reply
-  // finishes, so the server picks the section from it.
+  // plan keeps. The server reads the plan from that reply if it isn't saved
+  // yet, and a reply that brought no plan still moves on, to section 1 in full.
+  // A reload before it moves on sends it then; a second tab's send is refused
+  // while the first runs.
   const continuedPlanRef = useRef<string | undefined>(undefined)
+  const planRequest = messages.at(-2)
   useEffect(() => {
-    if (!chat || chat.status !== "idle" || !unit.plan) return
+    if (!chat || chat.status !== "idle" || sending) return
     if (
       lastMessage?.role !== "assistant" ||
       lastMessage.status !== "completed" ||
+      planRequest?.role !== "user" ||
+      planRequest.content.trim() !== TEACH_QUICK_REPLIES.precheckDone ||
       continuedPlanRef.current === lastMessage.id
     )
       return
-    if (!outline || !parseTeachPlan(lastMessage.content, outline)) return
     if (parseTeachSectionMarker(lastMessage.content)) return
     continuedPlanRef.current = lastMessage.id
     queueMicrotask(() => void send(TEACH_QUICK_REPLIES.next))
-  }, [chat, unit.plan, lastMessage, outline, send])
+  }, [chat, sending, lastMessage, planRequest, send])
 
   // Brings a new reply's opening into view once it appears.
   const lastAssistantId = [...messages]

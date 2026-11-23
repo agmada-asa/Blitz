@@ -160,6 +160,7 @@ function teachContext(overrides: Record<string, unknown> = {}) {
     outline: null,
     sectionIndex: null,
     plan: null,
+    planSaved: false,
     knownConcepts: { strong: [], shaky: [] },
     sources: [
       { id: "source-1", filename: "week3.pdf", text: "Caches keep hot data close.", truncated: false },
