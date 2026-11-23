@@ -740,6 +740,19 @@ test("Teach progress is saved before the reply completes, and only a planning re
   assert.equal(next.sectionId, "s2")
 })
 
+test("a Teach reply whose progress can't be saved fails instead of completing", async () => {
+  harness.handlers["units:teachContext"] = () => teachContext()
+  harness.handlers["units:recordTeachProgress"] = () => {
+    throw new Error("Convex unreachable")
+  }
+  harness.attempts = [replies("```section\ns1\n```\nCaches.")]
+
+  await post(message({ message: "Next section" }))
+
+  assert.deepEqual(calls("workspaceChats:complete"), [])
+  assert.equal(calls("workspaceChats:fail").length, 1)
+})
+
 test("a resumed Teach reply cites for the section it had opened", async () => {
   harness.handlers["units:teachContext"] = () => teachContext()
   harness.handlers["workspaceChats:startTurn"] = () =>

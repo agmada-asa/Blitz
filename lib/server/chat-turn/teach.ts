@@ -86,8 +86,9 @@ export function teachTurnPrompt(
  * outline, plan, and section the reply set, and the unit's title. Once the
  * unit has an outline, its first question bank starts in the background so
  * Practice and Review have material by the time the learner wants them.
- * Failures are logged. It runs before the reply is marked complete, so the
- * chat never goes idle with stale progress.
+ * It runs before the reply is marked complete, so the chat never goes idle
+ * with stale progress: a failed progress save fails the reply. Other failures
+ * are only logged.
  *
  * @param client - Convex client for the personal deployment.
  * @param turn - The reply and the session it belongs to.
@@ -154,6 +155,9 @@ export async function finishTeachTurn(
       console.error("Teach progress could not be saved", {
         message: error instanceof Error ? error.message : "Unknown error",
       })
+      // The reply then fails rather than completing over stale progress,
+      // which would let `Next section` teach the same section again.
+      throw error
     })
   // The bank call is a no-op after the first.
   if (knownOutline)
