@@ -21,6 +21,8 @@
  * a question can be asked while the tutor is writing. A passage picked from
  * the lesson (`teach-ask-overlay.tsx`) is quoted into it, and a suggested
  * question picked under a section is asked there with that section attached.
+ * On desktop the side panel's left edge drags to resize it, and the width is
+ * remembered in this browser.
  */
 
 import Link from "next/link"
@@ -44,6 +46,7 @@ import {
 import type { FunctionReturnType } from "convex/server"
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
 import { useMinuteClock } from "@/hooks/use-minute-clock"
+import { usePaneWidth } from "@/hooks/use-pane-width"
 
 import type {
   LearningSourceSelection,
@@ -82,6 +85,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import { ResizeHandle } from "@/components/ui/resize-handle"
 import { ArrowDownIcon, ArrowLeftIcon, ArrowRightIcon, FileIcon } from "@/components/ui/icon"
 import {
   Popover,
@@ -127,6 +131,18 @@ import {
 
 /** How long a Compact now request holds a session, matching the server's lease. */
 const COMPACTION_LEASE_MS = 5 * 60 * 1_000
+
+/** Where the side panel's dragged width is saved in this browser. */
+const SIDE_PANE_WIDTH_KEY = "blitz.teach.sidePaneWidth"
+
+/** The side panel's narrowest width, matching its `min-w-96` class. */
+const SIDE_PANE_MIN_WIDTH = 384
+
+/**
+ * Room the lesson keeps beside a dragged side panel, matching the panel's
+ * `max-w-[calc(100vw-30rem)]` class (plus the outline's width on wide screens).
+ */
+const LESSON_MIN_WIDTH = 480
 
 /** Scrolls an element into view, respecting the reduced-motion preference. */
 function reveal(
@@ -198,6 +214,10 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
   >()
   const [sideChatOpen, setSideChatOpen] = useState(false)
   const [sideTab, setSideTab] = useState<LearningSidePaneTab>("chat")
+  /** The side panel's width once the user drags it, remembered between visits. */
+  const sideWidth = usePaneWidth(SIDE_PANE_WIDTH_KEY)
+  /** The unit outline, measured so a wide side panel never squeezes the lesson. */
+  const outlineRef = useRef<HTMLElement>(null)
   /** Passage waiting in the side chat's composer. */
   const [quote, setQuote] = useState<LessonPassage & { id: string }>()
   const setTeachSideChat = useMutation(api.workspaceChats.setTeachSideChat)
@@ -869,6 +889,7 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
     // scrolling a reply into view never scrolls the page behind it.
     <div className="flex h-[100dvh] min-h-0 overflow-hidden md:h-svh">
       <aside
+        ref={outlineRef}
         aria-label="Unit outline"
         className={cn(
           "hidden w-72 shrink-0 flex-col overflow-y-auto border-r border-border/70 px-3 py-5",
@@ -1257,7 +1278,25 @@ function LoadedTeachSession({ unit, ask }: { unit: LoadedUnit; ask?: string }) {
       </div>
 
       {sideOpen ? (
-        <div className="contents lg:block lg:h-full lg:w-[min(42vw,620px)] lg:min-w-96 lg:shrink-0">
+        <div
+          // The max width keeps a saved width from crowding the lesson after the window shrinks.
+          className="contents lg:relative lg:block lg:h-full lg:w-[min(42vw,620px)] lg:max-w-[calc(100vw-30rem)] lg:min-w-96 lg:shrink-0 2xl:max-w-[calc(100vw-48rem)]"
+          style={sideWidth.width === null ? undefined : { width: sideWidth.width }}
+        >
+          {/* Only the desktop panel resizes; on smaller screens it is a full-screen dialog. */}
+          <ResizeHandle
+            label="Resize side panel"
+            min={SIDE_PANE_MIN_WIDTH}
+            max={() =>
+              window.innerWidth -
+              LESSON_MIN_WIDTH -
+              (outlineRef.current?.offsetWidth ?? 0)
+            }
+            onResize={sideWidth.resize}
+            onResizeEnd={sideWidth.save}
+            onReset={sideWidth.reset}
+            className="hidden lg:block"
+          />
           <LearningSidePane
             sourceSelection={source}
             chatOpen={sideChatOpen}
