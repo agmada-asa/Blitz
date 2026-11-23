@@ -7,6 +7,9 @@
  * original (`originalViewer` in `lib/source-viewers.ts`), the reader opens on
  * it instead: PDF pages, PowerPoint slides, a Word document, or formatted
  * Markdown, each at the cited place with the passage highlighted.
+ *
+ * Beside a chat on desktop, the reader's left edge drags to resize it, and the
+ * width is remembered in this browser.
  */
 import { useEffect, useRef, useState, useSyncExternalStore } from "react"
 import dynamic from "next/dynamic"
@@ -18,6 +21,8 @@ import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
 import { Markdown } from "@/components/ui/markdown"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { PdfReader } from "@/components/ui/pdf-reader"
+import { ResizeHandle } from "@/components/ui/resize-handle"
+import { usePaneWidth } from "@/hooks/use-pane-width"
 import { citationOriginalUrl } from "@/lib/citations"
 import {
   clearQuoteHighlight,
@@ -96,6 +101,15 @@ export type LearningSourceSelection = {
   locator?: string
 }
 
+/** Where the chat source reader's dragged width is saved in this browser. */
+const SOURCE_PANE_WIDTH_KEY = "blitz.chat.sourcePaneWidth"
+
+/** The source reader's narrowest width, matching its `min-w-96` class. */
+const SOURCE_PANE_MIN_WIDTH = 384
+
+/** Room the chat keeps beside the reader, matching its `max-w-[calc(100%-30rem)]` class. */
+const CHAT_MIN_WIDTH = 480
+
 /** Subscribes to the breakpoint without mismatching the server render. */
 function subscribeWidth(callback: () => void) {
   const media = window.matchMedia("(min-width: 1024px)")
@@ -135,6 +149,11 @@ export function SourcePane({
       if (previous?.isConnected) previous.focus()
     }
   }, [])
+  const asideRef = useRef<HTMLElement>(null)
+  const paneWidth = usePaneWidth(SOURCE_PANE_WIDTH_KEY)
+  // A learning citation fills the column its page gives it; only the pane
+  // beside a chat has a width of its own to drag.
+  const resizable = !("kind" in selection)
   const reader = <SourceReader selection={selection} />
   if (!desktop)
     return (
@@ -155,11 +174,18 @@ export function SourcePane({
     )
   return (
     <aside
+      ref={asideRef}
       aria-label="Source reader"
       className={
-        "kind" in selection
-          ? "sticky top-6 flex h-[calc(100dvh-3rem)] w-full min-w-0 flex-col border-l bg-background"
-          : "flex h-full w-[min(45vw,680px)] min-w-96 shrink-0 flex-col border-l bg-background"
+        resizable
+          ? // The max width keeps a saved width from crowding the chat after the window shrinks.
+            "relative flex h-full w-[min(45vw,680px)] max-w-[calc(100%-30rem)] min-w-96 shrink-0 flex-col border-l bg-background"
+          : "sticky top-6 flex h-[calc(100dvh-3rem)] w-full min-w-0 flex-col border-l bg-background"
+      }
+      style={
+        resizable && paneWidth.width !== null
+          ? { width: paneWidth.width }
+          : undefined
       }
       onKeyDown={(event) => {
         if (event.key === "Escape") {
@@ -168,6 +194,19 @@ export function SourcePane({
         }
       }}
     >
+      {resizable ? (
+        <ResizeHandle
+          label="Resize source reader"
+          min={SOURCE_PANE_MIN_WIDTH}
+          max={() =>
+            (asideRef.current?.parentElement?.clientWidth ?? window.innerWidth) -
+            CHAT_MIN_WIDTH
+          }
+          onResize={paneWidth.resize}
+          onResizeEnd={paneWidth.save}
+          onReset={paneWidth.reset}
+        />
+      ) : null}
       <div className="flex justify-end border-b px-3 py-1">
         <Button ref={closeRef} variant="ghost" size="sm" onClick={onClose}>
           Close source
