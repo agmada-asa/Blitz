@@ -88,6 +88,7 @@ test("Math leaves MongoDB operators in quiz and prose text as literal text", () 
     "Use {$group: {_id: $brand, n: {$sum: 1}}} to count.",
     `Order: {"$match": {"brand": "DreamDrive"}}, then {"$sort": {"count": -1}}.`,
     "Use $match, then $group, then $project.",
+    `Use {"$x.y": "$z"} to match a path.`,
   ])
     assert.equal(formulas(parseMarkdown(text, { math: true })).length, 0, text)
   assert.deepEqual(
@@ -97,6 +98,14 @@ test("Math leaves MongoDB operators in quiz and prose text as literal text", () 
       })
     ).map((token) => token.text),
     ["n", "max(a, b)", "abc", String.raw`\sin x`, "f(x)=x^2"]
+  )
+})
+
+test("Inline math preserves quoted LaTeX and punctuation beside dollar identifiers", () => {
+  const text = String.raw`Use {$sum: "$x"} and compare $abc,def$ and $\text{"yes"}$.`
+  assert.deepEqual(
+    formulas(parseMarkdown(text, { math: true })).map(({ text }) => text),
+    ["abc,def", String.raw`\text{"yes"}`]
   )
 })
 

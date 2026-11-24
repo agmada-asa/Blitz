@@ -11,16 +11,19 @@ export type MathToken = {
 }
 
 /**
- * Whether a single-dollar span is code rather than a formula. MongoDB operators
- * and field paths put dollars inside JSON, as in `{"$group": {"_id": "$brand"}}`
- * or `{$sum: 1}`, which otherwise pass the spacing rules for `$…$`. Formulas
- * almost never contain a double quote, or start with a word of three or more
- * letters followed directly by a quote, `:`, `,` or a closing bracket.
+ * Detects a single-dollar math match that crosses two MongoDB operators or
+ * field paths. The first name ends at code punctuation and the apparent
+ * closing dollar starts another name. Quotes and punctuation inside a
+ * self-contained formula are allowed.
  * @param body The text between the two dollars.
- * @returns True when the span should stay literal text.
+ * @param after The remaining text after the apparent closing dollar.
+ * @returns True when the match should stay literal text.
  */
-function looksLikeCode(body: string): boolean {
-  return body.includes('"') || /^[A-Za-z_]\w{2,}["':,}\]]/.test(body)
+function crossesDollarIdentifiers(body: string, after: string): boolean {
+  return (
+    /^\$?[A-Za-z_]/.test(after) &&
+    /^[A-Za-z_]\w*(?:\.[\w]+)*["':,}\]]/.test(body)
+  )
 }
 
 /** Recognizes complete formulas before Markdown consumes backslashes or emphasis characters. */
@@ -43,7 +46,12 @@ function mathToken(source: string, block: boolean): MathToken | undefined {
     // Single dollars follow math spacing rules so ordinary prices remain prose.
     if (!block && index === 3 && /^\s|\s$/.test(match[1])) continue
     // Dollars inside JSON or MongoDB queries are operators, not maths.
-    if (!block && index === 3 && looksLikeCode(match[1])) continue
+    if (
+      !block &&
+      index === 3 &&
+      crossesDollarIdentifiers(match[1], source.slice(match[0].length))
+    )
+      continue
     return {
       type: "math",
       raw: match[0],
