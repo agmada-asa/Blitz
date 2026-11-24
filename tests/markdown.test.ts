@@ -89,6 +89,8 @@ test("Math leaves MongoDB operators in quiz and prose text as literal text", () 
     `Order: {"$match": {"brand": "DreamDrive"}}, then {"$sort": {"count": -1}}.`,
     "Use $match, then $group, then $project.",
     `Use {"$x.y": "$z"} to match a path.`,
+    `Sum with {"$reduce": {"input": "$items", "initialValue": 0, "in": {"$add": ["$$value", "$$this"]}}}.`,
+    `Use {"$replaceRoot": {"newRoot": "$$ROOT"}} or "$$CURRENT".`,
   ])
     assert.equal(formulas(parseMarkdown(text, { math: true })).length, 0, text)
   assert.deepEqual(

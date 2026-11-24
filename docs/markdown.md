@@ -21,10 +21,11 @@ backslashes or interpret subscripts as emphasis. Formula parsing is opt-in for
 the web renderer; speech parsing keeps its own rules. Code spans and ordinary
 code fences preserve their source. Single-dollar math requires non-space
 characters next to both delimiters, and a closing `$` followed by a digit is
-not a delimiter, so `$5 and $10` stays text. A span with a dollar-prefixed
-name followed by code punctuation stays text if the apparent closing dollar
-starts another name. This preserves MongoDB expressions such as
-`{"$group": {"_id": "$brand"}}` in quiz text while allowing quotes and
+not a delimiter, so `$5 and $10` stays text. A `$` or inline `$$` span with
+a dollar-prefixed name followed by code punctuation stays text if the
+apparent closing dollar starts another name. This preserves MongoDB
+expressions such as `{"$group": {"_id": "$brand"}}` and
+`["$$value", "$$this"]` in quiz text while allowing quotes and
 punctuation inside formulas. Escape literal dollars as `\$` when currency
 and formulas share a paragraph.
 

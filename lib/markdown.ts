@@ -11,10 +11,11 @@ export type MathToken = {
 }
 
 /**
- * Detects a single-dollar math match that crosses two MongoDB operators or
- * field paths. The first name ends at code punctuation and the apparent
- * closing dollar starts another name. Quotes and punctuation inside a
- * self-contained formula are allowed.
+ * Detects an inline math match that crosses two MongoDB operators, field
+ * paths or `$$` variables (`"$$value"`, `"$$this"`, `"$$ROOT"`). The first
+ * name ends at code punctuation and the apparent closing dollar starts
+ * another name. Quotes and punctuation inside a self-contained formula are
+ * allowed.
  * @param body The text between the two dollars.
  * @param after The remaining text after the apparent closing dollar.
  * @returns True when the match should stay literal text.
@@ -45,10 +46,11 @@ function mathToken(source: string, block: boolean): MathToken | undefined {
     if (!match || !match[1].trim()) continue
     // Single dollars follow math spacing rules so ordinary prices remain prose.
     if (!block && index === 3 && /^\s|\s$/.test(match[1])) continue
-    // Dollars inside JSON or MongoDB queries are operators, not maths.
+    // Dollars inside JSON or MongoDB queries are operators, not maths. Inline
+    // `$$` matters too: two `$$` variables in one query would otherwise pair up.
     if (
       !block &&
-      index === 3 &&
+      (index === 0 || index === 3) &&
       crossesDollarIdentifiers(match[1], source.slice(match[0].length))
     )
       continue
