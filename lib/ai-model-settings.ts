@@ -373,7 +373,10 @@ export const AUTO_AI_MODEL_TIERS: Readonly<
   opencode: [
     /^google\/gemini-\d+(?:\.\d+)?-neon$/,
     /^google\/gemini-\d+(?:\.\d+)?-hydrogen$/,
-    /^google\/gemini-\d+(?:\.\d+)?-flash$/,
+    /^google\/gemini-\d+(?:\.\d+)?-flash(?:-preview)?$/,
+    /^google\/gemini-flash-latest$/,
+    /^google\/gemini-\d+(?:\.\d+)?-flash-lite(?:-preview)?$/,
+    /^google\/gemini-flash-lite-latest$/,
   ],
   antigravity: [
     /^gemini-\d+(?:\.\d+)?-neon(?:-medium)?$/,
@@ -967,8 +970,8 @@ function compareVersionsDescending(
  * model of the first family the catalogue offers. The catalogue should be the
  * signed-in account's own, since plans differ in which models they include;
  * without one, Blitz's curated list stands in. When no family matches, the
- * catalogue's default model is used, and failing that the provider's own
- * default.
+ * catalogue's default model is used, then the first known Codex model or
+ * the runtime default for other providers.
  *
  * The saved effort is kept when the chosen model accepts it. Otherwise it
  * becomes `medium`, then `low`, then the model's first level; ACP providers
@@ -1002,7 +1005,9 @@ export function resolveAutoAiModel(
       )[0]
     if (chosen) break
   }
-  chosen ??= candidates.find((option) => option.isDefault)
+  chosen ??=
+    candidates.find((option) => option.isDefault) ??
+    (providerId === "codex" ? candidates[0] : undefined)
   const model = chosen?.id ?? "default"
   if (providerId === "opencode" || providerId === "antigravity")
     return { model, effort: "default" }

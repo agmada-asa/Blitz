@@ -31,9 +31,11 @@ import {
 } from "../card-chat.ts"
 import { claudeBackgroundLimits } from "../spending-limits.ts"
 import { providerThreadFeatures } from "../../provider-thread-features.ts"
-import type {
-  AiProviderId,
-  AiReasoningEffort,
+import {
+  AUTO_AI_MODEL,
+  resolveAutoAiModel,
+  type AiProviderId,
+  type AiReasoningEffort,
 } from "../../ai-model-settings.ts"
 import {
   isWebResearchTurn,
@@ -368,13 +370,13 @@ function defaultEngine(
     : createClaudeEngine({ effortSelected: options.effortSelected })
 }
 
-/** Checks the selected Codex model, effort, and image input against the runtime catalogue. */
+/** Resolves Auto and checks the resulting selection against the same Codex catalogue. */
 async function checkCodexSelection(
   engine: Engine,
   selection: ProviderSelection,
   hasImages: boolean,
   catalog: readonly ProviderModelOption[] | undefined
-): Promise<void> {
+): Promise<ProviderSelection> {
   let models = catalog
   if (!models) {
     try {
@@ -388,6 +390,18 @@ async function checkCodexSelection(
         error
       )
     }
+  }
+  if (selection.model === AUTO_AI_MODEL) {
+    const imageModels = hasImages
+      ? models.filter((model) => model.inputModalities?.includes("image"))
+      : models
+    // When no model supports images, let the normal validation report why.
+    const { model, effort } = resolveAutoAiModel(
+      "codex",
+      selection.effort,
+      imageModels.length ? imageModels : models
+    )
+    selection = { ...selection, model, effort }
   }
   const selectedModel =
     selection.model === "default"
@@ -404,7 +418,7 @@ async function checkCodexSelection(
         "invalid-input",
         "Codex default model capabilities are unavailable"
       )
-    return
+    return selection
   }
   try {
     validateCodexModelSelection(
@@ -424,6 +438,7 @@ async function checkCodexSelection(
       error
     )
   }
+  return selection
 }
 
 /** Thread settings for one turn, before an engine exists. */
@@ -584,14 +599,14 @@ function rebindableCodexEngine(): {
 function claimEngine(
   providerId: EngineProviderId,
   request: RunProviderTextTurnRequest,
-  setup: EngineThreadSetup,
+  effortSelected: boolean,
   options: ProviderTextTurnOptions
 ): Engine | undefined {
   if (options.createEngine) return undefined
   if (providerId === "claude-code" && (request.threadId || request.fork))
     return undefined
   const pooled = claimPrewarmedEngine(
-    prewarmedEngineKey(providerId, request.workspaceDirectory, setup.effortSelected)
+    prewarmedEngineKey(providerId, request.workspaceDirectory, effortSelected)
   )
   pooled?.bindToolCalls?.(options.codex?.onToolCall)
   return pooled?.engine
@@ -675,13 +690,15 @@ async function runEngineProviderTurn(
   options: ProviderTextTurnOptions
 ): Promise<CardChatResult> {
   const request = supportedTurnRequest(requested)
-  const setup = await engineThreadSetup(
-    providerId,
-    request,
-    selection,
-    instructions,
-    options
-  )
+  // Codex's engine can list models before it opens a thread, so Auto and
+  // validation use one catalogue, including support for image attachments.
+  const setup =
+    providerId === "codex"
+      ? undefined
+      : await engineThreadSetup(
+          providerId, request, selection, instructions, options
+        )
+  const effortSelected = setup?.effortSelected ?? false
   // A fake ACP peer in tests stands in for the installed CLI as well.
   if (isAcpProvider(providerId) && !options.spawnOpenCode)
     await checkAcpProviderReady(providerId, request)
@@ -692,21 +709,29 @@ async function runEngineProviderTurn(
         request.workspaceDirectory,
         options.spawnOpenCode
       )
-    : (claimEngine(providerId, request, setup, options) ??
+    : (claimEngine(providerId, request, effortSelected, options) ??
         (options.createEngine ?? defaultEngine)(providerId, {
           ...(options.codex?.onToolCall
             ? { onToolCall: options.codex.onToolCall }
             : {}),
-          effortSelected: setup.effortSelected,
+          effortSelected,
         }))
+  let thread: ThreadOptions
   try {
-    if (providerId === "codex")
-      await checkCodexSelection(
+    if (setup) {
+      thread = setup.thread
+    } else {
+      const checked = await checkCodexSelection(
         engine,
         selection,
         Boolean(request.attachments?.length),
         options.codexModelCatalog
       )
+      const codexSetup = await engineThreadSetup(
+        providerId, request, checked, instructions, options
+      )
+      thread = codexSetup.thread
+    }
   } catch (error) {
     await engine.close().catch(() => undefined)
     throw error
@@ -715,7 +740,7 @@ async function runEngineProviderTurn(
     {
       providerId,
       engine,
-      thread: setup.thread,
+      thread,
       ...(request.threadId ? { threadId: request.threadId } : {}),
       // An ACP agent reports a turn as started before it checks a reloaded session.
       ...(isAcpProvider(providerId) ? { confirmResume: true } : {}),
@@ -755,16 +780,15 @@ async function runEngineProviderTurn(
 
 /**
  * Resolves a turn's provider selection and the instructions it sends: the
- * caller's, the execution policy's, and Codex's runtime notes.
+ * caller's, the execution policy's, and Codex's runtime notes. Codex resolves
+ * Auto separately because its preflight already reads the model catalogue.
  *
  * @throws CardChatError when the execution settings are invalid.
  */
 async function turnBasics(
   request: RunProviderTextTurnRequest
 ): Promise<{ selection: ProviderSelection; instructions: string }> {
-  // Auto settles on a model from the account's own catalogue here, so every
-  // turn, prewarm and validation below sees a concrete model.
-  const selection: ProviderSelection = await resolveAutoSelection({
+  const requested: ProviderSelection = {
     providerId: request.providerId,
     ...(request.providerInstanceId
       ? { providerInstanceId: request.providerInstanceId }
@@ -773,7 +797,7 @@ async function turnBasics(
     ...(request.effort?.trim()
       ? { effort: request.effort.trim() as AiReasoningEffort }
       : {}),
-  })
+  }
   let execution
   try {
     execution = resolveProviderExecution({
@@ -803,6 +827,10 @@ async function turnBasics(
   ]
     .filter(Boolean)
     .join("\n\n")
+  const selection =
+    request.providerId === "codex"
+      ? requested
+      : await resolveAutoSelection(requested)
   return { selection, instructions }
 }
 
@@ -831,7 +859,11 @@ export async function prewarmProviderTextTurn(
     const turn = supportedTurnRequest({ ...request, prompt: "" })
     const { selection, instructions } = await turnBasics(turn)
     const setup = await engineThreadSetup(providerId, turn, selection, instructions, {})
-    key = prewarmedEngineKey(providerId, request.workspaceDirectory, setup.effortSelected)
+    key = prewarmedEngineKey(
+      providerId,
+      request.workspaceDirectory,
+      providerId === "claude-code" && setup.effortSelected
+    )
     let bindToolCalls: ((handler: ToolCallHandler | undefined) => void) | undefined
     if (providerId === "codex") {
       const codex = rebindableCodexEngine()
@@ -872,7 +904,8 @@ export async function compactProviderThread(
   try {
     const turn = supportedTurnRequest({ ...request, prompt: "" })
     const { selection, instructions } = await turnBasics(turn)
-    const setup = await engineThreadSetup(providerId, turn, selection, instructions, {})
+    const resolved = providerId === "codex" ? await resolveAutoSelection(selection) : selection
+    const setup = await engineThreadSetup(providerId, turn, resolved, instructions, {})
     const engine = (options.createEngine ?? defaultEngine)(providerId, {
       effortSelected: setup.effortSelected,
     })

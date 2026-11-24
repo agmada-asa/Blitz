@@ -448,8 +448,30 @@ test("Auto keeps the saved effort when the chosen model accepts it", () => {
     resolveAutoAiModel("claude-code", "medium", [row("claude-haiku-4-5-20251001", ["default"])]),
     { model: "claude-haiku-4-5-20251001", effort: "default" }
   )
+  assert.deepEqual(
+    resolveAutoAiModel("claude-code", "high", [
+      row("opus"),
+      row("default", ["low"], true),
+    ]),
+    { model: "default", effort: "low" }
+  )
   // Without a live catalogue, Blitz's own list stands in.
   assert.equal(resolveAutoAiModel("claude-code", "medium").model, "sonnet")
+})
+
+test("OpenCode Auto uses available Flash previews, aliases, and Lite models before the default", () => {
+  for (const id of [
+    "google/gemini-3-flash-preview",
+    "google/gemini-flash-latest",
+    "google/gemini-3.5-flash-lite",
+    "google/gemini-flash-lite-latest",
+  ]) {
+    const catalog = [
+      row("google/gemini-3.1-pro-preview", ["default"], true),
+      row(id),
+    ]
+    assert.equal(resolveAutoAiModel("opencode", "default", catalog).model, id)
+  }
 })
 
 /** Confirms Auto is offered first in every picker, is not a "saved model", and passes validation. */

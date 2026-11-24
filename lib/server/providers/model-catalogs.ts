@@ -17,7 +17,6 @@ import {
 import { createAntigravityEngine } from "./antigravity.ts"
 import { getCodexModelCatalog } from "./codex-models.ts"
 import {
-  claudeModelOptions,
   createClaudeEngine,
   providerModelOptions,
 } from "./engines.ts"
@@ -60,11 +59,11 @@ async function withTimeout<T>(work: Promise<T>, label: string): Promise<T> {
   }
 }
 
-/** Reads Claude Code's catalogue, without the `default` alias row. */
+/** Reads Claude Code's catalogue, keeping the default alias's effort metadata for Auto. */
 async function listClaudeModels(): Promise<readonly ProviderModelOption[]> {
   const engine = createClaudeEngine()
   try {
-    return claudeModelOptions(await withTimeout(engine.models(), "Claude Code"))
+    return providerModelOptions(await withTimeout(engine.models(), "Claude Code"))
   } finally {
     await engine.close().catch(() => undefined)
   }

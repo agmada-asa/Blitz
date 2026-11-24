@@ -26,12 +26,12 @@ Every provider's picker starts with **Auto** (`auto`), which picks the provider'
 | --- | --- |
 | Claude Code | Sonnet, then Haiku |
 | Codex | newest Terra, then newest Luna |
-| OpenCode | Google's Gemini Neon, then Hydrogen, then Flash |
+| OpenCode | Google's Gemini Neon, then Hydrogen, then Flash or Flash Lite |
 | Antigravity | Gemini Neon, then Hydrogen, then Flash |
 
-Plans differ in which models they include, so Auto reads the signed-in account's own catalogue (`lib/server/providers/model-catalogs.ts`) rather than Blitz's curated lists, and takes the newest version of the first family listed (`AUTO_AI_MODEL_TIERS`, `resolveAutoAiModel` in `lib/ai-model-settings.ts`). A new version or a plan upgrade is picked up without a Blitz release. With no family listed, the catalogue's default model runs; with no catalogue, the curated list stands in. Claude Code and Antigravity catalogues are reused for five minutes, Codex and OpenCode for 30 seconds.
+Auto takes the newest available version in the first matching family from the signed-in account's catalogue (`AUTO_AI_MODEL_TIERS` and `resolveAutoAiModel` in `lib/ai-model-settings.ts`). If none of those families is available, it uses the catalogue's default. Codex uses the first eligible model if the list has no default. Claude Code and Antigravity catalogues are reused for five minutes. Chat's Codex catalogue and OpenCode's catalogue are reused for 30 seconds.
 
-`turnBasics` in `run-text-turn.ts` settles Auto before anything else reads the selection, so Teach, chat, prewarming and background tasks all get a concrete model. The saved reasoning level is kept when the chosen model accepts it, and otherwise lowered to `medium`, then `low`; OpenCode and Antigravity always get their default. Chats save `auto` itself, so a chat follows a later plan change too.
+Codex resolves Auto during preflight using the same catalogue it validates against. An image attachment limits the choice to models that support images. Other providers resolve Auto before opening the thread and can fall back to curated choices if the catalogue is unavailable. Auto keeps the saved reasoning level when the chosen model accepts it, then tries `medium`, `low`, and the model's first supported level. OpenCode and Antigravity use their default reasoning. Chats save `auto` so later turns can pick up plan changes.
 
 ## Defaults
 
