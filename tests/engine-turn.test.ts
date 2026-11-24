@@ -398,6 +398,42 @@ async function route(
   return engine
 }
 
+test("Codex Auto chooses a model and effort from the same catalogue used for preflight", async () => {
+  const catalog: readonly ProviderModelOption[] = [
+    {
+      id: "gpt-6.1-terra",
+      label: "Terra",
+      reasoningEfforts: ["medium", "high"],
+      inputModalities: ["text"],
+      isDefault: true,
+    },
+    { ...CATALOG[0], isDefault: false },
+  ]
+  const attachments = [
+    {
+      type: "image" as const,
+      mimeType: "image/png" as const,
+      data: "aGVsbG8=",
+      name: "diagram.png",
+    },
+  ]
+  const textTurn = await route(
+    "codex",
+    { model: "auto", effort: "high" },
+    { codexModelCatalog: catalog }
+  )
+  assert.equal(textTurn.started[0].model, "gpt-6.1-terra")
+  assert.equal(textTurn.started[0].effort, "high")
+
+  const imageTurn = await route(
+    "codex",
+    { model: "auto", effort: "high", attachments },
+    { codexModelCatalog: catalog }
+  )
+  assert.equal(imageTurn.started[0].model, "gpt-6-luna")
+  assert.equal(imageTurn.started[0].effort, "low")
+})
+
 test("forwards approval policy to new and resumed Codex threads", async () => {
   for (const threadId of [undefined, "thr_saved"]) {
     for (const approvalPolicy of [

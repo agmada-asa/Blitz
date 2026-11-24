@@ -52,6 +52,8 @@ export type ChatRouteHarness = {
   /** Root for project folders the route asks for. */
   projectsDirectory: string
   codexModels: Array<{ id: string; reasoningEfforts?: string[] }>
+  /** Failure of the initial catalogue probe, when the turn should retry it. */
+  codexCatalogError?: Error
 }
 
 /** The live harness; replaced by `resetChatRouteHarness`. */
@@ -146,6 +148,7 @@ export async function generateChatTitle(
 
 /** Replaces the Codex model list. */
 export async function getCodexModelCatalog() {
+  if (harness.codexCatalogError) throw harness.codexCatalogError
   return harness.codexModels
 }
 
