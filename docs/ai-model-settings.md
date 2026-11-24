@@ -18,9 +18,24 @@ Where a provider publishes a catalogue, the picker uses its model IDs and reason
 
 Claude Code offers the `sonnet`, `opus`, `haiku` and `fable` aliases with their reasoning levels. OpenCode and Antigravity only expose the provider's default reasoning.
 
+## Auto
+
+Every provider's picker starts with **Auto** (`auto`), which picks the provider's middle-tier model at each turn and falls back to a cheaper one when the account's plan doesn't offer it:
+
+| Provider | Tries, in order |
+| --- | --- |
+| Claude Code | Sonnet, then Haiku |
+| Codex | newest Terra, then newest Luna |
+| OpenCode | Google's Gemini Neon, then Hydrogen, then Flash |
+| Antigravity | Gemini Neon, then Hydrogen, then Flash |
+
+Plans differ in which models they include, so Auto reads the signed-in account's own catalogue (`lib/server/providers/model-catalogs.ts`) rather than Blitz's curated lists, and takes the newest version of the first family listed (`AUTO_AI_MODEL_TIERS`, `resolveAutoAiModel` in `lib/ai-model-settings.ts`). A new version or a plan upgrade is picked up without a Blitz release. With no family listed, the catalogue's default model runs; with no catalogue, the curated list stands in. Claude Code and Antigravity catalogues are reused for five minutes, Codex and OpenCode for 30 seconds.
+
+`turnBasics` in `run-text-turn.ts` settles Auto before anything else reads the selection, so Teach, chat, prewarming and background tasks all get a concrete model. The saved reasoning level is kept when the chosen model accepts it, and otherwise lowered to `medium`, then `low`; OpenCode and Antigravity always get their default. Chats save `auto` itself, so a chat follows a later plan change too.
+
 ## Defaults
 
-Until settings are first saved, workers use `BLITZ_CODEX_MODEL` and `BLITZ_CODEX_EFFORT` if set, then Codex with `gpt-6-luna`: `medium` reasoning for Research and Practice questions, `low` for Teaching and chat. If Convex is briefly unavailable, a worker uses the same fallbacks rather than blocking queued work.
+Until settings are first saved, workers use `BLITZ_CODEX_MODEL` and `BLITZ_CODEX_EFFORT` if set, then Codex: `gpt-6-luna` at `medium` for Research and Practice questions, and Auto at `medium` for Teaching and chat. If Convex is briefly unavailable, a worker uses the same fallbacks rather than blocking queued work.
 
 ## Spending limits
 

@@ -45,6 +45,7 @@ import {
   checkProviderAvailability,
 } from "./registry.ts"
 import { validateCodexModelSelection } from "./codex-models.ts"
+import { resolveAutoSelection } from "./model-catalogs.ts"
 import { codexRuntimeInstructionsIfInstalled } from "./codex-runtime.ts"
 import {
   createClaudeEngine,
@@ -761,7 +762,9 @@ async function runEngineProviderTurn(
 async function turnBasics(
   request: RunProviderTextTurnRequest
 ): Promise<{ selection: ProviderSelection; instructions: string }> {
-  const selection: ProviderSelection = {
+  // Auto settles on a model from the account's own catalogue here, so every
+  // turn, prewarm and validation below sees a concrete model.
+  const selection: ProviderSelection = await resolveAutoSelection({
     providerId: request.providerId,
     ...(request.providerInstanceId
       ? { providerInstanceId: request.providerInstanceId }
@@ -770,7 +773,7 @@ async function turnBasics(
     ...(request.effort?.trim()
       ? { effort: request.effort.trim() as AiReasoningEffort }
       : {}),
-  }
+  })
   let execution
   try {
     execution = resolveProviderExecution({

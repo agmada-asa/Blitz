@@ -342,11 +342,66 @@ export type AiModelSettings = Record<AiModelField, string> &
     providerApprovalPolicies?: Partial<Record<AiProviderId, AiApprovalPolicy>>
   }
 
-/** Model used by each task before a setting or legacy environment fallback exists. */
+/**
+ * The model value that picks a provider's middle-tier model from the account's
+ * live catalogue at each turn, falling back to a cheaper tier the plan has.
+ * See {@link AUTO_AI_MODEL_TIERS}.
+ */
+export const AUTO_AI_MODEL = "auto"
+
+/**
+ * Model families Auto tries for each provider, best first: the provider's
+ * middle tier, then cheaper ones. Plans differ in which models they offer, so
+ * each pattern is matched against the signed-in account's own catalogue, and
+ * the newest version of the first family present wins. A new version is
+ * picked up without a Blitz release, and a plan without the middle tier falls
+ * back instead of failing.
+ */
+export const AUTO_AI_MODEL_TIERS: Readonly<
+  Record<AiProviderId, readonly RegExp[]>
+> = {
+  // The alias follows the newest Sonnet; pinned IDs cover a catalogue without it.
+  "claude-code": [
+    /^sonnet$/,
+    /^claude-sonnet-\d/,
+    /^haiku$/,
+    /^claude-haiku-\d/,
+  ],
+  codex: [/^gpt-\d+(?:\.\d+)?-terra$/, /^gpt-\d+(?:\.\d+)?-luna$/],
+  // Gemini 4 Neon sits between Hydrogen (the light model) and Carbon (the
+  // strongest); Flash is the light Gemini 3 line.
+  opencode: [
+    /^google\/gemini-\d+(?:\.\d+)?-neon$/,
+    /^google\/gemini-\d+(?:\.\d+)?-hydrogen$/,
+    /^google\/gemini-\d+(?:\.\d+)?-flash$/,
+  ],
+  antigravity: [
+    /^gemini-\d+(?:\.\d+)?-neon(?:-medium)?$/,
+    /^gemini-\d+(?:\.\d+)?-hydrogen(?:-medium)?$/,
+    /^gemini-\d+(?:\.\d+)?-flash(?:-medium)?$/,
+  ],
+}
+
+/** How the picker names Auto for each provider: what it tries first, then its fallback. */
+const AUTO_AI_MODEL_LABELS: Readonly<Record<AiProviderId, string>> = {
+  "claude-code": "Auto: Sonnet, else Haiku",
+  codex: "Auto: newest Terra, else Luna",
+  opencode: "Auto: Gemini Neon, else Hydrogen or Flash",
+  antigravity: "Auto: Gemini Neon, else Hydrogen or Flash",
+}
+
+/** Codex's curated default model, for tasks that name one rather than Auto. */
+const DEFAULT_CODEX_MODEL = "gpt-6-luna"
+
+/**
+ * Model used by each task before a setting or legacy environment fallback
+ * exists. Replies, which include Teach, use Auto so a lesson gets a
+ * middle-tier model whichever plan the account is on.
+ */
 export const DEFAULT_AI_MODELS: Readonly<Record<AiModelField, string>> = {
-  researchModel: "gpt-6-luna",
-  replyModel: "gpt-6-luna",
-  cardGenerationModel: "gpt-6-luna",
+  researchModel: DEFAULT_CODEX_MODEL,
+  replyModel: AUTO_AI_MODEL,
+  cardGenerationModel: DEFAULT_CODEX_MODEL,
 }
 
 /** Reasoning level used by each task before a setting or legacy fallback exists. */
@@ -354,7 +409,7 @@ export const DEFAULT_AI_REASONING_EFFORTS: Readonly<
   Record<AiReasoningField, AiReasoningEffort>
 > = {
   researchEffort: "medium",
-  replyEffort: "low",
+  replyEffort: "medium",
   cardGenerationEffort: "medium",
 }
 
@@ -429,13 +484,46 @@ export function getAiProviderOptionsForTask(
   )
 }
 
-/** Returns the provider's curated model choices while preserving saved custom IDs. */
+/**
+ * The picker's Auto choice for one provider. Its reasoning levels are the ones
+ * every model it can pick accepts; a level a fallback lacks is lowered at
+ * dispatch by {@link resolveAutoAiModel}.
+ */
+export function autoAiModelOption(
+  provider: AiProviderId
+): AiProviderModelOption {
+  return {
+    id: AUTO_AI_MODEL,
+    label: AUTO_AI_MODEL_LABELS[provider],
+    reasoningEfforts:
+      provider === "claude-code"
+        ? CLAUDE_REASONING_EFFORTS
+        : provider === "codex"
+          ? ["low", "medium", "high", "xhigh", "max"]
+          : ["default"],
+  }
+}
+
+/** Returns Auto, then the provider's model choices, preserving a saved custom ID. */
 export function getAiModelPickerOptions(
   provider: AiProviderId,
   model: string,
   runtimeOptions?: readonly AiProviderModelOption[]
 ): readonly AiProviderModelOption[] {
-  if (provider === "codex") return getCodexModelPickerOptions(model, runtimeOptions)
+  const savedModel = model === AUTO_AI_MODEL ? "" : model
+  const options =
+    provider === "codex"
+      ? getCodexModelPickerOptions(savedModel, runtimeOptions)
+      : providerModelPickerOptions(provider, savedModel, runtimeOptions)
+  return [autoAiModelOption(provider), ...options]
+}
+
+/** Returns a non-Codex provider's model choices while preserving saved custom IDs. */
+function providerModelPickerOptions(
+  provider: Exclude<AiProviderId, "codex">,
+  model: string,
+  runtimeOptions?: readonly AiProviderModelOption[]
+): readonly AiProviderModelOption[] {
   const options = runtimeOptions?.length
     ? runtimeOptions
     : AI_PROVIDER_MODEL_OPTIONS[provider]
@@ -503,7 +591,7 @@ export function getDefaultAiModelOption(
   const option =
     provider === "codex"
       ? CODEX_MODEL_OPTIONS.find(
-          (candidate) => candidate.id === DEFAULT_AI_MODELS.replyModel
+          (candidate) => candidate.id === DEFAULT_CODEX_MODEL
         )
       : AI_PROVIDER_MODEL_OPTIONS[provider][0]
   if (!option) throw new Error(`Provider ${provider} has no model options`)
@@ -673,6 +761,8 @@ export function validateAiReasoningEffort(
   const label = AI_REASONING_FIELD_LABELS[field]
   if (effort.length > 64 || !AI_REASONING_EFFORT_PATTERN.test(effort))
     throw new Error(`${label} reasoning level is not supported`)
+  // Auto names no catalogue model; it settles on one, and an effort it accepts, at dispatch.
+  if (model === AUTO_AI_MODEL) return effort as AiReasoningEffort
   const providerCatalog = provider ? modelCatalogs?.[provider] : undefined
   const catalogOption = providerCatalog?.find((option) => option.id === model)
   if (providerCatalog?.length && !catalogOption) {
@@ -851,6 +941,84 @@ export function validateAiTaskProviders(settings: AiModelSettings): void {
 }
 
 /**
+ * Reads the version numbers in a model ID, so `gpt-6.1-terra` sorts above
+ * `gpt-6-terra` and `gemini-4-neon` above `gemini-3.8-flash`.
+ */
+function modelVersion(id: string): readonly number[] {
+  return (id.match(/\d+/g) ?? []).map(Number)
+}
+
+/** Orders two version lists newest first, reading a missing part as 0. */
+function compareVersionsDescending(
+  a: readonly number[],
+  b: readonly number[]
+): number {
+  for (let index = 0; index < Math.max(a.length, b.length); index++) {
+    const difference = (b[index] ?? 0) - (a[index] ?? 0)
+    if (difference) return difference
+  }
+  return 0
+}
+
+/**
+ * Settles Auto on one model and effort for a turn.
+ *
+ * Walks {@link AUTO_AI_MODEL_TIERS} for the provider and takes the newest
+ * model of the first family the catalogue offers. The catalogue should be the
+ * signed-in account's own, since plans differ in which models they include;
+ * without one, Blitz's curated list stands in. When no family matches, the
+ * catalogue's default model is used, and failing that the provider's own
+ * default.
+ *
+ * The saved effort is kept when the chosen model accepts it. Otherwise it
+ * becomes `medium`, then `low`, then the model's first level; ACP providers
+ * take no level, so they always get `default`.
+ *
+ * @param providerId - The provider the turn runs on.
+ * @param effort - The saved reasoning level, if any.
+ * @param catalog - The account's live model catalogue, when it could be read.
+ * @returns A concrete model ID (or `default`) and the effort to send.
+ */
+export function resolveAutoAiModel(
+  providerId: AiProviderId,
+  effort: string | undefined,
+  catalog?: readonly (AiProviderModelCatalogOption & {
+    readonly isDefault?: boolean
+  })[]
+): { model: string; effort?: AiReasoningEffort } {
+  const candidates: readonly (AiProviderModelCatalogOption & {
+    readonly isDefault?: boolean
+  })[] = catalog?.length
+    ? catalog
+    : providerId === "codex"
+      ? CODEX_MODEL_OPTIONS
+      : AI_PROVIDER_MODEL_OPTIONS[providerId]
+  let chosen: (typeof candidates)[number] | undefined
+  for (const pattern of AUTO_AI_MODEL_TIERS[providerId]) {
+    chosen = candidates
+      .filter((option) => pattern.test(option.id))
+      .sort((a, b) =>
+        compareVersionsDescending(modelVersion(a.id), modelVersion(b.id))
+      )[0]
+    if (chosen) break
+  }
+  chosen ??= candidates.find((option) => option.isDefault)
+  const model = chosen?.id ?? "default"
+  if (providerId === "opencode" || providerId === "antigravity")
+    return { model, effort: "default" }
+  const supported = chosen
+    ? (chosen.reasoningEfforts ??
+      (chosen.reasoningEffort ? [chosen.reasoningEffort] : undefined))
+    : undefined
+  if (!supported?.length || (effort && supported.includes(effort)))
+    return effort ? { model, effort: effort as AiReasoningEffort } : { model }
+  const fallback = (["medium", "low"] as const).find((level) =>
+    supported.includes(level)
+  )
+  return { model, effort: fallback ?? supported[0] }
+}
+
+/**
  * Relative cost rank assigned to known models (lower number is cheaper).
  * Used when selecting the most cost-effective model for lightweight tasks such as chat title generation.
  */
@@ -920,9 +1088,7 @@ export function resolveCheapestAiModelSelection(
       cheapest?.id ??
       candidates.find((option) => option.isDefault)?.id ??
       candidates[0]?.id ??
-      (providerId === "codex"
-        ? DEFAULT_AI_MODELS.replyModel
-        : getDefaultAiModelOption(providerId).id)
+      getDefaultAiModelOption(providerId).id
   }
 
   const effortFallback = options.effortEnvironmentFallback?.trim()
