@@ -1,9 +1,13 @@
 "use client"
 
-/** Plays a project recording with timed passages and the shared Ask Blitz side panel. */
+/**
+ * Plays a project recording with timed passages and the shared Ask Blitz side
+ * panel. On desktop the panel's left edge drags to resize it, and the width is
+ * remembered in this browser.
+ */
 
 import Link from "next/link"
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react"
 
 import type { ChatPassage } from "@/components/chat/chat-workspace"
 import type { SourceSelection } from "@/components/chat/source-pane"
@@ -13,7 +17,9 @@ import {
 } from "@/components/projects/learning-side-pane"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
+import { ResizeHandle } from "@/components/ui/resize-handle"
 import { Skeleton } from "@/components/ui/skeleton"
+import { usePaneWidth } from "@/hooks/use-pane-width"
 import type { Id } from "@/convex/_generated/dataModel"
 import type {
   ProjectAudioItem,
@@ -26,6 +32,15 @@ import {
   type ListeningProgressStorage,
 } from "@/lib/client/listening-progress"
 import { cn } from "@/lib/utils"
+
+/** Where the side panel's dragged width is saved in this browser. */
+const SIDE_PANE_WIDTH_KEY = "blitz.listen.sidePaneWidth"
+
+/** The side panel's narrowest width in CSS pixels. */
+const SIDE_PANE_MIN_WIDTH = 384
+
+/** Room the transcript keeps beside the panel, matching the grid's `calc(100%-30rem)`. */
+const TRANSCRIPT_MIN_WIDTH = 480
 
 /** Props identify one completed local recording inside its owning project. */
 type ListeningRoomProps = { projectId: string; audioId: string }
@@ -80,6 +95,9 @@ export function ListeningRoom({ projectId, audioId }: ListeningRoomProps) {
   const [chatPassage, setChatPassage] = useState<ChatPassage>()
   const [sourceSelection, setSourceSelection] = useState<SourceSelection>()
   const [sidePaneTab, setSidePaneTab] = useState<LearningSidePaneTab>("chat")
+  /** The side panel's width once the user drags it, remembered between visits. */
+  const sidePaneWidth = usePaneWidth(SIDE_PANE_WIDTH_KEY)
+  const mainRef = useRef<HTMLElement>(null)
   const audioRef = useRef<HTMLAudioElement>(null)
   const transcriptRef = useRef<HTMLDivElement>(null)
   const passageRefs = useRef<Array<HTMLDivElement | null>>([])
@@ -287,10 +305,21 @@ export function ListeningRoom({ projectId, audioId }: ListeningRoomProps) {
 
   return (
     <main
+      ref={mainRef}
       className={cn(
         "grid min-w-0 grid-cols-1 lg:h-svh lg:overflow-hidden",
-        sidePaneOpen && "lg:grid-cols-[minmax(0,1fr)_420px]"
+        // The panel's column follows a dragged width, but never leaves the
+        // transcript less than 30rem, even after the window shrinks.
+        sidePaneOpen &&
+          "lg:grid-cols-[minmax(0,1fr)_min(var(--side-pane-width,420px),calc(100%-30rem))]"
       )}
+      style={
+        sidePaneWidth.width === null
+          ? undefined
+          : ({
+              "--side-pane-width": `${sidePaneWidth.width}px`,
+            } as CSSProperties)
+      }
     >
       <div className="mx-auto w-full max-w-6xl min-w-0 px-4 pt-6 pb-28 sm:px-8 sm:pt-10 lg:h-full lg:overflow-y-auto lg:pb-10">
         <Button asChild variant="ghost" className="mb-6 -ml-3">
@@ -462,16 +491,31 @@ export function ListeningRoom({ projectId, audioId }: ListeningRoomProps) {
         </div>
       </div>
       {sidePaneOpen ? (
-        <LearningSidePane
-          sourceSelection={sourceSelection}
-          chatOpen={Boolean(chatPassage)}
-          chatPassage={chatPassage}
-          activeTab={sidePaneTab}
-          onTabChange={setSidePaneTab}
-          onCloseTab={closeActiveSidePaneTab}
-          onClose={closeSidePane}
-          onOpenSource={openSource}
-        />
+        <div className="contents lg:relative lg:block lg:h-full lg:min-w-0">
+          {/* Only the desktop panel resizes; on smaller screens it is a full-screen dialog. */}
+          <ResizeHandle
+            label="Resize side panel"
+            min={SIDE_PANE_MIN_WIDTH}
+            max={() =>
+              (mainRef.current?.clientWidth ?? window.innerWidth) -
+              TRANSCRIPT_MIN_WIDTH
+            }
+            onResize={sidePaneWidth.resize}
+            onResizeEnd={sidePaneWidth.save}
+            onReset={sidePaneWidth.reset}
+            className="hidden lg:block"
+          />
+          <LearningSidePane
+            sourceSelection={sourceSelection}
+            chatOpen={Boolean(chatPassage)}
+            chatPassage={chatPassage}
+            activeTab={sidePaneTab}
+            onTabChange={setSidePaneTab}
+            onCloseTab={closeActiveSidePaneTab}
+            onClose={closeSidePane}
+            onOpenSource={openSource}
+          />
+        </div>
       ) : null}
     </main>
   )

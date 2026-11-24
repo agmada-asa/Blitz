@@ -14,7 +14,7 @@ export const LESSON_TEACHING_GUIDANCE = [
   "Write like a good teacher explaining the idea to one student who is meeting it for the first time and wants to understand it quickly.",
   "Open with the core idea in one or two plain sentences, so the student knows what they are about to learn and why it matters before any detail.",
   "Then build understanding in a clear order: what it is, a concrete worked example with real values or a specific case, how it works, and what tradeoff or consequence follows. Skip a step only when the idea is too simple to need it.",
-  "Prefer one well-chosen concrete example to several abstract statements. Walk through it step by step when the concept involves calculation, sequence, or cause and effect.",
+  "Prefer one well-chosen concrete example to several abstract statements. Trace it step by step only when the concept involves a calculation or a sequence of three or more dependent steps.",
   "Define every technical term in a few plain words the first time it appears. If a term would need a long detour to define and is not essential, leave it out.",
   "Put a clarification before the point where the student would otherwise misread something, not after it.",
   "Keep one idea per paragraph and cut tangents that do not help the student understand this concept. Move a separate idea to its own lesson rather than squeezing it in.",

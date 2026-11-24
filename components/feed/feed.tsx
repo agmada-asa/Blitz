@@ -22,7 +22,7 @@ import { FeedCardView } from "@/components/feed/feed-card"
 import { SessionSummary } from "@/components/progress/session-summary"
 import { TodayXpChip } from "@/components/progress/today-panel"
 import { Button } from "@/components/ui/button"
-import { CancelIcon } from "@/components/ui/icon"
+import { ArrowLeftIcon, CancelIcon } from "@/components/ui/icon"
 import { Progress } from "@/components/ui/progress"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -477,6 +477,12 @@ export function Feed({ initialFilter }: { initialFilter?: FeedFilter }) {
 
   return (
     <main className="mx-auto flex min-h-[calc(100svh-84px)] w-full max-w-2xl flex-col px-4 py-6 text-foreground sm:px-6 sm:py-10 md:min-h-svh">
+      {/* Review is opened from the Library's Today panel, so back returns there. */}
+      <Button asChild variant="ghost" size="sm" className="mb-3 -ml-2 min-h-9 self-start">
+        <Link href="/">
+          <ArrowLeftIcon aria-hidden="true" /> Projects
+        </Link>
+      </Button>
       <header className="flex items-center justify-between gap-3">
         <h1 className="font-heading text-2xl font-semibold tracking-tight">Review</h1>
         <div className="relative">

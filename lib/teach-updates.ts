@@ -417,13 +417,18 @@ function sectionInstruction(
   if (pending?.change === "added")
     return `${opening} This section was added because of new course material: ${pending.note || "see the new material."} Teach it in full.`
   if (mode === "skim")
-    return `${opening} The plan marks it as skim: the pre-check showed the learner partly knows it, so cover only what they missed or were not checked on, in 150 to 300 words, then its quiz.`
+    return `${opening} The plan marks it as skim: the learner partly knows it, so cover only what is new to them, in 150 to 300 words, then its quiz.`
   return `${opening} Teach it in full.`
 }
 
-/** What `Next section` asks for once every section is covered. */
+/**
+ * What `Next section` asks for once every section is covered. It names no
+ * conditions such as "if the lesson was updated": small models narrate those
+ * back ("No new course material came in"). Material from an update is already
+ * part of the lesson the recap covers.
+ */
 const RECAP_INSTRUCTION =
-  "Every section is now covered. Send the ```section block with body done, the short recap of the unit's key ideas (including anything new course material added, if the lesson was updated), and the final mixed quiz."
+  "Every section is now covered. Send the ```section block with body done, the short recap of the unit's key ideas, and the final mixed quiz."
 
 /**
  * Restates what a `Next section` reply was asked, from the section its reply

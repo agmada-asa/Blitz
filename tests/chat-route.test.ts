@@ -653,6 +653,27 @@ test("a file the chat does not own stops the turn before it starts", async () =>
   assert.deepEqual(calls("workspaceChats:startTurn"), [])
 })
 
+test("a failed Codex catalogue probe leaves Auto for turn preflight to resolve", async () => {
+  harness.handlers["workspaceChats:replySelection"] = () => ({
+    providerId: "codex",
+    providerModel: "auto",
+    providerEffort: "medium",
+  })
+  harness.codexCatalogError = new Error("Catalogue timed out")
+  const reply = replies("A clear answer.")
+  harness.attempts = [
+    async (request, options) => {
+      assert.equal(request.model, "auto")
+      assert.equal(options.codexModelCatalog, undefined)
+      return reply(request, options)
+    },
+  ]
+
+  const { events } = await post(message())
+
+  assert.equal(events.at(-1)?.type, "complete")
+})
+
 test("a Teach turn runs read-only on the unit, then records the outline it set", async () => {
   harness.handlers["units:teachContext"] = () => teachContext()
   harness.handlers["workspaceChats:startTurn"] = () =>

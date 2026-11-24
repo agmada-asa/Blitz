@@ -1167,11 +1167,19 @@ export type VizTheme = {
   dark: boolean
   background: string
   foreground: string
+  card: string
   muted: string
   mutedForeground: string
   border: string
+  input: string
+  ring: string
   brand: string
   brandForeground: string
+  primary: string
+  primaryForeground: string
+  accent: string
+  accentForeground: string
+  radius: string
   fontFamily: string
 }
 
@@ -1188,11 +1196,19 @@ export const VIZ_CONTENT_SECURITY_POLICY =
 const fallbackVizTheme: Omit<VizTheme, "dark"> = {
   background: "#fafafa",
   foreground: "#111111",
+  card: "#ffffff",
   muted: "#f1f1f1",
   mutedForeground: "#666666",
   border: "#dedede",
+  input: "#dedede",
+  ring: "#3b82f6",
   brand: "#2563eb",
   brandForeground: "#ffffff",
+  primary: "#111111",
+  primaryForeground: "#ffffff",
+  accent: "#e9f1ff",
+  accentForeground: "#174ea6",
+  radius: "0.75rem",
   fontFamily: "system-ui, sans-serif",
 }
 
@@ -1216,19 +1232,39 @@ export function vizThemeDeclarations(theme: VizTheme): string {
   const values: Array<[string, keyof typeof fallbackVizTheme]> = [
     ["--background", "background"],
     ["--foreground", "foreground"],
+    ["--card", "card"],
     ["--muted", "muted"],
     ["--muted-foreground", "mutedForeground"],
     ["--border", "border"],
+    ["--input", "input"],
+    ["--ring", "ring"],
     ["--brand", "brand"],
     ["--brand-foreground", "brandForeground"],
+    ["--primary", "primary"],
+    ["--primary-foreground", "primaryForeground"],
+    ["--accent", "accent"],
+    ["--accent-foreground", "accentForeground"],
+    ["--radius", "radius"],
     ["--font-sans", "fontFamily"],
   ]
   return [
     `color-scheme: ${theme.dark ? "dark" : "light"};`,
     ...values.map(
       ([property, key]) =>
-        `${property}: ${safeCssValue(theme[key], fallbackVizTheme[key])};`
+        `${property}: ${safeCssValue(theme[key] ?? "", fallbackVizTheme[key])};`
     ),
+    // Outline controls sit on the page in light mode and on a faint input tint
+    // in dark mode, as the app's outline buttons and inputs do.
+    `--control: ${
+      theme.dark
+        ? "color-mix(in oklab, var(--input) 30%, transparent)"
+        : "var(--background)"
+    };`,
+    `--control-hover: ${
+      theme.dark
+        ? "color-mix(in oklab, var(--input) 50%, transparent)"
+        : "var(--muted)"
+    };`,
   ].join(" ")
 }
 
@@ -1273,19 +1309,44 @@ const vizBridgeScript = `(function () {
   else start();
 })();`
 
-/** Base styles so visualisations inherit the app's colours, type, and reduced-motion preference. */
+/**
+ * Base styles so visualisations match the app: its font, colours and control
+ * styles (outline and primary buttons, inputs, focus rings), plus a few classes
+ * the prompt names (`row`, `cell`, `on`, `off`, `note`) so models lay out values
+ * and controls without styling them themselves. Everything sits in `:where()`
+ * so a visualisation's own rules still win.
+ */
 const vizBaseStyles = `
 *, *::before, *::after { box-sizing: border-box; }
 html, body { margin: 0; background: var(--background); color: var(--foreground); }
-body { padding: 12px; font-family: var(--font-sans); font-size: 15px; line-height: 1.5; overflow-wrap: anywhere; }
+body { padding: 16px; font-family: var(--font-sans); font-size: 15px; line-height: 1.5; overflow-wrap: anywhere; -webkit-font-smoothing: antialiased; }
 #blitz-viz-root { display: flow-root; }
-canvas, img, video { max-width: 100%; height: auto; }
-svg { max-width: 100%; }
-button, input, select, textarea { font: inherit; color: inherit; }
-button { min-height: 36px; padding: 6px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--muted); cursor: pointer; }
-button:hover { border-color: var(--brand); }
-:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
-input[type="range"] { accent-color: var(--brand); }
+:where(p, ul, ol) { margin: 0 0 8px; }
+:where(h1, h2, h3, h4) { margin: 0 0 8px; font-size: 15px; font-weight: 600; }
+:where(canvas, img, video) { max-width: 100%; height: auto; }
+:where(svg) { max-width: 100%; font-family: var(--font-sans); }
+:where(code, kbd, pre, .mono) { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
+:where(button, input, select, textarea) { font: inherit; color: inherit; }
+:where(button) { display: inline-flex; align-items: center; justify-content: center; gap: 6px; max-width: 100%; min-height: 32px; padding: 4px 10px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--control); font-size: 14px; font-weight: 500; white-space: normal; cursor: pointer; transition: background-color 150ms, border-color 150ms, color 150ms; }
+:where(button:hover) { background: var(--control-hover); }
+:where(button:active) { transform: translateY(1px); }
+:where(button:disabled) { opacity: 0.5; cursor: default; pointer-events: none; }
+:where(button.primary) { border-color: transparent; background: var(--primary); color: var(--primary-foreground); }
+:where(button.primary:hover) { background: color-mix(in oklab, var(--primary) 80%, transparent); }
+:where(button[aria-pressed="true"], button.on) { border-color: var(--brand); background: var(--accent); color: var(--accent-foreground); }
+:where(input:not([type]), input[type="text"], input[type="number"], select, textarea) { min-height: 32px; padding: 4px 10px; border: 1px solid var(--input); border-radius: var(--radius); background: var(--control); font-size: 14px; }
+:where(input[type="range"], input[type="checkbox"], input[type="radio"]) { accent-color: var(--brand); }
+:where(label) { font-size: 14px; }
+:where(table) { border-collapse: collapse; font-size: 14px; font-variant-numeric: tabular-nums; }
+:where(th, td) { padding: 6px 10px; border-bottom: 1px solid var(--border); text-align: left; }
+:where(th) { color: var(--muted-foreground); font-weight: 500; }
+:where(:focus-visible) { outline: 2px solid var(--ring); outline-offset: 2px; }
+:where(.row) { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+:where(.row + .row, .row + p, p + .row, .row + .note, .note + .row) { margin-top: 12px; }
+:where(.cell) { display: inline-flex; flex-direction: column; align-items: center; justify-content: center; min-width: 40px; min-height: 40px; padding: 6px 10px; border: 1px solid var(--border); border-radius: calc(var(--radius) * 0.8); background: var(--card); font-size: 14px; font-variant-numeric: tabular-nums; transition: background-color 200ms, border-color 200ms, color 200ms, opacity 200ms; }
+:where(.cell.on) { border-color: var(--brand); background: var(--accent); color: var(--accent-foreground); }
+:where(.cell.off) { border-style: dashed; background: transparent; color: var(--muted-foreground); }
+:where(.note) { color: var(--muted-foreground); font-size: 14px; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; scroll-behavior: auto !important; }
 }`
@@ -1296,13 +1357,24 @@ input[type="range"] { accent-color: var(--brand); }
  * redirect itself on load. The returned document must only be used with `sandbox="allow-scripts"`.
  * @param html Model-authored visualisation HTML.
  * @param theme Current app theme used for the initial styles.
+ * @param fontDataUrl The app font as a woff2 data URL. The frame may load fonts
+ *   only from data: URLs, so without it the frame falls back to a system font.
  * @returns A complete HTML document string.
  */
-export function buildVizDocument(html: string, theme: VizTheme): string {
+export function buildVizDocument(
+  html: string,
+  theme: VizTheme,
+  fontDataUrl?: string
+): string {
   const content = html.replace(
     /<meta\b[^>]*http-equiv\s*=\s*["']?\s*refresh[^>]*>/gi,
     ""
   )
+  // Named as the app names it, so the theme's --font-sans resolves to it.
+  const fontFace =
+    fontDataUrl && /^data:font\/woff2;base64,[A-Za-z0-9+/=]+$/.test(fontDataUrl)
+      ? `<style>@font-face { font-family: "Instrument Sans Variable"; font-style: normal; font-weight: 400 700; font-display: block; src: url(${fontDataUrl}) format("woff2"); }</style>`
+      : ""
   return [
     "<!doctype html>",
     '<html lang="en"><head>',
@@ -1311,6 +1383,7 @@ export function buildVizDocument(html: string, theme: VizTheme): string {
     '<meta name="viewport" content="width=device-width, initial-scale=1">',
     '<base target="_blank">',
     `<style id="blitz-viz-theme">:root { ${vizThemeDeclarations(theme)} }</style>`,
+    fontFace,
     `<style>${vizBaseStyles}</style>`,
     `<script>${vizBridgeScript}</script>`,
     '</head><body><div id="blitz-viz-root">',
@@ -1347,13 +1420,13 @@ Other types, for recall that choices would give away. They take the same id, con
 - "code-output": the question includes a fenced code block; answer is the exact output, or a list of accepted outputs. Keep programs short and deterministic.
 
 ### steps: worked example revealed one step at a time
-Use for worked problems, derivations, proofs, and code traces. 1–12 steps; each body is Markdown (max 4000 chars), title optional.
+Use for derivations, proofs, and traces of code, queries or algorithms over real data, where each step depends on the one before. Not for lists of facts, before-and-after comparisons or summaries: write those as prose. At most one per section. 1–12 steps; each body is Markdown (max 4000 chars), title optional.
 \`\`\`steps Solving 2x + 3 = 11
 {"steps":[{"title":"Isolate the term","body":"Subtract 3: $2x = 8$."},{"title":"Solve","body":"Divide by 2: $x = 4$."}]}
 \`\`\`
 
 ### Visuals: draw what is easier to see than read
-Pick the simplest form that shows the idea, and use one whenever the idea has a shape: a quantity that changes, a comparison, a structure, a process, or a state that evolves step by step.
+Pick the simplest form that shows the idea, and use one whenever the idea has a shape: a structure with branches (a tree, an index pointing at documents), a flow through stages (a pipeline), a comparison, or a quantity that changes. A mermaid diagram should show branching or several stages; a chain of two or three boxes adds nothing, and data records are clearer as a code block. At most one visual per section.
 - graph: any function, rate of growth, curve, or set of measurements. Add a slider when a constant's effect is the point.
 - mermaid diagram (a mermaid fenced block): structure and flow (flowcharts, trees, graphs of nodes, state machines, sequence diagrams, ER diagrams). Quote labels that contain punctuation.
 - viz: a process the learner steps through or controls, or a picture neither of the above can draw (an algorithm running on an array, a circuit with switchable inputs, a pipeline filling up, a geometric construction).
@@ -1369,10 +1442,10 @@ The body is JSON. Write expressions in x with + - * / ^ and brackets, always wri
 - params: up to 4 sliders {"name", "label", "min", "max", "step", "value"}; use the name in expressions. Names are letters, digits or _, not x or a function name.
 
 ### viz: interactive visualisation
-Use for a process the learner steps through or controls, or a picture a graph or mermaid diagram cannot draw. Give it controls (sliders, step and reset buttons, toggles) and show what changes. The body is raw, self-contained HTML with inline <style> and <script> (SVG or canvas welcome), under about 200 lines. No external resources: no CDN scripts, fonts, images, or network requests; they are blocked. It runs in an isolated frame that sizes to its content. Use the CSS variables --background, --foreground, --muted, --muted-foreground, --border, --brand, and --font-sans so it matches light and dark themes.
+Use for a process the learner steps through or controls, or a picture a graph or mermaid diagram cannot draw. Give it controls (sliders, step and reset buttons, toggles) and show what changes. The body is raw, self-contained HTML with inline <style> and <script> (SVG or canvas welcome), under about 200 lines. No external resources: no CDN scripts, fonts, images, or network requests; they are blocked. It runs in an isolated frame that sizes to its content. The frame already has the app's font, colours and control styles, so write plain <button>, <input> and <select> without styling them, with class="primary" on the one main action. For layout, use class="row" for a wrapping line of items or controls, "cell" for a box holding one value (add "on" to highlight it, "off" for one removed or inactive) and "note" for a muted caption. Don't set fonts, font sizes, borders, radii or colours on these. Colour anything you draw yourself (SVG, bars, canvas) with the CSS variables --foreground, --muted, --muted-foreground, --border, --brand and --accent, never fixed colours, so it works in light and dark themes.
 \`\`\`viz Growth of n squared
 <label>n = <input id="n" type="range" min="1" max="20" value="5"></label>
-<p id="out"></p>
+<p id="out" class="note"></p>
 <script>const n=document.getElementById("n"),o=document.getElementById("out");const u=()=>o.textContent="n² = "+n.value*n.value;n.oninput=u;u();</script>
 \`\`\`
 
@@ -1383,8 +1456,9 @@ Optionally end a reply with up to 3 short follow-up questions the learner might 
 \`\`\``
 
 /**
- * When a chat reply should use interactive blocks. Teach's protocol already requires quizzes, worked
- * examples, and follow-ups in every section; ordinary chat sends this instead so its replies use the
+ * When a chat reply should use interactive blocks. Teach's protocol already requires quizzes and a
+ * concrete example in every section, a visual where the idea has a shape, and follow-ups when the
+ * section leaves questions open; ordinary chat sends this instead so its replies use the
  * same blocks whenever the learner is learning, rather than only when they ask for a quiz by name.
  */
 export const CHAT_INTERACTIVE_BLOCKS_GUIDANCE = [
