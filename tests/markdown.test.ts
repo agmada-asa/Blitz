@@ -82,6 +82,24 @@ const value = "$x$";
   )
 })
 
+test("Math leaves MongoDB operators in quiz and prose text as literal text", () => {
+  for (const text of [
+    String.raw`In the stage {"$group": {"_id": "$brand", "count": {"$sum": 1}}}, each document adds 1.`,
+    "Use {$group: {_id: $brand, n: {$sum: 1}}} to count.",
+    `Order: {"$match": {"brand": "DreamDrive"}}, then {"$sort": {"count": -1}}.`,
+    "Use $match, then $group, then $project.",
+  ])
+    assert.equal(formulas(parseMarkdown(text, { math: true })).length, 0, text)
+  assert.deepEqual(
+    formulas(
+      parseMarkdown(String.raw`Keep $n$, $max(a, b)$, $abc$, $\sin x$ and $f(x)=x^2$.`, {
+        math: true,
+      })
+    ).map((token) => token.text),
+    ["n", "max(a, b)", "abc", String.raw`\sin x`, "f(x)=x^2"]
+  )
+})
+
 test("Every streamed formula prefix stays readable without parser failures", () => {
   const reply = String.raw`For \(n\ge2\), $c_1=3$.
 

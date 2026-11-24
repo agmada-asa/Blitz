@@ -10,6 +10,19 @@ export type MathToken = {
   display: boolean
 }
 
+/**
+ * Whether a single-dollar span is code rather than a formula. MongoDB operators
+ * and field paths put dollars inside JSON, as in `{"$group": {"_id": "$brand"}}`
+ * or `{$sum: 1}`, which otherwise pass the spacing rules for `$…$`. Formulas
+ * almost never contain a double quote, or start with a word of three or more
+ * letters followed directly by a quote, `:`, `,` or a closing bracket.
+ * @param body The text between the two dollars.
+ * @returns True when the span should stay literal text.
+ */
+function looksLikeCode(body: string): boolean {
+  return body.includes('"') || /^[A-Za-z_]\w{2,}["':,}\]]/.test(body)
+}
+
 /** Recognizes complete formulas before Markdown consumes backslashes or emphasis characters. */
 function mathToken(source: string, block: boolean): MathToken | undefined {
   const rules = block
@@ -29,6 +42,8 @@ function mathToken(source: string, block: boolean): MathToken | undefined {
     if (!match || !match[1].trim()) continue
     // Single dollars follow math spacing rules so ordinary prices remain prose.
     if (!block && index === 3 && /^\s|\s$/.test(match[1])) continue
+    // Dollars inside JSON or MongoDB queries are operators, not maths.
+    if (!block && index === 3 && looksLikeCode(match[1])) continue
     return {
       type: "math",
       raw: match[0],

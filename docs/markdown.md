@@ -21,8 +21,13 @@ backslashes or interpret subscripts as emphasis. Formula parsing is opt-in for
 the web renderer; speech parsing keeps its own rules. Code spans and ordinary
 code fences preserve their source. Single-dollar math requires non-space
 characters next to both delimiters, and a closing `$` followed by a digit is
-not a delimiter, so `$5 and $10` stays text. Escape literal dollars as `\$`
-when currency and formulas share a paragraph.
+not a delimiter, so `$5 and $10` stays text. A single-dollar span that looks
+like code also stays text: one containing a double quote, or starting with a
+word of three or more letters followed directly by a quote, `:`, `,` or a
+closing bracket. So MongoDB operators such as
+`{"$group": {"_id": "$brand"}}` or `{$sum: 1}` in quiz text aren't read as
+formulas. Escape literal dollars as `\$` when currency and formulas share a
+paragraph.
 
 Only explicit HTTP, HTTPS and mailto links open. Images load only from HTTP(S)
 URLs without credentials, lazily and with no referrer. Tables and code scroll
