@@ -16,6 +16,7 @@ import {
   type InteractiveBlock,
   type QuizBlock,
 } from "../lib/interactive-blocks.ts"
+import { VIZ_FONT_DATA_URL } from "../lib/viz-font.ts"
 
 /** Builds a valid single-choice quiz body, letting each test override one field. */
 function quiz(overrides: Record<string, unknown> = {}): string {
@@ -407,11 +408,19 @@ test("viz documents lock down network access and only expose sanitized theme val
       dark: true,
       background: "#101010",
       foreground: "</style><script>alert(1)</script>",
+      card: "#191919",
       muted: "#242424",
       mutedForeground: "#aaaaaa",
       border: "#303030",
+      input: "#3a3a3a",
+      ring: "#60a5fa",
       brand: "#ff8065",
       brandForeground: "#1b0d0a",
+      primary: "#f7f7f7",
+      primaryForeground: "#101010",
+      accent: "#152746",
+      accentForeground: "#b9d2ff",
+      radius: "0.75rem",
       fontFamily: '"Instrument Sans Variable", sans-serif',
     }
   )
@@ -421,9 +430,44 @@ test("viz documents lock down network access and only expose sanitized theme val
   )
   assert.match(document, /color-scheme: dark;/)
   assert.match(document, /--foreground: #111111;/)
+  assert.match(document, /--accent: #152746;/)
+  assert.match(document, /--radius: 0\.75rem;/)
+  assert.match(document, /--control: color-mix\(in oklab, var\(--input\) 30%, transparent\);/)
   assert.match(document, /--font-sans: "Instrument Sans Variable", sans-serif;/)
+  assert.doesNotMatch(document, /@font-face/)
   assert.doesNotMatch(document, /alert\(1\)/)
   assert.doesNotMatch(document, /refresh/)
+})
+
+test("viz documents embed the app font only from a woff2 data URL", () => {
+  const theme = {
+    dark: false,
+    background: "#fafafa",
+    foreground: "#111111",
+    card: "#ffffff",
+    muted: "#f1f1f1",
+    mutedForeground: "#666666",
+    border: "#dedede",
+    input: "#dedede",
+    ring: "#3b82f6",
+    brand: "#2563eb",
+    brandForeground: "#ffffff",
+    primary: "#111111",
+    primaryForeground: "#ffffff",
+    accent: "#e9f1ff",
+    accentForeground: "#174ea6",
+    radius: "0.75rem",
+    fontFamily: '"Instrument Sans Variable", sans-serif',
+  }
+  const embedded = buildVizDocument("<p>Hi</p>", theme, VIZ_FONT_DATA_URL)
+  assert.match(embedded, /@font-face \{ font-family: "Instrument Sans Variable";/)
+  assert.ok(embedded.indexOf("@font-face") < embedded.indexOf("<p>Hi</p>"))
+  assert.match(embedded, /--control: var\(--background\);/)
+  for (const unsafe of [
+    "https://example.com/font.woff2",
+    'data:font/woff2;base64,AAAA") } </style><script>alert(1)</script>',
+  ])
+    assert.doesNotMatch(buildVizDocument("<p>Hi</p>", theme, unsafe), /@font-face/)
 })
 
 test("the prompt documents every block type with an example", () => {
