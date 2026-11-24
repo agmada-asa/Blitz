@@ -59,9 +59,9 @@ type OptionMark = "correct-selected" | "incorrect-selected" | "correct-missed"
 
 /** Visible instruction under the question for each quiz type. */
 const quizHints: Record<QuizBlock["type"], string> = {
-  "single-choice": "Choose one answer.",
-  "multiple-answer": "Choose all that apply.",
-  "true-false": "Choose true or false.",
+  "single-choice": "Choose one",
+  "multiple-answer": "Choose all that apply",
+  "true-false": "True or false",
   ...structuredHints,
 }
 
@@ -291,10 +291,7 @@ export function QuizBlockView({
     >
       <fieldset className="min-w-0" aria-describedby={hintId}>
         <legend className="w-full">
-          <span className="block text-xs font-medium text-muted-foreground">
-            {block.concept}
-          </span>
-          <span id={questionId} className="mt-1 block font-medium">
+          <span id={questionId} className="block font-medium">
             {structured
               ? // Structured prompts often hold code blocks, so they render as full Markdown.
                 renderMarkdown(

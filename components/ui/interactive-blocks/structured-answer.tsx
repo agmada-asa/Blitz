@@ -52,10 +52,10 @@ export const structuredHints: Record<
   "cloze" | "ordering" | "matching" | "code-output",
   string
 > = {
-  cloze: "Fill in the blanks.",
-  ordering: "Put these in order, first at the top.",
-  matching: "Match each item.",
-  "code-output": "Type exactly what the program prints.",
+  cloze: "Fill in the blanks",
+  ordering: "Put in order, first at the top",
+  matching: "Match each item",
+  "code-output": "Type the exact output",
 }
 
 /** Props shared by every structured answer input. */
