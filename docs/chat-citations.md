@@ -22,6 +22,8 @@ The model receives the manifest as untrusted JSON and cites a supplied `citation
 
 The manifest is stored before streaming begins. Reloads, interrupted responses, and branches retain it. A transport retry receives the same manifest. Existing messages created before citation manifests remain readable, but their plain page mentions are not retroactively matched to potentially ambiguous sources. Asking a follow-up produces new linked citations. Originals for historical ad hoc uploads that never saved bytes cannot be recovered; their saved text remains usable as citation context.
 
+Replies can explain general knowledge without citations. When a learner asks what their material says and the available evidence cannot answer, the prompt tells the model to say it cannot verify the answer from the available material.
+
 ## Reader behavior
 
 `chatCitations.read` resolves the citation through its owning chat and message. It returns the full extracted source when available, plus the exact saved highlight range. If a source is deleted or its text changes, the saved passage is still readable. File endpoints resolve server-owned relative keys and serve only safe PDF/text formats inline; other original formats download.

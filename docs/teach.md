@@ -111,6 +111,11 @@ The tutor's rules live in `TEACH_RULES` in `lib/teach.ts`:
 - Interactive blocks (quiz, steps, viz, followups) follow
   `INTERACTIVE_BLOCKS_PROMPT` in `lib/interactive-blocks.ts`. Malformed blocks
   fall back to visible code; outline and section markers are hidden everywhere.
+- A section shows real data and output as code where the idea is about data or
+  code, and never mentions the pre-check, the plan, or the course material
+  itself. Extracted slide text loses crosses and highlights, so the tutor
+  treats an example that looks wrong as a deliberate wrong example and calls
+  the material wrong only when certain, once, never in the recap.
 
 ## Asking about the lesson
 

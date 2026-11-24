@@ -5,7 +5,8 @@
  *
  * The HTML runs only inside an iframe with `sandbox="allow-scripts"` (never `allow-same-origin`), so it
  * gets an opaque origin with no access to the app, its cookies, or storage. `buildVizDocument` adds a
- * Content Security Policy that blocks all network access, the app's theme colours, and a bridge script
+ * Content Security Policy that blocks all network access, the app's theme colours, font and control
+ * styles, and a bridge script
  * that reports content height. Height messages are trusted only when they come from this iframe's own
  * window. Theme changes are posted into the running frame so interactive state survives a theme switch.
  */
@@ -40,6 +41,45 @@ const FALLBACK_HEIGHT = 320
 /** How long to wait for the first height report before showing the frame at the fallback height. */
 const HEIGHT_TIMEOUT_MS = 4000
 
+/**
+ * The app font as a data URL, loaded once on first use so its 40 KB stay out
+ * of the main bundle. Undefined while loading; empty if the load failed, in
+ * which case frames use a system font.
+ */
+let vizFont: string | undefined
+let vizFontLoad: Promise<string> | undefined
+
+/**
+ * Loads the embedded app font for visualisation frames.
+ * @returns The font's data URL, or an empty string if it could not load.
+ */
+function loadVizFont(): Promise<string> {
+  vizFontLoad ??= import("@/lib/viz-font").then(
+    (module) => (vizFont = module.VIZ_FONT_DATA_URL),
+    () => (vizFont = "")
+  )
+  return vizFontLoad
+}
+
+/**
+ * Tracks the embedded app font, so a frame is built once the font is ready.
+ * @returns The font's data URL, empty if it failed, or undefined while loading.
+ */
+function useVizFont(): string | undefined {
+  const [font, setFont] = useState(vizFont)
+  useEffect(() => {
+    if (font !== undefined) return
+    let active = true
+    void loadVizFont().then((loaded) => {
+      if (active) setFont(loaded)
+    })
+    return () => {
+      active = false
+    }
+  }, [font])
+  return font
+}
+
 
 /**
  * Reads the resolved app palette and font as a string snapshot so React can compare it cheaply.
@@ -51,11 +91,19 @@ function readThemeSnapshot(): string {
   return JSON.stringify({
     background: value("--background"),
     foreground: value("--foreground"),
+    card: value("--card"),
     muted: value("--muted"),
     mutedForeground: value("--muted-foreground"),
     border: value("--border"),
+    input: value("--input"),
+    ring: value("--ring"),
     brand: value("--brand"),
     brandForeground: value("--brand-foreground"),
+    primary: value("--primary"),
+    primaryForeground: value("--primary-foreground"),
+    accent: value("--accent"),
+    accentForeground: value("--accent-foreground"),
+    radius: value("--radius"),
     fontFamily: getComputedStyle(document.body).fontFamily,
   } satisfies Omit<VizTheme, "dark">)
 }
@@ -137,6 +185,7 @@ export function VizBlockView({
 function VizFrame({ block, maxHeight }: { block: VizBlock; maxHeight: number }) {
   const iframeRef = useRef<HTMLIFrameElement>(null)
   const theme = useVizTheme()
+  const font = useVizFont()
   const themeCss = theme ? vizThemeDeclarations(theme) : ""
   const latestThemeCss = useRef(themeCss)
   const [frame, setFrame] = useState<{ html: string; srcdoc: string }>()
@@ -146,8 +195,11 @@ function VizFrame({ block, maxHeight }: { block: VizBlock; maxHeight: number }) 
   }>()
 
   // Build the document once per HTML change; later theme changes are posted into the running frame.
-  if (theme && frame?.html !== block.html)
-    setFrame({ html: block.html, srcdoc: buildVizDocument(block.html, theme) })
+  if (theme && font !== undefined && frame?.html !== block.html)
+    setFrame({
+      html: block.html,
+      srcdoc: buildVizDocument(block.html, theme, font),
+    })
 
   const srcdoc = frame?.html === block.html ? frame.srcdoc : undefined
   const height = measured?.srcdoc === srcdoc ? measured?.height : undefined

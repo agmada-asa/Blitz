@@ -515,7 +515,10 @@ export async function POST(request: Request): Promise<Response> {
           turnEvents.startAttempt()
           const codexModelCatalog =
             selection.providerId === "codex"
-              ? await getCodexModelCatalog({ requestTimeoutMs: 5_000 })
+              ? await getCodexModelCatalog({ requestTimeoutMs: 5_000 }).catch(
+                  // The turn can retry the lookup on the engine it will use.
+                  () => undefined
+                )
               : undefined
           return runProviderTextTurn(
             {

@@ -4,6 +4,10 @@ import assert from "node:assert/strict"
 import test from "node:test"
 
 import {
+  AUTO_AI_MODEL,
+  getAiModelPickerOptions,
+  resolveAutoAiModel,
+  validateAiReasoningEffort,
   resolveProviderApprovalPolicy,
   validateProviderApprovalPolicies,
   getSupportedAiReasoningEffortsForProvider,
@@ -60,10 +64,10 @@ test("validates complete model and reasoning settings", () => {
   assert.deepEqual(
     validateAiModelSettings({
       researchModel: " gpt-6-luna ",
-      replyModel: "gpt-6-luna",
+      replyModel: "auto",
       cardGenerationModel: "gpt-6-luna",
       researchEffort: "medium",
-      replyEffort: "low",
+      replyEffort: "medium",
       cardGenerationEffort: "medium",
     }),
     { ...DEFAULT_AI_MODEL_SETTINGS }
@@ -375,4 +379,117 @@ test("matches each provider's native access-level options", async () => {
       "full-access",
     ])
   }
+})
+
+/** A catalogue row with the given reasoning levels. */
+function row(id: string, reasoningEfforts: string[] = ["low", "medium", "high"], isDefault = false) {
+  return { id, reasoningEfforts, ...(isDefault ? { isDefault: true } : {}) }
+}
+
+/** Confirms Auto picks the middle tier a plan has, newest first, and falls back to cheaper tiers. */
+test("Auto picks the plan's middle-tier model and falls back to cheaper ones", () => {
+  // Claude: Sonnet when the plan has it, Haiku when it does not.
+  assert.deepEqual(
+    resolveAutoAiModel("claude-code", "medium", [row("opus"), row("sonnet"), row("haiku")]),
+    { model: "sonnet", effort: "medium" }
+  )
+  assert.deepEqual(
+    resolveAutoAiModel("claude-code", "medium", [row("haiku"), row("claude-haiku-4-5-20251001", ["default"])]),
+    { model: "haiku", effort: "medium" }
+  )
+  // Codex: the newest Terra, else the newest Luna, else the catalogue default.
+  const codex = [
+    row("gpt-6.2-sol", ["low", "medium", "high"], true),
+    row("gpt-6.1-terra"),
+    row("gpt-5.6-terra"),
+    row("gpt-6-luna"),
+    row("gpt-5.6-luna"),
+  ]
+  assert.equal(resolveAutoAiModel("codex", "medium", codex).model, "gpt-6.1-terra")
+  assert.equal(
+    resolveAutoAiModel("codex", "medium", codex.filter((option) => !option.id.endsWith("terra"))).model,
+    "gpt-6-luna"
+  )
+  assert.equal(resolveAutoAiModel("codex", "medium", [codex[0]!]).model, "gpt-6.2-sol")
+  // Gemini: Neon, else Hydrogen, else Flash; ACP providers take no reasoning level.
+  assert.deepEqual(
+    resolveAutoAiModel("opencode", "medium", [
+      row("opencode/big-pickle", ["default"], true),
+      row("google/gemini-4-hydrogen", ["default"]),
+      row("google/gemini-4-neon", ["default"]),
+      row("google/gemini-3.8-flash", ["default"]),
+    ]),
+    { model: "google/gemini-4-neon", effort: "default" }
+  )
+  assert.deepEqual(
+    resolveAutoAiModel("antigravity", "medium", [
+      row("gemini-3.8-flash", ["default"], true),
+      row("claude-sonnet-4-6", ["default"]),
+    ]),
+    { model: "gemini-3.8-flash", effort: "default" }
+  )
+  assert.equal(
+    resolveAutoAiModel("opencode", undefined, [row("opencode/big-pickle", ["default"], true)]).model,
+    "opencode/big-pickle"
+  )
+})
+
+/** Confirms Auto lowers an effort the chosen model lacks and keeps one it has. */
+test("Auto keeps the saved effort when the chosen model accepts it", () => {
+  assert.deepEqual(
+    resolveAutoAiModel("codex", "xhigh", [row("gpt-6-luna", ["low", "medium"])]),
+    { model: "gpt-6-luna", effort: "medium" }
+  )
+  assert.deepEqual(
+    resolveAutoAiModel("codex", "high", [row("gpt-6-luna", ["low", "high"])]),
+    { model: "gpt-6-luna", effort: "high" }
+  )
+  assert.deepEqual(
+    resolveAutoAiModel("claude-code", "medium", [row("claude-haiku-4-5-20251001", ["default"])]),
+    { model: "claude-haiku-4-5-20251001", effort: "default" }
+  )
+  assert.deepEqual(
+    resolveAutoAiModel("claude-code", "high", [
+      row("opus"),
+      row("default", ["low"], true),
+    ]),
+    { model: "default", effort: "low" }
+  )
+  // Without a live catalogue, Blitz's own list stands in.
+  assert.equal(resolveAutoAiModel("claude-code", "medium").model, "sonnet")
+})
+
+test("OpenCode Auto uses available Flash previews, aliases, and Lite models before the default", () => {
+  for (const id of [
+    "google/gemini-3-flash-preview",
+    "google/gemini-flash-latest",
+    "google/gemini-3.5-flash-lite",
+    "google/gemini-flash-lite-latest",
+  ]) {
+    const catalog = [
+      row("google/gemini-3.1-pro-preview", ["default"], true),
+      row(id),
+    ]
+    assert.equal(resolveAutoAiModel("opencode", "default", catalog).model, id)
+  }
+})
+
+/** Confirms Auto is offered first in every picker, is not a "saved model", and passes validation. */
+test("Auto is a selectable, valid model for every provider", () => {
+  for (const provider of ["codex", "claude-code", "opencode", "antigravity"] as const) {
+    const options = getAiModelPickerOptions(provider, AUTO_AI_MODEL, [
+      { ...row("only-model"), label: "Only model" },
+    ])
+    assert.deepEqual(
+      options.map((option) => option.id),
+      [AUTO_AI_MODEL, "only-model"]
+    )
+    assert.match(options[0]?.label ?? "", /^Auto: /)
+  }
+  assert.equal(
+    validateAiReasoningEffort("medium", AUTO_AI_MODEL, "replyEffort", "codex", {
+      codex: [row("gpt-6-luna")],
+    }),
+    "medium"
+  )
 })

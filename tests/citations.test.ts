@@ -78,6 +78,20 @@ test("links resolve only within the saved reply allowlist", () => {
   assert.match(prompt, /citation:message_1/)
 })
 
+test("citation prompts distinguish unavailable source evidence from general knowledge", () => {
+  const citation = {
+    id: "message_1",
+    filename: "notes.pdf",
+    ...sourcePassages("[Page 8]\nTokens")[0],
+  }
+  for (const citations of [[], [citation]]) {
+    const prompt = citationPrompt(citations)
+    assert.match(prompt, /general knowledge/)
+    assert.match(prompt, /cannot verify it from the available material/)
+    assert.match(prompt, /Do not invent source details/)
+  }
+})
+
 test("PDF pages keep their page through code comments, headings, and printed times", () => {
   const text = [
     "[Page 3]",
