@@ -14,7 +14,7 @@ Renderers live in `components/ui/interactive-blocks/`. Mermaid diagrams are ordi
 
 ## Prompting
 
-`INTERACTIVE_BLOCKS_PROMPT` describes every format with an example and its limits. Teach always includes it, and its rules require quizzes, worked examples and follow-ups in each section. Ordinary chat adds `CHAT_INTERACTIVE_BLOCKS_GUIDANCE`, which asks for blocks whenever the learner is learning something and not in greetings, short factual answers or project tasks.
+`INTERACTIVE_BLOCKS_PROMPT` describes every format with an example and its limits. Teach always includes it. Its rules require one or two quizzes in each section, at least one applying the idea to a new case, with question types varied across the lesson. They also ask for a visual wherever the idea has a shape and a steps block only for a trace through three or more dependent steps. Follow-ups appear only when the section leaves questions open. Each block type's guidance says when not to use it as well as when to: a mermaid diagram needs branching or several stages, and data is shown as a code block. Ordinary chat adds `CHAT_INTERACTIVE_BLOCKS_GUIDANCE`, which asks for blocks whenever the learner is learning something and not in greetings, short factual answers or project tasks.
 
 ## Validation
 

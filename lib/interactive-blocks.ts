@@ -1347,13 +1347,13 @@ Other types, for recall that choices would give away. They take the same id, con
 - "code-output": the question includes a fenced code block; answer is the exact output, or a list of accepted outputs. Keep programs short and deterministic.
 
 ### steps: worked example revealed one step at a time
-Use for worked problems, derivations, proofs, and code traces. 1–12 steps; each body is Markdown (max 4000 chars), title optional.
+Use for derivations, proofs, and traces of code, queries or algorithms over real data, where each step depends on the one before. Not for lists of facts, before-and-after comparisons or summaries: write those as prose. At most one per section. 1–12 steps; each body is Markdown (max 4000 chars), title optional.
 \`\`\`steps Solving 2x + 3 = 11
 {"steps":[{"title":"Isolate the term","body":"Subtract 3: $2x = 8$."},{"title":"Solve","body":"Divide by 2: $x = 4$."}]}
 \`\`\`
 
 ### Visuals: draw what is easier to see than read
-Pick the simplest form that shows the idea, and use one whenever the idea has a shape: a quantity that changes, a comparison, a structure, a process, or a state that evolves step by step.
+Pick the simplest form that shows the idea, and use one whenever the idea has a shape: a structure with branches (a tree, an index pointing at documents), a flow through stages (a pipeline), a comparison, or a quantity that changes. A mermaid diagram should show branching or several stages; a chain of two or three boxes adds nothing, and data records are clearer as a code block. At most one visual per section.
 - graph: any function, rate of growth, curve, or set of measurements. Add a slider when a constant's effect is the point.
 - mermaid diagram (a mermaid fenced block): structure and flow (flowcharts, trees, graphs of nodes, state machines, sequence diagrams, ER diagrams). Quote labels that contain punctuation.
 - viz: a process the learner steps through or controls, or a picture neither of the above can draw (an algorithm running on an array, a circuit with switchable inputs, a pipeline filling up, a geometric construction).
@@ -1383,8 +1383,9 @@ Optionally end a reply with up to 3 short follow-up questions the learner might 
 \`\`\``
 
 /**
- * When a chat reply should use interactive blocks. Teach's protocol already requires quizzes, worked
- * examples, and follow-ups in every section; ordinary chat sends this instead so its replies use the
+ * When a chat reply should use interactive blocks. Teach's protocol already requires quizzes and a
+ * concrete example in every section, a visual where the idea has a shape, and follow-ups when the
+ * section leaves questions open; ordinary chat sends this instead so its replies use the
  * same blocks whenever the learner is learning, rather than only when they ask for a quiz by name.
  */
 export const CHAT_INTERACTIVE_BLOCKS_GUIDANCE = [
