@@ -1327,7 +1327,7 @@ body { padding: 16px; font-family: var(--font-sans); font-size: 15px; line-heigh
 :where(svg) { max-width: 100%; font-family: var(--font-sans); }
 :where(code, kbd, pre, .mono) { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
 :where(button, input, select, textarea) { font: inherit; color: inherit; }
-:where(button) { display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 32px; padding: 0 10px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--control); font-size: 14px; font-weight: 500; white-space: nowrap; cursor: pointer; transition: background-color 150ms, border-color 150ms, color 150ms; }
+:where(button) { display: inline-flex; align-items: center; justify-content: center; gap: 6px; max-width: 100%; min-height: 32px; padding: 4px 10px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--control); font-size: 14px; font-weight: 500; white-space: normal; cursor: pointer; transition: background-color 150ms, border-color 150ms, color 150ms; }
 :where(button:hover) { background: var(--control-hover); }
 :where(button:active) { transform: translateY(1px); }
 :where(button:disabled) { opacity: 0.5; cursor: default; pointer-events: none; }
@@ -1340,7 +1340,7 @@ body { padding: 16px; font-family: var(--font-sans); font-size: 15px; line-heigh
 :where(table) { border-collapse: collapse; font-size: 14px; font-variant-numeric: tabular-nums; }
 :where(th, td) { padding: 6px 10px; border-bottom: 1px solid var(--border); text-align: left; }
 :where(th) { color: var(--muted-foreground); font-weight: 500; }
-:focus-visible { outline: none; border-color: var(--ring); box-shadow: 0 0 0 3px color-mix(in oklab, var(--ring) 50%, transparent); }
+:where(:focus-visible) { outline: 2px solid var(--ring); outline-offset: 2px; }
 :where(.row) { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 :where(.row + .row, .row + p, p + .row, .row + .note, .note + .row) { margin-top: 12px; }
 :where(.cell) { display: inline-flex; flex-direction: column; align-items: center; justify-content: center; min-width: 40px; min-height: 40px; padding: 6px 10px; border: 1px solid var(--border); border-radius: calc(var(--radius) * 0.8); background: var(--card); font-size: 14px; font-variant-numeric: tabular-nums; transition: background-color 200ms, border-color 200ms, color 200ms, opacity 200ms; }
